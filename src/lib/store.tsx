@@ -12,6 +12,7 @@ import {
   getConnectivity, onConnectivityChange, queueWrite, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
+import { syncToGoogleDrive } from './lib/driveSync';
 
 const STORE_KEY = 'nexfix_pos_v2';
 const STORE_KEY_V1 = 'nexfix_pos_v1';
@@ -53,12 +54,12 @@ interface StoreCtx {
   dark: boolean;
   toggleTheme: () => void;
   can: (key: string) => boolean;
-  /** true while the ADMIN unlock prompt is visible â€” the previous user's session is nullified (inert UI, no shortcuts) */
+  /** true while the ADMIN unlock prompt is visible — the previous user's session is nullified (inert UI, no shortcuts) */
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
   signIn: (email: string, password: string, remember: boolean) => { ok: boolean; error?: string };
   signOut: () => void;
-  /** cashier â†’ admin requires the admin switch password (pin). admin â†’ cashier is free. */
+  /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
   switchRole: (role: Role, pin?: string) => { ok: boolean; error?: string };
   changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
   /** verify the admin password without switching role (used for price overrides etc.) */
@@ -431,30 +432,44 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const saveProduct = useCallback((p: Product) => {
     setState(s => {
       const exists = s.products.some(x => x.id === p.id);
-      return { ...s, products: exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products] };
+      const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return { ...s, products: updatedProducts };
     });
     pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
   }, [pushAudit, state.products]);
 
   const deleteProduct = useCallback((id: string) => {
     const p = state.products.find(x => x.id === id);
-    setState(s => ({ ...s, products: s.products.filter(x => x.id !== id) }));
+    setState(s => {
+      const updatedProducts = s.products.filter(x => x.id !== id);
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return { ...s, products: updatedProducts };
+    });
     if (p) pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
   }, [pushAudit, state.products]);
 
   const adjustStock = useCallback((id: string, delta: number, reason: string) => {
     const p = state.products.find(x => x.id === id);
-    setState(s => ({
-      ...s,
-      products: s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x)),
-    }));
-    if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} â€” ${reason}`);
+    setState(s => {
+      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return {
+        ...s,
+        products: updatedProducts,
+      };
+    });
+    if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} — ${reason}`);
   }, [pushAudit, state.products]);
 
   /* ---------------- customers / suppliers ---------------- */
   const saveCustomer = useCallback((c: Customer) => {
     const exists = state.customers.some(x => x.id === c.id);
-    setState(s => ({ ...s, customers: exists ? s.customers.map(x => (x.id === c.id ? c : x)) : [c, ...s.customers] }));
+    setState(s => {
+      const updatedCustomers = exists ? s.customers.map(x => (x.id === c.id ? c : x)) : [c, ...s.customers];
+      syncToGoogleDrive('Customers', updatedCustomers); // Auto Google Sync
+      return { ...s, customers: updatedCustomers };
+    });
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Customer', `${exists ? 'Updated' : 'Created'} customer ${c.name}`);
   }, [pushAudit, state.customers]);
 
@@ -559,12 +574,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
       profit, status: 'completed',
     };
+
+    const updatedProducts = s.products.map(p => {
+      const line = input.lines.find(l => l.productId === p.id);
+      return line ? { ...p, stock: Math.max(0, p.stock - line.qty) } : p;
+    });
+
     setState(prev => ({
       ...prev,
-      products: prev.products.map(p => {
-        const line = input.lines.find(l => l.productId === p.id);
-        return line ? { ...p, stock: Math.max(0, p.stock - line.qty) } : p;
-      }),
+      products: updatedProducts,
       customers: prev.customers.map(c =>
         c.id === cust?.id
           ? {
@@ -582,6 +600,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       sales: [sale, ...prev.sales],
       counters: { ...prev.counters, bill: prev.counters.bill + 1 },
     }));
+
+    // Auto-Sync to Google Sheet (Sales & Products Inventory)
+    syncToGoogleDrive('SalesHistory', [sale]);
+    syncToGoogleDrive('Products', updatedProducts);
+
     pushAudit(
       'SALE', 'Sale',
       `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`,
@@ -634,7 +657,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
       return { ...s, purchases: [po, ...s.purchases], counters: { ...s.counters, po: seq } };
     });
-    pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} Â· Rs. ${p.total.toLocaleString()}`);
+    pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit]);
 
   const receivePurchase = useCallback((id: string) => {
@@ -674,13 +697,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ...s,
       expenses: [{ ...e, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
     }));
-    pushAudit('EXPENSE', 'Expense', `${e.category}: ${e.note} Â· Rs. ${e.amount.toLocaleString()}`);
+    pushAudit('EXPENSE', 'Expense', `${e.category}: ${e.note} · Rs. ${e.amount.toLocaleString()}`);
   }, [pushAudit, user?.name]);
 
   const deleteExpense = useCallback((id: string) => {
     const e = state.expenses.find(x => x.id === id);
     setState(s => ({ ...s, expenses: s.expenses.filter(x => x.id !== id) }));
-    if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} Â· Rs. ${e.amount.toLocaleString()}`);
+    if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`);
   }, [state.expenses, pushAudit]);
 
   /* ---------------- exchanges ---------------- */
@@ -764,7 +787,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           : x,
       ),
     }));
-    pushAudit('DAY-CLOSE', 'Session', `Drawer settled Â· counted Rs. ${counted.toLocaleString()}${note ? ` Â· ${note}` : ''}`);
+    pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${counted.toLocaleString()}${note ? ` · ${note}` : ''}`);
   }, [pushAudit]);
 
   // auto-open today's drawer session once per cashier
@@ -1001,4 +1024,4 @@ export function usePOS() {
   const ctx = useContext(Ctx);
   if (!ctx) throw new Error('usePOS must be used inside POSProvider');
   return ctx;
-  }
+}
