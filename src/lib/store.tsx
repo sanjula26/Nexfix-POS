@@ -12,7 +12,7 @@ import {
   getConnectivity, onConnectivityChange, queueWrite, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
-import { syncToGoogleDrive } from './lib/driveSync';
+import { syncToGoogleDrive } from './driveSync';
 
 const STORE_KEY = 'nexfix_pos_v2';
 const STORE_KEY_V1 = 'nexfix_pos_v1';
