@@ -1,5 +1,5 @@
 // Google Apps Script Deploy URL එක
-const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbymgneIr6qiK1PnB_-YvMukwbXb-emSRn4fOtBDgENJ5w3OwY2RBio3YD2-gjUQWOP5/exec";
+const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby_hd7aFdpiUY4mLF-kSaaDDrpQFWvrYhcVoyC1QS4knHdBH0juTphXGpPFlHJ8uoxf/exec";
 
 /**
  * Google Sheet එකට Data Save කරන Function එක
