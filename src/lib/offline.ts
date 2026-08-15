@@ -37,8 +37,10 @@ export async function getPendingSyncOperations() {
 
 /**
  * On reconnect, attempt to publish the durable local snapshot. A successful
- * acknowledgement is required before queued writes are considered synced.
- * Conflicts are deliberately retained rather than overwritten.
+ * snapshot acknowledgement does NOT clear the operation queue because the
+ * current queue still represents coarse state writes. It is safer to leave
+ * those entries visible until row-level/idempotent operation acknowledgement
+ * is implemented.
  */
 export async function flushSyncQueue(): Promise<{ flushed: number; pending: number; synced: boolean }> {
   const ops = await idbListQueue();
@@ -47,9 +49,7 @@ export async function flushSyncQueue(): Promise<{ flushed: number; pending: numb
 
   const result = await syncStateSnapshot(state);
   if (result.status === 'synced') {
-    // Snapshot is acknowledged by the server. The queue itself remains until
-    // granular operation-level sync is introduced, preventing silent loss.
-    return { flushed: ops.length, pending: ops.length, synced: true };
+    return { flushed: 0, pending: ops.length, synced: true };
   }
   return { flushed: 0, pending: ops.length, synced: false };
 }
