@@ -1,65 +1,22 @@
-// ElectroPOS Pro — Core Types
+export type Role = 'admin' | 'cashier' | 'technician' | 'manager';
 
-export type Role = 'admin' | 'manager' | 'cashier' | 'technician';
-export type UnitStatus = 'in_stock' | 'sold' | 'returned' | 'reserved' | 'defective' | 'in_repair';
-export type SaleStatus = 'completed' | 'refunded' | 'partial_refund' | 'exchanged' | 'void';
-export type PaymentMethod = 'cash' | 'card' | 'bank' | 'mobile' | 'credit' | 'points';
-export type PurchaseStatus = 'draft' | 'ordered' | 'partial' | 'received' | 'cancelled';
-export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted';
-export type RepairStatus =
-  | 'received' | 'diagnosed' | 'waiting_parts' | 'in_repair'
-  | 'ready' | 'delivered' | 'cancelled';
-export type ClaimStatus = 'open' | 'approved' | 'rejected' | 'replaced' | 'repaired' | 'closed';
-
-export interface Profile {
+export interface AppUser {
   id: string;
+  name: string;
   email: string;
-  full_name: string;
+  password: string;
   role: Role;
-  phone?: string;
   active: boolean;
-  commission_pct?: number;
-  created_at: string;
+  createdAt: string;
+  commissionPct?: number;
 }
 
-export interface Shop {
-  id: string;
-  name: string;
-  tagline?: string;
-  address?: string;
-  phone?: string;
-  email?: string;
-  logo_url?: string;
-  receipt_footer?: string;
-  tax_rate: number;
-  currency: string;
-  low_stock_default: number;
-  exchange_days: number;
-  repair_warranty_days: number;
-  loyalty_earn_div: number;
-  loyalty_point_value: number;
-  settings?: Record<string, unknown>;
-}
-
-export interface Category {
-  id: string;
-  shop_id: string;
-  name: string;
-  parent_id?: string;
-  sort_order?: number;
-}
-
-export interface Brand {
-  id: string;
-  shop_id: string;
-  name: string;
-}
-
+/** CCTV / custom product attributes */
 export interface ProductAttributes {
   resolution?: string;
   lens?: string;
   poe?: boolean;
-  night_vision?: string;
+  nightVision?: string;
   weatherproof?: string;
   power?: string;
   channels?: number;
@@ -69,154 +26,220 @@ export interface ProductAttributes {
 
 export interface Product {
   id: string;
-  shop_id: string;
   name: string;
-  sku?: string;
-  barcode?: string;
-  category_id?: string;
-  brand_id?: string;
-  description?: string;
+  sku: string;
+  barcode: string;
+  category: string;
+  brand: string;
   cost: number;
   price: number;
   stock: number;
-  reorder_level: number;
-  track_imei: boolean;
-  track_serial: boolean;
-  track_expiry: boolean;
-  warranty_months: number;
-  is_kit: boolean;
-  is_service: boolean;
+  reorderLevel: number;
+  trackImei: boolean;
+  /** track serial numbers (laptops, etc.) even without full IMEI */
+  trackSerial?: boolean;
+  trackExpiry?: boolean;
+  /** default warranty in months for this product */
+  warrantyMonths?: number;
+  /** Kit / Bundle product (BOM components in kitItems) */
+  isKit?: boolean;
+  isService?: boolean;
+  attributes?: ProductAttributes;
+  supplierId?: string;
   active: boolean;
-  attributes: ProductAttributes;
-  image_url?: string;
-  supplier_id?: string;
-  created_at: string;
-  category_name?: string;
-  brand_name?: string;
+  createdAt: string;
 }
 
+/** Bill of Materials line for kit products */
 export interface KitItem {
   id: string;
-  kit_product_id: string;
-  component_product_id: string;
+  kitProductId: string;
+  componentProductId: string;
   qty: number;
-  component_name?: string;
-  component_stock?: number;
 }
+
+/** Individual sellable unit with IMEI / serial / expiry */
+export type UnitStatus = 'in_stock' | 'sold' | 'returned' | 'reserved' | 'defective' | 'in_repair';
 
 export interface InventoryUnit {
   id: string;
-  shop_id: string;
-  product_id: string;
+  productId: string;
   imei?: string;
   serial?: string;
-  expiry_date?: string;
+  /** ISO date — for batteries, accessories with shelf life */
+  expiryDate?: string;
   status: UnitStatus;
+  purchaseId?: string;
+  saleId?: string;
+  saleBillNo?: string;
   cost?: number;
-  purchase_id?: string;
-  sale_id?: string;
-  sale_bill_no?: string;
-  warranty_months?: number;
-  warranty_expires_at?: string;
   note?: string;
-  created_at: string;
-  sold_at?: string;
-  product_name?: string;
+  createdAt: string;
+  soldAt?: string;
+  /** warranty end date calculated at sale */
+  warrantyExpiresAt?: string;
 }
 
 export interface Customer {
   id: string;
-  shop_id: string;
   name: string;
-  phone?: string;
+  phone: string;
   email?: string;
   nic?: string;
   address?: string;
-  credit_balance: number;
-  loyalty_points: number;
-  notes?: string;
-  created_at: string;
+  createdAt: string;
+  creditBalance: number;
+  loyaltyPoints: number;
 }
 
 export interface Supplier {
   id: string;
-  shop_id: string;
   name: string;
-  contact_person?: string;
-  phone?: string;
+  contactPerson?: string;
+  phone: string;
   email?: string;
   address?: string;
-  notes?: string;
-  created_at: string;
+  createdAt: string;
 }
 
 export interface SaleItem {
-  product_id?: string;
+  productId: string;
   name: string;
   qty: number;
   price: number;
   cost: number;
+  /** flat Rs discount applied to this line */
   discount?: number;
-  price_overridden?: boolean;
-  warranty_months?: number;
-  unit_ids?: string[];
+  /** true when the unit price was manually overridden */
+  priceOverridden?: boolean;
+  /** IMEI/serial of units sold on this line */
+  unitIds?: string[];
   imeis?: string[];
   serials?: string[];
+  warrantyMonths?: number;
 }
 
-export interface PaymentLeg {
-  method: PaymentMethod;
-  amount: number;
-}
+export type PaymentMethod = 'cash' | 'card' | 'bank' | 'mobile' | 'credit';
+
+export interface PaymentLeg { method: PaymentMethod; amount: number }
 
 export interface Sale {
   id: string;
-  shop_id: string;
-  bill_no: string;
-  customer_id?: string;
-  customer_name: string;
-  cashier_id?: string;
-  cashier_name?: string;
-  salesman_id?: string;
+  billNo: string;
+  date: string; // ISO
+  cashierId: string;
+  cashierName: string;
+  customerId?: string;
+  customerName: string;
   items: SaleItem[];
   subtotal: number;
   discount: number;
   tax: number;
-  shipping?: number;
   total: number;
-  amount_paid: number;
-  change_amount: number;
-  profit: number;
-  points_earned?: number;
-  points_redeemed?: number;
+  payment: PaymentMethod;
+  /** present when the bill was paid with multiple methods */
   payments?: PaymentLeg[];
-  status: SaleStatus;
+  shipping?: number;
+  /** loyalty points (not Rs) redeemed on this bill */
+  pointsRedeemed?: number;
+  pointsEarned?: number;
+  /** free-text bill note (gift packing, delivery instructions...) */
   note?: string;
-  created_at: string;
+  amountPaid: number;
+  change: number;
+  profit: number;
+  status: 'completed' | 'refunded' | 'exchanged';
 }
 
-export interface Quotation {
-  id: string;
-  shop_id: string;
-  quote_no: string;
-  customer_id?: string;
-  customer_name?: string;
-  customer_phone?: string;
-  status: QuoteStatus;
-  items: { product_id?: string; name: string; qty: number; price: number; discount?: number }[];
-  subtotal: number;
-  discount: number;
-  tax: number;
-  total: number;
-  valid_until?: string;
-  notes?: string;
-  converted_sale_id?: string;
-  created_by?: string;
-  created_at: string;
+export interface PurchaseItem {
+  productId: string;
+  name: string;
+  qty: number;
+  cost: number;
+  /** optional bulk expiry for this line */
+  expiryDate?: string;
 }
+
+export interface Purchase {
+  id: string;
+  poNo: string;
+  date: string;
+  supplierId: string;
+  supplierName: string;
+  items: PurchaseItem[];
+  total: number;
+  status: 'pending' | 'received';
+}
+
+export interface Expense {
+  id: string;
+  date: string;
+  category: string;
+  note: string;
+  amount: number;
+  by: string;
+}
+
+export interface ExchangeItem { productId: string; name: string; qty: number; amount: number }
+
+export interface Exchange {
+  id: string;
+  exNo: string;
+  date: string;
+  billNo: string;
+  customerName: string;
+  reason: string;
+  items: ExchangeItem[];
+  refund: number;
+  additional: number;
+  by: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  time: string;
+  user: string;
+  action: string;
+  entity: string;
+  details: string;
+}
+
+export interface HeldLine { productId: string; qty: number; unitIds?: string[] }
+
+export interface HeldSale {
+  id: string;
+  label: string;
+  heldAt: string;
+  customerId?: string;
+  lines: HeldLine[];
+  discount: number;
+  taxPct: number;
+}
+
+export interface DaySession {
+  id: string;
+  cashierId: string;
+  cashierName: string;
+  date: string; // yyyy-mm-dd
+  opening: number;
+  closed: boolean;
+  closing?: number;
+  note?: string;
+}
+
+/* -------------------- Repairs / Service Jobs -------------------- */
+
+export type RepairStatus =
+  | 'received'
+  | 'diagnosed'
+  | 'waiting_parts'
+  | 'in_repair'
+  | 'ready'
+  | 'delivered'
+  | 'cancelled';
 
 export interface RepairPart {
-  product_id?: string;
+  productId?: string;
   name: string;
   qty: number;
   cost: number;
@@ -224,90 +247,139 @@ export interface RepairPart {
 
 export interface RepairJob {
   id: string;
-  shop_id: string;
-  job_no: string;
-  customer_id?: string;
-  customer_name: string;
-  customer_phone?: string;
-  device_type: string;
-  device_brand?: string;
-  device_model?: string;
+  jobNo: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone?: string;
+  deviceType: string; // Phone / Laptop / Desktop / Tablet / CCTV / Other
+  deviceBrand: string;
+  deviceModel: string;
   imei?: string;
   serial?: string;
   fault: string;
   diagnosis?: string;
   parts: RepairPart[];
-  labor_cost: number;
+  laborCost: number;
   status: RepairStatus;
-  received_at: string;
-  promised_at?: string;
-  completed_at?: string;
-  delivered_at?: string;
-  technician_id?: string;
-  technician_name?: string;
-  warranty_days: number;
-  advance_paid: number;
-  notes?: string;
-  created_by?: string;
-  created_at: string;
+  receivedAt: string;
+  promisedAt?: string;
+  completedAt?: string;
+  deliveredAt?: string;
+  technicianId?: string;
+  technicianName?: string;
+  warrantyDays?: number;
+  note?: string;
+  advancePaid?: number;
+  by: string;
 }
+
+/* -------------------- Quotations -------------------- */
+export type QuoteStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'converted';
+
+export interface QuotationItem {
+  productId?: string;
+  name: string;
+  qty: number;
+  price: number;
+  discount?: number;
+}
+
+export interface Quotation {
+  id: string;
+  quoteNo: string;
+  customerId?: string;
+  customerName: string;
+  customerPhone?: string;
+  status: QuoteStatus;
+  items: QuotationItem[];
+  subtotal: number;
+  discount: number;
+  tax: number;
+  total: number;
+  validUntil?: string;
+  notes?: string;
+  convertedSaleId?: string;
+  createdAt: string;
+  by: string;
+}
+
+/* -------------------- Warranty Claims -------------------- */
+export type ClaimStatus = 'open' | 'approved' | 'rejected' | 'replaced' | 'repaired' | 'closed';
 
 export interface WarrantyClaim {
   id: string;
-  shop_id: string;
-  claim_no: string;
-  unit_id?: string;
-  sale_id?: string;
-  customer_id?: string;
-  product_name?: string;
-  imei_or_serial?: string;
-  issue_description: string;
+  claimNo: string;
+  unitId?: string;
+  saleId?: string;
+  saleBillNo?: string;
+  customerId?: string;
+  customerName?: string;
+  productName: string;
+  imeiOrSerial?: string;
+  issueDescription: string;
   status: ClaimStatus;
-  resolution_notes?: string;
-  created_by?: string;
-  created_at: string;
-  closed_at?: string;
+  resolutionNotes?: string;
+  createdAt: string;
+  closedAt?: string;
+  by: string;
 }
 
-export interface Expense {
-  id: string;
-  shop_id: string;
-  category: string;
-  note?: string;
-  amount: number;
-  expense_date: string;
-  created_by?: string;
-  created_at: string;
+export interface Settings {
+  shopName: string;
+  tagline: string;
+  address: string;
+  phone: string;
+  email: string;
+  receiptFooter: string;
+  taxDefault: number;
+  lowStockDefault: number;
+  exchangeDays: number;
+  openingFloat: number;
+  /** hashed password for the CASHIER → ADMIN role switch */
+  adminPinHash: string;
+  /** auto-open WhatsApp with the receipt text after checkout */
+  whatsappReceipts: boolean;
+  /** managed product categories */
+  categories?: string[];
+  /** managed brands */
+  brands?: string[];
+  /** default repair warranty days */
+  repairWarrantyDays?: number;
 }
 
-export interface DaySession {
-  id: string;
-  shop_id: string;
-  cashier_id: string;
-  cashier_name?: string;
-  session_date: string;
-  opening: number;
-  closing?: number;
-  closed: boolean;
-  note?: string;
+export interface Permissions {
+  admin: Record<string, boolean>;
+  cashier: Record<string, boolean>;
 }
 
-export interface AuditEntry {
-  id: string;
-  shop_id?: string;
-  user_id?: string;
-  user_email?: string;
-  action: string;
-  entity: string;
-  details?: string;
-  created_at: string;
+export interface Counters {
+  bill: number;
+  po: number;
+  ex: number;
+  job: number;
+  quote: number;
+  claim: number;
 }
 
-export interface CartLine {
-  product: Product;
-  qty: number;
-  price: number;
-  discount: number;
-  unitIds: string[];
-  note?: string;
+export interface POSState {
+  products: Product[];
+  customers: Customer[];
+  suppliers: Supplier[];
+  sales: Sale[];
+  purchases: Purchase[];
+  expenses: Expense[];
+  exchanges: Exchange[];
+  users: AppUser[];
+  audit: AuditEntry[];
+  held: HeldSale[];
+  sessions: DaySession[];
+  settings: Settings;
+  permissions: Permissions;
+  kitItems?: KitItem[];
+  quotations?: Quotation[];
+  warrantyClaims?: WarrantyClaim[];
+  counters: Counters;
+  /** Phase 3 */
+  units: InventoryUnit[];
+  repairs: RepairJob[];
 }
