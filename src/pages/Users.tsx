@@ -11,20 +11,57 @@ export default function Users() {
   const [editing, setEditing] = useState<AppUser | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [deleting, setDeleting] = useState<AppUser | null>(null);
+  const [confirmPass, setConfirmPass] = useState('');
+  const [formErr, setFormErr] = useState('');
+  const [formOk, setFormOk] = useState('');
+
 
   const save = () => {
-    if (!editing || !editing.name.trim() || !editing.email.trim()) return;
-    // New users must have a password; existing users can leave blank to keep current hash
-    if (isNew && !editing.password.trim()) return;
-    if (state.users.some(u => u.email.toLowerCase() === editing.email.toLowerCase() && u.id !== editing.id)) return;
+    setFormErr('');
+    setFormOk('');
+    if (!editing || !editing.name.trim() || !editing.email.trim()) {
+      setFormErr('Name and email are required');
+      return;
+    }
+    const email = editing.email.trim().toLowerCase();
+    if (!email.includes('@')) {
+      setFormErr('Enter a valid email (used as login username)');
+      return;
+    }
+    if (state.users.some(u => u.email.toLowerCase() === email && u.id !== editing.id)) {
+      setFormErr('This email is already used by another user');
+      return;
+    }
     const existing = state.users.find(u => u.id === editing.id);
+    const newPass = editing.password.trim();
+    if (isNew && !newPass) {
+      setFormErr('Password is required for new users');
+      return;
+    }
+    if (newPass) {
+      if (newPass.length < 4) {
+        setFormErr('Password must be at least 4 characters');
+        return;
+      }
+      if (newPass !== confirmPass) {
+        setFormErr('Password and confirm password do not match');
+        return;
+      }
+    }
     const toSave = {
       ...editing,
-      password: editing.password.trim() || (existing?.password ?? ''),
+      name: editing.name.trim(),
+      email,
+      password: newPass || (existing?.password ?? ''),
     };
-    if (!toSave.password) return;
+    if (!toSave.password) {
+      setFormErr('Password is required');
+      return;
+    }
     saveUser(toSave);
-    setEditing(null);
+    setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
+    setConfirmPass('');
+    setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
   };
 
   return (
@@ -38,7 +75,7 @@ export default function Users() {
             className="btn btn-primary"
             onClick={() => {
               setEditing({ id: uid(), name: '', email: '', password: '', role: 'cashier', active: true, createdAt: new Date().toISOString() });
-              setIsNew(true);
+              setIsNew(true); setConfirmPass(''); setFormErr(''); setFormOk('');
             }}
           >
             <Plus size={15} /> Add User
@@ -72,7 +109,7 @@ export default function Users() {
               </div>
               <div className="flex items-center gap-1.5">
                 <Toggle checked={u.active} onChange={() => toggleUserActive(u.id)} disabled={u.id === user?.id} />
-                <button className="icon-btn !w-8 !h-8" onClick={() => { setEditing({ ...u, password: '' }); setIsNew(false); }}><Pencil size={14} /></button>
+                <button className="icon-btn !w-8 !h-8" onClick={() => { setEditing({ ...u, password: '' }); setIsNew(false); setConfirmPass(''); setFormErr(''); setFormOk(''); }}><Pencil size={14} /></button>
                 {u.id !== user?.id && (
                   <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={() => setDeleting(u)}>
                     <Trash2 size={14} />
@@ -93,25 +130,39 @@ export default function Users() {
                 <input className="input pl-9" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Cashier name" />
               </span>
             </Field>
-            <Field label="Email (login)">
+            <Field label="Email / username (login)">
               <span className="relative block">
                 <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
                 <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" />
               </span>
             </Field>
-            <Field label="Password" hint={isNew ? 'Will be stored hashed (SHA-256)' : 'Leave unchanged or type a new password — always stored hashed'}>
+            <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored as SHA-256 hash' : 'Leave blank to keep current password'}>
               <span className="relative block">
                 <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
                 <input
                   className="input pl-9"
                   type="password"
                   value={editing.password}
-                  onChange={e => setEditing({ ...editing, password: e.target.value })}
-                  placeholder={isNew ? '••••••••' : 'Type new password to change'}
+                  onChange={e => { setEditing({ ...editing, password: e.target.value }); setFormErr(''); }}
+                  placeholder={isNew ? 'Min 4 characters' : 'Type only if changing password'}
                   autoComplete="new-password"
                 />
               </span>
             </Field>
+            {(isNew || editing.password.trim().length > 0) && (
+              <Field label="Confirm password">
+                <input
+                  className="input"
+                  type="password"
+                  value={confirmPass}
+                  onChange={e => { setConfirmPass(e.target.value); setFormErr(''); }}
+                  placeholder="Repeat password"
+                  autoComplete="new-password"
+                />
+              </Field>
+            )}
+            {formErr && <p className="text-sm font-medium text-rose-500">{formErr}</p>}
+            {formOk && <p className="text-sm font-medium text-emerald-500">{formOk}</p>}
             <Field label="Role">
               <div className="grid grid-cols-2 gap-2">
                 {(['admin', 'cashier'] as Role[]).map(r => (

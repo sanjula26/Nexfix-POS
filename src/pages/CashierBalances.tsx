@@ -64,9 +64,14 @@ export default function CashierBalances() {
       0,
     );
     const opening = session?.opening ?? state.settings.openingFloat;
-    // Expected drawer ≈ opening + cash sales − (optional expenses attributed later)
-    const expected = opening + cash;
-    return { mine, session, cash, credit, other, opening, expected };
+    // Auto expected drawer = opening + cash taken − cash refunds (full refund assumed cash if mixed unknown)
+    const myRefunds = state.sales.filter(s => s.status === 'refunded' && dkey(s.date) === today && s.cashierId === id);
+    const cashRefunds = myRefunds.reduce((a, s) => {
+      const cashPart = salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
+      return a + (cashPart > 0 ? cashPart : s.total);
+    }, 0);
+    const expected = Math.round((opening + cash - cashRefunds) * 100) / 100;
+    return { mine, session, cash, credit, other, opening, expected, cashRefunds };
   };
 
   const settle = () => {
@@ -84,13 +89,17 @@ export default function CashierBalances() {
     setOpeningInput('');
   };
 
-  const shopExpected =
-    (state.sessions.find(x => x.date === today && !x.closed)?.opening ??
-      state.settings.openingFloat) +
-    cashSales;
+  const cashRefundsShop = refunded.reduce((a, s) => {
+    const cashPart = salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
+    return a + (cashPart > 0 ? cashPart : s.total);
+  }, 0);
+  const openingTotal = state.sessions.filter(s => s.date === today).reduce((a, s) => a + s.opening, 0)
+    || state.settings.openingFloat;
+  // Expected physical cash ≈ openings + cash sales − cash refunds − today's expenses (cash out)
+  const shopExpected = Math.round((openingTotal + cashSales - cashRefundsShop - todayExpenses) * 100) / 100;
 
   const cards = [
-    { label: 'Opening float', value: fmtRs(state.sessions.filter(s => s.date === today).reduce((a, s) => a + s.opening, 0) || state.settings.openingFloat), icon: Wallet, tone: 'violet' },
+    { label: 'Opening float', value: fmtRs(openingTotal), icon: Wallet, tone: 'violet' },
     { label: "Today's sales", value: fmtRs(grossSales), icon: TrendingUp, tone: 'emerald' },
     { label: 'Cash in drawer', value: fmtRs(cashSales), icon: Banknote, tone: 'sky' },
     { label: 'Card / Bank / Mobile', value: fmtRs(cardSales + bankSales + mobileSales), icon: CreditCard, tone: 'blue' },
@@ -178,7 +187,7 @@ export default function CashierBalances() {
                         className="btn btn-primary !py-1.5 !px-3 text-xs"
                         onClick={() => {
                           setSettling(c.id);
-                          setCounted(String(Math.round(r.expected)));
+                          setCounted(String(r.expected));
                           setNote('');
                         }}
                       >
