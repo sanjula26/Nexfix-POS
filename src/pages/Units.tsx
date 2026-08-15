@@ -58,7 +58,8 @@ export default function Units() {
 
   const save = () => {
     if (!editing || !editing.productId) return;
-    if (!editing.imei?.trim() && !editing.serial?.trim()) return;
+    // allow saving placeholder units (fill IMEI later)
+    if (!editing.imei?.trim() && !editing.serial?.trim() && !editing.note?.trim() && isNew) return;
     saveUnit({
       ...editing,
       imei: editing.imei?.trim() || undefined,
@@ -199,7 +200,7 @@ export default function Units() {
               <input className="input" value={editing.note || ''} onChange={e => setEditing({ ...editing, note: e.target.value })} />
             </Field>
             <div className="flex gap-2.5 pt-1">
-              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.productId || (!editing.imei?.trim() && !editing.serial?.trim())}>
+              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.productId}>
                 {isNew ? 'Add unit' : 'Save'}
               </button>
               <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>

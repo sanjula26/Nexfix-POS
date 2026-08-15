@@ -1118,8 +1118,8 @@ export default function POS() {
               <p className="text-[11px] text-faint num">{filtered.length} of {products.length} items</p>
             </div>
           </div>
-          <div ref={searchBoxRef} className="w-full sm:w-64 order-3 sm:order-none">
-            <SearchInput value={search} onChange={setSearch} placeholder="Scan barcode or searchâ€¦ (F3)" />
+          <div ref={searchBoxRef} className="w-full sticky top-0 z-20 pb-2 bg-surface/95 backdrop-blur-sm">
+            <SearchInput value={search} onChange={setSearch} placeholder="Scan barcode, SKU, name or IMEI… (F3)" className="w-full" />
           </div>
         </div>
 

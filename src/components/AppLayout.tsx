@@ -36,7 +36,7 @@ const NAV: NavDef[] = [
   { to: '/price-tags', label: 'Price Tags', icon: Tags, perm: 'page:pricetags', group: 'Operations' },
   { to: '/signup', label: 'Customer Signup', icon: UserPlus, group: 'Operations' },
   { to: '/users', label: 'Users', icon: UserCog, group: 'Administration', adminOnly: true },
-  { to: '/cashier-balances', label: 'Cashier Balances', icon: Landmark, group: 'Administration', adminOnly: true },
+  { to: '/cashier-balances', label: 'Day Cash & Drawer', icon: Landmark, group: 'Administration', adminOnly: true },
   { to: '/permissions', label: 'Permissions', icon: KeyRound, group: 'Administration', adminOnly: true },
   { to: '/audit-log', label: 'Audit Log', icon: ScrollText, group: 'Administration', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings, group: 'System', adminOnly: true },
@@ -48,7 +48,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/customers/, 'Customers'], [/^\/suppliers/, 'Suppliers'], [/^\/purchases/, 'Purchases'],
   [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
   [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'], [/^\/signup/, 'Customer Signup'],
-  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Cashier Balances'], [/^\/permissions/, 'Permissions'],
+  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Day Cash & Drawer'], [/^\/permissions/, 'Permissions'],
   [/^\/audit-log/, 'Audit Log'], [/^\/settings/, 'Settings'],
 ];
 

@@ -1,156 +1,278 @@
 import { useMemo, useState } from 'react';
-import { Landmark, Banknote, Wallet, TrendingUp, Lock, Unlock, CheckCircle2, CalendarDays } from 'lucide-react';
+import {
+  Landmark, Banknote, Wallet, TrendingUp, Lock, Unlock, CheckCircle2,
+  RotateCcw, HandCoins, CreditCard, Smartphone, Receipt,
+} from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, Avatar, PageHeading } from '../components/ui';
-import { fmtRs, dkey, fmtNum, salePayments } from '../lib/utils';
+import { fmtRs, dkey, salePayments } from '../lib/utils';
 
 export default function CashierBalances() {
-  const { state, closeSession, user } = usePOS();
+  const { state, closeSession, openSession, user } = usePOS() as ReturnType<typeof usePOS> & {
+    openSession: (cashierId: string, opening: number) => void;
+  };
   const today = dkey(new Date());
   const [settling, setSettling] = useState<string | null>(null);
   const [counted, setCounted] = useState('');
   const [note, setNote] = useState('');
+  const [openFloatId, setOpenFloatId] = useState<string | null>(null);
+  const [openingInput, setOpeningInput] = useState('');
 
-  const cashiers = state.users.filter(u => u.role === 'cashier');
+  const cashiers = state.users.filter(u => u.role === 'cashier' || u.role === 'admin');
 
   const todaySales = useMemo(
-    () => state.sales.filter(s => s.status !== 'refunded' && dkey(s.date) === today),
+    () => state.sales.filter(s => dkey(s.date) === today),
     [state.sales, today],
   );
-  const todayExpenses = state.expenses.filter(e => dkey(e.date) === today).reduce((a, e) => a + e.amount, 0);
+  const completed = todaySales.filter(s => s.status === 'completed' || s.status === 'exchanged');
+  const refunded = todaySales.filter(s => s.status === 'refunded');
+
+  const sumMethod = (method: string) =>
+    completed.reduce(
+      (a, s) => a + salePayments(s).filter(l => l.method === method).reduce((x, l) => x + l.amount, 0),
+      0,
+    );
+
+  const cashSales = sumMethod('cash');
+  const cardSales = sumMethod('card');
+  const bankSales = sumMethod('bank');
+  const mobileSales = sumMethod('mobile');
+  const creditSales = sumMethod('credit');
+  const grossSales = completed.reduce((a, s) => a + s.total, 0);
+  const refundTotal = refunded.reduce((a, s) => a + s.total, 0);
+  const todayExpenses = state.expenses
+    .filter(e => dkey(e.date) === today)
+    .reduce((a, e) => a + e.amount, 0);
 
   const rowFor = (id: string) => {
-    const mine = todaySales.filter(s => s.cashierId === id);
+    const mine = completed.filter(s => s.cashierId === id);
     const session = state.sessions.find(x => x.cashierId === id && x.date === today);
-    const cash = mine.reduce((a, s) => a + salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0), 0);
-    const other = mine.reduce((a, s) => a + salePayments(s).filter(l => l.method !== 'cash').reduce((x, l) => x + l.amount, 0), 0);
+    const cash = mine.reduce(
+      (a, s) => a + salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0),
+      0,
+    );
+    const credit = mine.reduce(
+      (a, s) => a + salePayments(s).filter(l => l.method === 'credit').reduce((x, l) => x + l.amount, 0),
+      0,
+    );
+    const other = mine.reduce(
+      (a, s) =>
+        a +
+        salePayments(s)
+          .filter(l => l.method !== 'cash' && l.method !== 'credit')
+          .reduce((x, l) => x + l.amount, 0),
+      0,
+    );
     const opening = session?.opening ?? state.settings.openingFloat;
-    return { mine, session, cash, other, opening, expected: opening + cash };
+    // Expected drawer ≈ opening + cash sales − (optional expenses attributed later)
+    const expected = opening + cash;
+    return { mine, session, cash, credit, other, opening, expected };
   };
 
   const settle = () => {
     if (!settling) return;
     closeSession(settling, Number(counted) || 0, note.trim());
-    setSettling(null); setCounted(''); setNote('');
+    setSettling(null);
+    setCounted('');
+    setNote('');
   };
 
+  const startDay = () => {
+    if (!openFloatId) return;
+    openSession(openFloatId, Number(openingInput) || 0);
+    setOpenFloatId(null);
+    setOpeningInput('');
+  };
+
+  const shopExpected =
+    (state.sessions.find(x => x.date === today && !x.closed)?.opening ??
+      state.settings.openingFloat) +
+    cashSales;
+
+  const cards = [
+    { label: 'Opening float', value: fmtRs(state.sessions.filter(s => s.date === today).reduce((a, s) => a + s.opening, 0) || state.settings.openingFloat), icon: Wallet, tone: 'violet' },
+    { label: "Today's sales", value: fmtRs(grossSales), icon: TrendingUp, tone: 'emerald' },
+    { label: 'Cash in drawer', value: fmtRs(cashSales), icon: Banknote, tone: 'sky' },
+    { label: 'Card / Bank / Mobile', value: fmtRs(cardSales + bankSales + mobileSales), icon: CreditCard, tone: 'blue' },
+    { label: 'Credit (නයට)', value: fmtRs(creditSales), icon: HandCoins, tone: 'amber' },
+    { label: 'Refunds / returns', value: fmtRs(refundTotal), icon: RotateCcw, tone: 'rose' },
+    { label: 'Expenses', value: fmtRs(todayExpenses), icon: Receipt, tone: 'slate' },
+    { label: 'Expected cash', value: fmtRs(shopExpected), icon: Landmark, tone: 'violet' },
+  ];
+
   return (
-    <div>
+    <div className="space-y-5">
       <PageHeading
-        chip="Cash Control" chipTone="emerald"
-        title="Cashier Balances"
-        sub={`Drawer control for ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long' })}`}
+        chip="Cash"
+        title="Day cash & drawer"
+        sub={`Today · ${today} — opening float, sales, credit, returns in one place`}
+        actions={
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              const id = user?.id || cashiers[0]?.id;
+              if (!id) return;
+              const sess = state.sessions.find(x => x.cashierId === id && x.date === today);
+              setOpenFloatId(id);
+              setOpeningInput(String(sess?.opening ?? state.settings.openingFloat ?? 0));
+            }}
+          >
+            <Unlock size={15} /> Set opening cash
+          </button>
+        }
       />
 
-      {/* shop summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {[
-          { icon: Banknote, label: "Today's revenue", value: fmtRs(todaySales.reduce((a, s) => a + s.total, 0)), tint: 'from-emerald-400 to-teal-500' },
-          { icon: TrendingUp, label: "Today's profit", value: fmtRs(todaySales.reduce((a, s) => a + s.profit, 0)), tint: 'from-violet-500 to-purple-600' },
-          { icon: Wallet, label: "Today's expenses", value: fmtRs(todayExpenses), tint: 'from-amber-400 to-orange-500' },
-          { icon: Landmark, label: 'Cash in drawers', value: fmtRs(cashiers.reduce((a, c) => a + rowFor(c.id).expected, 0)), tint: 'from-sky-400 to-blue-600' },
-        ].map(s => (
-          <div key={s.label} className="card p-4 flex items-center gap-3.5">
-            <span className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.tint} text-white flex items-center justify-center shadow-md`}>
-              <s.icon size={17} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {cards.map(c => (
+          <div key={c.label} className="card p-4 flex gap-3 items-start">
+            <span className="w-9 h-9 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center shrink-0">
+              <c.icon size={16} />
             </span>
             <div className="min-w-0">
-              <div className="text-[10.5px] font-bold tracking-wider uppercase text-faint">{s.label}</div>
-              <div className="num text-lg font-extrabold text-ink truncate">{s.value}</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-sub">{c.label}</div>
+              <div className="text-lg font-bold num text-ink truncate mt-0.5">{c.value}</div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* per-cashier */}
-      <div className="space-y-5">
-        {cashiers.map(c => {
-          const r = rowFor(c.id);
-          const closed = r.session?.closed;
-          const variance = closed && r.session && r.session.closing !== undefined ? r.session.closing - r.expected : null;
-          return (
-            <div key={c.id} className="card overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-line bg-raised/40">
-                <div className="flex items-center gap-3">
-                  <Avatar name={c.name} size={38} />
-                  <div>
-                    <div className="font-bold text-ink">{c.name}</div>
-                    <div className="text-[11px] text-faint flex items-center gap-1"><CalendarDays size={11} /> Session: {today}</div>
+      <div className="card overflow-hidden">
+        <div className="px-4 py-3 border-b border-line font-semibold text-ink">Per cashier</div>
+        <div className="divide-y divide-line">
+          {cashiers.map(c => {
+            const r = rowFor(c.id);
+            const variance =
+              r.session?.closed && r.session.closing != null
+                ? r.session.closing - r.expected
+                : null;
+            return (
+              <div key={c.id} className="p-4">
+                <div className="flex flex-wrap items-center gap-3 justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar name={c.name} />
+                    <div>
+                      <div className="font-semibold text-ink">{c.name}</div>
+                      <div className="text-xs text-sub">{c.email}</div>
+                    </div>
+                    {r.session?.closed ? (
+                      <Badge tone="emerald">Closed</Badge>
+                    ) : (
+                      <Badge tone="amber">Open</Badge>
+                    )}
                   </div>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  {closed
-                    ? <Badge tone="emerald"><Lock size={11} /> SETTLED</Badge>
-                    : <Badge tone="amber"><Unlock size={11} /> OPEN DRAWER</Badge>}
-                  {!closed && user?.role === 'admin' && (
-                    <button className="btn btn-primary !py-2 !text-xs" onClick={() => { setSettling(c.id); setCounted(String(r.expected)); }}>
-                      <CheckCircle2 size={14} /> Settle drawer
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-soft !py-1.5 !px-3 text-xs"
+                      onClick={() => {
+                        setOpenFloatId(c.id);
+                        setOpeningInput(String(r.opening));
+                      }}
+                    >
+                      Opening {fmtRs(r.opening)}
                     </button>
-                  )}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-5 divide-x divide-line">
-                {[
-                  ['Opening float', r.opening, 'text-ink'],
-                  ['Bills today', r.mine.length, 'text-ink', true],
-                  ['Cash sales', r.cash, 'text-emerald-500'],
-                  ['Card / other sales', r.other, 'text-sky-500'],
-                  ['Expected in drawer', r.expected, 'text-violet-500'],
-                ].map(([l, v, c, plain]) => (
-                  <div key={l as string} className="px-5 py-4">
-                    <div className="text-[10px] font-bold tracking-wider uppercase text-faint">{l}</div>
-                    <div className={`num text-[17px] font-extrabold mt-1 ${c}`}>{plain ? fmtNum(v as number) : fmtRs(v as number, false)}</div>
+                    {!r.session?.closed && (
+                      <button
+                        type="button"
+                        className="btn btn-primary !py-1.5 !px-3 text-xs"
+                        onClick={() => {
+                          setSettling(c.id);
+                          setCounted(String(Math.round(r.expected)));
+                          setNote('');
+                        }}
+                      >
+                        <Lock size={14} /> Settle drawer
+                      </button>
+                    )}
                   </div>
-                ))}
-              </div>
-              {closed && (
-                <div className="px-6 py-3.5 border-t border-line bg-emerald-500/[0.05] flex flex-wrap items-center gap-4 text-[13px]">
-                  <span className="text-sub">Counted: <b className="num text-ink">{fmtRs(r.session?.closing || 0)}</b></span>
-                  <span className="text-sub">
-                    Variance:{' '}
-                    <b className={`num ${variance && variance !== 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                      {variance !== null ? fmtRs(variance) : '—'}
-                    </b>
-                  </span>
-                  {r.session?.note && <span className="text-faint">Note: {r.session.note}</span>}
                 </div>
-              )}
-            </div>
-          );
-        })}
-        {cashiers.length === 0 && (
-          <div className="card p-10 text-center text-sub text-sm">No cashier accounts. Add one under Users.</div>
-        )}
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                  <div className="rounded-lg bg-raised px-3 py-2">
+                    <div className="text-[10px] uppercase text-faint">Cash sales</div>
+                    <div className="font-semibold num">{fmtRs(r.cash)}</div>
+                  </div>
+                  <div className="rounded-lg bg-raised px-3 py-2">
+                    <div className="text-[10px] uppercase text-faint">Credit</div>
+                    <div className="font-semibold num text-amber-600">{fmtRs(r.credit)}</div>
+                  </div>
+                  <div className="rounded-lg bg-raised px-3 py-2">
+                    <div className="text-[10px] uppercase text-faint">Card/Bank/Mobile</div>
+                    <div className="font-semibold num">{fmtRs(r.other)}</div>
+                  </div>
+                  <div className="rounded-lg bg-raised px-3 py-2">
+                    <div className="text-[10px] uppercase text-faint">Expected drawer</div>
+                    <div className="font-semibold num text-violet-600">{fmtRs(r.expected)}</div>
+                  </div>
+                </div>
+                {r.session?.closed && (
+                  <div className="mt-2 text-sm text-sub flex flex-wrap gap-4">
+                    <span>
+                      Counted: <b className="text-ink num">{fmtRs(r.session.closing || 0)}</b>
+                    </span>
+                    <span>
+                      Variance:{' '}
+                      <b className={`num ${variance && variance !== 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                        {variance != null ? fmtRs(variance) : '—'}
+                      </b>
+                    </span>
+                    {r.session.note && <span>Note: {r.session.note}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      <Modal open={!!settling} onClose={() => setSettling(null)} title="Settle drawer" sub={cashiers.find(c => c.id === settling)?.name}>
-        {settling && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center rounded-xl bg-raised border border-line px-4 py-3">
-              <span className="text-sm text-sub">Expected in drawer</span>
-              <span className="num font-extrabold text-violet-500">{fmtRs(rowFor(settling).expected)}</span>
-            </div>
-            <Field label="Counted cash (Rs.)">
-              <input className="input num !text-base !font-bold" value={counted} onChange={e => setCounted(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" />
-            </Field>
-            <Field label="Note (optional)">
-              <input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="e.g. Rs. 500 short — will replace tomorrow" />
-            </Field>
-            {counted && (
-              <div className={`rounded-xl px-4 py-3 text-sm font-semibold flex justify-between ${
-                Number(counted) - rowFor(settling).expected === 0
-                  ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'bg-rose-500/10 text-rose-500'
-              }`}>
-                <span>Variance</span>
-                <span className="num">{fmtRs(Number(counted) - rowFor(settling).expected)}</span>
-              </div>
-            )}
-            <button className="btn btn-primary w-full" onClick={settle} disabled={!counted}>
-              <Lock size={15} /> Close &amp; settle day
+      <Modal open={!!openFloatId} onClose={() => setOpenFloatId(null)} title="Set opening cash">
+        <div className="space-y-3">
+          <p className="text-sm text-sub">
+            Morning float — අතේ තියෙන මුදල. Day end එකේ expected drawer = opening + cash sales.
+          </p>
+          <Field label="Opening amount (Rs.)">
+            <input
+              className="input num"
+              type="number"
+              value={openingInput}
+              onChange={e => setOpeningInput(e.target.value)}
+              autoFocus
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-soft" onClick={() => setOpenFloatId(null)}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" onClick={startDay}>
+              <CheckCircle2 size={15} /> Save opening
             </button>
           </div>
-        )}
+        </div>
+      </Modal>
+
+      <Modal open={!!settling} onClose={() => setSettling(null)} title="Settle cash drawer">
+        <div className="space-y-3">
+          <Field label="Counted cash in drawer (Rs.)">
+            <input
+              className="input num"
+              type="number"
+              value={counted}
+              onChange={e => setCounted(e.target.value)}
+              autoFocus
+            />
+          </Field>
+          <Field label="Note (optional)">
+            <input className="input" value={note} onChange={e => setNote(e.target.value)} />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-soft" onClick={() => setSettling(null)}>
+              Cancel
+            </button>
+            <button type="button" className="btn btn-primary" onClick={settle}>
+              <Lock size={15} /> Close day
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

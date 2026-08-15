@@ -20,7 +20,7 @@ const blankProduct = (lowDefault: number): Product => ({
 });
 
 export default function Inventory() {
-  const { state, saveProduct, deleteProduct, adjustStock, can, user } = usePOS();
+  const { state, saveProduct, deleteProduct, adjustStock, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
@@ -31,6 +31,11 @@ export default function Inventory() {
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
   const [adjDelta, setAdjDelta] = useState('');
   const [adjReason, setAdjReason] = useState('Restock');
+  const [catMgrOpen, setCatMgrOpen] = useState(false);
+  const [newCat, setNewCat] = useState('');
+  const [renameFrom, setRenameFrom] = useState('');
+  const [renameTo, setRenameTo] = useState('');
+
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -73,12 +78,17 @@ export default function Inventory() {
         </div>
         <div className="flex items-center gap-2.5">
           {can('act:manageStock') && (
-            <button
-              className="btn btn-primary"
-              onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault)); setIsNew(true); }}
-            >
-              <Plus size={15} /> Add Product
-            </button>
+            <>
+              <button type="button" className="btn btn-soft" onClick={() => setCatMgrOpen(true)}>
+                <Layers size={15} /> Categories
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault)); setIsNew(true); }}
+              >
+                <Plus size={15} /> Add Product
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -345,6 +355,84 @@ export default function Inventory() {
           </div>
         )}
       </Modal>
+
+      <Modal open={catMgrOpen} onClose={() => setCatMgrOpen(false)} title="Manage categories" wide>
+        <div className="space-y-4">
+          <div className="flex gap-2">
+            <input
+              className="input flex-1"
+              placeholder="New category name"
+              value={newCat}
+              onChange={e => setNewCat(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newCat.trim()) {
+                  saveCategory(newCat);
+                  setNewCat('');
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                if (newCat.trim()) {
+                  saveCategory(newCat);
+                  setNewCat('');
+                }
+              }}
+            >
+              Add
+            </button>
+          </div>
+          <ul className="divide-y divide-line rounded-xl border border-line overflow-hidden max-h-80 overflow-y-auto">
+            {categoryOptions.map(c => (
+              <li key={c} className="flex flex-wrap items-center gap-2 px-3 py-2.5 bg-surface">
+                {renameFrom === c ? (
+                  <>
+                    <input className="input flex-1" value={renameTo} onChange={e => setRenameTo(e.target.value)} autoFocus />
+                    <button
+                      type="button"
+                      className="btn btn-primary !py-1.5 !px-3 text-xs"
+                      onClick={() => {
+                        renameCategory?.(c, renameTo);
+                        setRenameFrom('');
+                        setRenameTo('');
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button type="button" className="btn btn-soft !py-1.5 !px-3 text-xs" onClick={() => setRenameFrom('')}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 font-medium text-ink">{c}</span>
+                    <span className="text-xs text-faint">{state.products.filter(pr => pr.category === c).length} items</span>
+                    <button type="button" className="btn btn-soft !py-1.5 !px-3 text-xs" onClick={() => { setRenameFrom(c); setRenameTo(c); }}>
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-danger-soft !py-1.5 !px-3 text-xs"
+                      onClick={() => {
+                        if (state.products.some(pr => pr.category === c)) {
+                          alert('Reassign products in this category first, or use Rename.');
+                          return;
+                        }
+                        removeCategory(c);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Modal>
+
     </div>
   );
 }

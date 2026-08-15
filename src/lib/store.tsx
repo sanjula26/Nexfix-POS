@@ -119,6 +119,8 @@ interface StoreCtx {
   deleteRepair: (id: string) => void;
   saveCategory: (name: string) => void;
   removeCategory: (name: string) => void;
+  renameCategory: (oldName: string, newName: string) => void;
+  openSession: (cashierId: string, opening: number) => void;
   saveBrand: (name: string) => void;
   removeBrand: (name: string) => void;
 }
@@ -994,6 +996,51 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const renameCategory = useCallback((oldName: string, newName: string) => {
+    const n = newName.trim();
+    if (!n || !oldName || n === oldName) return;
+    setState(s => {
+      const cats = s.settings.categories || [];
+      if (cats.some(c => c.toLowerCase() === n.toLowerCase() && c !== oldName)) return s;
+      return {
+        ...s,
+        settings: {
+          ...s.settings,
+          categories: cats.map(c => (c === oldName ? n : c)),
+        },
+        products: s.products.map(p => (p.category === oldName ? { ...p, category: n } : p)),
+      };
+    });
+    pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
+  }, [pushAudit]);
+
+  const openSession = useCallback((cashierId: string, opening: number) => {
+    const u = state.users.find(x => x.id === cashierId);
+    if (!u) return;
+    const today = dkey(new Date());
+    setState(s => {
+      const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
+      if (existing) {
+        return {
+          ...s,
+          sessions: s.sessions.map(x =>
+            x.id === existing.id ? { ...x, opening: Math.max(0, opening), closed: false, closing: undefined } : x,
+          ),
+        };
+      }
+      const ns: DaySession = {
+        id: uid(),
+        cashierId,
+        cashierName: u.name,
+        date: today,
+        opening: Math.max(0, opening),
+        closed: false,
+      };
+      return { ...s, sessions: [...s.sessions, ns] };
+    });
+    pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${opening.toLocaleString()} · ${u.name}`);
+  }, [state.users, pushAudit]);
+
   const saveBrand = useCallback((name: string) => {
     const n = name.trim();
     if (!n) return;
@@ -1047,7 +1094,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     flushOfflineQueue, pendingQueueCount,
     saveUnit, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair,
-    saveCategory, removeCategory, saveBrand, removeBrand,
+    saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
