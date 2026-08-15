@@ -14,11 +14,8 @@ dist-ssr
 .env
 .env.local
 .env.*.local
-*.backup.json
-nexfix-backup-*.json
-nexfix-auto-*.json
 
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
@@ -28,5 +25,6 @@ nexfix-auto-*.json
 *.njsproj
 *.sln
 *.sw?
-.vite-source-tags.js
-.vercel
+
+# TypeScript
+*.tsbuildinfo

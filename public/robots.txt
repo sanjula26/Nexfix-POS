@@ -1,5 +1,0 @@
-User-agent: *
-Allow: /
-
-# This is a private POS app — discourage indexing of the shell
-Disallow: /src/

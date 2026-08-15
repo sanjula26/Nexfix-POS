@@ -1,38 +1,34 @@
 {
-  "name": "nexfix-pos",
+  "name": "electro-pos-pro",
   "private": true,
-  "version": "2.0.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Nexfix Solution POS & Inventory — electronics shop (computers, mobiles, repairs)",
+  "description": "ElectroPOS Pro — Full-featured POS for Computers, Laptops, Phones, Parts, CCTV & Electronics with Repairs, Warranty, Kits & Multi-device support",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint ."
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.2.1",
-    "framer-motion": "^12.35.0",
-    "html-to-image": "^1.11.13",
-    "lucide-react": "^0.577.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.1",
-    "recharts": "^3.10.1",
-    "tailwindcss": "^4.2.1"
+    "@supabase/supabase-js": "^2.49.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "framer-motion": "^12.4.7",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.2.0",
+    "recharts": "^2.15.1",
+    "tailwind-merge": "^3.0.1"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@types/node": "^24.10.1",
-    "@types/react": "^19.2.7",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
-    "eslint": "^9.39.1",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.4.24",
-    "globals": "^16.5.0",
-    "typescript": "~5.9.3",
-    "typescript-eslint": "^8.48.0",
-    "vite": "^7.3.1"
+    "@tailwindcss/vite": "^4.0.9",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.9",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
   }
 }
