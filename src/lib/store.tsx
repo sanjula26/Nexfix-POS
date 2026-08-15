@@ -270,10 +270,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (status === 'online') {
         const { flushed } = await flushSyncQueue();
         setPendingQueueCount(0);
-        if (flushed > 0) {
-          // Opportunistic auto backup after reconnect
-          try { await downloadBackup(stateRef.current, 'auto'); } catch { /* ignore */ }
-        }
+        // On reconnect: push full state to Google + local snapshot (cloud preferred)
+        try {
+          await downloadBackup(stateRef.current, 'auto', {
+            download: flushed > 0,
+            cloud: true,
+          });
+          const meta = await idbGetMeta();
+          setBackupMeta(meta);
+        } catch { /* ignore */ }
       }
     });
     return unsub;

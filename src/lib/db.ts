@@ -20,6 +20,7 @@ export type QueueOp =
 export interface BackupMeta {
   lastAutoBackupAt?: string;
   lastManualBackupAt?: string;
+  lastCloudBackupAt?: string;
   autoBackupHours: number; // 0 = disabled
   backupCount: number;
 }

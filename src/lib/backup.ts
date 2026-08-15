@@ -1,11 +1,13 @@
 /**
  * Auto + Manual backup helpers for Nexfix POS.
- * Downloads JSON snapshots; tracks last backup times in IndexedDB meta.
+ * - Local JSON download (always works offline)
+ * - Optional cloud push to Google Sheets/Apps Script when online
  */
 
 import type { POSState } from './types';
 import { idbGetMeta, idbSetMeta } from './db';
 import { downloadFile, dkey } from './utils';
+import { backupStateToGoogle, isGoogleSyncEnabled } from './driveSync';
 
 export function buildBackupFilename(prefix = 'nexfix-backup'): string {
   const d = new Date();
@@ -13,33 +15,74 @@ export function buildBackupFilename(prefix = 'nexfix-backup'): string {
   return `${prefix}_${stamp}.json`;
 }
 
-/** Manual or auto download of full state JSON */
-export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual'): Promise<void> {
-  const json = JSON.stringify(
-    {
-      _meta: {
-        app: 'Nexfix POS',
-        version: 2,
-        exportedAt: new Date().toISOString(),
-        kind,
-      },
-      ...state,
+export interface BackupOptions {
+  /** also download JSON file (default true for manual) */
+  download?: boolean;
+  /** also push full state to Google when online (default true if sync enabled) */
+  cloud?: boolean;
+}
+
+/** Manual or auto backup of full state */
+export async function downloadBackup(
+  state: POSState,
+  kind: 'manual' | 'auto' = 'manual',
+  options: BackupOptions = {},
+): Promise<{ local: boolean; cloud: boolean }> {
+  const wantDownload = options.download !== false;
+  const wantCloud = options.cloud !== false && isGoogleSyncEnabled();
+
+  let local = false;
+  let cloud = false;
+
+  const payload = {
+    _meta: {
+      app: 'Nexfix POS',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      kind,
     },
-    null,
-    2,
-  );
-  downloadFile(buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'), json, 'application/json');
+    ...state,
+  };
+
+  if (wantDownload) {
+    try {
+      const json = JSON.stringify(payload, null, 2);
+      downloadFile(
+        buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'),
+        json,
+        'application/json',
+      );
+      local = true;
+    } catch { /* quota / blocked */ }
+  }
+
+  if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
+    try {
+      cloud = await backupStateToGoogle(payload, kind);
+    } catch { /* ignore */ }
+  }
+
+  const meta = await idbGetMeta();
   const patch =
     kind === 'auto'
-      ? { lastAutoBackupAt: new Date().toISOString(), backupCount: (await idbGetMeta()).backupCount + 1 }
-      : { lastManualBackupAt: new Date().toISOString(), backupCount: (await idbGetMeta()).backupCount + 1 };
-  await idbSetMeta(patch);
+      ? {
+          lastAutoBackupAt: new Date().toISOString(),
+          backupCount: (meta.backupCount || 0) + 1,
+          ...(cloud ? { lastCloudBackupAt: new Date().toISOString() } : {}),
+        }
+      : {
+          lastManualBackupAt: new Date().toISOString(),
+          backupCount: (meta.backupCount || 0) + 1,
+          ...(cloud ? { lastCloudBackupAt: new Date().toISOString() } : {}),
+        };
+  await idbSetMeta(patch as Parameters<typeof idbSetMeta>[0]);
+
+  return { local, cloud };
 }
 
 /**
  * Start auto-backup timer.
- * Returns a cleanup function to clear the interval.
- * Checks every minute whether enough hours have passed.
+ * When due: download JSON + push to Google (if online & enabled).
  */
 export function startAutoBackup(
   getState: () => POSState,
@@ -56,14 +99,14 @@ export function startAutoBackup(
       const due = Date.now() - last >= meta.autoBackupHours * 60 * 60 * 1000;
       if (!due) return;
       running = true;
-      await downloadBackup(getState(), 'auto');
+      // Auto: prefer cloud when online; still download JSON as local safety net
+      await downloadBackup(getState(), 'auto', { download: true, cloud: true });
       onBackup?.(new Date().toISOString());
     } catch { /* ignore */ } finally {
       running = false;
     }
   };
 
-  // check shortly after start, then every 60s
   const t0 = window.setTimeout(tick, 8_000);
   const interval = window.setInterval(tick, 60_000);
   return () => {

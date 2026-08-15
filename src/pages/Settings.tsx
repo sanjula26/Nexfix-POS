@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Store, SlidersHorizontal, Database, Download, Upload, RotateCcw,
+  Store, Database, Download, Upload, RotateCcw, Cloud,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
+import {
+  getGoogleScriptUrl, setGoogleScriptUrl, isGoogleSyncEnabled, setGoogleSyncEnabled,
+  backupStateToGoogle,
+} from '../lib/driveSync';
 
 export default function Settings() {
   const {
@@ -13,6 +17,9 @@ export default function Settings() {
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours);
+  const [gUrl, setGUrl] = useState(() => getGoogleScriptUrl());
+  const [gEnabled, setGEnabled] = useState(() => isGoogleSyncEnabled());
+  const [gMsg, setGMsg] = useState('');
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours); }, [backupMeta.autoBackupHours]);
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
@@ -231,6 +238,9 @@ export default function Settings() {
               {backupMeta.lastAutoBackupAt && (
                 <span className="badge bg-violet-500/10 text-violet-600">Last auto: {new Date(backupMeta.lastAutoBackupAt).toLocaleString()}</span>
               )}
+              {backupMeta.lastCloudBackupAt && (
+                <span className="badge bg-emerald-500/10 text-emerald-600">Last cloud: {new Date(backupMeta.lastCloudBackupAt).toLocaleString()}</span>
+              )}
             </div>
 
             <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4">
@@ -289,8 +299,68 @@ export default function Settings() {
               </button>
             </div>
             {(importMsg || backupMsg) && (
-              <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') ? 'text-emerald-500' : 'text-rose-500'}`}>
+              <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') ? 'text-emerald-500' : 'text-rose-500'}`}>
                 {importMsg || backupMsg}
+              </p>
+            )}
+          </div>
+
+          {/* Google Sheets / Gmail backup */}
+          <div className="card p-6">
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2">
+              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>
+              Google Sheets Sync &amp; Cloud Backup
+            </h3>
+            <p className="text-xs text-faint mb-3">
+              Linked to your Gmail via Google Apps Script. Sales, products and customers sync live when online.
+              Full state also backs up to Google on auto/manual backup.
+            </p>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <span className="text-sm font-medium text-ink">Enable Google sync</span>
+              <Toggle
+                checked={gEnabled}
+                onChange={v => {
+                  setGEnabled(v);
+                  setGoogleSyncEnabled(v);
+                  setGMsg(v ? 'Google sync enabled' : 'Google sync disabled');
+                }}
+              />
+            </div>
+            <Field label="Apps Script Web App URL" hint="Deploy as web app → Anyone → copy URL">
+              <input
+                className="w-full px-3 py-2 rounded-lg border border-line bg-raised text-sm"
+                value={gUrl}
+                onChange={e => setGUrl(e.target.value)}
+                placeholder="https://script.google.com/macros/s/…/exec"
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button
+                type="button"
+                className="btn btn-soft"
+                onClick={() => {
+                  setGoogleScriptUrl(gUrl);
+                  setGMsg('Google Script URL saved');
+                }}
+              >
+                Save URL
+              </button>
+              <button
+                type="button"
+                className="btn btn-emerald"
+                disabled={!gEnabled || connectivity !== 'online'}
+                onClick={async () => {
+                  setGMsg('Sending full backup to Google…');
+                  const ok = await backupStateToGoogle(state, 'manual');
+                  setGMsg(ok ? 'Full backup sent to Google Sheets' : 'Failed (offline or script error)');
+                }}
+              >
+                <Cloud size={15} /> Backup now to Google
+              </button>
+            </div>
+            {gMsg && (
+              <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('disabled') ? 'text-rose-500' : 'text-emerald-500'}`}>
+                {gMsg}
               </p>
             )}
           </div>
