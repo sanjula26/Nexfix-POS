@@ -2,6 +2,13 @@
 -- Safe to apply after the base schema. This migration is intentionally
 -- isolated so it can be reviewed/applied independently.
 
+-- Associate a cloud-authenticated profile with one primary shop. Existing
+-- installations keep NULL until an administrator assigns the user.
+alter table public.profiles
+  add column if not exists shop_id uuid references public.shops(id) on delete set null;
+
+create index if not exists idx_profiles_shop_id on public.profiles(shop_id);
+
 create table if not exists public.pos_state_snapshots (
   shop_id uuid primary key references public.shops(id) on delete cascade,
   state jsonb not null default '{}'::jsonb,
@@ -15,9 +22,7 @@ alter table public.pos_state_snapshots enable row level security;
 create index if not exists idx_pos_state_snapshots_updated
   on public.pos_state_snapshots(updated_at desc);
 
--- Access is limited to authenticated users who belong to the shop.
--- The helper uses profiles.shop_id when available; legacy installations
--- without that column should add their shop-membership policy separately.
+-- Access is limited to active authenticated users assigned to the shop.
 drop policy if exists "snapshot_select_authenticated" on public.pos_state_snapshots;
 create policy "snapshot_select_authenticated"
 on public.pos_state_snapshots
@@ -27,7 +32,7 @@ using (
   exists (
     select 1 from public.profiles p
     where p.id = auth.uid()
-      and (to_jsonb(p) ->> 'shop_id') = shop_id::text
+      and p.shop_id = shop_id
       and coalesce(p.active, true)
   )
 );
@@ -60,12 +65,16 @@ begin
     raise exception 'state must be a JSON object';
   end if;
 
+  if p_device_id is null or length(trim(p_device_id)) < 8 then
+    raise exception 'invalid device id';
+  end if;
+
   -- Do not trust a client-supplied shop id unless the authenticated profile
   -- is actually associated with that shop.
   if not exists (
     select 1 from public.profiles p
     where p.id = auth.uid()
-      and (to_jsonb(p) ->> 'shop_id') = p_shop_id::text
+      and p.shop_id = p_shop_id
       and coalesce(p.active, true)
   ) then
     raise exception 'not authorized for shop';
