@@ -310,7 +310,7 @@ export function buildSeed(): POSState {
   return {
     products: enrichedProducts, customers, suppliers, sales, purchases, expenses, exchanges,
     users, audit, held: [], sessions, settings, permissions,
-    counters: { bill: billSeq, po: 3, ex: 1, job: 3 },
+    counters: { bill: billSeq, po: 3, ex: 1, job: 3, quote: 0, claim: 0 },
     units, repairs,
   };
 }

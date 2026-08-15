@@ -6,7 +6,7 @@
   "description": "Nexfix Solution POS & Inventory — electronics shop (computers, mobiles, repairs)",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

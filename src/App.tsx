@@ -23,6 +23,7 @@ import Units from './pages/Units';
 import Repairs from './pages/Repairs';
 import Quotations from './pages/Quotations';
 import WarrantyClaims from './pages/WarrantyClaims';
+import Kits from './pages/Kits';
 
 function Protected() {
   const { user } = usePOS();
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} />
             <Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} />
             <Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} />
+            <Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} />
             <Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} />
             <Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} />
             <Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} />

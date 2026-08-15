@@ -534,7 +534,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         unitIds: l.unitIds,
         imeis: matchedUnits.map(u => u.imei).filter(Boolean) as string[],
         serials: matchedUnits.map(u => u.serial).filter(Boolean) as string[],
-        warrantyMonths: p.warrantyMonths,
       });
     }
     const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
@@ -673,15 +672,39 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const receivePurchase = useCallback((id: string) => {
     const po = state.purchases.find(x => x.id === id);
     if (!po || po.status === 'received') return;
-    setState(s => ({
-      ...s,
-      purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' } : x)),
-      products: s.products.map(p => {
+    setState(s => {
+      const newUnits: InventoryUnit[] = [];
+      const products = s.products.map(p => {
         const it = po.items.find(i => i.productId === p.id);
-        return it ? { ...p, stock: p.stock + it.qty, cost: it.cost } : p;
-      }),
-    }));
-    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName}`);
+        if (!it) return p;
+        // Auto-create placeholder IMEI/Serial units for tracked products
+        if (p.trackImei || p.trackSerial) {
+          const qty = Math.floor(it.qty);
+          for (let i = 0; i < qty; i++) {
+            newUnits.push({
+              id: uid(),
+              productId: p.id,
+              imei: p.trackImei ? '' : undefined,
+              serial: p.trackSerial && !p.trackImei ? '' : undefined,
+              status: 'in_stock',
+              purchaseId: po.id,
+              cost: it.cost,
+              expiryDate: it.expiryDate,
+              note: `From ${po.poNo} — fill IMEI/Serial in Units`,
+              createdAt: new Date().toISOString(),
+            } as InventoryUnit);
+          }
+        }
+        return { ...p, stock: p.stock + it.qty, cost: it.cost };
+      });
+      return {
+        ...s,
+        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),
+        products,
+        units: [...newUnits, ...(s.units || [])],
+      };
+    });
+    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
   }, [state.purchases, pushAudit]);
 
   const deletePurchase = useCallback((id: string) => {
