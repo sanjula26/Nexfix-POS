@@ -107,8 +107,8 @@ export function startAutoBackup(
     }
   };
 
-  const t0 = window.setTimeout(tick, 8_000);
-  const interval = window.setInterval(tick, 60_000);
+  const t0 = window.setTimeout(tick, 5_000);
+  const interval = window.setInterval(tick, 15_000);
   return () => {
     clearTimeout(t0);
     clearInterval(interval);

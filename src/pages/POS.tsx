@@ -116,6 +116,46 @@ export default function POS() {
 
   useEffect(() => { setSalesmanId(user?.id || ''); }, [user?.id]);
 
+  /* Import lines from Quotations → Convert to Sale */
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('nexfix_quote_convert');
+      if (!raw) return;
+      sessionStorage.removeItem('nexfix_quote_convert');
+      const data = JSON.parse(raw) as {
+        quoteNo?: string;
+        customerName?: string;
+        customerPhone?: string;
+        lines?: { productId: string; name: string; qty: number; price: number }[];
+      };
+      if (!data.lines?.length) return;
+      const next: Line[] = [];
+      for (const l of data.lines) {
+        let pid = l.productId;
+        if (!pid || !state.products.some(p => p.id === pid)) {
+          const match = state.products.find(
+            p => p.active && p.name.toLowerCase() === (l.name || '').toLowerCase(),
+          );
+          pid = match?.id || '';
+        }
+        if (!pid) continue;
+        next.push({ productId: pid, qty: l.qty || 1, discount: 0, price: l.price });
+      }
+      if (next.length) setLines(next);
+      if (data.customerName) {
+        const cust = state.customers.find(
+          c => c.name.toLowerCase() === data.customerName!.toLowerCase()
+            || (data.customerPhone && c.phone.includes(data.customerPhone)),
+        );
+        if (cust) setCustomerId(cust.id);
+      }
+      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);
+      setError('');
+    } catch { /* ignore */ }
+  // run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const products = state.products.filter(p => p.active);
   const activeStaff = state.users.filter(u => u.active);
   const categories = ['all', ...Array.from(new Set(products.map(p => p.category)))];

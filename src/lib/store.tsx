@@ -257,7 +257,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       persistState(state).catch(() => {});
-    }, 250);
+    }, 120);
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };

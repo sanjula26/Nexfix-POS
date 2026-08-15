@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Store, Database, Download, Upload, RotateCcw, Cloud,
+  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -16,15 +16,29 @@ export default function Settings() {
     connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
-  const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours);
+  const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const [gUrl, setGUrl] = useState(() => getGoogleScriptUrl());
   const [gEnabled, setGEnabled] = useState(() => isGoogleSyncEnabled());
   const [gMsg, setGMsg] = useState('');
-  useEffect(() => { setAutoHours(backupMeta.autoBackupHours); }, [backupMeta.autoBackupHours]);
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
-    return rest;
+    return {
+      shopName: rest.shopName || '',
+      tagline: rest.tagline || '',
+      address: rest.address || '',
+      phone: rest.phone || '',
+      email: rest.email || '',
+      receiptFooter: rest.receiptFooter || '',
+      taxDefault: rest.taxDefault ?? 0,
+      lowStockDefault: rest.lowStockDefault ?? 5,
+      exchangeDays: rest.exchangeDays ?? 7,
+      openingFloat: rest.openingFloat ?? 0,
+      whatsappReceipts: rest.whatsappReceipts !== false,
+      categories: rest.categories,
+      brands: rest.brands,
+      repairWarrantyDays: rest.repairWarrantyDays,
+    };
   });
   /* security — admin switch password */
   const [pinCur, setPinCur] = useState('');
@@ -36,6 +50,28 @@ export default function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState('');
+
+  useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
+
+  // Keep form in sync when settings load from IndexedDB (first boot)
+  useEffect(() => {
+    const s = state.settings;
+    if (!s) return;
+    setForm(f => ({
+      ...f,
+      shopName: s.shopName || f.shopName,
+      tagline: s.tagline || f.tagline,
+      address: s.address || f.address,
+      phone: s.phone || f.phone,
+      email: s.email || f.email,
+      receiptFooter: s.receiptFooter || f.receiptFooter,
+      taxDefault: s.taxDefault ?? f.taxDefault,
+      lowStockDefault: s.lowStockDefault ?? f.lowStockDefault,
+      exchangeDays: s.exchangeDays ?? f.exchangeDays,
+      openingFloat: s.openingFloat ?? f.openingFloat,
+      whatsappReceipts: s.whatsappReceipts !== false,
+    }));
+  }, [state.settings.shopName, state.settings.phone, state.settings.email]);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.type === 'number' ? Number(e.target.value) || 0 : e.target.value }));
@@ -92,27 +128,27 @@ export default function Settings() {
           <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
               <Field label="Shop name">
-                <input className="input" value={form.shopName} onChange={set('shopName')} />
+                <input className="input" value={form.shopName ?? ''} onChange={set('shopName')} />
               </Field>
               <Field label="Tagline">
-                <input className="input" value={form.tagline} onChange={set('tagline')} />
+                <input className="input" value={form.tagline ?? ''} onChange={set('tagline')} />
               </Field>
             </div>
             <Field label="Address">
-              <input className="input" value={form.address} onChange={set('address')} />
+              <input className="input" value={form.address ?? ''} onChange={set('address')} />
             </Field>
             <div className="grid sm:grid-cols-2 gap-4">
               <Field label="Phone">
-                <input className="input" value={form.phone} onChange={set('phone')} />
+                <input className="input" value={form.phone ?? ''} onChange={set('phone')} />
               </Field>
               <Field label="Email">
-                <input className="input" value={form.email} onChange={set('email')} />
+                <input className="input" value={form.email ?? ''} onChange={set('email')} />
               </Field>
             </div>
             <Field label="Receipt footer">
               <textarea
                 className="input min-h-[70px] resize-none"
-                value={form.receiptFooter}
+                value={form.receiptFooter ?? ''}
                 onChange={set('receiptFooter')}
               />
             </Field>
@@ -246,7 +282,7 @@ export default function Settings() {
             <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4">
               <div className="text-[12px] font-bold text-ink mb-2">Auto backup interval</div>
               <div className="flex flex-wrap items-center gap-2">
-                {[0, 1, 3, 6, 12, 24].map(h => (
+                {[0, 0.25, 0.5, 1, 3, 6, 12, 24].map(h => (
                   <button
                     key={h}
                     type="button"
@@ -257,7 +293,7 @@ export default function Settings() {
                       setBackupMsg(h === 0 ? 'Auto-backup disabled' : `Auto-backup every ${h}h`);
                     }}
                   >
-                    {h === 0 ? 'OFF' : `${h}h`}
+                    {h === 0 ? 'OFF' : h < 1 ? `${Math.round(h * 60)}m` : `${h}h`}
                   </button>
                 ))}
               </div>
