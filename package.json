@@ -1,16 +1,20 @@
 {
   "name": "nexfix-pos",
   "private": true,
-  "version": "2.0.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "Nexfix Solution POS & Inventory — electronics shop (computers, mobiles, repairs)",
+  "description": "Nexfix Solution POS & Inventory — production offline-first electronics POS",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "preview": "vite preview",
+    "desktop:build": "npm run build && electron-builder --win",
+    "desktop:dir": "npm run build && electron-builder --win --dir"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.0",
     "@tailwindcss/vite": "^4.2.1",
     "framer-motion": "^12.35.0",
     "html-to-image": "^1.11.13",
@@ -27,6 +31,8 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^38.1.0",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
@@ -34,5 +40,14 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1"
+  },
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.nexfixsolution.pos",
+    "productName": "Nexfix POS",
+    "files": ["dist/**/*", "electron/**/*"],
+    "directories": { "output": "release" },
+    "win": { "target": ["nsis", "portable"], "artifactName": "Nexfix-POS-${version}-${arch}.${ext}" },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }
   }
 }
