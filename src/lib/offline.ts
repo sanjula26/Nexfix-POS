@@ -6,7 +6,8 @@
  * a real remote sync succeeds.
  */
 
-import { idbEnqueue, idbListQueue } from './db';
+import { idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { syncStateSnapshot } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 
@@ -26,31 +27,30 @@ export function onConnectivityChange(cb: (status: Connectivity) => void): () => 
   };
 }
 
-/** Record a local write. The queue is intentionally durable. */
 export async function queueWrite(note?: string): Promise<void> {
   await idbEnqueue({ type: 'state_write', note });
 }
 
-/**
- * Returns pending operations for a future cloud-sync worker.
- *
- * The previous implementation cleared the queue without contacting a remote
- * backend. That could make a sale appear synced while its data was lost.
- * We deliberately do NOT clear anything here. A successful cloud adapter
- * should acknowledge individual operations only after the server confirms
- * them (preferably using an idempotency key).
- */
 export async function getPendingSyncOperations() {
   return idbListQueue();
 }
 
 /**
- * Compatibility wrapper. It reports pending work instead of falsely calling
- * it "flushed". This keeps existing callers safe until the Supabase sync
- * adapter is wired into the application.
+ * On reconnect, attempt to publish the durable local snapshot. A successful
+ * acknowledgement is required before queued writes are considered synced.
+ * Conflicts are deliberately retained rather than overwritten.
  */
 export async function flushSyncQueue(): Promise<{ flushed: number; pending: number; synced: boolean }> {
   const ops = await idbListQueue();
+  const state = await idbLoadState();
+  if (!state) return { flushed: 0, pending: ops.length, synced: false };
+
+  const result = await syncStateSnapshot(state);
+  if (result.status === 'synced') {
+    // Snapshot is acknowledged by the server. The queue itself remains until
+    // granular operation-level sync is introduced, preventing silent loss.
+    return { flushed: ops.length, pending: ops.length, synced: true };
+  }
   return { flushed: 0, pending: ops.length, synced: false };
 }
 
