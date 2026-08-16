@@ -5,7 +5,8 @@ import { syncStateSnapshot } from './cloudSync';
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
 export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { const up=()=>cb('online'); const down=()=>cb('offline'); window.addEventListener('online',up); window.addEventListener('offline',down); return()=>{window.removeEventListener('online',up);window.removeEventListener('offline',down);}; }
-export async function queueWrite(note?:string):Promise<void>{await idbEnqueue({type:'state_write',note});}
+/** Persists a pending write; failure is surfaced so the UI cannot report a write as safely queued when storage is unavailable. */
+export async function queueWrite(note?:string):Promise<void>{const queued=await idbEnqueue({type:'state_write',note});if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');}
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 /** A queue item is acknowledged only after the cloud RPC confirms the snapshot. */
