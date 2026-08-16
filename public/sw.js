@@ -1,5 +1,5 @@
 /* Nexfix POS Service Worker — offline shell cache */
-const CACHE = 'nexfix-pos-v2';
+const CACHE = 'nexfix-pos-v3';
 const SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
@@ -24,7 +24,7 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Network-first for navigations; cache fallback when offline
+  // Network-first for navigations; cache fallback when offline.
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
@@ -38,7 +38,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for same-origin static assets
+  // Cache-first for same-origin static assets.
   const url = new URL(req.url);
   if (url.origin === self.location.origin) {
     event.respondWith(
