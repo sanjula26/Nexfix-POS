@@ -26,7 +26,7 @@ let state = INITIAL;
 let stopConnectivity: (() => void) | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let syncing = false;
-let listeners = new Set<(next: SyncManagerState) => void>();
+const listeners = new Set<(next: SyncManagerState) => void>();
 
 function publish(next: SyncManagerState): void {
   state = next;
