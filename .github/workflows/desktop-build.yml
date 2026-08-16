@@ -2,6 +2,19 @@ name: Windows Desktop Build
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'electron/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.*'
+      - '.github/workflows/desktop-build.yml'
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,7 +34,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck
