@@ -121,6 +121,19 @@ export default function Reports() {
     return [...m.entries()].map(([k, v]) => ({ name: k.toUpperCase(), value: Math.round(v) }));
   }, [salesA]);
 
+  // PHASE1_MACHINE_REPORTS_V1
+  const machineRows = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; bills: number; revenue: number; profit: number }>();
+    salesA.forEach(s => {
+      const id = s.machineId || 'LEGACY';
+      const name = s.machineName || 'Legacy / Unassigned';
+      const e = m.get(id) || { id, name, bills: 0, revenue: 0, profit: 0 };
+      e.bills += 1; e.revenue += s.total; e.profit += s.profit;
+      m.set(id, e);
+    });
+    return [...m.values()].sort((a, b) => b.revenue - a.revenue);
+  }, [salesA]);
+
   const cashierRows = useMemo(() => {
     const m = new Map<string, { name: string; bills: number; revenue: number; profit: number }>();
     salesA.forEach(s => {
@@ -170,6 +183,32 @@ export default function Reports() {
         <button className="btn btn-outline-emerald bg-surface" onClick={exportCsv}>
           <Download size={15} /> Export CSV
         </button>
+      </div>
+
+      {/* ============ machine performance ============ */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-base font-extrabold text-ink">Machine Performance</h2>
+            <p className="text-xs text-sub mt-1">Sales, income and gross profit by POS terminal</p>
+          </div>
+          <Badge tone="blue">{machineRows.length} machine{machineRows.length === 1 ? '' : 's'}</Badge>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-sm">
+            <thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line">
+              <th className="py-2 pr-3">Machine</th><th className="py-2 pr-3">Bills</th><th className="py-2 pr-3">Sales / Income</th><th className="py-2">Gross Profit</th>
+            </tr></thead>
+            <tbody>{machineRows.map(row => (
+              <tr key={row.id} className="border-b border-line last:border-0">
+                <td className="py-3 pr-3"><div className="font-bold text-ink">{row.name}</div><div className="text-[10px] text-faint num">{row.id}</div></td>
+                <td className="py-3 pr-3 num">{fmtNum(row.bills)}</td>
+                <td className="py-3 pr-3 num font-semibold">{fmtRs(row.revenue)}</td>
+                <td className="py-3 num font-semibold text-emerald-600">{fmtRs(row.profit)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
       </div>
 
       {/* ============ date filter + compare panel ============ */}

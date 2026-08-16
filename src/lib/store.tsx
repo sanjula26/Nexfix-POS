@@ -13,6 +13,8 @@ import {
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
+import { getMachineIdentity } from './machine';
+
 
 const STORE_KEY = 'nexfix_pos_v2';
 const STORE_KEY_V1 = 'nexfix_pos_v1';
@@ -575,9 +577,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? legs.reduce((a, l) => a + l.amount, 0)
       : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
     const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
+    // PHASE1_MACHINE_TRACKING_V1
+    const machine = getMachineIdentity();
     const sale: Sale = {
       id: uid(), billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
+      machineId: machine.id, machineName: machine.name,
       note: input.note?.trim() || undefined,
       customerId: cust?.id, customerName: cust?.name || 'Walk-in customer',
       items, subtotal, discount, tax, shipping: shipping || undefined, total,
