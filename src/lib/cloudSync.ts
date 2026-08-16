@@ -4,6 +4,8 @@ import { supabase, supabaseConfigured } from './supabase';
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const REV_KEY = 'nexfix_cloud_revision';
+const MAX_SHOP_ID_LENGTH = 100;
+const MAX_DEVICE_ID_LENGTH = 200;
 
 function storage(): Storage | null {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
@@ -12,8 +14,8 @@ function storage(): Storage | null {
 function deviceId(): string {
   const s = storage();
   try {
-    const existing = s?.getItem(DEVICE_KEY);
-    if (existing) return existing;
+    const existing = s?.getItem(DEVICE_KEY)?.trim();
+    if (existing && existing.length <= MAX_DEVICE_ID_LENGTH) return existing;
     const id = crypto.randomUUID?.() || `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     s?.setItem(DEVICE_KEY, id);
     return id;
@@ -21,11 +23,16 @@ function deviceId(): string {
 }
 
 export function getCloudShopId(): string {
-  try { return storage()?.getItem(SHOP_KEY) || (import.meta.env.VITE_SUPABASE_SHOP_ID || '').trim(); } catch { return ''; }
+  try {
+    const id = (storage()?.getItem(SHOP_KEY) || import.meta.env.VITE_SUPABASE_SHOP_ID || '').trim();
+    return id.length <= MAX_SHOP_ID_LENGTH ? id : '';
+  } catch { return ''; }
 }
 
 export function setCloudShopId(id: string): void {
-  try { storage()?.setItem(SHOP_KEY, id.trim()); } catch { /* ignore */ }
+  const normalized = id.trim();
+  if (normalized.length > MAX_SHOP_ID_LENGTH) return;
+  try { storage()?.setItem(SHOP_KEY, normalized); } catch { /* ignore */ }
 }
 
 function getRevision(): number {
@@ -58,6 +65,11 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
   const shopId = getCloudShopId();
   if (!shopId) return { status: 'disabled' };
 
+  const currentDeviceId = deviceId();
+  if (!currentDeviceId || currentDeviceId.length > MAX_DEVICE_ID_LENGTH) {
+    return { status: 'error', message: 'Invalid device identifier' };
+  }
+
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { status: 'error', message: sessionError.message };
   if (!sessionData.session) return { status: 'disabled' };
@@ -65,7 +77,7 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
   const expectedRevision = getRevision();
   const { data, error } = await supabase.rpc('upsert_pos_snapshot', {
     p_shop_id: shopId,
-    p_device_id: deviceId(),
+    p_device_id: currentDeviceId,
     p_expected_revision: expectedRevision,
     p_state: state,
   });
@@ -78,8 +90,8 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
   if (!Number.isSafeInteger(revision) || revision < 0) {
     return { status: 'error', message: 'Invalid revision returned by server' };
   }
-  if (row.conflict) return { status: 'conflict', remoteRevision: revision };
-  if (row.ok) {
+  if (row.conflict === true) return { status: 'conflict', remoteRevision: revision };
+  if (row.ok === true) {
     setRevision(revision);
     return { status: 'synced', revision };
   }
