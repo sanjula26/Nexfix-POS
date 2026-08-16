@@ -19,13 +19,23 @@ export function buildBackupFilename(prefix = 'nexfix-backup'): string {
   return `${prefix}_${stamp}.json`;
 }
 
+function isValidIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function validateBackup(input: unknown): input is BackupEnvelope {
-  if (!input || typeof input !== 'object') return false;
+  if (!hasPlainObjectShape(input)) return false;
   const value = input as Partial<BackupEnvelope>;
   const meta = value._meta;
-  return !!meta && meta.app === 'Nexfix POS' && meta.version === 2 &&
-    typeof meta.exportedAt === 'string' && (meta.kind === 'manual' || meta.kind === 'auto') &&
-    !!value.state && typeof value.state === 'object';
+  if (!hasPlainObjectShape(meta)) return false;
+  return meta.app === 'Nexfix POS' && meta.version === 2 &&
+    isValidIsoDate(meta.exportedAt) &&
+    (meta.kind === 'manual' || meta.kind === 'auto') &&
+    hasPlainObjectShape(value.state);
 }
 
 export function parseBackup(raw: string): BackupEnvelope | null {
@@ -35,6 +45,17 @@ export function parseBackup(raw: string): BackupEnvelope | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Validate a backup before any restore operation. This intentionally performs
+ * no writes: callers can validate first and only then replace application state.
+ */
+export function validateBackupForRestore(input: unknown): BackupEnvelope {
+  if (!validateBackup(input)) {
+    throw new Error('Invalid or unsupported Nexfix POS backup. Restore was not performed.');
+  }
+  return input;
 }
 
 export interface BackupOptions {
