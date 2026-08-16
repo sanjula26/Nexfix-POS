@@ -27,6 +27,24 @@ function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+/** Strictly validate the top-level POS collections before any restore can occur. */
+function hasValidStateShape(value: unknown): value is POSState {
+  if (!hasPlainObjectShape(value)) return false;
+  const state = value as Record<string, unknown>;
+  const requiredArrays = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs'];
+  if (!requiredArrays.every((key) => hasArray(state[key]))) return false;
+  if (!hasPlainObjectShape(state.settings) || !hasPlainObjectShape(state.permissions)) return false;
+  if (!hasPlainObjectShape(state.counters)) return false;
+  if ('kitItems' in state && !hasArray(state.kitItems)) return false;
+  if ('quotations' in state && !hasArray(state.quotations)) return false;
+  if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
+  return true;
+}
+
 export function validateBackup(input: unknown): input is BackupEnvelope {
   if (!hasPlainObjectShape(input)) return false;
   const value = input as Partial<BackupEnvelope>;
@@ -35,7 +53,7 @@ export function validateBackup(input: unknown): input is BackupEnvelope {
   return meta.app === 'Nexfix POS' && meta.version === 2 &&
     isValidIsoDate(meta.exportedAt) &&
     (meta.kind === 'manual' || meta.kind === 'auto') &&
-    hasPlainObjectShape(value.state);
+    hasValidStateShape(value.state);
 }
 
 export function parseBackup(raw: string): BackupEnvelope | null {
