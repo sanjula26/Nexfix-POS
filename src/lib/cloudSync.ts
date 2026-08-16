@@ -74,6 +74,12 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
   if (sessionError) return { status: 'error', message: sessionError.message };
   if (!sessionData.session) return { status: 'disabled' };
 
+  const { error: deviceError } = await supabase.rpc('register_pos_device', {
+    p_shop_id: shopId,
+    p_device_id: currentDeviceId,
+  });
+  if (deviceError) return { status: 'error', message: deviceError.message };
+
   const expectedRevision = getRevision();
   const { data, error } = await supabase.rpc('upsert_pos_snapshot', {
     p_shop_id: shopId,
