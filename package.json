@@ -47,7 +47,8 @@
     "productName": "Nexfix POS",
     "files": ["dist/**/*", "electron/**/*"],
     "directories": { "output": "release" },
-    "win": { "target": ["nsis", "portable"], "artifactName": "Nexfix-POS-${version}-${arch}.${ext}" },
-    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }
+    "win": { "target": ["nsis", "portable"] },
+    "nsis": { "artifactName": "Nexfix-POS-${version}-${arch}-installer.${ext}", "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true },
+    "portable": { "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}" }
   }
 }
