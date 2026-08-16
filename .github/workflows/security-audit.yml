@@ -48,9 +48,13 @@ jobs:
           test -d supabase/migrations
           test -n "$(find supabase/migrations -type f -name '*.sql' -print -quit)"
 
-      - name: Check production build
+      - name: Check security workflow configuration
+        shell: bash
         run: |
-          npm ci --no-audit --no-fund
-          npm run typecheck
-          npm run lint
-          npm run build
+          set -euo pipefail
+          test -f .github/workflows/ci.yml
+          test -f .github/workflows/security-audit.yml
+          if grep -qE 'npm (ci|install)|npm run (typecheck|lint|build)' .github/workflows/security-audit.yml; then
+            echo 'Security audit must not duplicate the production build; CI is the single build gate.'
+            exit 1
+          fi
