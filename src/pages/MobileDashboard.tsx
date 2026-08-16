@@ -4,7 +4,8 @@ import { usePOS } from '../lib/store';
 const money = (n: number) => new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 0 }).format(n);
 
 export default function MobileDashboard() {
-  const { sales, products, expenses } = usePOS();
+  const { state } = usePOS();
+  const { sales, products, expenses } = state;
   const today = new Date().toISOString().slice(0, 10);
   const todaySales = useMemo(() => sales.filter(s => s.date.slice(0, 10) === today && s.status === 'completed'), [sales, today]);
   const revenue = todaySales.reduce((sum, s) => sum + s.total, 0);
@@ -17,7 +18,9 @@ export default function MobileDashboard() {
     for (const sale of todaySales) {
       const id = sale.machineId || 'legacy';
       const current = map.get(id) || { name: sale.machineName || 'Unassigned', bills: 0, revenue: 0, profit: 0 };
-      current.bills += 1; current.revenue += sale.total; current.profit += sale.profit;
+      current.bills += 1;
+      current.revenue += sale.total;
+      current.profit += sale.profit;
       map.set(id, current);
     }
     return [...map.values()].sort((a, b) => b.revenue - a.revenue);
