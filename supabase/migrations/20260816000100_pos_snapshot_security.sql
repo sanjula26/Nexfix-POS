@@ -39,7 +39,7 @@ create policy "pos snapshots owner update"
   with check (owner_id = auth.uid() and updated_by = auth.uid());
 
 revoke all on public.pos_state_snapshots from anon;
-grants select, insert, update on public.pos_state_snapshots to authenticated;
+grant select, insert, update on public.pos_state_snapshots to authenticated;
 
 create or replace function public.upsert_pos_snapshot(
   p_shop_id text,
