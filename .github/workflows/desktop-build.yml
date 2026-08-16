@@ -30,14 +30,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
       - name: Verify dependency manifest
         shell: pwsh
         run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          git diff --exit-code -- package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+          git diff --exit-code -- package.json package-lock.json
 
       - name: Typecheck
         run: npm run typecheck
@@ -50,6 +49,13 @@ jobs:
 
       - name: Build Windows installer and portable app
         run: npm run desktop:build
+
+      - name: Verify Windows artifacts
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path release -File
+          if ($files.Count -lt 2) { throw "Expected installer and portable artifacts." }
+          if (-not ($files.Name -match '\.exe$').Count) { throw "No Windows .exe artifact was produced." }
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
