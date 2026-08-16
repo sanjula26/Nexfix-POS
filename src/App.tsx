@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
+import { startSyncManager } from './lib/syncManager';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -25,6 +27,11 @@ import Quotations from './pages/Quotations';
 import WarrantyClaims from './pages/WarrantyClaims';
 import Kits from './pages/Kits';
 
+function SyncBootstrap() {
+  useEffect(() => startSyncManager(), []);
+  return null;
+}
+
 function Protected() {
   const { user } = usePOS();
   const location = useLocation();
@@ -43,6 +50,7 @@ function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boole
 export default function App() {
   return (
     <POSProvider>
+      <SyncBootstrap />
       <HashRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
