@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows-desktop:
@@ -63,3 +63,12 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v3.0.0-build.${{ github.run_number }}"
+          $title = "Nexfix POS $tag"
+          gh release create $tag release/*.exe --repo $env:GITHUB_REPOSITORY --title $title --generate-notes
