@@ -2,16 +2,6 @@ name: Windows Desktop Build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'electron/**'
-      - 'src/**'
-      - 'public/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.*'
-      - '.github/workflows/desktop-build.yml'
 
 permissions:
   contents: read
@@ -30,8 +20,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      # The repository's lockfile predates the current package.json. npm install
-      # is intentionally used here so CI can reconcile the lockfile in-memory.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
