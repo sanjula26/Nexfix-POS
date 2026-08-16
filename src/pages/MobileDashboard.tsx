@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { usePOS } from '../lib/store';
+import { getMachineIdentity } from '../lib/machine';
 
 const money = (n: number) => new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR', maximumFractionDigits: 0 }).format(n);
 const localDateKey = (date = new Date()) => {
@@ -19,6 +20,8 @@ export default function MobileDashboard() {
   const profit = todaySales.reduce((sum, s) => sum + s.profit, 0);
   const expensesToday = expenses.filter(e => e.date.slice(0, 10) === today).reduce((sum, e) => sum + e.amount, 0);
   const lowStock = products.filter(p => p.active && p.stock <= p.reorderLevel).length;
+  const machine = getMachineIdentity();
+  const canViewProfit = can('act:viewCost');
 
   const machines = useMemo(() => {
     const map = new Map<string, { id: string; name: string; bills: number; revenue: number; profit: number }>();
@@ -35,7 +38,11 @@ export default function MobileDashboard() {
 
   return <main className="min-h-screen bg-slate-50 p-4 pb-8 sm:p-6">
     <div className="mx-auto max-w-5xl space-y-4">
-      <header><h1 className="text-2xl font-bold text-slate-900">Mobile Dashboard</h1><p className="text-sm text-slate-500">Today at a glance</p></header>
+      <header className="flex items-start justify-between gap-3">
+        <div><h1 className="text-2xl font-bold text-slate-900">Mobile Dashboard</h1><p className="text-sm text-slate-500">Today at a glance</p></div>
+        <Link to="/" className="shrink-0 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">Desktop</Link>
+      </header>
+      <div className="rounded-xl bg-violet-50 px-3 py-2 text-xs text-violet-800 ring-1 ring-violet-100">Terminal: <span className="font-semibold">{machine.name}</span><span className="ml-1 text-violet-600">({machine.id})</span></div>
       <nav aria-label="Quick actions" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {can('page:pos') && <Link to="/pos" className="rounded-xl bg-violet-600 px-3 py-3 text-center text-sm font-semibold text-white shadow-sm active:scale-[0.98]">New Sale</Link>}
         {can('page:sales') && <Link to="/sales" className="rounded-xl bg-white px-3 py-3 text-center text-sm font-semibold text-slate-800 ring-1 ring-slate-200 active:scale-[0.98]">Sales</Link>}
@@ -43,9 +50,9 @@ export default function MobileDashboard() {
         {can('page:inventory') && <Link to="/inventory" className="rounded-xl bg-white px-3 py-3 text-center text-sm font-semibold text-slate-800 ring-1 ring-slate-200 active:scale-[0.98]">Inventory</Link>}
       </nav>
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[['Sales', money(revenue)], ['Profit', money(profit)], ['Expenses', money(expensesToday)], ['Low stock', String(lowStock)]].map(([label, value]) => <article key={label} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-bold text-slate-900">{value}</p></article>)}
+        {[['Sales', money(revenue)], ...(canViewProfit ? [['Profit', money(profit)] as const] : []), ['Expenses', money(expensesToday)], ['Low stock', String(lowStock)]].map(([label, value]) => <article key={label} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-bold text-slate-900">{value}</p></article>)}
       </section>
-      <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><h2 className="font-semibold text-slate-900">Machine performance</h2><div className="mt-3 space-y-2">{machines.length ? machines.map((m) => <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><div><p className="font-medium">{m.name}</p><p className="text-xs text-slate-500">{m.bills} bills</p></div><div className="text-right"><p className="font-semibold">{money(m.revenue)}</p><p className="text-xs text-slate-500">Profit {money(m.profit)}</p></div></div>) : <p className="text-sm text-slate-500">No sales today.</p>}</div></section>
+      <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><h2 className="font-semibold text-slate-900">Machine performance</h2><div className="mt-3 space-y-2">{machines.length ? machines.map((m) => <div key={m.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 p-3"><div><p className="font-medium">{m.name}</p><p className="text-xs text-slate-500">{m.bills} bills</p></div><div className="text-right"><p className="font-semibold">{money(m.revenue)}</p>{canViewProfit && <p className="text-xs text-slate-500">Profit {money(m.profit)}</p>}</div></div>) : <p className="text-sm text-slate-500">No sales today.</p>}</div></section>
       <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200"><h2 className="font-semibold text-slate-900">Recent bills</h2><div className="mt-3 space-y-2">{todaySales.slice(-8).reverse().map(s => <div key={s.id} className="flex justify-between border-b border-slate-100 py-2 text-sm"><span>{s.billNo}</span><span className="font-medium">{money(s.total)}</span></div>)}{!todaySales.length && <p className="text-sm text-slate-500">No bills today.</p>}</div></section>
     </div>
   </main>;
