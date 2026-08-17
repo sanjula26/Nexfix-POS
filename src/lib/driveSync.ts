@@ -1,11 +1,18 @@
 /**
  * Google Apps Script / Drive backup integration.
  *
- * Security rule: never ship a real deployment URL or secret in source code.
- * Configure VITE_GOOGLE_SCRIPT_URL through the local environment or the
- * application's settings UI. Google sync is OFF until explicitly enabled.
+ * The deployment URL is the one supplied with the original Nexfix POS project.
+ * It is only used after Google Sync is explicitly enabled in Settings.
+ * The URL is validated to prevent accidental non-Google endpoints.
+ *
+ * Note: Google Apps Script web apps are commonly called with `no-cors` from
+ * browser builds, so a POST can confirm dispatch but cannot expose the script's
+ * JSON response to the browser. We therefore treat a successful fetch dispatch
+ * as "sent", while server-side Apps Script logging remains the source of truth.
  */
 
+const DEFAULT_SCRIPT_URL =
+  'https://script.google.com/macros/s/AKfycbwqgFn-6tKzAIYsaIT2zLAG6rsmCRPvqQ0iHfL4som0Pb1VoJbceaNG1EciTnpb4Yg/exec';
 const URL_KEY = 'nexfix_google_script_url';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
@@ -26,7 +33,9 @@ export function getGoogleScriptUrl(): string {
   } catch {
     // Ignore unavailable storage.
   }
-  return isAllowedScriptUrl(ENV_URL) ? ENV_URL : '';
+
+  if (isAllowedScriptUrl(ENV_URL)) return ENV_URL;
+  return isAllowedScriptUrl(DEFAULT_SCRIPT_URL) ? DEFAULT_SCRIPT_URL : '';
 }
 
 export function setGoogleScriptUrl(url: string): void {
