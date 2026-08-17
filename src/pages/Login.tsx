@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
 import { usePOS } from '../lib/store';
+import { ensureCloudSession } from '../lib/cloudAuth';
 
 const features = [
   { icon: KeyRound, tint: 'from-sky-500 to-blue-600', title: 'Role-Based Login', sub: 'Admin & Cashier' },
@@ -23,15 +24,27 @@ export default function Login() {
 
   useEffect(() => { if (user) navigate('/', { replace: true }); }, [user, navigate]);
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!email.trim() || !password) { setError('Enter your email and password'); return; }
     setLoading(true); setError('');
-    setTimeout(() => {
+    setTimeout(async () => {
       const res = signIn(email, password, remember);
+      if (!res.ok) {
+        setLoading(false);
+        setError(res.error || 'Sign in failed');
+        return;
+      }
+
+      // Keep local POS login authoritative for offline use, then establish the
+      // matching Supabase session for RLS-protected cloud sync. Cloud setup
+      // failures never block a valid local login.
+      const cloud = await ensureCloudSession(email, password, res.ok ? (user?.name || email.trim()) : email.trim());
       setLoading(false);
-      if (res.ok) navigate('/', { replace: true });
-      else setError(res.error || 'Sign in failed');
+      if (cloud.needsEmailConfirmation) {
+        setError('Signed in locally. Check your email to enable cloud sync on this account.');
+      }
+      navigate('/', { replace: true });
     }, 650);
   };
 
