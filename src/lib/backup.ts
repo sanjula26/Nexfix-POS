@@ -81,7 +81,12 @@ export interface BackupOptions {
   cloud?: boolean;
 }
 
-/** Manual or auto backup of full state. A cloud failure never marks the backup as cloud-successful. */
+/**
+ * Manual or auto backup of full state.
+ * A cloud failure never advances the successful-backup timestamp when cloud
+ * sync is enabled, so the auto-backup scheduler will retry instead of silently
+ * treating an unsent cloud backup as complete.
+ */
 export async function downloadBackup(
   state: POSState,
   kind: 'manual' | 'auto' = 'manual',
@@ -111,11 +116,16 @@ export async function downloadBackup(
     try { cloud = await backupStateToGoogle(payload, kind); } catch { cloud = false; }
   }
 
-  const now = new Date().toISOString();
-  const meta = await idbGetMeta();
-  await idbSetMeta(kind === 'auto'
-    ? { lastAutoBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) }
-    : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
+  // A configured cloud backup is only successful when the cloud dispatch
+  // succeeds. If cloud sync is disabled, a successful local export is enough.
+  const successful = wantCloud ? cloud : local;
+  if (successful) {
+    const now = new Date().toISOString();
+    const meta = await idbGetMeta();
+    await idbSetMeta(kind === 'auto'
+      ? { lastAutoBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) }
+      : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
+  }
 
   return { local, cloud };
 }
@@ -130,8 +140,10 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       const last = meta.lastAutoBackupAt ? new Date(meta.lastAutoBackupAt).getTime() : 0;
       if (Date.now() - last < meta.autoBackupHours * 60 * 60 * 1000) return;
       running = true;
-      await downloadBackup(getState(), 'auto', { download: true, cloud: true });
-      onBackup?.(new Date().toISOString());
+      const result = await downloadBackup(getState(), 'auto', { download: true, cloud: true });
+      const cloudRequired = isGoogleSyncEnabled();
+      const successful = cloudRequired ? result.cloud : result.local;
+      if (successful) onBackup?.(new Date().toISOString());
     } catch { /* retry on next tick */ } finally { running = false; }
   };
   const t0 = window.setTimeout(tick, 5_000);
