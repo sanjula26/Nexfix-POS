@@ -1,14 +1,12 @@
 /**
- * Google Apps Script / Drive backup integration.
+ * Google Apps Script / Google Sheets backup integration.
  *
- * The deployment URL is the one supplied with the original Nexfix POS project.
- * It is only used after Google Sync is explicitly enabled in Settings.
- * The URL is validated to prevent accidental non-Google endpoints.
- *
- * Note: Google Apps Script web apps are commonly called with `no-cors` from
- * browser builds, so a POST can confirm dispatch but cannot expose the script's
- * JSON response to the browser. We therefore treat a successful fetch dispatch
- * as "sent", while server-side Apps Script logging remains the source of truth.
+ * Browser-safe transport:
+ * - Cross-origin POST uses a hidden form/iframe instead of fetch(no-cors), so
+ *   browser CORS/redirect behavior cannot incorrectly report a network failure.
+ * - The Apps Script stores an acknowledgement keyed by requestId.
+ * - The acknowledgement is read through JSONP, which is intentionally used
+ *   only for this public, non-secret status endpoint.
  */
 
 const DEFAULT_SCRIPT_URL =
@@ -67,21 +65,116 @@ export function setGoogleSyncEnabled(on: boolean): void {
   }
 }
 
+function makeRequestId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // Fall through.
+  }
+  return `nexfix-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function submitCrossOriginPost(url: string, body: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const iframeName = `nexfix-post-${makeRequestId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+    const iframe = document.createElement('iframe');
+    iframe.name = iframeName;
+    iframe.style.display = 'none';
+    iframe.setAttribute('aria-hidden', 'true');
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = url;
+    form.target = iframeName;
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'payload';
+    input.value = JSON.stringify(body);
+    form.appendChild(input);
+
+    const cleanup = () => {
+      window.setTimeout(() => {
+        iframe.remove();
+        form.remove();
+      }, 1000);
+    };
+
+    iframe.onload = () => {
+      cleanup();
+      resolve();
+    };
+    iframe.onerror = () => {
+      cleanup();
+      reject(new Error('Google Apps Script POST could not be dispatched.'));
+    };
+
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+
+    try {
+      form.submit();
+      // Cross-origin iframe navigation does not expose the response, so the
+      // actual server acknowledgement is checked separately by JSONP.
+    } catch (error) {
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
+function readJsonpStatus(url: string, requestId: string, timeoutMs = 12000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const callbackName = `nexfixBackupAck_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement('script');
+    let settled = false;
+
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      script.remove();
+      try {
+        delete (window as unknown as Record<string, unknown>)[callbackName];
+      } catch {
+        // Ignore cleanup failure.
+      }
+      resolve(value);
+    };
+
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+
+    (window as unknown as Record<string, unknown>)[callbackName] = (payload: unknown) => {
+      const result = payload as { ok?: boolean; status?: string } | null;
+      finish(Boolean(result?.ok && result.status === 'success'));
+    };
+
+    script.onerror = () => finish(false);
+    script.src = `${url}?action=backupStatus&requestId=${encodeURIComponent(requestId)}&callback=${encodeURIComponent(callbackName)}`;
+    document.head.appendChild(script);
+  });
+}
+
 async function postToScript(body: Record<string, unknown>): Promise<boolean> {
   if (!isGoogleSyncEnabled()) return false;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  if (typeof document === 'undefined') return false;
 
   const url = getGoogleScriptUrl();
   if (!url) return false;
 
+  const requestId = makeRequestId();
+  const payload = { ...body, requestId };
+
   try {
-    await fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body),
-    });
-    return true;
+    await submitCrossOriginPost(url, payload);
+
+    // The server acknowledgement is the source of truth. This avoids the old
+    // false-positive/false-negative behavior caused by browser CORS handling.
+    return await readJsonpStatus(url, requestId);
   } catch (error) {
     console.error('[Google Sync] failed', error);
     return false;
@@ -104,15 +197,35 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
 
 export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]> {
   const base = getGoogleScriptUrl();
-  if (!base || !isGoogleSyncEnabled()) return [];
-  try {
-    const url = `${base}?table=${encodeURIComponent(tableName)}`;
-    const response = await fetch(url);
-    if (!response.ok) return [];
-    const data = await response.json();
-    return Array.isArray(data) ? data : data?.rows || [];
-  } catch (error) {
-    console.error(`[Google Sheet Fetch] ${tableName}`, error);
-    return [];
-  }
+  if (!base || !isGoogleSyncEnabled() || typeof document === 'undefined') return [];
+
+  return new Promise((resolve) => {
+    const callbackName = `nexfixRows_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement('script');
+    let settled = false;
+
+    const finish = (rows: unknown[]) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      script.remove();
+      try {
+        delete (window as unknown as Record<string, unknown>)[callbackName];
+      } catch {
+        // Ignore cleanup failure.
+      }
+      resolve(rows);
+    };
+
+    const timer = window.setTimeout(() => finish([]), 12000);
+
+    (window as unknown as Record<string, unknown>)[callbackName] = (payload: unknown) => {
+      const data = payload as { ok?: boolean; rows?: unknown[] } | null;
+      finish(data?.ok && Array.isArray(data.rows) ? data.rows : []);
+    };
+
+    script.onerror = () => finish([]);
+    script.src = `${base}?action=getTable&table=${encodeURIComponent(tableName)}&callback=${encodeURIComponent(callbackName)}`;
+    document.head.appendChild(script);
+  });
 }
