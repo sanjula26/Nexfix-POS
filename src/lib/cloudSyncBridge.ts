@@ -3,6 +3,7 @@ import { runSyncNow } from './syncManager';
 import { getCloudShopId } from './cloudSync';
 import { supabase, supabaseConfigured } from './supabase';
 
+const CLOUD_SYNC_DELAY_MS = 350;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -25,7 +26,7 @@ export function scheduleCloudSync(note = 'state_change'): void {
         // The normal connectivity/retry path will retry after a durable queue write.
       }
     })();
-  }, 350);
+  }, CLOUD_SYNC_DELAY_MS);
 }
 
 export function cancelScheduledCloudSync(): void {
