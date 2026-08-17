@@ -9,12 +9,34 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
 
 export async function signUpToCloud(email: string, password: string, fullName: string) {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
-  const { error } = await supabase.auth.signUp({
+  const { error, data } = await supabase.auth.signUp({
     email: email.trim(),
     password,
     options: { data: { full_name: fullName.trim() } },
   });
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, needsEmailConfirmation: !data.session };
+}
+
+/**
+ * Local POS accounts remain the offline authority. After a successful local
+ * login, establish the matching Supabase session so RLS-protected cloud sync
+ * RPCs can use auth.uid(). If the cloud account does not exist yet, provision
+ * it with the same credentials. A missing/disabled cloud configuration never
+ * blocks local POS login.
+ */
+export async function ensureCloudSession(
+  email: string,
+  password: string,
+  fullName: string,
+): Promise<{ ok: boolean; error?: string; needsEmailConfirmation?: boolean }> {
+  const signedIn = await signInToCloud(email, password);
+  if (signedIn.ok) return signedIn;
+  if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return signedIn;
+
+  const created = await signUpToCloud(email, password, fullName);
+  if (!created.ok) return { ok: false, error: created.error };
+  return created;
 }
 
 export async function signOutFromCloud(): Promise<void> {
