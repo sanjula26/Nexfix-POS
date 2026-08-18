@@ -9,9 +9,14 @@
  *   only for this public, non-secret status endpoint.
  */
 
+// Current deployed Google Apps Script Web App URL.
+// IMPORTANT: this is the /macros/s/.../exec Web App URL, not the /macros/library/d/... URL.
 const DEFAULT_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbytyis-RNV9lhVM-v8LdVwnqkvU7O0BfpHBjVjdiVv0P4G8LsJSzjgvh4Wg8S1f27l_/exec';
-const URL_KEY = 'nexfix_google_script_url';
+  'https://script.google.com/macros/s/AKfycbwqgFn-6tKzAIYsaIT2zLAG6rsmCRPvqQ0iHfL4som0Pb1VoJbceaNG1EciTnpb4Yg/exec';
+
+// Version the storage key so an older, broken deployment URL saved by a previous
+// build cannot silently override the current working Web App URL.
+const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 
@@ -94,6 +99,8 @@ function submitCrossOriginPost(url: string, body: Record<string, unknown>): Prom
     form.target = iframeName;
     form.style.display = 'none';
 
+    // Apps Script receives this as e.parameter.payload.
+    // The deployed Code.gs must parse e.parameter.payload (or fall back to raw JSON).
     const input = document.createElement('input');
     input.type = 'hidden';
     input.name = 'payload';
