@@ -10,7 +10,7 @@
  */
 
 const DEFAULT_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbwqgFn-6tKzAIYsaIT2zLAG6rsmCRPvqQ0iHfL4som0Pb1VoJbceaNG1EciTnpb4Yg/exec';
+  'https://script.google.com/macros/s/AKfycbxZS0-9ENxT-aKeze24N8w6zviHFxc39csETRLo-Wdo19xoLzJ2UeYeQDckgRO3SNMO/exec';
 const URL_KEY = 'nexfix_google_script_url';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
