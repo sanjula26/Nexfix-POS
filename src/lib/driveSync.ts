@@ -15,10 +15,14 @@ const URL_KEY = 'nexfix_google_script_url';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 
+/** Only a deployed Apps Script Web App URL is valid here.
+ * Library URLs such as /macros/library/d/... are NOT Web App endpoints.
+ */
 function isAllowedScriptUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && url.hostname === 'script.google.com';
+    if (url.protocol !== 'https:' || url.hostname !== 'script.google.com') return false;
+    return /^\/macros\/s\/[^/]+\/(?:exec|dev)\/?$/.test(url.pathname);
   } catch {
     return false;
   }
@@ -39,7 +43,7 @@ export function getGoogleScriptUrl(): string {
 export function setGoogleScriptUrl(url: string): void {
   const value = url.trim();
   if (value && !isAllowedScriptUrl(value)) {
-    throw new Error('Google Apps Script URL must be an HTTPS script.google.com URL.');
+    throw new Error('Invalid Google Apps Script Web App URL. Use the deployed /macros/s/.../exec URL, not a /macros/library/d/... URL.');
   }
   try {
     if (value) localStorage.setItem(URL_KEY, value);
@@ -117,8 +121,6 @@ function submitCrossOriginPost(url: string, body: Record<string, unknown>): Prom
 
     try {
       form.submit();
-      // Cross-origin iframe navigation does not expose the response, so the
-      // actual server acknowledgement is checked separately by JSONP.
     } catch (error) {
       cleanup();
       reject(error instanceof Error ? error : new Error(String(error)));
@@ -171,9 +173,6 @@ async function postToScript(body: Record<string, unknown>): Promise<boolean> {
 
   try {
     await submitCrossOriginPost(url, payload);
-
-    // The server acknowledgement is the source of truth. This avoids the old
-    // false-positive/false-negative behavior caused by browser CORS handling.
     return await readJsonpStatus(url, requestId);
   } catch (error) {
     console.error('[Google Sync] failed', error);
