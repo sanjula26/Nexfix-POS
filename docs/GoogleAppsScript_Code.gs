@@ -1,4 +1,4 @@
-/** Nexfix POS Google Apps Script API. Deploy as Web app: Execute as Me, Anyone. */
+/** Nexfix POS Google Apps Script API */
 var BACKUP_SHEET = 'FullBackup';
 var VERSION = '1.1.0';
 var STATUS_PREFIX = 'nexfix_backup_status_';
