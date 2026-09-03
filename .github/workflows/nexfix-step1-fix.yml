@@ -1,3 +1,4 @@
+# Temporary, self-removing Step 1 patch workflow.
 name: Apply Nexfix POS Step 1 fix
 on:
   push:
