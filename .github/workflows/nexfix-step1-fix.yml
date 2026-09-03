@@ -32,7 +32,7 @@ jobs:
       - name: Verify source patch
         run: |
           grep -n "requestedQtyByProduct" src/lib/store.tsx
-          npm ci
+          npm install --package-lock=false --ignore-scripts
           npm run typecheck
           npm run build
       - name: Commit fix and remove temporary workflow
