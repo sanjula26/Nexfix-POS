@@ -511,11 +511,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const s = state;
     const items: SaleItem[] = [];
     const soldUnitIds: string[] = [];
+    const requestedQtyByProduct = new Map<string, number>();
     for (const l of input.lines) {
       const p = s.products.find(x => x.id === l.productId);
       if (!p) return null;
-      // Hard block selling more than available stock
-      if (l.qty <= 0 || l.qty > p.stock) return null;
+      // Aggregate duplicate cart lines before validating stock so the same product
+      // cannot consume more stock than is actually available.
+      const requestedQty = (requestedQtyByProduct.get(l.productId) || 0) + l.qty;
+      if (!Number.isFinite(l.qty) || l.qty <= 0 || requestedQty > p.stock) return null;
+      requestedQtyByProduct.set(l.productId, requestedQty);
       // IMEI/serial tracked products MUST supply matching in-stock unit ids
       if (p.trackImei || p.trackSerial) {
         if (!l.unitIds || l.unitIds.length !== l.qty) return null;
@@ -594,9 +598,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       profit, status: 'completed',
     };
 
+    // Deduct the aggregate quantity for each product, including duplicate cart lines.
     const updatedProducts = s.products.map(p => {
-      const line = input.lines.find(l => l.productId === p.id);
-      return line ? { ...p, stock: Math.max(0, p.stock - line.qty) } : p;
+      const qty = requestedQtyByProduct.get(p.id);
+      return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
 
     setState(prev => ({
