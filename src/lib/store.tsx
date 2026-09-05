@@ -640,13 +640,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sale = state.sales.find(x => x.id === saleId);
     if (!sale || sale.status !== 'completed') return;
     const returnedUnitIds = sale.items.flatMap(it => it.unitIds || []);
+    const refundQtyByProduct = new Map<string, number>();
+    sale.items.forEach(it => {
+      refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);
+    });
     setState(s => ({
       ...s,
       sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),
       products: s.products.map(p => {
-        const it = sale.items.find(i => i.productId === p.id);
-        return it ? { ...p, stock: p.stock + it.qty } : p;
+        const qty = refundQtyByProduct.get(p.id);
+        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
       }),
+      customers: s.customers.map(c => c.id === sale.customerId
+        ? {
+            ...c,
+            creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)),
+            loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)),
+          }
+        : c,
+      ),
       units: (s.units || []).map(u =>
         returnedUnitIds.includes(u.id)
           ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
