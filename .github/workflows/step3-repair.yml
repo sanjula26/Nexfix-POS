@@ -1,6 +1,8 @@
 name: Step 3 Repair
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - fix/step3-exchange-reconciliation
 permissions:
   contents: write
 jobs:
@@ -10,12 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: Repair Step 3 source and clean temporary files
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -31,7 +28,6 @@ jobs:
             if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
             const validIdx = [...new Set(itemIdx)].filter(i => Number.isInteger(i) && i >= 0 && i < sale.items.length);
             if (validIdx.length === 0) return;
-
             setState(s => {
               const exItems = validIdx.map(i => {
                 const it = sale.items[i];
@@ -40,9 +36,7 @@ jobs:
               const refund = mode === 'refund' ? exItems.reduce((sum, i) => sum + i.amount, 0) : 0;
               const returnedUnitIds = validIdx.flatMap(i => sale.items[i].unitIds || []);
               const restockQtyByProduct = new Map<string, number>();
-              exItems.forEach(it => {
-                restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + it.qty);
-              });
+              exItems.forEach(it => restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + it.qty));
               const seq = s.counters.ex + 1;
               const ex: Exchange = {
                 id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
@@ -58,25 +52,22 @@ jobs:
                   const qty = restockQtyByProduct.get(p.id);
                   return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
                 }),
-                units: (s.units || []).map(u =>
-                  returnedUnitIds.includes(u.id)
-                    ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-                    : u,
-                ),
+                units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
+                  ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+                  : u),
               };
             });
             pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${validIdx.length} item(s) on ${sale.billNo}`);
           }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);'''
           if len(pattern.findall(text)) != 1:
               raise SystemExit('Expected exactly one original exchange block; refusing to modify source')
-          text2 = pattern.sub(new, text, count=1)
-          p.write_text(text2)
+          p.write_text(pattern.sub(new, text, count=1))
           PY
           git fetch origin main --depth=1
           git checkout origin/main -- package.json .github/workflows/ci.yml
-          git rm -f scripts/step3-patch.mjs .step3-trigger2 || true
+          git rm -f scripts/step3-patch.mjs .step3-trigger2 .github/workflows/step3-repair.yml || true
           git add src/lib/store.tsx package.json .github/workflows/ci.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit -m 'fix: harden exchange validation and reconciliation'
-          git push origin HEAD:${GITHUB_HEAD_REF:-fix/step3-exchange-reconciliation}
+          git push origin HEAD:${GITHUB_REF_NAME}
