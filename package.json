@@ -8,7 +8,6 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "pretypecheck": "node scripts/step3-patch.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "preview": "vite preview",
     "desktop:build": "npm run build && electron-builder --win --publish never",
@@ -16,7 +15,6 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",
-    "@tailwindcss/vite": "^4.2.1",
     "@tailwindcss/vite": "^4.2.1",
     "framer-motion": "^12.35.0",
     "html-to-image": "^1.11.13",
