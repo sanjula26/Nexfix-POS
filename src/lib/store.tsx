@@ -4,6 +4,7 @@ import {
   AppUser, AuditEntry, HeldSale, Settings, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
   InventoryUnit, RepairJob, RepairStatus,
 } from './types';
+import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
 import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed } from './utils';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, type BackupMeta } from './db';
@@ -386,7 +387,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, pushAudit]);
 
   const switchRole = useCallback((role: Role, pin?: string): { ok: boolean; error?: string } => {
-    // Prefer restoring the previous user when switching back to cashier
     let target = state.users.find(u => u.role === role && u.active);
     if (role === 'cashier' && user?.role === 'admin') {
       try {
@@ -398,8 +398,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } catch { /* ignore */ }
     }
     if (!target) return { ok: false, error: `No active ${role} account exists` };
-
-    // cashier → admin requires the admin switch password
     if (role === 'admin' && user?.role === 'cashier') {
       if (!verifyPassword(pin || '', state.settings.adminPinHash)) {
         setState(s => ({
@@ -412,10 +410,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }));
         return { ok: false, error: 'Incorrect admin password' };
       }
-      // Remember current cashier so we can restore them later
       try { sessionStorage.setItem('nexfix_prev_user', user.id); } catch { /* ignore */ }
     }
-
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
     setSession(sess);
@@ -447,7 +443,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => {
       const exists = s.products.some(x => x.id === p.id);
       const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
     pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
@@ -457,7 +453,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const p = state.products.find(x => x.id === id);
     setState(s => {
       const updatedProducts = s.products.filter(x => x.id !== id);
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
     if (p) pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
@@ -467,7 +463,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const p = state.products.find(x => x.id === id);
     setState(s => {
       const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      syncToGoogleDrive('Products', updatedProducts);
       return {
         ...s,
         products: updatedProducts,
@@ -481,7 +477,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const exists = state.customers.some(x => x.id === c.id);
     setState(s => {
       const updatedCustomers = exists ? s.customers.map(x => (x.id === c.id ? c : x)) : [c, ...s.customers];
-      syncToGoogleDrive('Customers', updatedCustomers); // Auto Google Sync
+      syncToGoogleDrive('Customers', updatedCustomers);
       return { ...s, customers: updatedCustomers };
     });
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Customer', `${exists ? 'Updated' : 'Created'} customer ${c.name}`);
@@ -491,7 +487,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const c = state.customers.find(x => x.id === id);
     setState(s => ({ ...s, customers: s.customers.filter(x => x.id !== id) }));
     if (c) pushAudit('DELETE', 'Customer', `Deleted customer ${c.name}`);
-  }, [pushAudit, state.customers]);
+  }, [state.customers, pushAudit]);
 
   const saveSupplier = useCallback((sp: Supplier) => {
     const exists = state.suppliers.some(x => x.id === sp.id);
@@ -503,7 +499,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sp = state.suppliers.find(x => x.id === id);
     setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x.id !== id) }));
     if (sp) pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
-  }, [pushAudit, state.suppliers]);
+  }, [state.suppliers, pushAudit]);
 
   /* ---------------- sales ---------------- */
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
@@ -515,34 +511,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     for (const l of input.lines) {
       const p = s.products.find(x => x.id === l.productId);
       if (!p) return null;
-      // Aggregate duplicate cart lines before validating stock so the same product
-      // cannot consume more stock than is actually available.
       const requestedQty = (requestedQtyByProduct.get(l.productId) || 0) + l.qty;
       if (!Number.isFinite(l.qty) || l.qty <= 0 || requestedQty > p.stock) return null;
       requestedQtyByProduct.set(l.productId, requestedQty);
-      // IMEI/serial tracked products MUST supply matching in-stock unit ids
       if (p.trackImei || p.trackSerial) {
         if (!l.unitIds || l.unitIds.length !== l.qty) return null;
         for (const uid_ of l.unitIds) {
           const u = (s.units || []).find(x => x.id === uid_ && x.productId === p.id && x.status === 'in_stock');
           if (!u) return null;
-          if (soldUnitIds.includes(uid_)) return null; // same unit twice
+          if (soldUnitIds.includes(uid_)) return null;
           soldUnitIds.push(uid_);
         }
       }
       const unitPrice = l.price !== undefined && l.price >= 0 ? l.price : p.price;
       const gross = unitPrice * l.qty;
-      const matchedUnits = (l.unitIds || [])
-        .map(id => (s.units || []).find(u => u.id === id))
-        .filter(Boolean) as InventoryUnit[];
-      items.push({
-        productId: p.id, name: p.name, qty: l.qty, price: unitPrice, cost: p.cost,
-        discount: Math.min(Math.max(l.discount || 0, 0), gross),
-        priceOverridden: unitPrice !== p.price || undefined,
-        unitIds: l.unitIds,
-        imeis: matchedUnits.map(u => u.imei).filter(Boolean) as string[],
-        serials: matchedUnits.map(u => u.serial).filter(Boolean) as string[],
-      });
+      const matchedUnits = (l.unitIds || []).map(id => (s.units || []).find(u => u.id === id)).filter(Boolean) as InventoryUnit[];
+      items.push({ productId: p.id, name: p.name, qty: l.qty, price: unitPrice, cost: p.cost,
+        discount: Math.min(Math.max(l.discount || 0, 0), gross), priceOverridden: unitPrice !== p.price || undefined,
+        unitIds: l.unitIds, imeis: matchedUnits.map(u => u.imei).filter(Boolean) as string[], serials: matchedUnits.map(u => u.serial).filter(Boolean) as string[] });
     }
     const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
     const lineDiscount = items.reduce((sum, it) => sum + (it.discount || 0), 0);
@@ -551,88 +537,33 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const tax = Math.round(((subtotal - discount) * (input.taxPct || 0)) / 100 * 100) / 100;
     const shipping = Math.max(0, input.shipping || 0);
     const cust = input.customerId ? s.customers.find(c => c.id === input.customerId) : undefined;
-    const pointsRedeemed = Math.min(
-      Math.max(0, Math.floor(input.pointsRedeemed || 0)),
-      cust?.loyaltyPoints || 0,
-    );
+    const pointsRedeemed = Math.min(Math.max(0, Math.floor(input.pointsRedeemed || 0)), cust?.loyaltyPoints || 0);
     const pointsValue = pointsRedeemed * POINT_VALUE;
     const preTotal = subtotal - discount + tax + shipping;
     const total = Math.max(0, Math.round((preTotal - Math.min(pointsValue, preTotal)) * 100) / 100);
-    // Gross margin − discounts − loyalty points redeemed (+ shipping is revenue)
-    const profit = Math.round((
-      items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
-      - lineDiscount - discount - pointsValue + shipping
-    ) * 100) / 100;
+    const profit = Math.round((items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0) - lineDiscount - discount - pointsValue + shipping) * 100) / 100;
     const pointsEarned = cust ? pointsForRs(total) : 0;
-    const maxSaleSeq = s.sales.reduce((m, x) => {
-      const n = parseInt(x.billNo.split('-').pop() || '0', 10);
-      return Number.isFinite(n) ? Math.max(m, n) : m;
-    }, 0);
+    const maxSaleSeq = s.sales.reduce((m, x) => { const n = parseInt(x.billNo.split('-').pop() || '0', 10); return Number.isFinite(n) ? Math.max(m, n) : m; }, 0);
     const seq = Math.max(s.counters.bill, maxSaleSeq + 1);
     const billNo = `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(seq).slice(-4)}`;
-    const salesman = input.salesmanId
-      ? s.users.find(u => u.id === input.salesmanId && u.active)
-      : undefined;
+    const salesman = input.salesmanId ? s.users.find(u => u.id === input.salesmanId && u.active) : undefined;
     const byUser = salesman || user;
     const legs = (input.payments || []).filter(l => l.amount > 0);
     const isSplit = legs.length > 1;
     const isCredit = legs.some(l => l.method === 'credit') || (!isSplit && input.payment === 'credit');
-    const amountPaid = isSplit
-      ? legs.reduce((a, l) => a + l.amount, 0)
-      : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
+    const amountPaid = isSplit ? legs.reduce((a, l) => a + l.amount, 0) : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
     const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
-    // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
-    const sale: Sale = {
-      id: uid(), billNo, date: new Date().toISOString(),
-      cashierId: byUser.id, cashierName: byUser.name,
-      machineId: machine.id, machineName: machine.name,
-      note: input.note?.trim() || undefined,
-      customerId: cust?.id, customerName: cust?.name || 'Walk-in customer',
-      items, subtotal, discount, tax, shipping: shipping || undefined, total,
-      payment: isSplit ? legs[0].method : input.payment,
-      payments: isSplit ? legs : undefined,
-      pointsRedeemed: pointsRedeemed || undefined,
-      pointsEarned: pointsEarned || undefined,
-      amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
-      profit, status: 'completed',
-    };
-
-    // Deduct the aggregate quantity for each product, including duplicate cart lines.
-    const updatedProducts = s.products.map(p => {
-      const qty = requestedQtyByProduct.get(p.id);
-      return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
-    });
-
-    setState(prev => ({
-      ...prev,
-      products: updatedProducts,
-      customers: prev.customers.map(c =>
-        c.id === cust?.id
-          ? {
-              ...c,
-              creditBalance: c.creditBalance + balanceDue,
-              loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsRedeemed) + pointsEarned,
-            }
-          : c,
-      ),
-      units: (prev.units || []).map(u =>
-        soldUnitIds.includes(u.id)
-          ? { ...u, status: 'sold' as const, saleId: sale.id, saleBillNo: billNo, soldAt: sale.date }
-          : u,
-      ),
-      sales: [sale, ...prev.sales],
-      counters: { ...prev.counters, bill: prev.counters.bill + 1 },
-    }));
-
-    // Auto-Sync to Google Sheet (Sales & Products Inventory)
-    syncToGoogleDrive('SalesHistory', [sale]);
-    syncToGoogleDrive('Products', updatedProducts);
-
-    pushAudit(
-      'SALE', 'Sale',
-      `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`,
-    );
+    const sale: Sale = { id: uid(), billNo, date: new Date().toISOString(), cashierId: byUser.id, cashierName: byUser.name,
+      machineId: machine.id, machineName: machine.name, note: input.note?.trim() || undefined, customerId: cust?.id, customerName: cust?.name || 'Walk-in customer',
+      items, subtotal, discount, tax, shipping: shipping || undefined, total, payment: isSplit ? legs[0].method : input.payment,
+      payments: isSplit ? legs : undefined, pointsRedeemed: pointsRedeemed || undefined, pointsEarned: pointsEarned || undefined,
+      amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total), profit, status: 'completed' };
+    const updatedProducts = s.products.map(p => { const qty = requestedQtyByProduct.get(p.id); return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p; });
+    setState(prev => ({ ...prev, products: updatedProducts, customers: prev.customers.map(c => c.id === cust?.id ? { ...c, creditBalance: c.creditBalance + balanceDue, loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsRedeemed) + pointsEarned } : c),
+      units: (prev.units || []).map(u => soldUnitIds.includes(u.id) ? { ...u, status: 'sold' as const, saleId: sale.id, saleBillNo: billNo, soldAt: sale.date } : u), sales: [sale, ...prev.sales], counters: { ...prev.counters, bill: prev.counters.bill + 1 } }));
+    syncToGoogleDrive('SalesHistory', [sale]); syncToGoogleDrive('Products', updatedProducts);
+    pushAudit('SALE', 'Sale', `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`);
     return sale;
   }, [user, state, pushAudit]);
 
@@ -641,276 +572,134 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!sale || sale.status !== 'completed') return;
     const returnedUnitIds = sale.items.flatMap(it => it.unitIds || []);
     const refundQtyByProduct = new Map<string, number>();
-    sale.items.forEach(it => {
-      refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);
-    });
-    setState(s => ({
-      ...s,
-      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),
-      products: s.products.map(p => {
-        const qty = refundQtyByProduct.get(p.id);
-        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
-      }),
-      customers: s.customers.map(c => c.id === sale.customerId
-        ? {
-            ...c,
-            creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)),
-            loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)),
-          }
-        : c,
-      ),
-      units: (s.units || []).map(u =>
-        returnedUnitIds.includes(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-          : u,
-      ),
-    }));
+    sale.items.forEach(it => refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty));
+    setState(s => ({ ...s, sales: s.sales.map(x => x.id === saleId ? { ...x, status: 'refunded' } : x),
+      products: s.products.map(p => { const qty = refundQtyByProduct.get(p.id); return qty !== undefined ? { ...p, stock: p.stock + qty } : p; }),
+      customers: s.customers.map(c => c.id === sale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)), loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)) } : c),
+      units: (s.units || []).map(u => returnedUnitIds.includes(u.id) ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u) }));
     pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${sale.total.toLocaleString()}${returnedUnitIds.length ? ` · ${returnedUnitIds.length} unit(s) returned` : ''}`);
   }, [state.sales, pushAudit]);
 
   /* ---------------- held sales ---------------- */
-  const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {
-    setState(s => ({ ...s, held: [...s.held, { ...h, id: uid(), heldAt: new Date().toISOString() }] }));
-  }, []);
-
-  const resumeHold = useCallback((id: string) => {
-    const h = state.held.find(x => x.id === id);
-    setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) }));
-    return h;
-  }, [state.held]);
-
-  const deleteHold = useCallback((id: string) => {
-    setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) }));
-  }, []);
+  const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => { setState(s => ({ ...s, held: [...s.held, { ...h, id: uid(), heldAt: new Date().toISOString() }] })); }, []);
+  const resumeHold = useCallback((id: string) => { const h = state.held.find(x => x.id === id); setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) })); return h; }, [state.held]);
+  const deleteHold = useCallback((id: string) => { setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) })); }, []);
 
   /* ---------------- purchases ---------------- */
   const savePurchase = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
     setState(s => {
       const seq = s.counters.po + 1;
-      const po: Purchase = {
-        ...p, id: uid(), poNo: `PO-${String(seq).padStart(4, '0')}`,
-        date: new Date().toISOString(), status: 'pending',
-      };
+      const po: Purchase = { ...p, id: uid(), poNo: `PO-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(), status: 'pending' };
       return { ...s, purchases: [po, ...s.purchases], counters: { ...s.counters, po: seq } };
     });
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit]);
 
   const receivePurchase = useCallback((id: string) => {
-    const po = state.purchases.find(x => x.id === id);
-    if (!po || po.status === 'received') return;
     setState(s => {
+      const po = s.purchases.find(x => x.id === id);
+      if (!po || po.status !== 'pending') return s;
+      const plan = buildPurchaseReceivePlan(po, s.products);
+      if (!plan || plan.productStockDelta.size === 0) return s;
       const newUnits: InventoryUnit[] = [];
       const products = s.products.map(p => {
-        const it = po.items.find(i => i.productId === p.id);
-        if (!it) return p;
-        // Auto-create placeholder IMEI/Serial units for tracked products
+        const qty = plan.productStockDelta.get(p.id);
+        if (qty === undefined) return p;
         if (p.trackImei || p.trackSerial) {
-          const qty = Math.floor(it.qty);
-          for (let i = 0; i < qty; i++) {
-            newUnits.push({
-              id: uid(),
-              productId: p.id,
-              imei: p.trackImei ? '' : undefined,
-              serial: p.trackSerial && !p.trackImei ? '' : undefined,
-              status: 'in_stock',
-              purchaseId: po.id,
-              cost: it.cost,
-              expiryDate: it.expiryDate,
-              note: `From ${po.poNo} — fill IMEI/Serial in Units`,
-              createdAt: new Date().toISOString(),
-            } as InventoryUnit);
+          const unitQty = plan.trackedUnitCount.get(p.id) || 0;
+          const cost = plan.productCost.get(p.id) ?? p.cost;
+          const sourceItem = po.items.find(i => i.productId === p.id);
+          for (let i = 0; i < unitQty; i++) {
+            newUnits.push({ id: uid(), productId: p.id, imei: p.trackImei ? '' : undefined,
+              serial: p.trackSerial && !p.trackImei ? '' : undefined, status: 'in_stock', purchaseId: po.id,
+              cost, expiryDate: sourceItem?.expiryDate, note: `From ${po.poNo} — fill IMEI/Serial in Units`, createdAt: new Date().toISOString() } as InventoryUnit);
           }
         }
-        return { ...p, stock: p.stock + it.qty, cost: it.cost };
+        return { ...p, stock: p.stock + qty, cost: plan.productCost.get(p.id) ?? p.cost };
       });
-      return {
-        ...s,
-        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),
-        products,
-        units: [...newUnits, ...(s.units || [])],
-      };
+      return { ...s, purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const } : x), products, units: [...newUnits, ...(s.units || [])] };
     });
-    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
-  }, [state.purchases, pushAudit]);
+    pushAudit('RECEIVE', 'Purchase', `Received purchase ${id} with validated aggregated lines`);
+  }, [pushAudit]);
 
   const deletePurchase = useCallback((id: string) => {
     const po = state.purchases.find(x => x.id === id);
     if (!po) return;
+    if (!canDeletePurchase(po)) {
+      pushAudit('DENIED', 'Purchase', `Blocked deletion of received purchase ${po.poNo} — use a reversal flow instead`);
+      return;
+    }
     setState(s => {
-      // If PO was already received, reverse the stock that was added
-      let products = s.products;
-      if (po.status === 'received') {
-        products = s.products.map(p => {
-          const it = po.items.find(i => i.productId === p.id);
-          return it ? { ...p, stock: Math.max(0, p.stock - it.qty) } : p;
-        });
-      }
-      return { ...s, purchases: s.purchases.filter(x => x.id !== id), products };
+      const current = s.purchases.find(x => x.id === id);
+      if (!current || !canDeletePurchase(current)) return s;
+      return { ...s, purchases: s.purchases.filter(x => x.id !== id) };
     });
-    pushAudit('DELETE', 'Purchase', `Deleted ${po.poNo}${po.status === 'received' ? ' · stock reversed' : ''}`);
+    pushAudit('DELETE', 'Purchase', `Deleted pending purchase ${po.poNo}`);
   }, [state.purchases, pushAudit]);
 
   /* ---------------- expenses ---------------- */
-  const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => {
-    setState(s => ({
-      ...s,
-      expenses: [{ ...e, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
-    }));
-    pushAudit('EXPENSE', 'Expense', `${e.category}: ${e.note} · Rs. ${e.amount.toLocaleString()}`);
-  }, [pushAudit, user?.name]);
-
-  const deleteExpense = useCallback((id: string) => {
-    const e = state.expenses.find(x => x.id === id);
-    setState(s => ({ ...s, expenses: s.expenses.filter(x => x.id !== id) }));
-    if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`);
-  }, [state.expenses, pushAudit]);
+  const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => { setState(s => ({ ...s, expenses: [{ ...e, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses] })); pushAudit('EXPENSE', 'Expense', `${e.category}: ${e.note} · Rs. ${e.amount.toLocaleString()}`); }, [pushAudit, user?.name]);
+  const deleteExpense = useCallback((id: string) => { const e = state.expenses.find(x => x.id === id); setState(s => ({ ...s, expenses: s.expenses.filter(x => x.id !== id) })); if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`); }, [state.expenses, pushAudit]);
 
   /* ---------------- exchanges ---------------- */
   const processExchange = useCallback((saleId: string, itemIdx: number[], reason: string, mode: 'refund' | 'replace') => {
-  const sale = state.sales.find(x => x.id === saleId);
-  if (!user || !sale || sale.status !== 'completed' || itemIdx.length === 0) return;
-  if (mode === 'refund' && !can('act:refund')) return;
-  const ageMs = Date.now() - new Date(sale.date).getTime();
-  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
-  const validIdx = [...new Set(itemIdx)].filter(i => Number.isInteger(i) && i >= 0 && i < sale.items.length);
-  if (validIdx.length === 0) return;
-  setState(s => {
-    const exItems = validIdx.map(i => {
-      const it = sale.items[i];
-      return { productId: it.productId, name: it.name, qty: it.qty, amount: it.price * it.qty - (it.discount || 0) };
+    const sale = state.sales.find(x => x.id === saleId);
+    if (!user || !sale || sale.status !== 'completed' || itemIdx.length === 0) return;
+    if (mode === 'refund' && !can('act:refund')) return;
+    const ageMs = Date.now() - new Date(sale.date).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
+    const validIdx = [...new Set(itemIdx)].filter(i => Number.isInteger(i) && i >= 0 && i < sale.items.length);
+    if (validIdx.length === 0) return;
+    setState(s => {
+      const exItems = validIdx.map(i => { const it = sale.items[i]; return { productId: it.productId, name: it.name, qty: it.qty, amount: it.price * it.qty - (it.discount || 0) }; });
+      const refund = mode === 'refund' ? exItems.reduce((sum, i) => sum + i.amount, 0) : 0;
+      const returnedUnitIds = validIdx.flatMap(i => sale.items[i].unitIds || []);
+      const restockQtyByProduct = new Map<string, number>();
+      exItems.forEach(it => restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + it.qty));
+      const seq = s.counters.ex + 1;
+      const ex: Exchange = { id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(), billNo: sale.billNo, customerName: sale.customerName, reason, items: exItems, refund, additional: 0, by: user.name };
+      return { ...s, exchanges: [ex, ...s.exchanges], counters: { ...s.counters, ex: seq }, sales: s.sales.map(x => x.id === saleId ? { ...x, status: 'exchanged' } : x),
+        products: s.products.map(p => { const qty = restockQtyByProduct.get(p.id); return qty !== undefined ? { ...p, stock: p.stock + qty } : p; }),
+        units: (s.units || []).map(u => returnedUnitIds.includes(u.id) ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u) };
     });
-    const refund = mode === 'refund' ? exItems.reduce((sum, i) => sum + i.amount, 0) : 0;
-    const returnedUnitIds = validIdx.flatMap(i => sale.items[i].unitIds || []);
-    const restockQtyByProduct = new Map<string, number>();
-    exItems.forEach(it => restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + it.qty));
-    const seq = s.counters.ex + 1;
-    const ex: Exchange = {
-      id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
-      billNo: sale.billNo, customerName: sale.customerName, reason,
-      items: exItems, refund, additional: 0, by: user.name,
-    };
-    return {
-      ...s,
-      exchanges: [ex, ...s.exchanges],
-      counters: { ...s.counters, ex: seq },
-      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'exchanged' } : x)),
-      products: s.products.map(p => {
-        const qty = restockQtyByProduct.get(p.id);
-        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
-      }),
-      units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
-        ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-        : u),
-    };
-  });
-  pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${validIdx.length} item(s) on ${sale.billNo}`);
-}, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
+    pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${validIdx.length} item(s) on ${sale.billNo}`);
+  }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
   const saveUser = useCallback((u: AppUser) => {
-    const exists = state.users.some(x => x.id === u.id);
-    // Always store password as hash (skip re-hash if already hashed and unchanged)
-    const existing = state.users.find(x => x.id === u.id);
-    const password = isHashed(u.password)
-      ? u.password
-      : (existing && u.password === existing.password ? existing.password : hashPassword(u.password));
+    const exists = state.users.some(x => x.id === u.id); const existing = state.users.find(x => x.id === u.id);
+    const password = isHashed(u.password) ? u.password : (existing && u.password === existing.password ? existing.password : hashPassword(u.password));
     const toSave = { ...u, password };
-    setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
+    setState(s => ({ ...s, users: exists ? s.users.map(x => x.id === u.id ? toSave : x) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
   }, [state.users, pushAudit]);
-
-  const toggleUserActive = useCallback((id: string) => {
-    const u = state.users.find(x => x.id === id);
-    setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
-    if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
-  }, [state.users, pushAudit]);
-
-  const deleteUser = useCallback((id: string) => {
-    const u = state.users.find(x => x.id === id);
-    if (!u || u.id === user?.id) return;
-    setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
-    pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
-  }, [state.users, user?.id, pushAudit]);
+  const toggleUserActive = useCallback((id: string) => { const u = state.users.find(x => x.id === id); setState(s => ({ ...s, users: s.users.map(x => x.id === id ? { ...x, active: !x.active } : x) })); if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`); }, [state.users, pushAudit]);
+  const deleteUser = useCallback((id: string) => { const u = state.users.find(x => x.id === id); if (!u || u.id === user?.id) return; setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) })); pushAudit('DELETE', 'User', `Deleted user ${u.name}`); }, [state.users, user?.id, pushAudit]);
 
   /* ---------------- admin ---------------- */
-  const setPermission = useCallback((role: Role, key: string, value: boolean) => {
-    if (role === 'admin') return;
-    setState(s => ({
-      ...s,
-      permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } },
-    }));
-    pushAudit('PERMISSION', 'Permissions', `Set ${key} = ${value ? 'ON' : 'OFF'} for ${role}`);
-  }, [pushAudit]);
-
-  const updateSettings = useCallback((patch: Partial<Settings>) => {
-    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));
-    pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`);
-  }, [pushAudit]);
-
-  const closeSession = useCallback((cashierId: string, counted: number, note: string) => {
-    setState(s => ({
-      ...s,
-      sessions: s.sessions.map(x =>
-        x.cashierId === cashierId && x.date === dkey(new Date())
-          ? { ...x, closed: true, closing: counted, note }
-          : x,
-      ),
-    }));
-    pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${counted.toLocaleString()}${note ? ` · ${note}` : ''}`);
-  }, [pushAudit]);
-
-  // auto-open today's drawer session once per cashier
+  const setPermission = useCallback((role: Role, key: string, value: boolean) => { if (role === 'admin') return; setState(s => ({ ...s, permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } } })); pushAudit('PERMISSION', 'Permissions', `Set ${key} = ${value ? 'ON' : 'OFF'} for ${role}`); }, [pushAudit]);
+  const updateSettings = useCallback((patch: Partial<Settings>) => { setState(s => ({ ...s, settings: { ...s.settings, ...patch } })); pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`); }, [pushAudit]);
+  const closeSession = useCallback((cashierId: string, counted: number, note: string) => { setState(s => ({ ...s, sessions: s.sessions.map(x => x.cashierId === cashierId && x.date === dkey(new Date()) ? { ...x, closed: true, closing: counted, note } : x) })); pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${counted.toLocaleString()}${note ? ` · ${note}` : ''}`); }, [pushAudit]);
   useEffect(() => {
     if (!user) return;
     const today = dkey(new Date());
     if (state.sessions.some(x => x.cashierId === user.id && x.date === today)) return;
-    const ns: DaySession = {
-      id: uid(), cashierId: user.id, cashierName: user.name, date: today,
-      opening: state.settings.openingFloat, closed: false,
-    };
-    setState(s =>
-      s.sessions.some(x => x.cashierId === user.id && x.date === today)
-        ? s
-        : { ...s, sessions: [...s.sessions, ns] },
-    );
+    const ns: DaySession = { id: uid(), cashierId: user.id, cashierName: user.name, date: today, opening: state.settings.openingFloat, closed: false };
+    setState(s => s.sessions.some(x => x.cashierId === user.id && x.date === today) ? s : { ...s, sessions: [...s.sessions, ns] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
-
-  const logAudit = useCallback((action: string, entity: string, details: string) => {
-    pushAudit(action, entity, details);
-  }, [pushAudit]);
-
-  /** Audit log is append-only — clear is disabled for accountability */
-  const clearAudit = useCallback(() => {
-    setState(s => ({
-      ...s,
-      audit: [{
-        id: uid(), time: new Date().toISOString(),
-        user: user?.email || 'system', action: 'DENIED', entity: 'Audit',
-        details: 'Attempted to clear audit log — blocked (append-only policy)',
-      }, ...s.audit].slice(0, 500),
-    }));
-  }, [user?.email]);
-
+  const logAudit = useCallback((action: string, entity: string, details: string) => { pushAudit(action, entity, details); }, [pushAudit]);
+  const clearAudit = useCallback(() => { setState(s => ({ ...s, audit: [{ id: uid(), time: new Date().toISOString(), user: user?.email || 'system', action: 'DENIED', entity: 'Audit', details: 'Attempted to clear audit log — blocked (append-only policy)' }, ...s.audit].slice(0, 500) })); }, [user?.email]);
   const exportData = useCallback(() => JSON.stringify(state, null, 2), [state]);
-
   const importData = useCallback((json: string) => {
     try {
       const parsed = JSON.parse(json) as POSState;
-      // Basic schema validation — reject malicious / incomplete payloads
       if (!parsed || typeof parsed !== 'object') return false;
       if (!Array.isArray(parsed.products) || !Array.isArray(parsed.users) || !Array.isArray(parsed.sales)) return false;
       if (!parsed.settings || typeof parsed.settings !== 'object') return false;
       if (!parsed.permissions || typeof parsed.permissions !== 'object') return false;
-      // Ensure no user can inject an elevated role without a valid structure
-      const safeUsers = parsed.users.filter(
-        (u): u is AppUser =>
-          !!u && typeof u.id === 'string' && typeof u.email === 'string' &&
-          (u.role === 'admin' || u.role === 'cashier') && typeof u.password === 'string',
-      );
+      const safeUsers = parsed.users.filter((u): u is AppUser => !!u && typeof u.id === 'string' && typeof u.email === 'string' && (u.role === 'admin' || u.role === 'cashier') && typeof u.password === 'string');
       if (safeUsers.length === 0) return false;
-      // Strip wrapper _meta if present from our backup format
       const { _meta: _ignored, ...rest } = parsed as POSState & { _meta?: unknown };
       const migrated = migrate({ ...rest, users: safeUsers });
       setState(migrated);
@@ -918,219 +707,49 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return true;
     } catch { return false; }
   }, [pushAudit]);
-
-  const resetData = useCallback(() => {
-    const seed = buildSeed();
-    setState(seed);
-  }, []);
+  const resetData = useCallback(() => { setState(buildSeed()); }, []);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit) => {
     const exists = (state.units || []).some(x => x.id === u.id);
-    // prevent duplicate IMEI/serial in stock
-    const dup = (state.units || []).find(x =>
-      x.id !== u.id && x.status === 'in_stock' &&
-      ((u.imei && x.imei === u.imei) || (u.serial && x.serial === u.serial)),
-    );
-    if (dup) {
-      pushAudit('DENIED', 'Unit', `Duplicate IMEI/serial blocked: ${u.imei || u.serial}`);
-      return;
-    }
-    setState(s => ({
-      ...s,
-      units: exists
-        ? (s.units || []).map(x => (x.id === u.id ? u : x))
-        : [u, ...(s.units || [])],
-    }));
+    const dup = (state.units || []).find(x => x.id !== u.id && x.status === 'in_stock' && ((u.imei && x.imei === u.imei) || (u.serial && x.serial === u.serial)));
+    if (dup) { pushAudit('DENIED', 'Unit', `Duplicate IMEI/serial blocked: ${u.imei || u.serial}`); return; }
+    setState(s => ({ ...s, units: exists ? (s.units || []).map(x => x.id === u.id ? u : x) : [u, ...(s.units || [])] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Unit', `${exists ? 'Updated' : 'Added'} unit ${u.imei || u.serial || u.id}`);
   }, [state.units, pushAudit]);
-
-  const deleteUnit = useCallback((id: string) => {
-    const u = (state.units || []).find(x => x.id === id);
-    setState(s => ({ ...s, units: (s.units || []).filter(x => x.id !== id) }));
-    if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`);
-  }, [state.units, pushAudit]);
-
-  const findUnitByCode = useCallback((code: string) => {
-    const q = code.trim().toLowerCase();
-    if (!q) return undefined;
-    return (state.units || []).find(u =>
-      (u.imei && u.imei.toLowerCase() === q) ||
-      (u.serial && u.serial.toLowerCase() === q) ||
-      u.id.toLowerCase() === q,
-    );
-  }, [state.units]);
+  const deleteUnit = useCallback((id: string) => { const u = (state.units || []).find(x => x.id === id); setState(s => ({ ...s, units: (s.units || []).filter(x => x.id !== id) })); if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`); }, [state.units, pushAudit]);
+  const findUnitByCode = useCallback((code: string) => { const q = code.trim().toLowerCase(); if (!q) return undefined; return (state.units || []).find(u => (u.imei && u.imei.toLowerCase() === q) || (u.serial && u.serial.toLowerCase() === q) || u.id.toLowerCase() === q); }, [state.units]);
 
   /* ---------------- repairs ---------------- */
   const saveRepair = useCallback((r: RepairJob) => {
     const exists = (state.repairs || []).some(x => x.id === r.id);
     setState(s => {
-      let job = r;
-      let counters = s.counters;
-      if (!exists && (!r.jobNo || r.jobNo.startsWith('JOB-TEMP'))) {
-        const seq = (s.counters.job || 0) + 1;
-        job = { ...r, jobNo: `JOB-${String(seq).padStart(4, '0')}` };
-        counters = { ...s.counters, job: seq };
-      }
-      // Deduct parts from stock when first saved with parts (simple model)
+      let job = r; let counters = s.counters;
+      if (!exists && (!r.jobNo || r.jobNo.startsWith('JOB-TEMP'))) { const seq = (s.counters.job || 0) + 1; job = { ...r, jobNo: `JOB-${String(seq).padStart(4, '0')}` }; counters = { ...s.counters, job: seq }; }
       let products = s.products;
-      if (!exists && job.parts?.length) {
-        products = s.products.map(p => {
-          const part = job.parts.find(pt => pt.productId === p.id);
-          return part ? { ...p, stock: Math.max(0, p.stock - part.qty) } : p;
-        });
-      }
-      return {
-        ...s,
-        products,
-        counters,
-        repairs: exists
-          ? (s.repairs || []).map(x => (x.id === r.id ? job : x))
-          : [job, ...(s.repairs || [])],
-      };
+      if (!exists && job.parts?.length) products = s.products.map(p => { const part = job.parts!.find(pt => pt.productId === p.id); return part ? { ...p, stock: Math.max(0, p.stock - part.qty) } : p; });
+      return { ...s, products, counters, repairs: exists ? (s.repairs || []).map(x => x.id === r.id ? job : x) : [job, ...(s.repairs || [])] };
     });
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Repair', `${exists ? 'Updated' : 'Opened'} ${r.jobNo || 'job'} · ${r.deviceBrand} ${r.deviceModel}`);
   }, [state.repairs, pushAudit]);
+  const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => { setState(s => ({ ...s, repairs: (s.repairs || []).map(j => { if (j.id !== id) return j; const next = { ...j, ...patch, status }; if (status === 'ready' || status === 'delivered') { if (!next.completedAt) next.completedAt = new Date().toISOString(); } if (status === 'delivered') next.deliveredAt = new Date().toISOString(); return next; }) })); pushAudit('STATUS', 'Repair', `Job status → ${status}`); }, [pushAudit]);
+  const deleteRepair = useCallback((id: string) => { const j = (state.repairs || []).find(x => x.id === id); setState(s => ({ ...s, repairs: (s.repairs || []).filter(x => x.id !== id) })); if (j) pushAudit('DELETE', 'Repair', `Deleted ${j.jobNo}`); }, [state.repairs, pushAudit]);
+  const saveCategory = useCallback((name: string) => { const n = name.trim(); if (!n) return; setState(s => { const cats = s.settings.categories || []; if (cats.some(c => c.toLowerCase() === n.toLowerCase())) return s; return { ...s, settings: { ...s.settings, categories: [...cats, n] } }; }); }, []);
+  const removeCategory = useCallback((name: string) => { setState(s => ({ ...s, settings: { ...s.settings, categories: (s.settings.categories || []).filter(c => c !== name) } })); }, []);
+  const renameCategory = useCallback((oldName: string, newName: string) => { const n = newName.trim(); if (!n || !oldName || n === oldName) return; setState(s => { const cats = s.settings.categories || []; if (cats.some(c => c.toLowerCase() === n.toLowerCase() && c !== oldName)) return s; return { ...s, settings: { ...s.settings, categories: cats.map(c => c === oldName ? n : c) }, products: s.products.map(p => p.category === oldName ? { ...p, category: n } : p) }; }); pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`); }, [pushAudit]);
+  const openSession = useCallback((cashierId: string, opening: number) => { const u = state.users.find(x => x.id === cashierId); if (!u) return; const today = dkey(new Date()); setState(s => { const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today); if (existing) return { ...s, sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: Math.max(0, opening), closed: false, closing: undefined } : x) }; const ns: DaySession = { id: uid(), cashierId, cashierName: u.name, date: today, opening: Math.max(0, opening), closed: false }; return { ...s, sessions: [...s.sessions, ns] }; }); pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${opening.toLocaleString()} · ${u.name}`); }, [state.users, pushAudit]);
+  const saveBrand = useCallback((name: string) => { const n = name.trim(); if (!n) return; setState(s => { const brands = s.settings.brands || []; if (brands.some(b => b.toLowerCase() === n.toLowerCase())) return s; return { ...s, settings: { ...s.settings, brands: [...brands, n] } }; }); }, []);
+  const removeBrand = useCallback((name: string) => { setState(s => ({ ...s, settings: { ...s.settings, brands: (s.settings.brands || []).filter(b => b !== name) } })); }, []);
+  const runManualBackup = useCallback(async () => { await downloadBackup(state, 'manual'); const meta = await idbGetMeta(); setBackupMeta(meta); pushAudit('BACKUP', 'Settings', 'Manual backup downloaded'); }, [state, pushAudit]);
+  const setAutoBackupHours = useCallback(async (hours: number) => { const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) }); setBackupMeta(meta); pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${hours <= 0 ? 'OFF' : hours + 'h'}`); }, [pushAudit]);
+  const flushOfflineQueue = useCallback(async () => { const { flushed } = await flushSyncQueue(); setPendingQueueCount(0); if (flushed > 0) pushAudit('SYNC', 'Offline', `Flushed ${flushed} queued write(s)`); return flushed; }, [pushAudit]);
 
-  const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
-    setState(s => ({
-      ...s,
-      repairs: (s.repairs || []).map(j => {
-        if (j.id !== id) return j;
-        const next = { ...j, ...patch, status };
-        if (status === 'ready' || status === 'delivered') {
-          if (!next.completedAt) next.completedAt = new Date().toISOString();
-        }
-        if (status === 'delivered') next.deliveredAt = new Date().toISOString();
-        return next;
-      }),
-    }));
-    pushAudit('STATUS', 'Repair', `Job status → ${status}`);
-  }, [pushAudit]);
-
-  const deleteRepair = useCallback((id: string) => {
-    const j = (state.repairs || []).find(x => x.id === id);
-    setState(s => ({ ...s, repairs: (s.repairs || []).filter(x => x.id !== id) }));
-    if (j) pushAudit('DELETE', 'Repair', `Deleted ${j.jobNo}`);
-  }, [state.repairs, pushAudit]);
-
-  const saveCategory = useCallback((name: string) => {
-    const n = name.trim();
-    if (!n) return;
-    setState(s => {
-      const cats = s.settings.categories || [];
-      if (cats.some(c => c.toLowerCase() === n.toLowerCase())) return s;
-      return { ...s, settings: { ...s.settings, categories: [...cats, n] } };
-    });
-  }, []);
-
-  const removeCategory = useCallback((name: string) => {
-    setState(s => ({
-      ...s,
-      settings: { ...s.settings, categories: (s.settings.categories || []).filter(c => c !== name) },
-    }));
-  }, []);
-
-  const renameCategory = useCallback((oldName: string, newName: string) => {
-    const n = newName.trim();
-    if (!n || !oldName || n === oldName) return;
-    setState(s => {
-      const cats = s.settings.categories || [];
-      if (cats.some(c => c.toLowerCase() === n.toLowerCase() && c !== oldName)) return s;
-      return {
-        ...s,
-        settings: {
-          ...s.settings,
-          categories: cats.map(c => (c === oldName ? n : c)),
-        },
-        products: s.products.map(p => (p.category === oldName ? { ...p, category: n } : p)),
-      };
-    });
-    pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
-  }, [pushAudit]);
-
-  const openSession = useCallback((cashierId: string, opening: number) => {
-    const u = state.users.find(x => x.id === cashierId);
-    if (!u) return;
-    const today = dkey(new Date());
-    setState(s => {
-      const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
-      if (existing) {
-        return {
-          ...s,
-          sessions: s.sessions.map(x =>
-            x.id === existing.id ? { ...x, opening: Math.max(0, opening), closed: false, closing: undefined } : x,
-          ),
-        };
-      }
-      const ns: DaySession = {
-        id: uid(),
-        cashierId,
-        cashierName: u.name,
-        date: today,
-        opening: Math.max(0, opening),
-        closed: false,
-      };
-      return { ...s, sessions: [...s.sessions, ns] };
-    });
-    pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${opening.toLocaleString()} · ${u.name}`);
-  }, [state.users, pushAudit]);
-
-  const saveBrand = useCallback((name: string) => {
-    const n = name.trim();
-    if (!n) return;
-    setState(s => {
-      const brands = s.settings.brands || [];
-      if (brands.some(b => b.toLowerCase() === n.toLowerCase())) return s;
-      return { ...s, settings: { ...s.settings, brands: [...brands, n] } };
-    });
-  }, []);
-
-  const removeBrand = useCallback((name: string) => {
-    setState(s => ({
-      ...s,
-      settings: { ...s.settings, brands: (s.settings.brands || []).filter(b => b !== name) },
-    }));
-  }, []);
-
-  const runManualBackup = useCallback(async () => {
-    await downloadBackup(state, 'manual');
-    const meta = await idbGetMeta();
-    setBackupMeta(meta);
-    pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
-  }, [state, pushAudit]);
-
-  const setAutoBackupHours = useCallback(async (hours: number) => {
-    const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
-    setBackupMeta(meta);
-    pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${hours <= 0 ? 'OFF' : hours + 'h'}`);
-  }, [pushAudit]);
-
-  const flushOfflineQueue = useCallback(async () => {
-    const { flushed } = await flushSyncQueue();
-    setPendingQueueCount(0);
-    if (flushed > 0) pushAudit('SYNC', 'Offline', `Flushed ${flushed} queued write(s)`);
-    return flushed;
-  }, [pushAudit]);
-
-  const value: StoreCtx = {
-    state, user, viewingAs, dark, toggleTheme, can,
-    adminPrompt, setAdminPrompt,
-    signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
-    saveProduct, deleteProduct, adjustStock,
-    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier,
-    completeSale, refundSale, holdSale, resumeHold, deleteHold,
-    savePurchase, receivePurchase, deletePurchase,
-    addExpense, deleteExpense, processExchange,
-    saveUser, toggleUserActive, deleteUser,
-    setPermission, updateSettings, closeSession, logAudit, clearAudit,
-    exportData, importData, resetData,
-    connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
-    flushOfflineQueue, pendingQueueCount,
-    saveUnit, deleteUnit, findUnitByCode,
-    saveRepair, updateRepairStatus, deleteRepair,
-    saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
-  };
+  const value: StoreCtx = { state, user, viewingAs, dark, toggleTheme, can, adminPrompt, setAdminPrompt, signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
+    saveProduct, deleteProduct, adjustStock, saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, completeSale, refundSale, holdSale, resumeHold, deleteHold,
+    savePurchase, receivePurchase, deletePurchase, addExpense, deleteExpense, processExchange, saveUser, toggleUserActive, deleteUser, setPermission, updateSettings,
+    closeSession, logAudit, clearAudit, exportData, importData, resetData, connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue,
+    pendingQueueCount, saveUnit, deleteUnit, findUnitByCode, saveRepair, updateRepairStatus, deleteRepair, saveCategory, removeCategory, renameCategory, openSession,
+    saveBrand, removeBrand };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
