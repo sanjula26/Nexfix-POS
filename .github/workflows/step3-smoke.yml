@@ -1,0 +1,11 @@
+name: Step 3 Smoke Test
+on:
+  push:
+    branches:
+      - fix/step3-exchange-reconciliation
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Step 3 workflow runner is active"
