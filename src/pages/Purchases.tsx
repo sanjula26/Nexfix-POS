@@ -23,6 +23,8 @@ export default function Purchases() {
 
   const totalValue = state.purchases.reduce((a, p) => a + p.total, 0);
   const poTotal = rows.reduce((a, r) => a + r.qty * r.cost, 0);
+  const selectedProductIds = rows.map(r => r.productId).filter(Boolean);
+  const hasDuplicateProducts = new Set(selectedProductIds).size !== selectedProductIds.length;
 
   const setRow = (i: number, patch: Partial<Row>) => {
     const next = rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
@@ -38,7 +40,7 @@ export default function Purchases() {
     const items = rows.filter(r => r.productId && r.qty > 0).map(r => ({
       productId: r.productId, name: state.products.find(p => p.id === r.productId)?.name || '', qty: r.qty, cost: r.cost,
     }));
-    if (!sup || items.length === 0) return;
+    if (!sup || items.length === 0 || hasDuplicateProducts) return;
     savePurchase({ supplierId: sup.id, supplierName: sup.name, items, total: items.reduce((a, i) => a + i.qty * i.cost, 0) });
     setCreating(false);
     setSupplierId('');
@@ -139,6 +141,11 @@ export default function Purchases() {
                 </div>
               ))}
             </div>
+            {hasDuplicateProducts && (
+              <p className="text-xs text-rose-500 mt-2 font-medium">
+                The same product cannot appear on multiple purchase lines. Use one line per product so receiving stock and tracked units remain consistent.
+              </p>
+            )}
             <button className="btn btn-soft !text-xs mt-2.5" onClick={() => setRows(rs => [...rs, { productId: '', qty: 1, cost: 0 }])}>
               <Plus size={13} /> Add line
             </button>
@@ -150,7 +157,7 @@ export default function Purchases() {
           </div>
 
           <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={submit} disabled={!supplierId || !rows.some(r => r.productId && r.qty > 0)}>
+            <button className="btn btn-primary flex-1" onClick={submit} disabled={!supplierId || !rows.some(r => r.productId && r.qty > 0) || hasDuplicateProducts}>
               <Plus size={15} /> Create purchase order
             </button>
             <button className="btn btn-soft" onClick={() => setCreating(false)}>Cancel</button>
