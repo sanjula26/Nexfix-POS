@@ -1,3 +1,5 @@
+import type { InventoryTransaction } from './inventoryLedger';
+
 export type Role = 'admin' | 'cashier' | 'technician' | 'manager';
 export interface AppUser { id:string; name:string; email:string; password:string; role:Role; active:boolean; createdAt:string; commissionPct?:number; }
 export interface ProductAttributes { resolution?:string; lens?:string; poe?:boolean; nightVision?:string; weatherproof?:string; power?:string; channels?:number; storage?:string; [key:string]:string|number|boolean|undefined; }
@@ -38,4 +40,4 @@ export interface WarrantyClaim { id:string; claimNo:string; unitId?:string; sale
 export interface Settings { shopName:string; tagline:string; address:string; phone:string; email:string; receiptFooter:string; taxDefault:number; lowStockDefault:number; exchangeDays:number; openingFloat:number; adminPinHash:string; whatsappReceipts:boolean; categories?:string[]; brands?:string[]; repairWarrantyDays?:number; }
 export interface Permissions { admin:Record<string,boolean>; cashier:Record<string,boolean>; technician?:Record<string,boolean>; manager?:Record<string,boolean>; }
 export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; }
-export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; }
+export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; }
