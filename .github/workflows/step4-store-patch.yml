@@ -18,15 +18,16 @@ jobs:
           fetch-depth: 0
       - name: Apply exact purchase reconciliation patch
         run: |
+          if grep -Fq "import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';" src/lib/store.tsx; then
+            echo "store.tsx already patched; nothing to do"
+            exit 0
+          fi
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/lib/store.tsx')
           s = p.read_text()
           old_import = "import { syncToGoogleDrive } from './driveSync';\nimport { getMachineIdentity } from './machine';"
           new_import = "import { syncToGoogleDrive } from './driveSync';\nimport { getMachineIdentity } from './machine';\nimport { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';"
-          if new_import in s:
-              print('store.tsx already patched; nothing to do')
-              raise SystemExit(0)
           if s.count(old_import) != 1:
               raise SystemExit('Import anchor mismatch; refusing to modify store.tsx')
           s = s.replace(old_import, new_import, 1)
@@ -43,6 +44,10 @@ jobs:
           test "$(git diff --numstat -- src/lib/store.tsx | awk '{print $2}')" = "25"
       - name: Commit exact patch
         run: |
+          if git diff --quiet -- src/lib/store.tsx; then
+            echo "No store.tsx changes to commit"
+            exit 0
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/lib/store.tsx
