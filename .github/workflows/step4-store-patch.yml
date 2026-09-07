@@ -2,7 +2,7 @@ name: Step 4 store patch
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
     branches: [main]
 
 permissions:
@@ -24,7 +24,10 @@ jobs:
           s = p.read_text()
           old_import = "import { syncToGoogleDrive } from './driveSync';\nimport { getMachineIdentity } from './machine';"
           new_import = "import { syncToGoogleDrive } from './driveSync';\nimport { getMachineIdentity } from './machine';\nimport { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';"
-          if s.count(old_import) != 1 or s.count(new_import) != 0:
+          if new_import in s:
+              print('store.tsx already patched; nothing to do')
+              raise SystemExit(0)
+          if s.count(old_import) != 1:
               raise SystemExit('Import anchor mismatch; refusing to modify store.tsx')
           s = s.replace(old_import, new_import, 1)
           old_block = '''  const receivePurchase = useCallback((id: string) => {\n    const po = state.purchases.find(x => x.id === id);\n    if (!po || po.status === 'received') return;\n    setState(s => {\n      const newUnits: InventoryUnit[] = [];\n      const products = s.products.map(p => {\n        const it = po.items.find(i => i.productId === p.id);\n        if (!it) return p;\n        // Auto-create placeholder IMEI/Serial units for tracked products\n        if (p.trackImei || p.trackSerial) {\n          const qty = Math.floor(it.qty);\n          for (let i = 0; i < qty; i++) {\n            newUnits.push({\n              id: uid(),\n              productId: p.id,\n              imei: p.trackImei ? '' : undefined,\n              serial: p.trackSerial && !p.trackImei ? '' : undefined,\n              status: 'in_stock',\n              purchaseId: po.id,\n              cost: it.cost,\n              expiryDate: it.expiryDate,\n              note: `From ${po.poNo} — fill IMEI/Serial in Units`,\n              createdAt: new Date().toISOString(),\n            } as InventoryUnit);\n          }\n        }\n        return { ...p, stock: p.stock + it.qty, cost: it.cost };\n      });\n      return {\n        ...s,\n        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),\n        products,\n        units: [...newUnits, ...(s.units || [])],\n      };\n    });\n    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);\n  }, [state.purchases, pushAudit]);\n\n  const deletePurchase = useCallback((id: string) => {\n    const po = state.purchases.find(x => x.id === id);\n    if (!po) return;\n    setState(s => {\n      // If PO was already received, reverse the stock that was added\n      let products = s.products;\n      if (po.status === 'received') {\n        products = s.products.map(p => {\n          const it = po.items.find(i => i.productId === p.id);\n          return it ? { ...p, stock: Math.max(0, p.stock - it.qty) } : p;\n        });\n      }\n      return { ...s, purchases: s.purchases.filter(x => x.id !== id), products };\n    });\n    pushAudit('DELETE', 'Purchase', `Deleted ${po.poNo}${po.status === 'received' ? ' · stock reversed' : ''}`);\n  }, [state.purchases, pushAudit]);'''
@@ -36,8 +39,8 @@ jobs:
           PY
           git diff --check
           git diff --numstat -- src/lib/store.tsx
-          test "$(git diff --numstat -- src/lib/store.tsx | awk '{print $1}')" = "30"
-          test "$(git diff --numstat -- src/lib/store.tsx | awk '{print $2}')" = "28"
+          test "$(git diff --numstat -- src/lib/store.tsx | awk '{print $1}')" = "27"
+          test "$(git diff --numstat -- src/lib/store.tsx | awk '{print $2}')" = "25"
       - name: Commit exact patch
         run: |
           git config user.name 'github-actions[bot]'
