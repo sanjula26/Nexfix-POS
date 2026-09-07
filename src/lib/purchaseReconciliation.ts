@@ -8,8 +8,8 @@ export interface PurchaseReceivePlan {
 
 /**
  * Builds a deterministic receive plan from every purchase line.
- * Duplicate product lines are aggregated instead of using Array.find(), so
- * stock and tracked-unit creation cannot silently ignore later lines.
+ * Purchase creation rejects duplicate product lines, so the store-layer
+ * receive path must reject them too rather than silently choosing one cost.
  */
 export function buildPurchaseReceivePlan(po: Purchase, products: readonly Product[]): PurchaseReceivePlan | null {
   const productById = new Map(products.map(p => [p.id, p]));
@@ -22,14 +22,17 @@ export function buildPurchaseReceivePlan(po: Purchase, products: readonly Produc
     if (!product || !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isFinite(item.cost) || item.cost < 0) {
       return null;
     }
+    // Duplicate product lines can carry different costs. Reject them at the
+    // business-logic boundary instead of silently losing a line's cost.
+    if (productStockDelta.has(item.productId)) return null;
 
-    productStockDelta.set(item.productId, (productStockDelta.get(item.productId) || 0) + item.qty);
+    productStockDelta.set(item.productId, item.qty);
     productCost.set(item.productId, item.cost);
 
     if (product.trackImei || product.trackSerial) {
       const qty = Math.floor(item.qty);
       if (qty !== item.qty) return null;
-      trackedUnitCount.set(item.productId, (trackedUnitCount.get(item.productId) || 0) + qty);
+      trackedUnitCount.set(item.productId, qty);
     }
   }
 

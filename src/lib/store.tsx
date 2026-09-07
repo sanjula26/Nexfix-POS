@@ -14,6 +14,7 @@ import {
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
+import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -698,31 +699,38 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const receivePurchase = useCallback((id: string) => {
     const po = state.purchases.find(x => x.id === id);
-    if (!po || po.status === 'received') return;
+    if (!po || po.status !== 'pending') return;
+    const plan = buildPurchaseReceivePlan(po, state.products);
+    if (!plan) return;
     setState(s => {
+      const currentPo = s.purchases.find(x => x.id === id);
+      if (!currentPo || currentPo.status !== 'pending') return s;
+      const currentPlan = buildPurchaseReceivePlan(currentPo, s.products);
+      if (!currentPlan) return s;
+      const now = new Date().toISOString();
       const newUnits: InventoryUnit[] = [];
       const products = s.products.map(p => {
-        const it = po.items.find(i => i.productId === p.id);
-        if (!it) return p;
-        // Auto-create placeholder IMEI/Serial units for tracked products
-        if (p.trackImei || p.trackSerial) {
-          const qty = Math.floor(it.qty);
-          for (let i = 0; i < qty; i++) {
+        const delta = currentPlan.productStockDelta.get(p.id);
+        if (delta === undefined) return p;
+        const cost = currentPlan.productCost.get(p.id);
+        const trackedQty = currentPlan.trackedUnitCount.get(p.id) || 0;
+        if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
+          for (let i = 0; i < trackedQty; i++) {
             newUnits.push({
               id: uid(),
               productId: p.id,
               imei: p.trackImei ? '' : undefined,
               serial: p.trackSerial && !p.trackImei ? '' : undefined,
               status: 'in_stock',
-              purchaseId: po.id,
-              cost: it.cost,
-              expiryDate: it.expiryDate,
-              note: `From ${po.poNo} — fill IMEI/Serial in Units`,
-              createdAt: new Date().toISOString(),
+              purchaseId: currentPo.id,
+              cost,
+              expiryDate: currentPo.items.find(item => item.productId === p.id)?.expiryDate,
+              note: `From ${currentPo.poNo} — fill IMEI/Serial in Units`,
+              createdAt: now,
             } as InventoryUnit);
           }
         }
-        return { ...p, stock: p.stock + it.qty, cost: it.cost };
+        return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}) };
       });
       return {
         ...s,
@@ -732,23 +740,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
     });
     pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
-  }, [state.purchases, pushAudit]);
+  }, [state.purchases, state.products, pushAudit]);
 
   const deletePurchase = useCallback((id: string) => {
     const po = state.purchases.find(x => x.id === id);
-    if (!po) return;
+    if (!po || !canDeletePurchase(po)) return;
     setState(s => {
-      // If PO was already received, reverse the stock that was added
-      let products = s.products;
-      if (po.status === 'received') {
-        products = s.products.map(p => {
-          const it = po.items.find(i => i.productId === p.id);
-          return it ? { ...p, stock: Math.max(0, p.stock - it.qty) } : p;
-        });
-      }
-      return { ...s, purchases: s.purchases.filter(x => x.id !== id), products };
+      const currentPo = s.purchases.find(x => x.id === id);
+      if (!currentPo || !canDeletePurchase(currentPo)) return s;
+      return { ...s, purchases: s.purchases.filter(x => x.id !== id) };
     });
-    pushAudit('DELETE', 'Purchase', `Deleted ${po.poNo}${po.status === 'received' ? ' · stock reversed' : ''}`);
+    pushAudit('DELETE', 'Purchase', `Deleted ${po.poNo}`);
   }, [state.purchases, pushAudit]);
 
   /* ---------------- expenses ---------------- */
