@@ -35,6 +35,32 @@ export default function Customers() {
     ? state.sales.filter(s => s.customerId === historyOf.id).sort((a, b) => +new Date(b.date) - +new Date(a.date))
     : [];
 
+  const accountLedger = useMemo(() => {
+    if (!historyOf) return [] as Array<{ id: string; date: string; billNo: string; type: 'charge' | 'refund'; amount: number; balance: number }>;
+
+    const movements = state.sales
+      .filter(s => s.customerId === historyOf.id && (s.status === 'completed' || s.status === 'refunded'))
+      .map(s => {
+        const creditAmount = Math.max(0, Math.min(s.total, s.total - s.amountPaid));
+        const isRefund = s.status === 'refunded';
+        return {
+          id: `${s.id}-${isRefund ? 'refund' : 'charge'}`,
+          date: s.date,
+          billNo: s.billNo,
+          type: isRefund ? 'refund' as const : 'charge' as const,
+          amount: creditAmount,
+        };
+      })
+      .filter(x => Number.isFinite(x.amount) && x.amount > 0)
+      .sort((a, b) => +new Date(a.date) - +new Date(b.date));
+
+    let balance = 0;
+    return movements.map(m => {
+      balance += m.type === 'charge' ? m.amount : -m.amount;
+      return { ...m, balance };
+    }).reverse();
+  }, [historyOf, state.sales]);
+
   return (
     <div>
       <PageHeading
@@ -174,7 +200,7 @@ export default function Customers() {
         </div>
       </Modal>
 
-      {/* history */}
+      {/* history + account ledger */}
       <Modal open={!!historyOf} onClose={() => setHistoryOf(null)} title="Purchase history" sub={historyOf?.name} wide>
         {historyOf && (
           <div>
@@ -191,6 +217,50 @@ export default function Customers() {
                 </div>
               ))}
             </div>
+
+            <div className="rounded-xl border border-line overflow-hidden mb-5">
+              <div className="px-4 py-3 border-b border-line flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-bold text-ink">Credit account ledger</div>
+                  <div className="text-[11px] text-faint mt-0.5">Credit sales and refunds, oldest balance calculated forward</div>
+                </div>
+                <Badge tone={historyOf.creditBalance > 0 ? 'amber' : 'emerald'} className="num">
+                  {fmtRs(historyOf.creditBalance)} outstanding
+                </Badge>
+              </div>
+              {accountLedger.length === 0 ? (
+                <div className="p-5 text-center text-xs text-faint">No credit movements recorded for this customer.</div>
+              ) : (
+                <div className="max-h-[32vh] overflow-y-auto">
+                  <table className="w-full min-w-[560px]">
+                    <thead>
+                      <tr>
+                        <th className="th">Date</th><th className="th">Reference</th><th className="th">Type</th>
+                        <th className="th !text-right">Amount</th><th className="th !text-right">Running balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountLedger.map(entry => (
+                        <tr key={entry.id} className="hover:bg-raised/40">
+                          <td className="td text-[12px] text-sub">{fmtDate(entry.date)}</td>
+                          <td className="td font-semibold text-violet-500 text-[12px]">{entry.billNo}</td>
+                          <td className="td">
+                            <Badge tone={entry.type === 'charge' ? 'amber' : 'emerald'}>
+                              {entry.type === 'charge' ? 'Credit charge' : 'Refund'}
+                            </Badge>
+                          </td>
+                          <td className={`td !text-right num font-semibold ${entry.type === 'charge' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            {entry.type === 'charge' ? '+' : '-'}{fmtRs(entry.amount)}
+                          </td>
+                          <td className="td !text-right num font-bold text-ink">{fmtRs(entry.balance)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
             {purchaseRows.length === 0 ? (
               <EmptyState icon={<History size={24} />} title="No purchases yet" />
             ) : (
