@@ -6,7 +6,7 @@ import {
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
 import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed } from './utils';
-import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, flushSyncQueue, registerServiceWorker,
@@ -247,7 +247,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           await idbSaveState(local);
         }
         const meta = await idbGetMeta();
-        if (!cancelled) setBackupMeta(meta);
+        const queued = await idbListQueue();
+        if (!cancelled) {
+          setBackupMeta(meta);
+          setPendingQueueCount(queued.length);
+        }
       } catch { /* keep localStorage state */ }
       if (!cancelled) setReady(true);
       // Register service worker for offline shell
@@ -273,8 +277,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const unsub = onConnectivityChange(async (status) => {
       setConnectivity(status);
       if (status === 'online') {
-        const { flushed } = await flushSyncQueue();
-        setPendingQueueCount(0);
+        const { flushed, pending } = await flushSyncQueue();
+        // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
+        setPendingQueueCount(pending);
         // On reconnect: push full state to Google + local snapshot (cloud preferred)
         try {
           await downloadBackup(stateRef.current, 'auto', {
@@ -504,7 +509,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sp = state.suppliers.find(x => x.id === id);
     setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x.id !== id) }));
     if (sp) pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
-  }, [pushAudit, state.suppliers]);
+  }, [state.suppliers, pushAudit]);
 
   /* ---------------- sales ---------------- */
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
@@ -1109,8 +1114,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit]);
 
   const flushOfflineQueue = useCallback(async () => {
-    const { flushed } = await flushSyncQueue();
-    setPendingQueueCount(0);
+    const { flushed, pending } = await flushSyncQueue();
+    setPendingQueueCount(pending);
     if (flushed > 0) pushAudit('SYNC', 'Offline', `Flushed ${flushed} queued write(s)`);
     return flushed;
   }, [pushAudit]);
