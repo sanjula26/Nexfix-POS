@@ -8,25 +8,45 @@ function createMachineId(): string {
   return `POS-${random.toUpperCase()}`;
 }
 
+function readStorage(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Returns one stable terminal identity per browser/desktop installation. */
 export function getMachineIdentity(): { id: string; name: string } {
   if (typeof window === 'undefined') return { id: 'server-terminal', name: 'POS Terminal' };
-  let id = window.localStorage.getItem(MACHINE_ID_KEY);
+
+  let id = readStorage(MACHINE_ID_KEY);
   if (!id) {
     id = createMachineId();
-    window.localStorage.setItem(MACHINE_ID_KEY, id);
+    writeStorage(MACHINE_ID_KEY, id);
   }
-  let name = window.localStorage.getItem(MACHINE_NAME_KEY);
+
+  let name = readStorage(MACHINE_NAME_KEY);
   if (!name) {
     name = id;
-    window.localStorage.setItem(MACHINE_NAME_KEY, name);
+    writeStorage(MACHINE_NAME_KEY, name);
   }
+
   return { id, name };
 }
 
 export function setMachineName(name: string): { id: string; name: string } {
   const current = getMachineIdentity();
   const next = name.trim().slice(0, 80) || current.id;
-  window.localStorage.setItem(MACHINE_NAME_KEY, next);
+  writeStorage(MACHINE_NAME_KEY, next);
   return { id: current.id, name: next };
 }
