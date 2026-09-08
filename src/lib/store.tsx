@@ -407,8 +407,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         setState(s => ({
           ...s,
           audit: [{
-            id: uid(), time: new Date().toISOString(),
-            user: user?.email || 'unknown', action: 'DENIED', entity: 'Auth',
+            id: uid(), time: new Date().toISOString(), user: user?.email || 'unknown', action: 'DENIED', entity: 'Auth',
             details: `Failed ADMIN unlock attempt by ${user?.name || 'unknown'}`,
           }, ...s.audit].slice(0, 500),
         }));
@@ -652,6 +651,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     sale.items.forEach(it => {
       refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);
     });
+    // Defensive normalization: persisted/imported sale metadata must never be able to
+    // manufacture loyalty points during a refund. Only finite, non-negative integers
+    // recorded on the sale are eligible for the reversal.
+    const pointsEarned = Number.isFinite(sale.pointsEarned)
+      ? Math.max(0, Math.floor(sale.pointsEarned || 0))
+      : 0;
+    const pointsRedeemed = Number.isFinite(sale.pointsRedeemed)
+      ? Math.max(0, Math.floor(sale.pointsRedeemed || 0))
+      : 0;
     setState(s => ({
       ...s,
       sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),
@@ -663,7 +671,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         ? {
             ...c,
             creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)),
-            loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)),
+            loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsEarned + pointsRedeemed),
           }
         : c,
       ),
