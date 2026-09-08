@@ -86,10 +86,10 @@ export default function Settings() {
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
   void set;
 
-  const submitPin = () => {
+  const submitPin = async () => {
     setPinMsg(null);
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
-    const res = changeAdminPin(pinCur, pinNew);
+    const res = await changeAdminPin(pinCur, pinNew);
     if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
     setPinMsg({ ok: true, text: 'Admin switch password updated' });
     setPinCur(''); setPinNew(''); setPinConfirm('');

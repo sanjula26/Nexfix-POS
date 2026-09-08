@@ -261,11 +261,11 @@ function AdminUnlockModal() {
     if (lockUntil && lockSecsLeft === 0) { setLockUntil(null); setError(''); }
   }, [lockSecsLeft, lockUntil]);
 
-  const tryUnlock = () => {
+  const tryUnlock = async () => {
     if (!pin || busy || lockSecsLeft > 0) return;
     setBusy(true); setError('');
-    setTimeout(() => {
-      const res = switchRole('admin', pin);
+    setTimeout(async () => {
+      const res = await switchRole('admin', pin);
       setBusy(false);
       if (res.ok) { setAdminPrompt(false); return; }
       armIdle();

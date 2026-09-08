@@ -16,7 +16,7 @@ export default function Users() {
   const [formOk, setFormOk] = useState('');
 
 
-  const save = () => {
+  const save = async () => {
     setFormErr('');
     setFormOk('');
     if (!editing || !editing.name.trim() || !editing.email.trim()) {
@@ -58,7 +58,7 @@ export default function Users() {
       setFormErr('Password is required');
       return;
     }
-    saveUser(toSave);
+    await saveUser(toSave);
     setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
     setConfirmPass('');
     setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
@@ -136,7 +136,7 @@ export default function Users() {
                 <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" />
               </span>
             </Field>
-            <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored as SHA-256 hash' : 'Leave blank to keep current password'}>
+            <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored as PBKDF2-SHA256 hash' : 'Leave blank to keep current password'}>
               <span className="relative block">
                 <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
                 <input

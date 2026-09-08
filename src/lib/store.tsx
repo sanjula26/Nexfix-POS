@@ -5,7 +5,8 @@ import {
   InventoryUnit, RepairJob, RepairStatus,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
-import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed } from './utils';
+import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, isHashed } from './utils';
+import { hashCredential, isPbkdf2Hash, verifyCredential } from './passwordAuth';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup } from './backup';
 import {
@@ -60,13 +61,13 @@ interface StoreCtx {
   /** true while the ADMIN unlock prompt is visible — the previous user's session is nullified (inert UI, no shortcuts) */
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
-  signIn: (email: string, password: string, remember: boolean) => { ok: boolean; error?: string };
+  signIn: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
-  switchRole: (role: Role, pin?: string) => { ok: boolean; error?: string };
-  changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
+  switchRole: (role: Role, pin?: string) => Promise<{ ok: boolean; error?: string }>;
+  changeAdminPin: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>;
   /** verify the admin password without switching role (used for price overrides etc.) */
-  verifyAdminPin: (pin: string, reason?: string) => boolean;
+  verifyAdminPin: (pin: string, reason?: string) => Promise<boolean>;
   // products
   saveProduct: (p: Product) => void;
   deleteProduct: (id: string) => void;
@@ -132,10 +133,8 @@ const Ctx = createContext<StoreCtx | null>(null);
 
 function migrate(s: POSState): POSState {
   // Upgrade plaintext passwords → SHA-256 hashes (one-time migration)
-  const users = (s.users || []).map(u => ({
-    ...u,
-    password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
-  }));
+  // Credentials are migrated lazily after successful verification.
+  const users = (s.users || []).map(u => ({ ...u, password: u.password || '' }));
   // Upgrade weak FNV admin PIN hash if it still looks like the old format (8 hex + . + base36)
   let adminPinHash = s.settings?.adminPinHash || hashPin('admin123');
   if (adminPinHash.includes('.') || adminPinHash.length < 32) {
@@ -319,8 +318,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   );
   const viewingAs: Role = user?.role || 'admin';
 
-  const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
-    const ok = verifyPassword(pin || '', state.settings.adminPinHash);
+  const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
+    const verification = await verifyCredential(pin || '', state.settings.adminPinHash);
+    const ok = verification.ok;
+    if (ok && verification.needsRehash) {
+      const upgraded = await hashCredential(pin || '');
+      setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgraded } }));
+    }
     if (!ok) {
       setState(s => ({
         ...s,
@@ -355,14 +359,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [user, state.permissions],
   );
 
-  const signIn = useCallback((email: string, password: string, remember: boolean) => {
+  const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
     const u = state.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
     if (!u) return { ok: false, error: 'No account found for this email' };
-    // Support both hashed (new) and legacy plaintext during transition
-    const passwordOk = isHashed(u.password)
-      ? verifyPassword(password, u.password)
-      : u.password === password;
-    if (!passwordOk) return { ok: false, error: 'Incorrect password' };
+    const verification = await verifyCredential(password, u.password);
+    if (!verification.ok) return { ok: false, error: 'Incorrect password' };
     if (!u.active) return { ok: false, error: 'This account has been deactivated' };
     const sess = { userId: u.id, remember };
     setSession(sess);
@@ -370,19 +371,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       else sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
     } catch { /* ignore */ }
-    // Auto-upgrade plaintext password to hash on successful login
-    if (!isHashed(u.password)) {
-      setState(s => ({
-        ...s,
-        users: s.users.map(x => x.id === u.id ? { ...x, password: hashPassword(password) } : x),
-        audit: [{ id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth', details: `${u.name} signed in` }, ...s.audit].slice(0, 500),
-      }));
-    } else {
-      setState(s => ({
-        ...s,
-        audit: [{ id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth', details: `${u.name} signed in` }, ...s.audit].slice(0, 500),
-      }));
-    }
+    const upgradedPassword = verification.needsRehash ? await hashCredential(password) : u.password;
+    setState(s => ({
+      ...s,
+      users: s.users.map(x => x.id === u.id ? { ...x, password: upgradedPassword } : x),
+      audit: [{ id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth', details: `${u.name} signed in` }, ...s.audit].slice(0, 500),
+    }));
     return { ok: true };
   }, [state.users]);
 
@@ -392,7 +386,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
-  const switchRole = useCallback((role: Role, pin?: string): { ok: boolean; error?: string } => {
+  const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
     // Prefer restoring the previous user when switching back to cashier
     let target = state.users.find(u => u.role === role && u.active);
     if (role === 'cashier' && user?.role === 'admin') {
@@ -408,7 +402,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     // cashier → admin requires the admin switch password
     if (role === 'admin' && user?.role === 'cashier') {
-      if (!verifyPassword(pin || '', state.settings.adminPinHash)) {
+      const verification = await verifyCredential(pin || '', state.settings.adminPinHash);
+      if (!verification.ok) {
         setState(s => ({
           ...s,
           audit: [{
@@ -418,6 +413,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           }, ...s.audit].slice(0, 500),
         }));
         return { ok: false, error: 'Incorrect admin password' };
+      }
+      if (verification.needsRehash) {
+        const upgraded = await hashCredential(pin || '');
+        setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgraded } }));
       }
       // Remember current cashier so we can restore them later
       try { sessionStorage.setItem('nexfix_prev_user', user.id); } catch { /* ignore */ }
@@ -440,11 +439,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   }, [state.users, state.settings.adminPinHash, session, user]);
 
-  const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
+  const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
-    if (!verifyPassword(current, state.settings.adminPinHash)) return { ok: false, error: 'Current password is incorrect' };
+    const verification = await verifyCredential(current, state.settings.adminPinHash);
+    if (!verification.ok) return { ok: false, error: 'Current password is incorrect' };
     if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
-    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
+    const upgraded = await hashCredential(next.trim());
+    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgraded } }));
     pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
     return { ok: true };
   }, [user, state.settings.adminPinHash, pushAudit]);
@@ -816,13 +817,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
-  const saveUser = useCallback((u: AppUser) => {
+  const saveUser = useCallback(async (u: AppUser) => {
     const exists = state.users.some(x => x.id === u.id);
-    // Always store password as hash (skip re-hash if already hashed and unchanged)
     const existing = state.users.find(x => x.id === u.id);
-    const password = isHashed(u.password)
-      ? u.password
-      : (existing && u.password === existing.password ? existing.password : hashPassword(u.password));
+    const password = existing && u.password === existing.password
+      ? existing.password
+      : (isPbkdf2Hash(u.password) ? u.password : await hashCredential(u.password));
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);

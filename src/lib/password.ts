@@ -33,7 +33,7 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 async function derive(password: string, salt: Uint8Array): Promise<Uint8Array> {
   const key = await getCrypto().subtle.importKey(
     'raw',
-    new TextEncoder().encode(password),
+    new TextEncoder().encode(password) as unknown as BufferSource,
     'PBKDF2',
     false,
     ['deriveBits'],
@@ -41,7 +41,7 @@ async function derive(password: string, salt: Uint8Array): Promise<Uint8Array> {
   const bits = await getCrypto().subtle.deriveBits(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as unknown as BufferSource,
       iterations: PBKDF2_ITERATIONS,
       hash: 'SHA-256',
     },

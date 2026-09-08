@@ -1,4 +1,6 @@
 import { hashPassword as hashPbkdf2Password, isPbkdf2Hash, verifyPassword as verifyPbkdf2Password } from './password';
+
+export { isPbkdf2Hash } from './password';
 import { hashPassword as hashLegacyPassword, isHashed as isLegacyHash, verifyPassword as verifyLegacyPassword } from './utils';
 
 export interface CredentialVerification {

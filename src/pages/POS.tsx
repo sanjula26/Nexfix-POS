@@ -429,8 +429,8 @@ export default function POS() {
   const tryGate = () => {
     if (!gatePin || gateBusy) return;
     setGateBusy(true); setGateErr('');
-    setTimeout(() => {
-      const ok = verifyAdminPin(gatePin, 'price override');
+    setTimeout(async () => {
+      const ok = await verifyAdminPin(gatePin, 'price override');
       setGateBusy(false);
       if (ok) { setPriceUnlocked(true); setGateOpen(false); setGatePin(''); toast('Price override unlocked for this bill', 'amber'); }
       else { setGateErr('Incorrect admin password'); setGatePin(''); }
