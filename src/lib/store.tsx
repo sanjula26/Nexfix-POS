@@ -146,6 +146,7 @@ function migrate(s: POSState): POSState {
     users,
     units: s.units || [],
     repairs: s.repairs || [],
+    supplierPayments: s.supplierPayments || [],
     counters: {
       bill: s.counters?.bill ?? 0,
       po: s.counters?.po ?? 0,
