@@ -5,6 +5,54 @@ import {
 } from './types';
 import { mulberry32, uid, dkey, hashPin, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 
+const DEMO_SEED_ENABLED = import.meta.env.VITE_ENABLE_DEMO_SEED !== 'false';
+const DEMO_BASELINE_KEY = 'nexfix_demo_seed_baseline_v1';
+const DEMO_COLLECTIONS = [
+  'products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges',
+  'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations',
+  'warrantyClaims', 'inventoryTransactions', 'supplierPayments',
+] as const;
+
+type DemoBaseline = Record<string, string[]>;
+
+function captureDemoBaseline(state: POSState): DemoBaseline {
+  const baseline: DemoBaseline = {};
+  for (const key of DEMO_COLLECTIONS) {
+    const value = (state as unknown as Record<string, unknown>)[key];
+    baseline[key] = Array.isArray(value)
+      ? value.filter((item): item is { id: string } => !!item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string').map(item => item.id)
+      : [];
+  }
+  return baseline;
+}
+
+function storeDemoBaseline(state: POSState): void {
+  try {
+    localStorage.setItem(DEMO_BASELINE_KEY, JSON.stringify(captureDemoBaseline(state)));
+  } catch { /* safe failure: reset guard will refuse without a baseline */ }
+}
+
+function canResetDemoData(current: POSState): boolean {
+  if (!DEMO_SEED_ENABLED || typeof localStorage === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(DEMO_BASELINE_KEY);
+    if (!raw) return false;
+    const baseline = JSON.parse(raw) as DemoBaseline;
+    for (const key of DEMO_COLLECTIONS) {
+      const value = (current as unknown as Record<string, unknown>)[key];
+      if (!Array.isArray(value)) continue;
+      const allowed = new Set(baseline[key] || []);
+      for (const item of value) {
+        if (!item || typeof item !== 'object' || typeof (item as { id?: unknown }).id !== 'string') return false;
+        if (!allowed.has((item as { id: string }).id)) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const PERMISSION_KEYS: { key: string; label: string; group: string }[] = [
   { key: 'page:dashboard', label: 'Dashboard', group: 'Pages' },
   { key: 'page:pos', label: 'POS / Sales', group: 'Pages' },
@@ -44,6 +92,18 @@ export const DEFAULT_BRANDS = [
 const sell = (p: number) => Math.round(p * 100) / 100;
 
 export function buildSeed(): POSState {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const existing = localStorage.getItem('nexfix_pos_v2');
+      if (existing) {
+        const current = JSON.parse(existing) as POSState;
+        if (current && current.products && current.users && !canResetDemoData(current)) {
+          return current;
+        }
+      }
+    } catch { /* continue with a fresh seed */ }
+  }
+
   const rng = mulberry32(20260813);
   const now = new Date();
   const iso = (d: Date) => d.toISOString();
@@ -307,10 +367,13 @@ export function buildSeed(): POSState {
     return p;
   });
 
-  return {
+  const seed: POSState = {
     products: enrichedProducts, customers, suppliers, sales, purchases, expenses, exchanges,
     users, audit, held: [], sessions, settings, permissions,
     counters: { bill: billSeq, po: 3, ex: 1, job: 3, quote: 0, claim: 0 },
     units, repairs,
   };
+
+  storeDemoBaseline(seed);
+  return seed;
 }
