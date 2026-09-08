@@ -1,4 +1,5 @@
 import type { InventoryTransaction } from './inventoryLedger';
+import type { SupplierPayment } from './supplierPayments';
 
 export type Role = 'admin' | 'cashier' | 'technician' | 'manager';
 export interface AppUser { id:string; name:string; email:string; password:string; role:Role; active:boolean; createdAt:string; commissionPct?:number; }
@@ -12,14 +13,7 @@ export interface Supplier { id:string; name:string; contactPerson?:string; phone
 export interface SaleItem { productId:string; name:string; qty:number; price:number; cost:number; discount?:number; priceOverridden?:boolean; unitIds?:string[]; imeis?:string[]; serials?:string[]; warrantyMonths?:number; }
 export type PaymentMethod='cash'|'card'|'bank'|'mobile'|'credit';
 export interface PaymentLeg { method:PaymentMethod; amount:number }
-export interface Sale {
-  id:string; billNo:string; date:string; cashierId:string; cashierName:string;
-  /** Optional for backward compatibility; new sales will be assigned a terminal identity in Phase 1. */
-  machineId?:string; machineName?:string;
-  customerId?:string; customerName:string; items:SaleItem[]; subtotal:number; discount:number; tax:number; total:number;
-  payment:PaymentMethod; payments?:PaymentLeg[]; shipping?:number; pointsRedeemed?:number; pointsEarned?:number; note?:string;
-  amountPaid:number; change:number; profit:number; status:'completed'|'refunded'|'exchanged';
-}
+export interface Sale { id:string; billNo:string; date:string; cashierId:string; cashierName:string; machineId?:string; machineName?:string; customerId?:string; customerName:string; items:SaleItem[]; subtotal:number; discount:number; tax:number; total:number; payment:PaymentMethod; payments?:PaymentLeg[]; shipping?:number; pointsRedeemed?:number; pointsEarned?:number; note?:string; amountPaid:number; change:number; profit:number; status:'completed'|'refunded'|'exchanged'; }
 export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; }
 export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; }
 export interface Expense { id:string; date:string; category:string; note:string; amount:number; by:string; }
@@ -40,4 +34,4 @@ export interface WarrantyClaim { id:string; claimNo:string; unitId?:string; sale
 export interface Settings { shopName:string; tagline:string; address:string; phone:string; email:string; receiptFooter:string; taxDefault:number; lowStockDefault:number; exchangeDays:number; openingFloat:number; adminPinHash:string; whatsappReceipts:boolean; categories?:string[]; brands?:string[]; repairWarrantyDays?:number; }
 export interface Permissions { admin:Record<string,boolean>; cashier:Record<string,boolean>; technician?:Record<string,boolean>; manager?:Record<string,boolean>; }
 export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; }
-export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; }
+export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; }
