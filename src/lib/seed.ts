@@ -41,9 +41,31 @@ export const DEFAULT_BRANDS = [
   'Baseus', 'Hikvision', 'Dahua', 'CP Plus', 'Imou', 'Generic', 'Other',
 ];
 
+const DEMO_SEED_ENABLED = import.meta.env.VITE_SEED_DEMO === 'true';
+
+const emptyState = (): POSState => {
+  const adminPermissions: Record<string, boolean> = {};
+  PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
+  return {
+    products: [], customers: [], suppliers: [], sales: [], purchases: [], expenses: [], exchanges: [],
+    users: [], audit: [], held: [], sessions: [],
+    settings: {
+      shopName: '', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
+      adminPinHash: hashPin('admin123'), whatsappReceipts: false,
+      categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
+    },
+    permissions: { admin: adminPermissions, cashier: {} },
+    counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
+    units: [], repairs: [], kitItems: [], quotations: [], warrantyClaims: [],
+  };
+};
+
 const sell = (p: number) => Math.round(p * 100) / 100;
 
 export function buildSeed(): POSState {
+  if (!DEMO_SEED_ENABLED) return emptyState();
+
   const rng = mulberry32(20260813);
   const now = new Date();
   const iso = (d: Date) => d.toISOString();
@@ -106,7 +128,6 @@ export function buildSeed(): POSState {
     { id: 'c-anne', name: 'Anne Perera', phone: '+94 72 998 4411', email: 'anne.p@example.com', address: '21 Hill Street, Dehiwala', createdAt: iso(daysAgo(25)), creditBalance: 0, loyaltyPoints: 10 },
   ];
 
-  // ---- sales (deterministic, spread across last 45 days) ----
   const sales: Sale[] = [];
   const cashiers = [users[0], users[1], users[2]];
   const payments: PaymentMethod[] = ['cash', 'cash', 'cash', 'card', 'card', 'mobile', 'bank'];
@@ -116,7 +137,7 @@ export function buildSeed(): POSState {
   const makeSale = (date: Date, idx: number): Sale => {
     const nItems = 1 + Math.floor(rng() * 3);
     const picked = new Set<number>();
-    const items = [];
+    const items: Sale['items'] = [];
     for (let i = 0; i < nItems; i++) {
       let pi = Math.floor(rng() * saleCatalog.length);
       while (picked.has(pi)) pi = Math.floor(rng() * saleCatalog.length);
@@ -145,12 +166,9 @@ export function buildSeed(): POSState {
   };
 
   for (let d = 45; d >= 1; d--) {
-    const count = d % 7 === 0 ? 0 : 1 + Math.floor(rng() * 3); // some Sundays closed
-    for (let i = 0; i < count; i++) {
-      sales.push(makeSale(daysAgo(d, 9 + Math.floor(rng() * 9)), d));
-    }
+    const count = d % 7 === 0 ? 0 : 1 + Math.floor(rng() * 3);
+    for (let i = 0; i < count; i++) sales.push(makeSale(daysAgo(d, 9 + Math.floor(rng() * 9)), d));
   }
-  // a few sales today so dashboards feel alive
   sales.push(makeSale(daysAgo(0, 9), 0), makeSale(daysAgo(0, 11), 0), makeSale(daysAgo(0, 13), 0));
   sales.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   billSeq += 3;
@@ -161,52 +179,38 @@ export function buildSeed(): POSState {
       items: [
         { productId: 'p-gala15', name: 'Samsung Galaxy A15 5G', qty: 10, cost: 62000 },
         { productId: 'p-rn13', name: 'Xiaomi Redmi Note 13', qty: 12, cost: 68500 },
-      ],
-      total: 10 * 62000 + 12 * 68500, status: 'received',
+      ], total: 10 * 62000 + 12 * 68500, status: 'received',
     },
     {
       id: 'po-2', poNo: 'PO-0002', date: iso(daysAgo(9)), supplierId: 's-pcb', supplierName: 'Power Cell Batteries Ltd',
       items: [
         { productId: 'p-chg25w', name: 'USB-C Fast Charger 25W', qty: 40, cost: 2800 },
         { productId: 'p-ank10k', name: 'Anker PowerCore 10000', qty: 15, cost: 9800 },
-      ],
-      total: 40 * 2800 + 15 * 9800, status: 'received',
+      ], total: 40 * 2800 + 15 * 9800, status: 'received',
     },
     {
       id: 'po-3', poNo: 'PO-0003', date: iso(daysAgo(2)), supplierId: 's-tdl', supplierName: 'Tech Distributors Lanka',
       items: [
         { productId: 'p-ids3', name: 'Lenovo IdeaPad Slim 3', qty: 4, cost: 168000 },
         { productId: 'p-sd128', name: 'SanDisk microSD 128GB', qty: 20, cost: 5400 },
-      ],
-      total: 4 * 168000 + 20 * 5400, status: 'pending',
+      ], total: 4 * 168000 + 20 * 5400, status: 'pending',
     },
   ];
 
   const expenses: Expense[] = [];
   const expSeed: [string, string, number][] = [
-    ['Rent', 'Shop rent - monthly', 55000],
-    ['Utilities', 'Electricity bill', 12800],
-    ['Salary', 'Staff salary advance', 40000],
-    ['Transport', 'Stock pickup - Panchikawatte', 3500],
-    ['Utilities', 'Internet & phone', 5900],
-    ['Supplies', 'Receipt rolls & bags', 4200],
-    ['Marketing', 'Facebook boost - new arrivals', 7500],
-    ['Maintenance', 'Counter display repair', 9500],
-    ['Utilities', 'Water bill', 1850],
+    ['Rent', 'Shop rent - monthly', 55000], ['Utilities', 'Electricity bill', 12800], ['Salary', 'Staff salary advance', 40000],
+    ['Transport', 'Stock pickup - Panchikawatte', 3500], ['Utilities', 'Internet & phone', 5900], ['Supplies', 'Receipt rolls & bags', 4200],
+    ['Marketing', 'Facebook boost - new arrivals', 7500], ['Maintenance', 'Counter display repair', 9500], ['Utilities', 'Water bill', 1850],
     ['Transport', 'Courier - islandwide orders', 6200],
   ];
-  expSeed.forEach(([category, note, amount], i) => {
-    expenses.push({ id: uid(), date: iso(daysAgo(28 - i * 3, 14)), category, note, amount, by: 'Shop Administrator' });
-  });
+  expSeed.forEach(([category, note, amount], i) => expenses.push({ id: uid(), date: iso(daysAgo(28 - i * 3, 14)), category, note, amount, by: 'Shop Administrator' }));
 
-  const exchanges: Exchange[] = [
-    {
-      id: uid(), exNo: 'EX-0001', date: iso(daysAgo(6)), billNo: sales[5]?.billNo || 'NFX-20260101-1006',
-      customerName: 'Walk-in customer', reason: 'Charger port loose contact',
-      items: [{ productId: 'p-chg25w', name: 'USB-C Fast Charger 25W', qty: 1, amount: 4950 }],
-      refund: 0, additional: 0, by: 'Nimal Perera',
-    },
-  ];
+  const exchanges: Exchange[] = [{
+    id: uid(), exNo: 'EX-0001', date: iso(daysAgo(6)), billNo: sales[5]?.billNo || 'NFX-20260101-1006',
+    customerName: 'Walk-in customer', reason: 'Charger port loose contact',
+    items: [{ productId: 'p-chg25w', name: 'USB-C Fast Charger 25W', qty: 1, amount: 4950 }], refund: 0, additional: 0, by: 'Nimal Perera',
+  }];
 
   const audit: AuditEntry[] = [
     { id: uid(), time: iso(daysAgo(1, 17, 40)), user: 'admin@nexfixsolution.com', action: 'DELETE', entity: 'Customer', details: 'Deleted customer Kapila' },
@@ -217,92 +221,58 @@ export function buildSeed(): POSState {
   ];
 
   const settings: Settings = {
-    shopName: 'NEXFIX Solution',
-    tagline: 'POS & Inventory Management System',
-    address: 'No 45, Galle Road, Colombo 04, Sri Lanka',
-    phone: '+94 74 109 7350',
-    email: 'info@nexfixsolution.com',
-    receiptFooter: 'Thank you for shopping with us! 3-day exchange policy applies.',
-    taxDefault: 0,
-    lowStockDefault: 5,
-    exchangeDays: 3,
-    openingFloat: 10000,
-    adminPinHash: hashPin('admin123'),
-    whatsappReceipts: false,
-    categories: [...DEFAULT_CATEGORIES],
-    brands: [...DEFAULT_BRANDS],
-    repairWarrantyDays: 30,
+    shopName: 'NEXFIX Solution', tagline: 'POS & Inventory Management System', address: 'No 45, Galle Road, Colombo 04, Sri Lanka',
+    phone: '+94 74 109 7350', email: 'info@nexfixsolution.com', receiptFooter: 'Thank you for shopping with us! 3-day exchange policy applies.',
+    taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, adminPinHash: hashPin('admin123'),
+    whatsappReceipts: false, categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
   };
 
   const adminAll: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(k => (adminAll[k.key] = true));
   const cashierPerms: Record<string, boolean> = {
-    'page:dashboard': true, 'page:pos': true, 'page:inventory': false,
-    'page:units': true, 'page:repairs': true,
-    'page:customers': true,
-    'page:suppliers': false, 'page:purchases': false, 'page:sales': true, 'page:exchanges': true,
-    'page:expenses': false, 'page:reports': false, 'page:pricetags': true,
-    'act:discount': true, 'act:creditSale': false, 'act:refund': false, 'act:viewCost': false,
-    'act:manageStock': false, 'act:deleteRecords': false, 'act:export': false,
+    'page:dashboard': true, 'page:pos': true, 'page:inventory': false, 'page:units': true, 'page:repairs': true,
+    'page:customers': true, 'page:suppliers': false, 'page:purchases': false, 'page:sales': true, 'page:exchanges': true,
+    'page:expenses': false, 'page:reports': false, 'page:pricetags': true, 'act:discount': true, 'act:creditSale': false,
+    'act:refund': false, 'act:viewCost': false, 'act:manageStock': false, 'act:deleteRecords': false, 'act:export': false,
   };
   const permissions: Permissions = { admin: adminAll, cashier: cashierPerms };
 
-  const sessions: DaySession[] = [
-    { id: uid(), cashierId: 'u-nimal', cashierName: 'Nimal Perera', date: dkey(daysAgo(0)), opening: 10000, closed: false },
-  ];
+  const sessions: DaySession[] = [{ id: uid(), cashierId: 'u-nimal', cashierName: 'Nimal Perera', date: dkey(daysAgo(0)), opening: 10000, closed: false }];
 
-  // Sample IMEI/serial units for tracked products
   const units: InventoryUnit[] = [
     { id: 'u-ip13-1', productId: 'p-ip13', imei: '356938035643809', serial: 'DNQGX1A2JCLF', status: 'in_stock', cost: 185000, createdAt: iso(daysAgo(20)) },
     { id: 'u-ip13-2', productId: 'p-ip13', imei: '356938035643810', serial: 'DNQGX1A2JCLG', status: 'in_stock', cost: 185000, createdAt: iso(daysAgo(20)) },
     { id: 'u-rn13-1', productId: 'p-rn13', imei: '869884040001234', status: 'in_stock', cost: 42000, createdAt: iso(daysAgo(15)) },
     { id: 'u-rn13-2', productId: 'p-rn13', imei: '869884040001235', status: 'sold', saleId: 'seed-sold', saleBillNo: 'NFX-SEED', cost: 42000, createdAt: iso(daysAgo(15)), soldAt: iso(daysAgo(5)) },
     { id: 'u-gala15-1', productId: 'p-gala15', imei: '359299450012345', status: 'in_stock', cost: 78000, createdAt: iso(daysAgo(10)) },
-    // Accessories with expiry (example batteries / power banks)
     { id: 'u-ank-1', productId: 'p-ank10k', serial: 'ANK-2025-001', expiryDate: iso(daysAgo(-400)).slice(0, 10), status: 'in_stock', cost: 3200, createdAt: iso(daysAgo(30)) },
     { id: 'u-ank-2', productId: 'p-ank10k', serial: 'ANK-2024-088', expiryDate: iso(daysAgo(20)).slice(0, 10), status: 'in_stock', cost: 3200, createdAt: iso(daysAgo(60)), note: 'Near expiry' },
   ];
 
   const repairs: RepairJob[] = [
     {
-      id: 'rj-1', jobNo: 'JOB-0001',
-      customerId: 'c-kasun', customerName: 'Kasun Rajapaksha', customerPhone: '+94 77 123 4567',
-      deviceType: 'Phone', deviceBrand: 'Apple', deviceModel: 'iPhone 13',
-      imei: '356938035640001', fault: 'Screen cracked after drop', diagnosis: 'LCD + digitizer replacement needed',
-      parts: [{ name: 'iPhone 13 LCD assembly', qty: 1, cost: 28000, productId: 'p-ids3' }],
-      laborCost: 3500, status: 'in_repair',
-      receivedAt: iso(daysAgo(3, 11, 20)), promisedAt: iso(daysAgo(-2)).slice(0, 10),
-      technicianId: 'u-sithum', technicianName: 'Sithum Eranga',
-      warrantyDays: 30, advancePaid: 10000, by: 'Nimal Perera',
+      id: 'rj-1', jobNo: 'JOB-0001', customerId: 'c-kasun', customerName: 'Kasun Rajapaksha', customerPhone: '+94 77 123 4567',
+      deviceType: 'Phone', deviceBrand: 'Apple', deviceModel: 'iPhone 13', imei: '356938035640001', fault: 'Screen cracked after drop',
+      diagnosis: 'LCD + digitizer replacement needed', parts: [{ name: 'iPhone 13 LCD assembly', qty: 1, cost: 28000, productId: 'p-ids3' }],
+      laborCost: 3500, status: 'in_repair', receivedAt: iso(daysAgo(3, 11, 20)), promisedAt: iso(daysAgo(-2)).slice(0, 10),
+      technicianId: 'u-sithum', technicianName: 'Sithum Eranga', warrantyDays: 30, advancePaid: 10000, by: 'Nimal Perera',
     },
     {
-      id: 'rj-2', jobNo: 'JOB-0002',
-      customerName: 'Walk-in Customer', customerPhone: '+94 71 555 0199',
-      deviceType: 'Laptop', deviceBrand: 'HP', deviceModel: 'Pavilion 15',
-      serial: '5CD1234ABC', fault: 'No power / dead battery',
-      diagnosis: 'Battery swollen — replace battery + clean ports',
-      parts: [{ name: 'HP Pavilion battery', qty: 1, cost: 12500 }],
-      laborCost: 2500, status: 'ready',
-      receivedAt: iso(daysAgo(7, 14, 0)), promisedAt: iso(daysAgo(1)).slice(0, 10),
-      completedAt: iso(daysAgo(1, 16, 30)),
-      technicianName: 'Sithum Eranga', warrantyDays: 30, advancePaid: 5000, by: 'Shop Administrator',
+      id: 'rj-2', jobNo: 'JOB-0002', customerName: 'Walk-in Customer', customerPhone: '+94 71 555 0199', deviceType: 'Laptop', deviceBrand: 'HP',
+      deviceModel: 'Pavilion 15', serial: '5CD1234ABC', fault: 'No power / dead battery', diagnosis: 'Battery swollen — replace battery + clean ports',
+      parts: [{ name: 'HP Pavilion battery', qty: 1, cost: 12500 }], laborCost: 2500, status: 'ready', receivedAt: iso(daysAgo(7, 14, 0)),
+      promisedAt: iso(daysAgo(1)).slice(0, 10), completedAt: iso(daysAgo(1, 16, 30)), technicianName: 'Sithum Eranga', warrantyDays: 30,
+      advancePaid: 5000, by: 'Shop Administrator',
     },
     {
-      id: 'rj-3', jobNo: 'JOB-0003',
-      customerId: 'c-nimali', customerName: 'Nimali Fernando', customerPhone: '+94 71 234 5678',
-      deviceType: 'Phone', deviceBrand: 'Samsung', deviceModel: 'Galaxy A15',
-      imei: '359299450099999', fault: 'Charging port loose',
-      parts: [], laborCost: 1500, status: 'received',
-      receivedAt: iso(daysAgo(0, 9, 45)), promisedAt: iso(daysAgo(-1)).slice(0, 10),
-      warrantyDays: 14, by: 'Nimal Perera',
+      id: 'rj-3', jobNo: 'JOB-0003', customerId: 'c-nimali', customerName: 'Nimali Fernando', customerPhone: '+94 71 234 5678', deviceType: 'Phone',
+      deviceBrand: 'Samsung', deviceModel: 'Galaxy A15', imei: '359299450099999', fault: 'Charging port loose', parts: [], laborCost: 1500, status: 'received',
+      receivedAt: iso(daysAgo(0, 9, 45)), promisedAt: iso(daysAgo(-1)).slice(0, 10), warrantyDays: 14, by: 'Nimal Perera',
     },
   ];
 
-  // Mark some phone products as IMEI-tracked with warranty
   const enrichedProducts = products.map(p => {
-    if (['p-ip13', 'p-rn13', 'p-gala15'].includes(p.id)) {
-      return { ...p, trackImei: true, warrantyMonths: p.id === 'p-ip13' ? 12 : 6 };
-    }
+    if (['p-ip13', 'p-rn13', 'p-gala15'].includes(p.id)) return { ...p, trackImei: true, warrantyMonths: p.id === 'p-ip13' ? 12 : 6 };
     if (p.id === 'p-ank10k') return { ...p, trackSerial: true, warrantyMonths: 12 };
     return p;
   });
@@ -310,7 +280,6 @@ export function buildSeed(): POSState {
   return {
     products: enrichedProducts, customers, suppliers, sales, purchases, expenses, exchanges,
     users, audit, held: [], sessions, settings, permissions,
-    counters: { bill: billSeq, po: 3, ex: 1, job: 3, quote: 0, claim: 0 },
-    units, repairs,
+    counters: { bill: billSeq, po: 3, ex: 1, job: 3, quote: 0, claim: 0 }, units, repairs,
   };
 }
