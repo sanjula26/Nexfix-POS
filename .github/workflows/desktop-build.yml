@@ -56,14 +56,6 @@ jobs:
           if ($files.Count -lt 2) { throw "Expected installer and portable artifacts." }
           if ($exeFiles.Count -lt 2) { throw "Expected at least two Windows .exe artifacts (installer and portable)." }
 
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: nexfix-pos-windows
-          path: release/*
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Publish GitHub Release
         shell: pwsh
         env:
