@@ -91,7 +91,7 @@ interface StoreCtx {
   addExpense: (e: Omit<Expense, 'id' | 'date' | 'by'>) => void;
   deleteExpense: (id: string) => void;
   // exchanges
-  processExchange: (saleId: string, itemIdx: number[], reason: string, mode: 'refund' | 'replace') => void;
+  processExchange: (saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => void;
   // users
   saveUser: (u: AppUser) => void;
   toggleUserActive: (id: string) => void;
@@ -774,45 +774,77 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.expenses, pushAudit]);
 
   /* ---------------- exchanges ---------------- */
-  const processExchange = useCallback((saleId: string, itemIdx: number[], reason: string, mode: 'refund' | 'replace') => {
-  const sale = state.sales.find(x => x.id === saleId);
-  if (!user || !sale || sale.status !== 'completed' || itemIdx.length === 0) return;
-  if (mode === 'refund' && !can('act:refund')) return;
-  const ageMs = Date.now() - new Date(sale.date).getTime();
-  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
-  const validIdx = [...new Set(itemIdx)].filter(i => Number.isInteger(i) && i >= 0 && i < sale.items.length);
-  if (validIdx.length === 0) return;
-  setState(s => {
-    const exItems = validIdx.map(i => {
-      const it = sale.items[i];
-      return { productId: it.productId, name: it.name, qty: it.qty, amount: it.price * it.qty - (it.discount || 0) };
+  const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => {
+    const sale = state.sales.find(x => x.id === saleId);
+    if (!user || !sale || sale.status !== 'completed' || returns.length === 0) return;
+    if (mode === 'refund' && !can('act:refund')) return;
+    const ageMs = Date.now() - new Date(sale.date).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
+
+    const requested = new Map<number, number>();
+    for (const item of returns) {
+      if (!Number.isInteger(item.itemIdx) || item.itemIdx < 0 || item.itemIdx >= sale.items.length) continue;
+      if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
+      requested.set(item.itemIdx, Math.floor(item.qty));
+    }
+    if (requested.size === 0) return;
+
+    setState(s => {
+      const priorReturnedByProduct = new Map<string, number>();
+      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {
+        priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);
+      });
+
+      const exItems: Exchange['items'] = [];
+      const returnedUnitIds: string[] = [];
+      const restockQtyByProduct = new Map<string, number>();
+      let refund = 0;
+
+      for (const [itemIdx, requestedQty] of requested) {
+        const it = sale.items[itemIdx];
+        const alreadyReturned = priorReturnedByProduct.get(it.productId) || 0;
+        const availableQty = Math.max(0, it.qty - alreadyReturned);
+        const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).length;
+        const qty = Math.min(requestedQty, availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : requestedQty);
+        if (qty <= 0) continue;
+
+        const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
+        const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
+        const unitIds = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).slice(0, qty);
+
+        exItems.push({ productId: it.productId, name: it.name, qty, amount });
+        if (mode === 'refund') refund += amount;
+        restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
+        returnedUnitIds.push(...unitIds);
+        priorReturnedByProduct.set(it.productId, alreadyReturned + qty);
+      }
+
+      if (exItems.length === 0) return s;
+
+      const seq = s.counters.ex + 1;
+      const ex: Exchange = {
+        id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
+        billNo: sale.billNo, customerName: sale.customerName, reason,
+        items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
+      };
+      const allReturned = sale.items.every(it => (priorReturnedByProduct.get(it.productId) || 0) >= it.qty);
+
+      return {
+        ...s,
+        exchanges: [ex, ...s.exchanges],
+        counters: { ...s.counters, ex: seq },
+        sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'exchanged' : 'completed' } : x),
+        products: s.products.map(p => {
+          const qty = restockQtyByProduct.get(p.id);
+          return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
+        }),
+        units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
+          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+          : u),
+      };
     });
-    const refund = mode === 'refund' ? exItems.reduce((sum, i) => sum + i.amount, 0) : 0;
-    const returnedUnitIds = validIdx.flatMap(i => sale.items[i].unitIds || []);
-    const restockQtyByProduct = new Map<string, number>();
-    exItems.forEach(it => restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + it.qty));
-    const seq = s.counters.ex + 1;
-    const ex: Exchange = {
-      id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
-      billNo: sale.billNo, customerName: sale.customerName, reason,
-      items: exItems, refund, additional: 0, by: user.name,
-    };
-    return {
-      ...s,
-      exchanges: [ex, ...s.exchanges],
-      counters: { ...s.counters, ex: seq },
-      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'exchanged' } : x)),
-      products: s.products.map(p => {
-        const qty = restockQtyByProduct.get(p.id);
-        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
-      }),
-      units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
-        ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-        : u),
-    };
-  });
-  pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${validIdx.length} item(s) on ${sale.billNo}`);
-}, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
+    pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${returns.reduce((sum, x) => sum + Math.max(0, Math.floor(x.qty)), 0)} unit(s) on ${sale.billNo}`);
+  }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
   const saveUser = useCallback((u: AppUser) => {

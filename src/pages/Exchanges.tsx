@@ -14,6 +14,7 @@ export default function Exchanges() {
   const [query, setQuery] = useState('');
   const [bill, setBill] = useState<Sale | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
+  const [returnQty, setReturnQty] = useState<Record<number, number>>({});
   const [reason, setReason] = useState('Defective item');
   const [mode, setMode] = useState<'refund' | 'replace'>('replace');
   const [searched, setSearched] = useState(false);
@@ -25,6 +26,7 @@ export default function Exchanges() {
     const found = state.sales.find(s => s.billNo.toLowerCase() === q || s.billNo.toLowerCase().endsWith(q) && q.length >= 4);
     setBill(found || null);
     setSelected([]);
+    setReturnQty({});
     setConfirm(false);
   };
 
@@ -44,17 +46,23 @@ export default function Exchanges() {
     ? Date.now() - new Date(bill.date).getTime() <= state.settings.exchangeDays * 86400000
     : false;
 
-  const toggle = (i: number) =>
+  const toggle = (i: number) => {
     setSelected(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]));
+    if (!selected.includes(i) && bill) setReturnQty(q => ({ ...q, [i]: bill.items[i].qty }));
+  };
 
   const selectedSum = useMemo(
-    () => (bill ? selected.reduce((a, i) => a + bill.items[i].price * bill.items[i].qty - (bill.items[i].discount || 0), 0) : 0),
-    [bill, selected],
+    () => (bill ? selected.reduce((a, i) => {
+      const qty = Math.max(0, Math.min(bill.items[i].qty, returnQty[i] || 0));
+      const discount = bill.items[i].qty > 0 ? (bill.items[i].discount || 0) * (qty / bill.items[i].qty) : 0;
+      return a + bill.items[i].price * qty - discount;
+    }, 0) : 0),
+    [bill, selected, returnQty],
   );
 
   const doProcess = () => {
     if (!bill || selected.length === 0) return;
-    processExchange(bill.id, selected, reason, mode);
+    processExchange(bill.id, selected.map(itemIdx => ({ itemIdx, qty: returnQty[itemIdx] || 0 })).filter(x => x.qty > 0), reason, mode);
     setBill(null); setQuery(''); setSearched(false); setConfirm(false); setSelected([]);
   };
 
@@ -132,7 +140,9 @@ export default function Exchanges() {
                       <td className="td font-medium text-[13px]">{it.name}</td>
                       <td className="td num">{it.qty}</td>
                       <td className="td num">{fmtRs(it.price)}</td>
-                      <td className="td num font-semibold text-right">{fmtRs(it.price * it.qty)}</td>
+                      <td className="td num font-semibold text-right">
+                        {selected.includes(i) ? <input type="number" min={1} max={it.qty} className="input w-20 !py-1 text-right" value={returnQty[i] || ''} onClick={ev => ev.stopPropagation()} onChange={ev => setReturnQty(q => ({ ...q, [i]: Math.max(0, Math.min(it.qty, Number(ev.target.value) || 0)) }))} aria-label={`Return quantity for ${it.name}`} /> : it.qty}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -168,7 +178,7 @@ export default function Exchanges() {
 
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3.5">
               <span className="text-sm text-sub">
-                {selected.length} item(s) selected
+                {selected.reduce((sum, i) => sum + (returnQty[i] || 0), 0)} unit(s) selected
               </span>
               <div className="flex items-center gap-4">
                 {mode === 'refund'
