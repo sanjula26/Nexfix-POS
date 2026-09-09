@@ -76,8 +76,8 @@ jobs:
           q=Path('src/pages/Exchanges.tsx'); e=q.read_text()
           marker="  const [selected, setSelected] = useState<number[]>([]);"
           if marker not in e: raise SystemExit('selected state anchor not found')
-          e=e.replace(marker, marker+"\n  const [returnQty, setReturnQty] = useState<Record<number, number>>({});",1)
-          e=e.replace("    setSelected([]);\n    setConfirm(false);", "    setSelected([]);\n    setReturnQty({});\n    setConfirm(false);",1)
+          e=e.replace(marker,marker+"\n  const [returnQty, setReturnQty] = useState<Record<number, number>>({});",1)
+          e=e.replace("    setSelected([]);\n    setConfirm(false);","    setSelected([]);\n    setReturnQty({});\n    setConfirm(false);",1)
           toggle="""  const toggle = (i: number) =>
     setSelected(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]));"""
           if toggle not in e: raise SystemExit('toggle anchor not found')
