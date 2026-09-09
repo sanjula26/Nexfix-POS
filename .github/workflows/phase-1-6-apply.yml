@@ -1,10 +1,14 @@
 name: Apply Phase 1.6 partial return patch
+
 on:
   push:
     paths:
       - '.github/workflows/phase-1-6-apply.yml'
+      - '.github/phase16_patch.py'
+
 permissions:
   contents: write
+
 jobs:
   patch:
     if: github.ref == 'refs/heads/main'
@@ -17,160 +21,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Patch source files
+      - name: Apply source patch
+        run: python .github/phase16_patch.py
+      - name: Validate patch
         run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          store = Path('src/lib/store.tsx')
-          s = store.read_text()
-          old_sig = "processExchange: (saleId: string, itemIdx: number[], reason: string, mode: 'refund' | 'replace') => void;"
-          new_sig = "processExchange: (saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => void;"
-          if old_sig not in s:
-              raise SystemExit('store signature anchor not found')
-          s = s.replace(old_sig, new_sig, 1)
-          start = s.index("  const processExchange = useCallback((saleId: string, itemIdx: number[]")
-          end = s.index("\n\n  /* ---------------- users ---------------- */", start)
-          block = '''  const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => {
-    const sale = state.sales.find(x => x.id === saleId);
-    if (!user || !sale || sale.status !== 'completed' || returns.length === 0) return;
-    if (mode === 'refund' && !can('act:refund')) return;
-    const ageMs = Date.now() - new Date(sale.date).getTime();
-    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
-
-    const requested = new Map<number, number>();
-    for (const item of returns) {
-      if (!Number.isInteger(item.itemIdx) || item.itemIdx < 0 || item.itemIdx >= sale.items.length) continue;
-      if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
-      requested.set(item.itemIdx, Math.floor(item.qty));
-    }
-    if (requested.size === 0) return;
-
-    setState(s => {
-      const priorReturnedByProduct = new Map<string, number>();
-      s.exchanges
-        .filter(x => x.billNo === sale.billNo)
-        .flatMap(x => x.items)
-        .forEach(item => priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty));
-
-      const exItems: Exchange['items'] = [];
-      const returnedUnitIds: string[] = [];
-      const restockQtyByProduct = new Map<string, number>();
-      let refund = 0;
-
-      for (const [itemIdx, requestedQty] of requested) {
-        const it = sale.items[itemIdx];
-        const alreadyReturned = priorReturnedByProduct.get(it.productId) || 0;
-        const availableQty = Math.max(0, it.qty - alreadyReturned);
-        const qty = Math.min(requestedQty, availableQty);
-        if (qty <= 0) continue;
-
-        const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
-        const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
-        const unitIds = (it.unitIds || [])
-          .map(id => s.units.find(u => u.id === id))
-          .filter((u): u is InventoryUnit => !!u && u.status === 'sold')
-          .slice(0, qty)
-          .map(u => u.id);
-
-        exItems.push({ productId: it.productId, name: it.name, qty, amount });
-        if (mode === 'refund') refund += amount;
-        restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
-        returnedUnitIds.push(...unitIds);
-        priorReturnedByProduct.set(it.productId, alreadyReturned + qty);
-      }
-
-      if (exItems.length === 0) return s;
-
-      const seq = s.counters.ex + 1;
-      const ex: Exchange = {
-        id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
-        billNo: sale.billNo, customerName: sale.customerName, reason,
-        items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
-      };
-
-      const returnedAfter = new Map(priorReturnedByProduct);
-      const allReturned = sale.items.every(it => (returnedAfter.get(it.productId) || 0) >= it.qty);
-
-      return {
-        ...s,
-        exchanges: [ex, ...s.exchanges],
-        counters: { ...s.counters, ex: seq },
-        sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'exchanged' : 'completed' } : x),
-        products: s.products.map(p => {
-          const qty = restockQtyByProduct.get(p.id);
-          return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
-        }),
-        units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-          : u),
-      };
-    });
-    pushAudit('EXCHANGE', 'Exchange', `${mode === 'refund' ? 'Returned' : 'Exchanged'} ${returns.reduce((sum, x) => sum + Math.max(0, Math.floor(x.qty)), 0)} unit(s) on ${sale.billNo}`);
-  }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);'''
-          s = s[:start] + block + s[end:]
-          store.write_text(s)
-
-          page = Path('src/pages/Exchanges.tsx')
-          e = page.read_text()
-          marker = "  const [selected, setSelected] = useState<number[]>([]);"
-          if marker not in e:
-              raise SystemExit('selected state anchor not found')
-          e = e.replace(marker, marker + "\n  const [returnQty, setReturnQty] = useState<Record<number, number>>({});", 1)
-          e = e.replace("    setSelected([]);\n    setConfirm(false);", "    setSelected([]);\n    setReturnQty({});\n    setConfirm(false);", 1)
-          old_toggle = """  const toggle = (i: number) =>
-    setSelected(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]));"""
-          new_toggle = """  const toggle = (i: number) => {
-    setSelected(s => (s.includes(i) ? s.filter(x => x !== i) : [...s, i]));
-    if (!selected.includes(i) && bill) setReturnQty(q => ({ ...q, [i]: bill.items[i].qty }));
-  };"""
-          if old_toggle not in e:
-              raise SystemExit('toggle anchor not found')
-          e = e.replace(old_toggle, new_toggle, 1)
-          old_sum = """  const selectedSum = useMemo(
-    () => (bill ? selected.reduce((a, i) => a + bill.items[i].price * bill.items[i].qty - (bill.items[i].discount || 0), 0) : 0),
-    [bill, selected],
-  );"""
-          new_sum = """  const selectedSum = useMemo(
-    () => (bill ? selected.reduce((a, i) => {
-      const qty = Math.max(0, Math.min(bill.items[i].qty, returnQty[i] || 0));
-      const discount = bill.items[i].qty > 0 ? (bill.items[i].discount || 0) * (qty / bill.items[i].qty) : 0;
-      return a + bill.items[i].price * qty - discount;
-    }, 0) : 0),
-    [bill, selected, returnQty],
-  );"""
-          if old_sum not in e:
-              raise SystemExit('sum anchor not found')
-          e = e.replace(old_sum, new_sum, 1)
-          old_call = "    processExchange(bill.id, selected, reason, mode);"
-          new_call = "    processExchange(bill.id, selected.map(itemIdx => ({ itemIdx, qty: returnQty[itemIdx] || 0 })).filter(x => x.qty > 0), reason, mode);"
-          if old_call not in e:
-              raise SystemExit('process call anchor not found')
-          e = e.replace(old_call, new_call, 1)
-          old_row = '''                      <td className="td num">{it.qty}</td>
-                      <td className="td num">{fmtRs(it.price)}</td>
-                      <td className="td num font-semibold text-right">{fmtRs(it.price * it.qty)}</td>'''
-          new_row = '''                      <td className="td num">{it.qty}</td>
-                      <td className="td num">{fmtRs(it.price)}</td>
-                      <td className="td num font-semibold text-right">
-                        {selected.includes(i) ? <input type="number" min={1} max={it.qty} className="input w-20 !py-1 text-right" value={returnQty[i] || ''} onClick={ev => ev.stopPropagation()} onChange={ev => setReturnQty(q => ({ ...q, [i]: Math.max(0, Math.min(it.qty, Number(ev.target.value) || 0)) }))} aria-label={`Return quantity for ${it.name}`} /> : it.qty}
-                      </td>'''
-          if old_row not in e:
-              raise SystemExit('row anchor not found')
-          e = e.replace(old_row, new_row, 1)
-          e = e.replace("                {selected.length} item(s) selected", "                {selected.reduce((sum, i) => sum + (returnQty[i] || 0), 0)} unit(s) selected", 1)
-          page.write_text(e)
-          PY
+          git diff --check
           npm install --no-audit --no-fund
           npm run typecheck
           npm run lint
           npm run build
-          git diff --check
+      - name: Commit source changes
+        run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add src/lib/store.tsx src/pages/Exchanges.tsx
-          git commit -m "fix: support partial quantity returns"
-          git push origin HEAD:main
-          git rm .github/workflows/phase-1-6-apply.yml
-          git commit -m "chore: remove phase 1.6 patch runner"
-          git push origin HEAD:main
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+          else
+            git commit -m 'fix: support partial quantity returns'
+            git push origin HEAD:main
+          fi
