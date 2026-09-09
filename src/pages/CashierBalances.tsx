@@ -64,7 +64,6 @@ export default function CashierBalances() {
       0,
     );
     const opening = session?.opening ?? state.settings.openingFloat;
-    // Auto expected drawer = opening + cash taken − cash refunds (full refund assumed cash if mixed unknown)
     const myRefunds = state.sales.filter(s => s.status === 'refunded' && dkey(s.date) === today && s.cashierId === id);
     const cashRefunds = myRefunds.reduce((a, s) => {
       const cashPart = salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
@@ -84,6 +83,13 @@ export default function CashierBalances() {
 
   const startDay = () => {
     if (!openFloatId) return;
+    const existing = state.sessions.find(x => x.cashierId === openFloatId && x.date === today);
+    if (existing && !existing.closed) {
+      window.alert(`This cashier already has an open session for ${today}. The existing session will be kept unchanged.`);
+      setOpenFloatId(null);
+      setOpeningInput('');
+      return;
+    }
     openSession(openFloatId, Number(openingInput) || 0);
     setOpenFloatId(null);
     setOpeningInput('');
@@ -95,7 +101,6 @@ export default function CashierBalances() {
   }, 0);
   const openingTotal = state.sessions.filter(s => s.date === today).reduce((a, s) => a + s.opening, 0)
     || state.settings.openingFloat;
-  // Expected physical cash ≈ openings + cash sales − cash refunds − today's expenses (cash out)
   const shopExpected = Math.round((openingTotal + cashSales - cashRefundsShop - todayExpenses) * 100) / 100;
 
   const cards = [
