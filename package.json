@@ -24,7 +24,7 @@
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.1",
     "recharts": "^3.10.1",
-    "tailwindcss": "^7.2.1"
+    "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -50,6 +50,7 @@
     "directories": { "output": "release" },
     "win": { "target": ["nsis", "portable"] },
     "nsis": { "artifactName": "Nexfix-POS-${version}-${arch}-installer.${ext}", "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true },
-    "portable": { "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}" }
+    "portable": { "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}" },
+    "publish": null
   }
 }
