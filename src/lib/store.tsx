@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   POSState, Product, Customer, Supplier, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
-  InventoryUnit, RepairJob, RepairStatus,
+  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
 import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash } from './utils';
@@ -88,6 +88,7 @@ interface StoreCtx {
   // purchases
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
   receivePurchase: (id: string) => void;
+  createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
   // expenses
   addExpense: (e: Omit<Expense, 'id' | 'date' | 'by'>) => void;
@@ -135,7 +136,7 @@ const Ctx = createContext<StoreCtx | null>(null);
 function applyInventoryLedger(
   prev: POSState,
   next: POSState,
-  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT',
+  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL',
   by?: string,
 ): POSState {
   const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
@@ -188,6 +189,13 @@ function applyInventoryLedger(
     }
   }
 
+  if (operation === 'PURCHASE_REVERSAL') {
+    const ids = new Set((prev.purchaseReturns || []).map(x => x.id));
+    for (const ret of next.purchaseReturns || []) if (!ids.has(ret.id)) for (const item of ret.items) if (item.qty > 0) {
+      add({ id: 'inv:purchase-return:' + ret.id + ':' + item.itemIdx, type: 'PURCHASE_REVERSAL', productId: item.productId, quantity: -item.qty, referenceId: ret.id, referenceNo: ret.dnNo, reason: ret.reason });
+    }
+  }
+
   if (operation === 'STOCK_ADJUSTMENT') {
     for (const [productId, product] of nextProducts) {
       const before = prevProducts.get(productId)?.stock;
@@ -226,10 +234,12 @@ function migrate(s: POSState): POSState {
       job: s.counters?.job ?? 0,
       quote: (s.counters as { quote?: number })?.quote ?? 0,
       claim: (s.counters as { claim?: number })?.claim ?? 0,
+      dn: (s.counters as { dn?: number })?.dn ?? 0,
     },
     kitItems: s.kitItems || [],
     quotations: s.quotations || [],
     warrantyClaims: s.warrantyClaims || [],
+    purchaseReturns: s.purchaseReturns || [],
     settings: {
       ...s.settings,
       adminPinHash,
@@ -390,7 +400,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [session, state.users],
   );
   const viewingAs: Role = user?.role || 'admin';
-  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT', updater: (prev: POSState) => POSState) => {
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL', updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
 
@@ -830,6 +840,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
   }, [state.purchases, state.products, pushAudit]);
 
+  const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
+    const purchase = state.purchases.find(x => x.id === input.purchaseId);
+    if (!purchase || purchase.status !== 'received' || !user || !input.reason.trim()) return null;
+    const existing = state.purchaseReturns || [];
+    const returnedByItem = new Map<number, number>();
+    for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
+    const requested = new Map<number, number>();
+    for (const line of input.lines) { if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue; if (!Number.isFinite(line.qty) || line.qty <= 0) continue; requested.set(line.itemIdx, (requested.get(line.itemIdx) || 0) + Math.floor(line.qty)); }
+    if (requested.size === 0) return null;
+    const items: PurchaseReturnItem[] = [];
+    for (const [itemIdx, qtyRequested] of requested) { const source = purchase.items[itemIdx]; const already = returnedByItem.get(itemIdx) || 0; const remaining = Math.max(0, source.qty - already); const stock = state.products.find(p => p.id === source.productId)?.stock || 0; const qty = Math.min(qtyRequested, remaining, stock); if (qty <= 0) continue; items.push({ itemIdx, productId: source.productId, name: source.name, qty, cost: source.cost, total: qty * source.cost }); }
+    if (!items.length) return null;
+    const seq = (state.counters.dn || 0) + 1;
+    const ret: PurchaseReturn = { id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo, supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items, total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email };
+    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({ ...prev, products: prev.products.map(p => { const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0); return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p; }), purchaseReturns: [ret, ...(prev.purchaseReturns || [])], counters: { ...prev.counters, dn: seq } }));
+    pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
+    return ret;
+  }, [state.purchases, state.purchaseReturns, state.products, state.counters.dn, user, pushAudit]);
+
   const deletePurchase = useCallback((id: string) => {
     const po = state.purchases.find(x => x.id === id);
     if (!po || !canDeletePurchase(po)) return;
@@ -1254,7 +1283,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     saveProduct, deleteProduct, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier,
     completeSale, refundSale, holdSale, resumeHold, deleteHold,
-    savePurchase, receivePurchase, deletePurchase,
+    savePurchase, receivePurchase, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, logAudit, clearAudit,
