@@ -873,8 +873,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (requested.size === 0) return;
 
     setStateWithInventoryLedger('EXCHANGE', s => {
+      const priorReturnedByLine = new Map<string, number>();
       const priorReturnedByProduct = new Map<string, number>();
       s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {
+        const lineKey = item.itemIdx !== undefined ? 'i:' + item.itemIdx : 'p:' + item.productId;
+        priorReturnedByLine.set(lineKey, (priorReturnedByLine.get(lineKey) || 0) + item.qty);
         priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);
       });
 
@@ -885,7 +888,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       for (const [itemIdx, requestedQty] of requested) {
         const it = sale.items[itemIdx];
-        const alreadyReturned = priorReturnedByProduct.get(it.productId) || 0;
+        const lineKey = 'i:' + itemIdx;
+        const alreadyReturned = priorReturnedByLine.has(lineKey)
+          ? (priorReturnedByLine.get(lineKey) || 0)
+          : (priorReturnedByProduct.get(it.productId) || 0);
         const availableQty = Math.max(0, it.qty - alreadyReturned);
         const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).length;
         const qty = Math.min(requestedQty, availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : requestedQty);
@@ -895,11 +901,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
         const unitIds = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).slice(0, qty);
 
-        exItems.push({ productId: it.productId, name: it.name, qty, amount });
+        exItems.push({ itemIdx, productId: it.productId, name: it.name, qty, amount });
         if (mode === 'refund') refund += amount;
         restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
         returnedUnitIds.push(...unitIds);
-        priorReturnedByProduct.set(it.productId, alreadyReturned + qty);
+        priorReturnedByLine.set(lineKey, alreadyReturned + qty);
+        priorReturnedByProduct.set(it.productId, (priorReturnedByProduct.get(it.productId) || 0) + qty);
       }
 
       if (exItems.length === 0) return s;
@@ -910,7 +917,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         billNo: sale.billNo, customerName: sale.customerName, reason,
         items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
       };
-      const allReturned = sale.items.every(it => (priorReturnedByProduct.get(it.productId) || 0) >= it.qty);
+      const allReturned = sale.items.every((it, idx) => {
+        const returned = priorReturnedByLine.has('i:' + idx)
+          ? (priorReturnedByLine.get('i:' + idx) || 0)
+          : (priorReturnedByProduct.get(it.productId) || 0);
+        return returned >= it.qty;
+      });
 
       return {
         ...s,
