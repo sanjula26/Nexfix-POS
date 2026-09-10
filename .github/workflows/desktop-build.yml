@@ -1,5 +1,5 @@
 name: Windows Desktop Build
-# Final release workflow verification trigger; no build behavior changed.
+# Release workflow verifies Windows installer/portable outputs and publishes checksums.
 
 on:
   workflow_dispatch:
@@ -57,6 +57,18 @@ jobs:
           if ($files.Count -lt 2) { throw "Expected installer and portable artifacts." }
           if ($exeFiles.Count -lt 2) { throw "Expected at least two Windows .exe artifacts (installer and portable)." }
 
+      - name: Generate release checksums
+        shell: pwsh
+        run: |
+          $exeFiles = Get-ChildItem -Path release -Filter *.exe -File | Sort-Object Name
+          if ($exeFiles.Count -lt 2) { throw "Expected at least two Windows .exe artifacts before checksum generation." }
+          $lines = foreach ($file in $exeFiles) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
+          Get-Content release/SHA256SUMS.txt
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
@@ -64,4 +76,4 @@ jobs:
         run: |
           $tag = "v3.0.0-build.${{ github.run_number }}"
           $title = "Nexfix POS $tag"
-          gh release create $tag release/*.exe --repo $env:GITHUB_REPOSITORY --title $title --generate-notes
+          gh release create $tag release/*.exe release/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --title $title --generate-notes
