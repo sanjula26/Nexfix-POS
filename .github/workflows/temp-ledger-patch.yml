@@ -1,0 +1,162 @@
+name: temp-ledger-patch
+on:
+  push:
+    branches: [feature/inventory-ledger-safe-integration]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply safe inventory ledger integration
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+
+          if "from './inventoryLedger'" not in s:
+              anchor = "import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';"
+              assert anchor in s, 'purchase reconciliation import anchor missing'
+              s = s.replace(anchor, anchor + "\nimport { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';", 1)
+
+          helper_anchor = "const Ctx = createContext<StoreCtx | null>(null);"
+          assert helper_anchor in s, 'Ctx anchor missing'
+          if 'function applyInventoryLedger(' not in s:
+              helper = r'''
+
+function applyInventoryLedger(
+  prev: POSState,
+  next: POSState,
+  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT',
+  by?: string,
+): POSState {
+  const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
+  const transactions: InventoryTransaction[] = [];
+  const productMap = new Map(next.products.map(p => [p.id, p]));
+  const prevProductMap = new Map(prev.products.map(p => [p.id, p]));
+  const now = new Date().toISOString();
+
+  const add = (tx: Omit<InventoryTransaction, 'id' | 'occurredAt'> & { id: string }) => {
+    transactions.push({ ...tx, occurredAt: now, by });
+  };
+
+  if (operation === 'SALE') {
+    const prevIds = new Set(prev.sales.map(x => x.id));
+    for (const sale of next.sales) {
+      if (prevIds.has(sale.id)) continue;
+      for (const item of sale.items) {
+        if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
+        add({ id: `inv:sale:${sale.id}:${item.productId}`, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+      }
+    }
+  }
+
+  if (operation === 'REFUND') {
+    for (const sale of next.sales) {
+      const old = prev.sales.find(x => x.id === sale.id);
+      if (!old || old.status === 'refunded' || sale.status !== 'refunded') continue;
+      for (const item of sale.items) {
+        if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
+        add({ id: `inv:refund:${sale.id}:${item.productId}`, type: 'REFUND', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+      }
+    }
+  }
+
+  if (operation === 'PURCHASE_RECEIVE') {
+    for (const purchase of next.purchases) {
+      const old = prev.purchases.find(x => x.id === purchase.id);
+      if (!old || old.status === 'received' || purchase.status !== 'received') continue;
+      for (const item of purchase.items) {
+        if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
+        add({ id: `inv:purchase:${purchase.id}:${item.productId}`, type: 'PURCHASE_RECEIVE', productId: item.productId, quantity: item.qty, referenceId: purchase.id, referenceNo: purchase.poNo });
+      }
+    }
+  }
+
+  if (operation === 'EXCHANGE') {
+    const prevIds = new Set(prev.exchanges.map(x => x.id));
+    for (const ex of next.exchanges) {
+      if (prevIds.has(ex.id)) continue;
+      const returned = new Map<string, number>();
+      for (const item of ex.items) {
+        if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
+        returned.set(item.productId, (returned.get(item.productId) || 0) + item.qty);
+        add({ id: `inv:exchange:${ex.id}:${item.productId}:return`, type: 'EXCHANGE_RETURN', productId: item.productId, quantity: item.qty, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
+      }
+      for (const [productId, qtyReturned] of returned) {
+        const before = prevProductMap.get(productId)?.stock || 0;
+        const after = productMap.get(productId)?.stock || 0;
+        const netDelta = after - before;
+        const outgoing = qtyReturned - netDelta;
+        if (outgoing > 0) add({ id: `inv:exchange:${ex.id}:${productId}:out`, type: 'SALE', productId, quantity: -outgoing, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
+      }
+    }
+  }
+
+  if (operation === 'STOCK_ADJUSTMENT') {
+    for (const [productId, afterProduct] of productMap) {
+      const before = prevProductMap.get(productId)?.stock;
+      if (before === undefined) continue;
+      const delta = afterProduct.stock - before;
+      if (!delta) continue;
+      add({ id: `inv:adjust:${productId}:${afterProduct.stock}:${delta}`, type: 'STOCK_ADJUSTMENT', productId, quantity: delta, reason: 'Stock adjustment' });
+    }
+  }
+
+  let updated = ledger;
+  for (const tx of transactions) updated = appendInventoryTransaction(updated, tx);
+  return updated === next.inventoryTransactions ? next : { ...next, inventoryTransactions: updated };
+}
+'''
+              s = s.replace(helper_anchor, helper_anchor + helper, 1)
+
+          va_anchor = "  const viewingAs: Role = user?.role || 'admin';\n"
+          if 'setStateWithInventoryLedger' not in s:
+              assert va_anchor in s, 'viewingAs anchor missing'
+              wrapper = r'''
+  const setStateWithInventoryLedger = useCallback(
+    (operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT', updater: (prev: POSState) => POSState) => {
+      setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
+    },
+    [user?.email],
+  );
+'''
+              s = s.replace(va_anchor, va_anchor + wrapper, 1)
+
+          ops = {
+            'adjustStock': 'STOCK_ADJUSTMENT',
+            'completeSale': 'SALE',
+            'refundSale': 'REFUND',
+            'receivePurchase': 'PURCHASE_RECEIVE',
+            'processExchange': 'EXCHANGE',
+          }
+          for fn, op in ops.items():
+              marker = re.search(rf"\n  const {fn} = useCallback\(", s)
+              assert marker, f'{fn} declaration missing'
+              start = marker.start()
+              nxt = re.search(r"\n  const [A-Za-z0-9_]+ = useCallback\(", s[marker.end():])
+              end = marker.end() + (nxt.start() if nxt else len(s[marker.end():]))
+              chunk = s[start:end]
+              if f"setStateWithInventoryLedger('{op}'" not in chunk:
+                  idx = chunk.find('setState(')
+                  assert idx >= 0, f'{fn}: setState call not found'
+                  chunk = chunk[:idx] + f"setStateWithInventoryLedger('{op}', " + chunk[idx+len('setState('):]
+                  s = s[:start] + chunk + s[end:]
+
+          p.write_text(s)
+          print('patched store.tsx')
+          PY
+      - name: Typecheck
+        run: npm ci && npm run typecheck
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx
+          git diff --cached --quiet || git commit -m 'feat: safely integrate inventory ledger into POS mutations'
+          git push
