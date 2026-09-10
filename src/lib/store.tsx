@@ -78,6 +78,8 @@ interface StoreCtx {
   deleteCustomer: (id: string) => void;
   saveSupplier: (s: Supplier) => void;
   deleteSupplier: (id: string) => void;
+  saveSupplierPayment: (p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => import('./supplierPayments').SupplierPayment | null;
+  deleteSupplierPayment: (id: string) => void;
   // sales
   completeSale: (input: NewSaleInput) => Sale | null;
   refundSale: (saleId: string) => void;
@@ -240,6 +242,7 @@ function migrate(s: POSState): POSState {
     quotations: s.quotations || [],
     warrantyClaims: s.warrantyClaims || [],
     purchaseReturns: s.purchaseReturns || [],
+    supplierPayments: s.supplierPayments || [],
     settings: {
       ...s.settings,
       adminPinHash,
@@ -604,6 +607,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (sp) pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
   }, [state.suppliers, pushAudit]);
 
+  const saveSupplierPayment = useCallback((p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => {
+    if (!user || !state.suppliers.some(s => s.id === p.supplierId)) return null;
+    if (!Number.isFinite(p.amount) || p.amount <= 0) return null;
+    const purchaseTotal = state.purchases.filter(x => x.supplierId === p.supplierId && x.status === 'received').reduce((sum, x) => sum + Math.max(0, x.total), 0);
+    const returnTotal = (state.purchaseReturns || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, x.total), 0);
+    const paidTotal = (state.supplierPayments || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, x.amount), 0);
+    const outstanding = Math.max(0, Math.round((purchaseTotal - returnTotal - paidTotal) * 100) / 100);
+    if (p.amount > outstanding) return null;
+    const payment: import('./supplierPayments').SupplierPayment = { ...p, amount: Math.round(p.amount * 100) / 100, id: uid(), date: new Date().toISOString(), by: user.name };
+    setState(s => ({ ...s, supplierPayments: [payment, ...(s.supplierPayments || [])] }));
+    pushAudit('CREATE', 'SupplierPayment', `Payment of Rs. ${payment.amount.toLocaleString()} to supplier ${state.suppliers.find(s => s.id === p.supplierId)?.name || p.supplierId}`);
+    return payment;
+  }, [state.suppliers, state.purchases, state.purchaseReturns, state.supplierPayments, user, pushAudit]);
+
+  const deleteSupplierPayment = useCallback((id: string) => {
+    if (!can('act:deleteRecords')) return;
+    const payment = (state.supplierPayments || []).find(x => x.id === id);
+    if (!payment) return;
+    setState(s => ({ ...s, supplierPayments: (s.supplierPayments || []).filter(x => x.id !== id) }));
+    pushAudit('DELETE', 'SupplierPayment', `Deleted supplier payment ${id}`);
+  }, [can, state.supplierPayments, pushAudit]);
+
   /* ---------------- sales ---------------- */
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
     if (!user || input.lines.length === 0) return null;
@@ -676,6 +701,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const legs = (input.payments || []).filter(l => l.amount > 0);
     const isSplit = legs.length > 1;
     const isCredit = legs.some(l => l.method === 'credit') || (!isSplit && input.payment === 'credit');
+    if (isCredit) {
+      if (!cust) return null;
+      const creditLimit = cust.creditLimit ?? 0;
+      const projectedBalance = cust.creditBalance + Math.max(0, total - (isSplit ? legs.filter(l => l.method !== 'credit').reduce((a, l) => a + l.amount, 0) : input.amountPaid));
+      if (creditLimit > 0 && projectedBalance > creditLimit) return null;
+    }
     const amountPaid = isSplit
       ? legs.reduce((a, l) => a + l.amount, 0)
       : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
@@ -1281,7 +1312,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     adminPrompt, setAdminPrompt,
     signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
     saveProduct, deleteProduct, adjustStock,
-    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier,
+    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
     completeSale, refundSale, holdSale, resumeHold, deleteHold,
     savePurchase, receivePurchase, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,

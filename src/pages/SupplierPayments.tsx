@@ -25,7 +25,7 @@ export default function SupplierPayments() {
 
   const supplier = state.suppliers.find(s => s.id === supplierId);
   const payments = state.supplierPayments || [];
-  const outstanding = supplier ? getSupplierOutstanding(supplier.id, state.purchases, payments) : 0;
+  const outstanding = supplier ? getSupplierOutstanding(supplier.id, state.purchases, payments, state.purchaseReturns || []) : 0;
   const supplierPurchases = supplier
     ? state.purchases.filter(p => p.supplierId === supplier.id && p.status === 'received').sort((a, b) => +new Date(b.date) - +new Date(a.date))
     : [];
@@ -40,7 +40,7 @@ export default function SupplierPayments() {
       .sort((a, b) => +new Date(b.date) - +new Date(a.date));
   }, [payments, search, state.suppliers]);
 
-  const totalOutstanding = state.suppliers.reduce((sum, s) => sum + getSupplierOutstanding(s.id, state.purchases, payments), 0);
+  const totalOutstanding = state.suppliers.reduce((sum, s) => sum + getSupplierOutstanding(s.id, state.purchases, payments, state.purchaseReturns || []), 0);
   const totalPaid = payments.reduce((sum, p) => sum + (Number.isFinite(p.amount) ? p.amount : 0), 0);
 
   const save = () => {

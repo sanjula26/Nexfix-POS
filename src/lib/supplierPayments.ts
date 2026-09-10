@@ -1,4 +1,4 @@
-import type { Purchase, Supplier } from './types';
+import type { Purchase, PurchaseReturn, Supplier } from './types';
 
 export type SupplierPaymentMethod = 'cash' | 'card' | 'bank' | 'mobile';
 
@@ -26,6 +26,7 @@ export function buildSupplierLedger(
   supplier: Supplier,
   purchases: readonly Purchase[],
   payments: readonly SupplierPayment[],
+  purchaseReturns: readonly PurchaseReturn[] = [],
 ): SupplierAccountLedgerRow[] {
   const rows: Array<{ date: string; type: 'purchase' | 'payment'; reference: string; amount: number; paymentMethod?: SupplierPaymentMethod }> = [];
 
@@ -33,6 +34,12 @@ export function buildSupplierLedger(
     if (purchase.supplierId !== supplier.id || purchase.status !== 'received') continue;
     if (!Number.isFinite(purchase.total) || purchase.total < 0) continue;
     rows.push({ date: purchase.date, type: 'purchase', reference: purchase.poNo, amount: purchase.total });
+  }
+
+  for (const purchaseReturn of purchaseReturns) {
+    if (purchaseReturn.supplierId !== supplier.id) continue;
+    if (!Number.isFinite(purchaseReturn.total) || purchaseReturn.total <= 0) continue;
+    rows.push({ date: purchaseReturn.date, type: 'payment', reference: purchaseReturn.dnNo, amount: -purchaseReturn.total });
   }
 
   for (const payment of payments) {
@@ -53,12 +60,16 @@ export function getSupplierOutstanding(
   supplierId: string,
   purchases: readonly Purchase[],
   payments: readonly SupplierPayment[],
+  purchaseReturns: readonly PurchaseReturn[] = [],
 ): number {
   const purchased = purchases
     .filter(p => p.supplierId === supplierId && p.status === 'received' && Number.isFinite(p.total) && p.total >= 0)
     .reduce((sum, p) => sum + p.total, 0);
+  const returned = purchaseReturns
+    .filter(p => p.supplierId === supplierId && Number.isFinite(p.total) && p.total > 0)
+    .reduce((sum, p) => sum + p.total, 0);
   const paid = payments
     .filter(p => p.supplierId === supplierId && Number.isFinite(p.amount) && p.amount > 0)
     .reduce((sum, p) => sum + p.amount, 0);
-  return Math.max(0, Math.round((purchased - paid) * 100) / 100);
+  return Math.max(0, Math.round((purchased - returned - paid) * 100) / 100);
 }
