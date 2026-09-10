@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, FileX, Plus, Minus, Download, Printer } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../components/ui';
-import { fmtRs, fmtDate, dkey, uid, downloadFile } from '../lib/utils';
+import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
 import type { Purchase } from '../lib/types';
 
 interface ReturnLine { productId: string; name: string; maxQty: number; qty: number; cost: number; }
@@ -51,7 +51,13 @@ export default function PurchaseReturn() {
 
   const selectGRN = (grn: Purchase) => {
     setSelectedGRN(grn);
-    setLines(grn.items.map(i => ({ productId: i.productId, name: i.name, maxQty: i.qty, qty: 0, cost: i.cost })));
+    setLines(grn.items.map(i => ({
+      productId: i.productId,
+      name: i.name,
+      maxQty: Math.min(i.qty, Math.max(0, state.products.find(p => p.id === i.productId)?.stock ?? 0)),
+      qty: 0,
+      cost: i.cost,
+    })));
     setReason('');
   };
 
@@ -97,7 +103,7 @@ export default function PurchaseReturn() {
       />
 
       {done && (
-        <Modal title={`Debit Note Created — ${done.dnNo}`} onClose={() => setDone(null)}>
+        <Modal open={Boolean(done)} title={`Debit Note Created — ${done.dnNo}`} onClose={() => setDone(null)}>
           <div className="space-y-3">
             <p className="text-sm text-sub">Stock has been deducted. Debit note <strong>{done.dnNo}</strong> for <strong>{done.supplierName}</strong>.</p>
             <p className="text-sm font-bold text-rose-500">Total Debit: {fmtRs(done.total)}</p>
