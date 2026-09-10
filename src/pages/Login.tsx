@@ -29,7 +29,7 @@ export default function Login() {
     if (!email.trim() || !password) { setError('Enter your email and password'); return; }
     setLoading(true); setError('');
     setTimeout(async () => {
-      const res = signIn(email, password, remember);
+      const res = await signIn(email, password, remember);
       if (!res.ok) {
         setLoading(false);
         setError(res.error || 'Sign in failed');

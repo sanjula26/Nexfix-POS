@@ -5,7 +5,8 @@ import {
   InventoryUnit, RepairJob, RepairStatus,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
-import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed } from './utils';
+import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash } from './utils';
+import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup } from './backup';
 import {
@@ -60,7 +61,7 @@ interface StoreCtx {
   /** true while the ADMIN unlock prompt is visible — the previous user's session is nullified (inert UI, no shortcuts) */
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
-  signIn: (email: string, password: string, remember: boolean) => { ok: boolean; error?: string };
+  signIn: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
   switchRole: (role: Role, pin?: string) => { ok: boolean; error?: string };
@@ -354,34 +355,40 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [user, state.permissions],
   );
 
-  const signIn = useCallback((email: string, password: string, remember: boolean) => {
+  const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
     const u = state.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
     if (!u) return { ok: false, error: 'No account found for this email' };
-    // Support both hashed (new) and legacy plaintext during transition
+
+    // Verify both current PBKDF2 hashes and legacy SHA-256 hashes. Plaintext
+    // passwords are retained only for the one-time migration path.
     const passwordOk = isHashed(u.password)
-      ? verifyPassword(password, u.password)
+      ? await verifyPasswordAsync(password, u.password)
       : u.password === password;
     if (!passwordOk) return { ok: false, error: 'Incorrect password' };
     if (!u.active) return { ok: false, error: 'This account has been deactivated' };
+
     const sess = { userId: u.id, remember };
     setSession(sess);
     try {
       if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       else sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
     } catch { /* ignore */ }
-    // Auto-upgrade plaintext password to hash on successful login
-    if (!isHashed(u.password)) {
-      setState(s => ({
-        ...s,
-        users: s.users.map(x => x.id === u.id ? { ...x, password: hashPassword(password) } : x),
-        audit: [{ id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth', details: `${u.name} signed in` }, ...s.audit].slice(0, 500),
-      }));
-    } else {
-      setState(s => ({
-        ...s,
-        audit: [{ id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth', details: `${u.name} signed in` }, ...s.audit].slice(0, 500),
-      }));
-    }
+
+    // Successful login upgrades both legacy SHA-256 and plaintext passwords
+    // to a fresh random-salt PBKDF2-SHA-256 hash. Current PBKDF2 hashes are
+    // left unchanged so repeated logins do not cause unnecessary rehashing.
+    const needsUpgrade = !isPasswordHash(u.password);
+    const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
+    setState(s => ({
+      ...s,
+      users: needsUpgrade
+        ? s.users.map(x => x.id === u.id ? { ...x, password: upgradedPassword } : x)
+        : s.users,
+      audit: [{
+        id: uid(), time: new Date().toISOString(), user: u.email, action: 'LOGIN', entity: 'Auth',
+        details: `${u.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}`,
+      }, ...s.audit].slice(0, 500),
+    }));
     return { ok: true };
   }, [state.users]);
 
