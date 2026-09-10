@@ -30,6 +30,7 @@ const NAV: NavDef[] = [
   { to: '/suppliers', label: 'Suppliers', icon: Truck, perm: 'page:suppliers', group: 'Operations' },
   { to: '/supplier-payments', label: 'Supplier Payments', icon: Wallet, perm: 'page:suppliers', group: 'Operations' },
   { to: '/purchases', label: 'Purchases', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
+  { to: '/grn', label: 'Goods Received Notes', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
   { to: '/sales', label: 'Sales History', icon: ReceiptText, perm: 'page:sales', group: 'Operations' },
   { to: '/exchanges', label: 'Exchanges', icon: ArrowLeftRight, perm: 'page:exchanges', group: 'Operations' },
   { to: '/expenses', label: 'Expenses', icon: Wallet, perm: 'page:expenses', group: 'Operations' },
@@ -46,7 +47,7 @@ const NAV: NavDef[] = [
 const TITLES: [RegExp, string][] = [
   [/^\/$/, 'Dashboard'], [/^\/pos/, 'Point of Sale'], [/^\/inventory/, 'Inventory'],
   [/^\/units/, 'IMEI / Serial Units'], [/^\/repairs/, 'Repairs / Service'],
-  [/^\/customers/, 'Customers'], [/^\/suppliers/, 'Suppliers'], [/^\/supplier-payments/, 'Supplier Payments'], [/^\/purchases/, 'Purchases'],
+  [/^\/customers/, 'Customers'], [/^\/suppliers/, 'Suppliers'], [/^\/supplier-payments/, 'Supplier Payments'], [/^\/grn/, 'Goods Received Notes'], [/^\/purchases/, 'Purchases'],
   [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
   [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'], [/^\/signup/, 'Customer Signup'],
   [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Day Cash & Drawer'], [/^\/permissions/, 'Permissions'],
