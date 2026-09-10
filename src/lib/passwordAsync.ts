@@ -17,6 +17,12 @@ const base64ToBytes = (value: string): Uint8Array => {
   return bytes;
 };
 
+const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+};
+
 const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
   if (a.length !== b.length) return false;
   let diff = 0;
@@ -27,10 +33,7 @@ const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 /** True only for the current salted PBKDF2 storage format. */
 export const isCurrentPasswordHash = (value: string): boolean => isPasswordHash(value);
 
-/**
- * Verify a password without running the synchronous PBKDF2 implementation on the UI thread.
- * Legacy SHA-256 hashes are verified synchronously because the legacy operation is inexpensive.
- */
+/** Verify passwords using Web Crypto where available, with legacy SHA-256 support. */
 export const verifyPasswordAsync = async (plain: string, storedHash: string): Promise<boolean> => {
   if (isLegacyPasswordHash(storedHash)) return verifyLegacyPassword(plain, storedHash);
   if (!isCurrentPasswordHash(storedHash)) return false;
@@ -44,13 +47,13 @@ export const verifyPasswordAsync = async (plain: string, storedHash: string): Pr
 
     const key = await crypto.subtle.importKey(
       'raw',
-      new TextEncoder().encode(plain),
+      toArrayBuffer(new TextEncoder().encode(plain)),
       { name: 'PBKDF2' },
       false,
       ['deriveBits'],
     );
     const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
       key,
       PBKDF2_KEY_BYTES * 8,
     );
@@ -68,13 +71,13 @@ export const hashPasswordAsync = async (plain: string): Promise<string> => {
     crypto.getRandomValues(salt);
     const key = await crypto.subtle.importKey(
       'raw',
-      new TextEncoder().encode(plain),
+      toArrayBuffer(new TextEncoder().encode(plain)),
       { name: 'PBKDF2' },
       false,
       ['deriveBits'],
     );
     const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
       key,
       PBKDF2_KEY_BYTES * 8,
     );
