@@ -89,7 +89,10 @@ interface StoreCtx {
   deleteHold: (id: string) => void;
   // purchases
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
-  receivePurchase: (id: string) => void;
+  saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => Purchase | null;
+  updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => boolean;
+  receivePurchase: (id: string, processorName?: string) => void;
+  processGRN: (id: string, processorName: string) => void;
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
   // expenses
@@ -236,6 +239,7 @@ function migrate(s: POSState): POSState {
       job: s.counters?.job ?? 0,
       quote: (s.counters as { quote?: number })?.quote ?? 0,
       claim: (s.counters as { claim?: number })?.claim ?? 0,
+      grn: (s.counters as { grn?: number })?.grn ?? 0,
       dn: (s.counters as { dn?: number })?.dn ?? 0,
     },
     kitItems: s.kitItems || [],
@@ -826,7 +830,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit]);
 
-  const receivePurchase = useCallback((id: string) => {
+  const receivePurchase = useCallback((id: string, processorName?: string) => {
     const po = state.purchases.find(x => x.id === id);
     if (!po || po.status !== 'pending') return;
     const plan = buildPurchaseReceivePlan(po, state.products);
@@ -863,13 +867,35 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       return {
         ...s,
-        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),
+        purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
         products,
         units: [...newUnits, ...(s.units || [])],
       };
     });
     pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
   }, [state.purchases, state.products, pushAudit]);
+
+  const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
+    if (!user || !p.supplierId || !p.items.length) return null;
+    const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
+    if (!buildPurchaseReceivePlan(validation, state.products)) return null;
+    const created: Purchase = { ...p, id: uid(), poNo: `GRN-${String((state.counters.grn ?? 0) + 1).padStart(4, '0')}`, date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
+    setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
+    pushAudit('CREATE', 'GRN', `Draft ${created.poNo} for ${created.supplierName} · Rs. ${created.total.toLocaleString()}`);
+    return created;
+  }, [state.products, state.counters.grn, user, pushAudit]);
+
+  const updateGRNDraft = useCallback((id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => {
+    const current = state.purchases.find(x => x.id === id);
+    if (!current || current.status !== 'pending') return false;
+    const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
+    if (!buildPurchaseReceivePlan(next, state.products)) return false;
+    setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
+    pushAudit('EDIT', 'GRN', `Updated draft ${current.poNo}`);
+    return true;
+  }, [state.purchases, state.products, pushAudit]);
+
+  const processGRN = useCallback((id: string, processorName: string) => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
     const purchase = state.purchases.find(x => x.id === input.purchaseId);
@@ -1314,7 +1340,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     saveProduct, deleteProduct, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
     completeSale, refundSale, holdSale, resumeHold, deleteHold,
-    savePurchase, receivePurchase, createPurchaseReturn, deletePurchase,
+    savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, logAudit, clearAudit,
