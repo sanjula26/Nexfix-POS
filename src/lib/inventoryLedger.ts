@@ -48,6 +48,19 @@ export function isValidInventoryTransaction(value: unknown): value is InventoryT
 }
 
 /**
+ * Build a validated inventory movement record. Positive quantities add stock;
+ * negative quantities remove stock. This keeps transaction construction
+ * consistent across sales, returns, exchanges and stock adjustments.
+ */
+export function buildInventoryTransaction(input: Omit<InventoryTransaction, 'occurredAt'> & { occurredAt?: string }): InventoryTransaction | null {
+  const transaction: InventoryTransaction = {
+    ...input,
+    occurredAt: input.occurredAt || new Date().toISOString(),
+  };
+  return isValidInventoryTransaction(transaction) ? transaction : null;
+}
+
+/**
  * Append-only helper. Existing records are never mutated or replaced.
  * Duplicate transaction ids are rejected to provide basic idempotency.
  */
