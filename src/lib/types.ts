@@ -8,16 +8,47 @@ export interface Product { id:string; name:string; sku:string; barcode:string; c
 export interface KitItem { id:string; kitProductId:string; componentProductId:string; qty:number; }
 export type UnitStatus='in_stock'|'sold'|'returned'|'reserved'|'defective'|'in_repair';
 export interface InventoryUnit { id:string; productId:string; imei?:string; serial?:string; expiryDate?:string; status:UnitStatus; purchaseId?:string; saleId?:string; saleBillNo?:string; cost?:number; note?:string; createdAt:string; soldAt?:string; warrantyExpiresAt?:string; }
-export interface Customer { id:string; name:string; phone:string; email?:string; nic?:string; address?:string; createdAt:string; creditBalance:number; loyaltyPoints:number; }
+export interface Customer { id:string; name:string; phone:string; email?:string; nic?:string; address?:string; createdAt:string; creditBalance:number; loyaltyPoints:number; creditLimit?:number; }
 export interface Supplier { id:string; name:string; contactPerson?:string; phone:string; email?:string; address?:string; createdAt:string; }
 export interface SaleItem { productId:string; name:string; qty:number; price:number; cost:number; discount?:number; priceOverridden?:boolean; unitIds?:string[]; imeis?:string[]; serials?:string[]; warrantyMonths?:number; }
 export type PaymentMethod='cash'|'card'|'bank'|'mobile'|'credit';
 export interface PaymentLeg { method:PaymentMethod; amount:number }
 export interface Sale { id:string; billNo:string; date:string; cashierId:string; cashierName:string; machineId?:string; machineName?:string; customerId?:string; customerName:string; items:SaleItem[]; subtotal:number; discount:number; tax:number; total:number; payment:PaymentMethod; payments?:PaymentLeg[]; shipping?:number; pointsRedeemed?:number; pointsEarned?:number; note?:string; amountPaid:number; change:number; profit:number; status:'completed'|'refunded'|'exchanged'; }
-export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; }
-export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; }
+export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; sellingPrice?:number; sellDiscountPct?:number; sellDiscountAmt?:number; updateSellingPrice?:boolean; }
+export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; supplierInvoiceNo?:string; notes?:string; processedAt?:string; processedBy?:string; }
+
+// ── GRN (Goods Received Note) ──────────────────────────────────────────────
+export interface GRNItem {
+  productId: string;
+  itemCode: string;
+  description: string;
+  costPrice: number;
+  sellingPrice: number;
+  sellDiscountPct: number;
+  sellDiscountAmt: number;
+  quantity: number;
+  total: number;
+  imeis?: string[];
+}
+export interface GRN {
+  id: string;
+  grnNumber: string;
+  supplierId: string;
+  supplierName: string;
+  supplierInvoiceNo: string;
+  date: string;
+  status: 'draft' | 'processed';
+  items: GRNItem[];
+  totalCost: number;
+  notes?: string;
+  createdBy: string;
+  processedAt?: string;
+  processedBy?: string;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface Expense { id:string; date:string; category:string; note:string; amount:number; by:string; }
-export interface ExchangeItem { productId:string; name:string; qty:number; amount:number }
+export interface ExchangeItem { productId:string; name:string; qty:number; amount:number; itemIdx?:number }
 export interface Exchange { id:string; exNo:string; date:string; billNo:string; customerName:string; reason:string; items:ExchangeItem[]; refund:number; additional:number; by:string; }
 export interface AuditEntry { id:string; time:string; user:string; action:string; entity:string; details:string; }
 export interface HeldLine { productId:string; qty:number; unitIds?:string[] }
@@ -33,5 +64,5 @@ export type ClaimStatus='open'|'approved'|'rejected'|'replaced'|'repaired'|'clos
 export interface WarrantyClaim { id:string; claimNo:string; unitId?:string; saleId?:string; saleBillNo?:string; customerId?:string; customerName?:string; productName:string; imeiOrSerial?:string; issueDescription:string; status:ClaimStatus; resolutionNotes?:string; createdAt:string; closedAt?:string; by:string; }
 export interface Settings { shopName:string; tagline:string; address:string; phone:string; email:string; receiptFooter:string; taxDefault:number; lowStockDefault:number; exchangeDays:number; openingFloat:number; adminPinHash:string; whatsappReceipts:boolean; categories?:string[]; brands?:string[]; repairWarrantyDays?:number; }
 export interface Permissions { admin:Record<string,boolean>; cashier:Record<string,boolean>; technician?:Record<string,boolean>; manager?:Record<string,boolean>; }
-export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; }
-export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; }
+export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; grn?:number; }
+export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; grns?:GRN[]; }
