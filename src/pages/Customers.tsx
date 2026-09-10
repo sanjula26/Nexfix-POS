@@ -105,7 +105,7 @@ export default function Customers() {
               <thead>
                 <tr>
                   <th className="th">Customer</th><th className="th">Contact</th><th className="th">Address</th>
-                  <th className="th">Credit</th><th className="th">Since</th><th className="th !text-right">Actions</th>
+                  <th className="th">Credit</th><th className="th">Limit</th><th className="th">Since</th><th className="th !text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -127,6 +127,7 @@ export default function Customers() {
                         ? <Badge tone="amber" className="num">{fmtRs(c.creditBalance)}</Badge>
                         : <span className="text-xs text-faint">—</span>}
                     </td>
+                    <td className="td num text-xs text-sub">{c.creditLimit && c.creditLimit > 0 ? fmtRs(c.creditLimit) : 'Unlimited'}</td>
                     <td className="td text-[13px] text-sub" title={fmtDate(c.createdAt)}>{timeAgo(c.createdAt)}</td>
                     <td className="td">
                       <div className="flex items-center justify-end gap-1">
@@ -170,6 +171,9 @@ export default function Customers() {
             </Field>
             <Field label="Address">
               <input className="input" value={editing.address || ''} onChange={e => setEditing({ ...editing, address: e.target.value })} placeholder="Street, City" />
+            </Field>
+            <Field label="Credit limit (Rs.)" hint="0 = unlimited. Credit sales are blocked when the limit would be exceeded.">
+              <input className="input num" type="number" min={0} step={0.01} value={editing.creditLimit ?? ''} onChange={e => { const n = Math.max(0, Number(e.target.value) || 0); setEditing({ ...editing, creditLimit: n > 0 ? n : undefined }); }} placeholder="0 (unlimited)" />
             </Field>
             <Field label="Loyalty points" hint="Earned automatically: 1 pt per Rs. 1,000 · worth Rs. 20 each">
               <input
