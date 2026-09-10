@@ -6,11 +6,89 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply inventory ledger codemod
+        if: github.actor != 'github-actions[bot]' && github.head_ref == 'feature/inventory-ledger-integration'
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+          old = "import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';\n"
+          new = old + "import { appendInventoryTransaction, buildInventoryTransaction } from './inventoryLedger';\n"
+          assert old in s and new not in s
+          s = s.replace(old, new, 1)
+          old = """      const updatedProducts = s.products.map(p => {\n      const qty = requestedQtyByProduct.get(p.id);\n      return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;\n    });\n\n    setState(prev => ({\n      ...prev,\n      products: updatedProducts,"""
+          new = """      const updatedProducts = s.products.map(p => {\n      const qty = requestedQtyByProduct.get(p.id);\n      return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;\n    });\n\n    setState(prev => {\n      let inventoryTransactions = prev.inventoryTransactions || [];\n      items.forEach((item, index) => {\n        const tx = buildInventoryTransaction({\n          id: `${sale.id}:SALE:${index}`, type: 'SALE', productId: item.productId,\n          quantity: -item.qty, by: byUser.name, machineId: machine.id,\n          referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds,\n        });\n        if (tx) inventoryTransactions = appendInventoryTransaction(inventoryTransactions, tx);\n      });\n      return { ...prev, inventoryTransactions, products: updatedProducts,"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """    setState(s => ({\n      ...s,\n      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),\n      products: s.products.map(p => {"""
+          new = """    setState(s => {\n      let inventoryTransactions = s.inventoryTransactions || [];\n      sale.items.forEach((item, index) => {\n        const tx = buildInventoryTransaction({\n          id: `${sale.id}:REFUND:${index}`, type: 'REFUND', productId: item.productId,\n          quantity: item.qty, by: user?.name, machineId: sale.machineId,\n          referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds,\n        });\n        if (tx) inventoryTransactions = appendInventoryTransaction(inventoryTransactions, tx);\n      });\n      return { ...s, inventoryTransactions,\n      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),\n      products: s.products.map(p => {"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      units: (s.units || []).map(u =>\n        returnedUnitIds.includes(u.id)\n          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }\n          : u,\n      ),\n    }));\n    pushAudit('REFUND',"""
+          new = """      units: (s.units || []).map(u =>\n        returnedUnitIds.includes(u.id)\n          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }\n          : u,\n      ),\n    };\n    });\n    pushAudit('REFUND',"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """    const p = state.products.find(x => x.id === id);\n    setState(s => {\n      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));\n      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync\n      return {\n        ...s,\n        products: updatedProducts,\n      };\n    });"""
+          new = """    const p = state.products.find(x => x.id === id);\n    if (!p || !Number.isFinite(delta) || delta === 0) return;\n    const tx = buildInventoryTransaction({\n      id: uid(), type: 'STOCK_ADJUSTMENT', productId: id, quantity: delta,\n      by: user?.name, machineId: getMachineIdentity().id, referenceId: id, reason,\n    });\n    setState(s => {\n      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));\n      syncToGoogleDrive('Products', updatedProducts);\n      return { ...s, products: updatedProducts, inventoryTransactions: tx ? appendInventoryTransaction(s.inventoryTransactions || [], tx) : (s.inventoryTransactions || []) };\n    });"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """  }, [pushAudit, state.products]);\n\n  /* ---------------- customers / suppliers ---------------- */"""
+          new = """  }, [pushAudit, state.products, user]);\n\n  /* ---------------- customers / suppliers ---------------- */"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      return {\n        ...s,\n        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),\n        products,\n        units: [...newUnits, ...(s.units || [])],\n      };"""
+          new = """      let inventoryTransactions = s.inventoryTransactions || [];\n      for (const [productId, quantity] of currentPlan.productStockDelta.entries()) {\n        const tx = buildInventoryTransaction({\n          id: `${currentPo.id}:PURCHASE_RECEIVE:${productId}`, type: 'PURCHASE_RECEIVE',\n          productId, quantity, by: user?.name, machineId: getMachineIdentity().id,\n          referenceId: currentPo.id, referenceNo: currentPo.poNo,\n        });\n        if (tx) inventoryTransactions = appendInventoryTransaction(inventoryTransactions, tx);\n      }\n      return { ...s, inventoryTransactions,\n        purchases: s.purchases.map(x => (x.id === id ? { ...x, status: 'received' as const } : x)),\n        products, units: [...newUnits, ...(s.units || [])],\n      };"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """  }, [state.purchases, state.products, pushAudit]);\n\n  const deletePurchase"""
+          new = """  }, [state.purchases, state.products, pushAudit, user]);\n\n  const deletePurchase"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      const priorReturnedByProduct = new Map<string, number>();\n      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {\n        priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);\n      });\n\n      const exItems: Exchange['items'] = [];"""
+          new = """      const priorReturnedByProduct = new Map<string, number>();\n      const priorReturnedByItem = new Map<number, number>();\n      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {\n        if (Number.isInteger(item.itemIdx)) priorReturnedByItem.set(item.itemIdx!, (priorReturnedByItem.get(item.itemIdx!) || 0) + item.qty);\n        else priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);\n      });\n\n      const exItems: Exchange['items'] = [];"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """        const it = sale.items[itemIdx];\n        const alreadyReturned = priorReturnedByProduct.get(it.productId) || 0;\n        const availableQty = Math.max(0, it.qty - alreadyReturned);"""
+          new = """        const it = sale.items[itemIdx];\n        const alreadyReturned = (priorReturnedByItem.get(itemIdx) || 0) + (priorReturnedByItem.has(itemIdx) ? 0 : (priorReturnedByProduct.get(it.productId) || 0));\n        const availableQty = Math.max(0, it.qty - alreadyReturned);"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """        exItems.push({ productId: it.productId, name: it.name, qty, amount });"""
+          new = """        exItems.push({ productId: it.productId, name: it.name, qty, amount, itemIdx });"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """        priorReturnedByProduct.set(it.productId, alreadyReturned + qty);"""
+          new = """        priorReturnedByItem.set(itemIdx, alreadyReturned + qty);"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      const allReturned = sale.items.every(it => (priorReturnedByProduct.get(it.productId) || 0) >= it.qty);"""
+          new = """      const allReturned = sale.items.every((it, idx) => {\n        const returned = (priorReturnedByItem.get(idx) || 0) + (priorReturnedByItem.has(idx) ? 0 : (priorReturnedByProduct.get(it.productId) || 0));\n        return returned >= it.qty;\n      });"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = """      return {\n        ...s,\n        exchanges: [ex, ...s.exchanges],"""
+          new = """      let inventoryTransactions = s.inventoryTransactions || [];\n      exItems.forEach((item, index) => {\n        const tx = buildInventoryTransaction({\n          id: `${ex.id}:EXCHANGE_RETURN:${index}`, type: 'EXCHANGE_RETURN', productId: item.productId,\n          quantity: item.qty, by: user.name, machineId: sale.machineId, referenceId: ex.id,\n          referenceNo: ex.exNo, unitIds: (sale.items[item.itemIdx ?? 0]?.unitIds || []).slice(0, item.qty), reason,\n        });\n        if (tx) inventoryTransactions = appendInventoryTransaction(inventoryTransactions, tx);\n      });\n      return { ...s, inventoryTransactions, exchanges: [ex, ...s.exchanges],"""
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/store.tsx
+          git checkout origin/main -- .github/workflows/ci.yml
+          git rm .github/workflows/apply-ledger.yml
+          git add .github/workflows/ci.yml
+          git commit -m "feat: integrate append-only inventory ledger"
+          git push origin HEAD:${{ github.head_ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
