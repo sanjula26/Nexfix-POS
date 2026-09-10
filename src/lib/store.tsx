@@ -136,7 +136,7 @@ const Ctx = createContext<StoreCtx | null>(null);
 function applyInventoryLedger(
   prev: POSState,
   next: POSState,
-  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL',
+  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'PURCHASE_REVERSAL',
   by?: string,
 ): POSState {
   const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
