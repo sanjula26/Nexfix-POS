@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "pretypecheck": "node scripts/apply-purchase-return.mjs",
+    "pretypecheck": "node scripts/apply-purchase-return.mjs && node scripts/fix-purchase-return-page.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "preview": "vite preview",
     "desktop:build": "npm run build && electron-builder --win --publish never",
