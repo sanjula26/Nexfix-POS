@@ -50,7 +50,6 @@
     "directories": { "output": "release" },
     "win": { "target": ["nsis", "portable"] },
     "nsis": { "artifactName": "Nexfix-POS-${version}-${arch}-installer.${ext}", "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true },
-    "portable": { "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}" },
-    "publish": null
+    "portable": { "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}" }
   }
 }
