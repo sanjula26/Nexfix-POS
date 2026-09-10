@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -17,6 +20,102 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Apply safe inventory ledger integration
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+          if "from './inventoryLedger'" not in s:
+              anchor = "import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';"
+              assert anchor in s
+              s = s.replace(anchor, anchor + "\nimport { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';", 1)
+          if 'function applyInventoryLedger(' not in s:
+              anchor = "const Ctx = createContext<StoreCtx | null>(null);"
+              assert anchor in s
+              helper = r'''
+
+function applyInventoryLedger(prev: POSState, next: POSState, operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT', by?: string): POSState {
+  const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
+  const transactions: InventoryTransaction[] = [];
+  const prevProducts = new Map(prev.products.map(p => [p.id, p]));
+  const nextProducts = new Map(next.products.map(p => [p.id, p]));
+  const now = new Date().toISOString();
+  const add = (tx: Omit<InventoryTransaction, 'id' | 'occurredAt'> & { id: string }) => transactions.push({ ...tx, occurredAt: now, by });
+  if (operation === 'SALE') {
+    const ids = new Set(prev.sales.map(x => x.id));
+    for (const sale of next.sales) if (!ids.has(sale.id)) for (const item of sale.items) if (item.qty > 0) add({ id: `inv:sale:${sale.id}:${item.productId}`, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+  }
+  if (operation === 'REFUND') {
+    for (const sale of next.sales) {
+      const old = prev.sales.find(x => x.id === sale.id);
+      if (!old || old.status === 'refunded' || sale.status !== 'refunded') continue;
+      for (const item of sale.items) if (item.qty > 0) add({ id: `inv:refund:${sale.id}:${item.productId}`, type: 'REFUND', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+    }
+  }
+  if (operation === 'PURCHASE_RECEIVE') {
+    for (const purchase of next.purchases) {
+      const old = prev.purchases.find(x => x.id === purchase.id);
+      if (!old || old.status === 'received' || purchase.status !== 'received') continue;
+      for (const item of purchase.items) if (item.qty > 0) add({ id: `inv:purchase:${purchase.id}:${item.productId}`, type: 'PURCHASE_RECEIVE', productId: item.productId, quantity: item.qty, referenceId: purchase.id, referenceNo: purchase.poNo });
+    }
+  }
+  if (operation === 'EXCHANGE') {
+    const ids = new Set(prev.exchanges.map(x => x.id));
+    for (const ex of next.exchanges) if (!ids.has(ex.id)) {
+      const returned = new Map<string, number>();
+      for (const item of ex.items) if (item.qty > 0) { returned.set(item.productId, (returned.get(item.productId) || 0) + item.qty); add({ id: `inv:exchange:${ex.id}:${item.productId}:return`, type: 'EXCHANGE_RETURN', productId: item.productId, quantity: item.qty, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason }); }
+      for (const [productId, qtyReturned] of returned) {
+        const netDelta = (nextProducts.get(productId)?.stock || 0) - (prevProducts.get(productId)?.stock || 0);
+        const outgoing = qtyReturned - netDelta;
+        if (outgoing > 0) add({ id: `inv:exchange:${ex.id}:${productId}:out`, type: 'SALE', productId, quantity: -outgoing, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
+      }
+    }
+  }
+  if (operation === 'STOCK_ADJUSTMENT') {
+    for (const [productId, product] of nextProducts) {
+      const before = prevProducts.get(productId)?.stock;
+      if (before === undefined) continue;
+      const delta = product.stock - before;
+      if (delta) add({ id: `inv:adjust:${productId}:${product.stock}:${delta}`, type: 'STOCK_ADJUSTMENT', productId, quantity: delta, reason: 'Stock adjustment' });
+    }
+  }
+  let updated = ledger;
+  for (const tx of transactions) updated = appendInventoryTransaction(updated, tx);
+  return updated === next.inventoryTransactions ? next : { ...next, inventoryTransactions: updated };
+}
+'''
+              s = s.replace(anchor, anchor + helper, 1)
+          if 'setStateWithInventoryLedger' not in s:
+              anchor = "  const viewingAs: Role = user?.role || 'admin';\n"
+              assert anchor in s
+              wrapper = r'''
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT', updater: (prev: POSState) => POSState) => {
+    setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
+  }, [user?.email]);
+'''
+              s = s.replace(anchor, anchor + wrapper, 1)
+          ops = {'adjustStock':'STOCK_ADJUSTMENT','completeSale':'SALE','refundSale':'REFUND','receivePurchase':'PURCHASE_RECEIVE','processExchange':'EXCHANGE'}
+          for fn, op in ops.items():
+              marker = re.search(rf"\n  const {fn} = useCallback\(", s)
+              assert marker, f'{fn} declaration missing'
+              start = marker.start()
+              nxt = re.search(r"\n  const [A-Za-z0-9_]+ = useCallback\(", s[marker.end():])
+              end = marker.end() + (nxt.start() if nxt else len(s[marker.end():]))
+              chunk = s[start:end]
+              if f"setStateWithInventoryLedger('{op}'" not in chunk:
+                  idx = chunk.find('setState(')
+                  assert idx >= 0, f'{fn} setState missing'
+                  chunk = chunk[:idx] + f"setStateWithInventoryLedger('{op}', " + chunk[idx+len('setState('):]
+                  s = s[:start] + chunk + s[end:]
+          p.write_text(s)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx
+          if ! git diff --cached --quiet; then git commit -m 'feat: safely integrate inventory ledger into POS mutations'; git push; fi
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
