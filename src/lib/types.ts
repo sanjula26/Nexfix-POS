@@ -17,6 +17,9 @@ export interface Sale { id:string; billNo:string; date:string; cashierId:string;
 export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; sellingPrice?:number; sellDiscountPct?:number; sellDiscountAmt?:number; updateSellingPrice?:boolean; }
 export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; supplierInvoiceNo?:string; notes?:string; processedAt?:string; processedBy?:string; }
 
+export interface PurchaseReturnItem { itemIdx:number; productId:string; name:string; qty:number; cost:number; total:number; }
+export interface PurchaseReturn { id:string; dnNo:string; purchaseId:string; poNo:string; supplierId:string; supplierName:string; date:string; items:PurchaseReturnItem[]; total:number; reason:string; by:string; }
+
 // ── GRN (Goods Received Note) ──────────────────────────────────────────────
 export interface GRNItem {
   productId: string;
@@ -64,5 +67,5 @@ export type ClaimStatus='open'|'approved'|'rejected'|'replaced'|'repaired'|'clos
 export interface WarrantyClaim { id:string; claimNo:string; unitId?:string; saleId?:string; saleBillNo?:string; customerId?:string; customerName?:string; productName:string; imeiOrSerial?:string; issueDescription:string; status:ClaimStatus; resolutionNotes?:string; createdAt:string; closedAt?:string; by:string; }
 export interface Settings { shopName:string; tagline:string; address:string; phone:string; email:string; receiptFooter:string; taxDefault:number; lowStockDefault:number; exchangeDays:number; openingFloat:number; adminPinHash:string; whatsappReceipts:boolean; categories?:string[]; brands?:string[]; repairWarrantyDays?:number; }
 export interface Permissions { admin:Record<string,boolean>; cashier:Record<string,boolean>; technician?:Record<string,boolean>; manager?:Record<string,boolean>; }
-export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; grn?:number; }
-export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; grns?:GRN[]; }
+export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; grn?:number; dn?:number; }
+export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; purchaseReturns?:PurchaseReturn[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; grns?:GRN[]; }
