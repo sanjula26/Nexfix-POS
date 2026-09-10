@@ -1,4 +1,5 @@
 name: Windows Desktop Build
+# Final release workflow verification trigger; no build behavior changed.
 
 on:
   workflow_dispatch:
