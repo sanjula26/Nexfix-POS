@@ -1,0 +1,39 @@
+name: Temporary GRN full verification
+on:
+  push:
+    branches: [feature/grn-workflow]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run desktop:build
+      - shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path release -File
+          $exeFiles = $files | Where-Object { $_.Extension -eq '.exe' }
+          if ($files.Count -lt 2) { throw 'Expected installer and portable artifacts.' }
+          if ($exeFiles.Count -lt 2) { throw 'Expected at least two Windows .exe artifacts.' }
