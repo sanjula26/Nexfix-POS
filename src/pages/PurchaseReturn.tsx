@@ -3,9 +3,9 @@ import { ArrowLeft, FileX, Plus, Minus, Download, Printer } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../components/ui';
 import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
-import type { Purchase } from '../lib/types';
+import type { Purchase, PurchaseReturn } from '../lib/types';
 
-interface ReturnLine { productId: string; name: string; maxQty: number; qty: number; cost: number; }
+interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }
 
 function printDebitNote(dn: { dnNo: string; date: string; supplierName: string; items: ReturnLine[]; total: number; reason: string }, shopName: string) {
   const w = window.open('', '_blank', 'width=800,height=600');
@@ -34,13 +34,13 @@ function printDebitNote(dn: { dnNo: string; date: string; supplierName: string; 
 }
 
 export default function PurchaseReturn() {
-  const { state, adjustStock, logAudit } = usePOS();
+  const { state, createPurchaseReturn } = usePOS();
   const [search, setSearch] = useState('');
   const [selectedGRN, setSelectedGRN] = useState<Purchase | null>(null);
   const [lines, setLines] = useState<ReturnLine[]>([]);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<{ dnNo: string; date: string; supplierName: string; items: ReturnLine[]; total: number; reason: string } | null>(null);
+  const [done, setDone] = useState<PurchaseReturn | null>(null);
 
   const processedGRNs = useMemo(() => {
     const q = search.toLowerCase();
@@ -51,13 +51,16 @@ export default function PurchaseReturn() {
 
   const selectGRN = (grn: Purchase) => {
     setSelectedGRN(grn);
-    setLines(grn.items.map(i => ({
-      productId: i.productId,
-      name: i.name,
-      maxQty: Math.min(i.qty, Math.max(0, state.products.find(p => p.id === i.productId)?.stock ?? 0)),
-      qty: 0,
-      cost: i.cost,
-    })));
+    const returnedByItem = new Map<number, number>();
+    for (const ret of state.purchaseReturns || []) {
+      if (ret.purchaseId !== grn.id) continue;
+      for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
+    }
+    setLines(grn.items.map((i, itemIdx) => {
+      const alreadyReturned = returnedByItem.get(itemIdx) || 0;
+      const stock = state.products.find(p => p.id === i.productId)?.stock ?? 0;
+      return { itemIdx, productId: i.productId, name: i.name, maxQty: Math.min(Math.max(0, i.qty - alreadyReturned), Math.max(0, stock)), qty: 0, cost: i.cost };
+    }));
     setReason('');
   };
 
@@ -68,19 +71,15 @@ export default function PurchaseReturn() {
   const returnItems = lines.filter(l => l.qty > 0);
   const returnTotal = returnItems.reduce((a, l) => a + l.qty * l.cost, 0);
 
-  const dnCounter = { current: state.purchases.length + state.exchanges.length };
-  const dnNo = `DN-${String(dnCounter.current + 1).padStart(4, '0')}`;
+  const dnNo = `DN-${String((state.counters.dn || 0) + 1).padStart(4, '0')}`;
 
   const handleSubmit = () => {
     if (!selectedGRN || returnItems.length === 0 || !reason.trim()) return;
     setSubmitting(true);
     try {
-      returnItems.forEach(item => {
-        adjustStock(item.productId, -item.qty, `Purchase return — Debit Note ${dnNo} from ${selectedGRN.supplierName}`);
-      });
-      const debitNote = { dnNo, date: new Date().toISOString(), supplierName: selectedGRN.supplierName, items: returnItems, total: returnTotal, reason: reason.trim() };
-      logAudit('PURCHASE_RETURN', 'GRN', `Debit Note ${dnNo} — ${selectedGRN.supplierName} — Rs.${returnTotal.toLocaleString()}`);
-      setDone(debitNote);
+      const result = createPurchaseReturn({ purchaseId: selectedGRN.id, lines: returnItems.map(item => ({ itemIdx: item.itemIdx, qty: item.qty })), reason: reason.trim() });
+      if (!result) return;
+      setDone(result);
       setSelectedGRN(null);
       setLines([]);
     } finally {
