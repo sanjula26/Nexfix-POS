@@ -59,7 +59,6 @@ jobs:
           assert old in s
           s = s.replace(old, new, 1)
 
-          # Exchange accounting: track returns by original sale item index, with a legacy product fallback.
           old = """      const priorReturnedByProduct = new Map<string, number>();\n      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {\n        priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);\n      });\n\n      const exItems: Exchange['items'] = [];"""
           new = """      const priorReturnedByProduct = new Map<string, number>();\n      const priorReturnedByItem = new Map<number, number>();\n      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {\n        if (Number.isInteger(item.itemIdx)) {\n          priorReturnedByItem.set(item.itemIdx!, (priorReturnedByItem.get(item.itemIdx!) || 0) + item.qty);\n        } else {\n          priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);\n        }\n      });\n\n      const exItems: Exchange['items'] = [];"""
           assert old in s
@@ -85,9 +84,6 @@ jobs:
           new = """      let inventoryTransactions = s.inventoryTransactions || [];\n      exItems.forEach((item, index) => {\n        const tx = buildInventoryTransaction({\n          id: `${ex.id}:EXCHANGE_RETURN:${index}`,\n          type: 'EXCHANGE_RETURN',\n          productId: item.productId,\n          quantity: item.qty,\n          by: user.name,\n          machineId: sale.machineId,\n          referenceId: ex.id,\n          referenceNo: ex.exNo,\n          unitIds: (sale.items[item.itemIdx ?? 0]?.unitIds || []).slice(0, item.qty),\n          reason,\n        });\n        if (tx) inventoryTransactions = appendInventoryTransaction(inventoryTransactions, tx);\n      });\n\n      return {\n        ...s,\n        inventoryTransactions,\n        exchanges: [ex, ...s.exchanges],"""
           assert old in s
           s = s.replace(old, new, 1)
-          old = """  }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);"""
-          new = """  }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);"""
-          assert old in s
 
           p.write_text(s)
           PY
@@ -101,5 +97,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/lib/store.tsx
           git rm .github/workflows/apply-ledger.yml
-          git commit -m "feat: integrate append-only inventory ledger" 
+          git commit -m "feat: integrate append-only inventory ledger"
           git push
