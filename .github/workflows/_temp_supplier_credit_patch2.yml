@@ -1,0 +1,107 @@
+name: Temporary Supplier Credit Patch 2
+on:
+  push:
+    branches: [feature/supplier-credit-controls]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def once(path, old, new):
+              p=Path(path); s=p.read_text()
+              if old not in s:
+                  raise SystemExit(f'{path}: marker not found: {old[:100]!r}')
+              p.write_text(s.replace(old,new,1))
+
+          store=Path('src/lib/store.tsx'); s=store.read_text()
+          once('src/lib/store.tsx', "} from './types';\n", "} from './types';\nimport type { SupplierPayment } from './supplierPayments';\nimport { getSupplierOutstanding } from './supplierPayments';\n")
+          once('src/lib/store.tsx', "  deleteSupplier: (id: string) => void;\n", "  deleteSupplier: (id: string) => void;\n  saveSupplierPayment: (p: Omit<SupplierPayment, 'id' | 'date' | 'by'>) => void;\n  deleteSupplierPayment: (id: string) => void;\n")
+          once('src/lib/store.tsx', "    purchaseReturns: s.purchaseReturns || [],\n", "    purchaseReturns: s.purchaseReturns || [],\n    supplierPayments: s.supplierPayments || [],\n")
+          once('src/lib/store.tsx', "  /* ---------------- sales ---------------- */", """  const saveSupplierPayment = useCallback((p: Omit<SupplierPayment, 'id' | 'date' | 'by'>) => {
+    if (!user || !Number.isFinite(p.amount) || p.amount <= 0) return;
+    const supplier = state.suppliers.find(s => s.id === p.supplierId);
+    if (!supplier) return;
+    if (p.purchaseId) {
+      const purchase = state.purchases.find(x => x.id === p.purchaseId);
+      if (!purchase || purchase.supplierId !== p.supplierId || purchase.status !== 'received') return;
+    }
+    const outstanding = getSupplierOutstanding(p.supplierId, state.purchases, state.supplierPayments || [], state.purchaseReturns || []);
+    if (p.amount > outstanding + 0.005) return;
+    const payment: SupplierPayment = { ...p, id: uid(), date: new Date().toISOString(), by: user.name };
+    setState(s => ({ ...s, supplierPayments: [payment, ...(s.supplierPayments || [])] }));
+    pushAudit('CREATE', 'SupplierPayment', `Payment of Rs. ${p.amount.toLocaleString()} to supplier ${supplier.name}`);
+  }, [pushAudit, state.purchaseReturns, state.purchases, state.suppliers, state.supplierPayments, user]);
+
+  const deleteSupplierPayment = useCallback((id: string) => {
+    if (!user || !can('act:deleteRecords')) return;
+    const payment = state.supplierPayments?.find(x => x.id === id);
+    setState(s => ({ ...s, supplierPayments: (s.supplierPayments || []).filter(x => x.id !== id) }));
+    if (payment) pushAudit('DELETE', 'SupplierPayment', `Deleted supplier payment of Rs. ${payment.amount.toLocaleString()}`);
+  }, [can, pushAudit, state.supplierPayments, user]);
+
+  /* ---------------- sales ---------------- */""")
+          once('src/lib/store.tsx', "    const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;\n", "    const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;\n    if (isCredit && cust?.creditLimit && cust.creditLimit > 0 && cust.creditBalance + balanceDue > cust.creditLimit + 0.005) return null;\n")
+          once('src/lib/store.tsx', "    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier,\n", "    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,\n")
+
+          once('src/pages/POS.tsx', "    if (hasCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales');\n", "    if (hasCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales');\n    if (hasCredit && customer?.creditLimit && customer.creditLimit > 0) {\n      const newBalance = customer.creditBalance + Math.max(0, total - paidNum);\n      if (newBalance > customer.creditLimit + 0.005) return setError(`Credit limit exceeded. Available credit: ${fmtRs(Math.max(0, customer.creditLimit - customer.creditBalance))}`);\n    }\n")
+
+          once('src/pages/Customers.tsx', "            <Field label=\"Address\">\n              <input className=\"input\" value={editing.address || ''} onChange={e => setEditing({ ...editing, address: e.target.value })} placeholder=\"Street, City\" />\n            </Field>\n", "            <Field label=\"Address\">\n              <input className=\"input\" value={editing.address || ''} onChange={e => setEditing({ ...editing, address: e.target.value })} placeholder=\"Street, City\" />\n            </Field>\n            <Field label=\"Credit Limit (Rs.)\" hint=\"0 = no limit. Credit sales are blocked above this limit\">\n              <input className=\"input num\" type=\"number\" min={0} value={editing.creditLimit || ''}\n                onChange={e => setEditing({ ...editing, creditLimit: Math.max(0, Number(e.target.value) || 0) || undefined })}\n                placeholder=\"0 (unlimited)\" />\n            </Field>\n")
+
+          # Supplier ledger now accounts for debit notes.
+          once('src/lib/supplierPayments.ts', "import type { Purchase, Supplier } from './types';", "import type { Purchase, PurchaseReturn, Supplier } from './types';")
+          once('src/lib/supplierPayments.ts', "  type: 'purchase' | 'payment';", "  type: 'purchase' | 'purchase_return' | 'payment';")
+          once('src/lib/supplierPayments.ts', "  payments: readonly SupplierPayment[],\n): SupplierAccountLedgerRow[] {\n  const rows: Array<{ date: string; type: 'purchase' | 'payment'; reference: string; amount: number; paymentMethod?: SupplierPaymentMethod }> = [];", "  payments: readonly SupplierPayment[],\n  purchaseReturns: readonly PurchaseReturn[] = [],\n): SupplierAccountLedgerRow[] {\n  const rows: Array<{ date: string; type: 'purchase' | 'purchase_return' | 'payment'; reference: string; amount: number; paymentMethod?: SupplierPaymentMethod }> = [];")
+          once('src/lib/supplierPayments.ts', "  for (const payment of payments) {", "  for (const purchaseReturn of purchaseReturns) {\n    if (purchaseReturn.supplierId !== supplier.id || !Number.isFinite(purchaseReturn.total) || purchaseReturn.total <= 0) continue;\n    rows.push({ date: purchaseReturn.date, type: 'purchase_return', reference: purchaseReturn.dnNo, amount: -purchaseReturn.total });\n  }\n\n  for (const payment of payments) {")
+          once('src/lib/supplierPayments.ts', "  payments: readonly SupplierPayment[],\n): number {\n", "  payments: readonly SupplierPayment[],\n  purchaseReturns: readonly PurchaseReturn[] = [],\n): number {\n")
+          once('src/lib/supplierPayments.ts', "  const paid = payments\n    .filter(p => p.supplierId === supplierId && Number.isFinite(p.amount) && p.amount > 0)\n    .reduce((sum, p) => sum + p.amount, 0);\n  return Math.max(0, Math.round((purchased - paid) * 100) / 100);", "  const returned = purchaseReturns\n    .filter(r => r.supplierId === supplierId && Number.isFinite(r.total) && r.total > 0)\n    .reduce((sum, r) => sum + r.total, 0);\n  const paid = payments\n    .filter(p => p.supplierId === supplierId && Number.isFinite(p.amount) && p.amount > 0)\n    .reduce((sum, p) => sum + p.amount, 0);\n  return Math.max(0, Math.round((purchased - returned - paid) * 100) / 100);")
+
+          # Suppliers UI: payment action + modal.
+          p=Path('src/pages/Suppliers.tsx'); s=p.read_text()
+          once('src/pages/Suppliers.tsx', "import { Plus, Pencil, Trash2, Phone, Mail, Truck, Package } from 'lucide-react';", "import { Plus, Pencil, Trash2, Phone, Mail, Truck, Package, CreditCard } from 'lucide-react';")
+          once('src/pages/Suppliers.tsx', "import type { Supplier } from '../lib/types';", "import type { Supplier } from '../lib/types';\nimport type { SupplierPaymentMethod } from '../lib/supplierPayments';\nimport { getSupplierOutstanding } from '../lib/supplierPayments';")
+          once('src/pages/Suppliers.tsx', "  const { state, saveSupplier, deleteSupplier, can } = usePOS();", "  const { state, saveSupplier, deleteSupplier, saveSupplierPayment, can } = usePOS();")
+          once('src/pages/Suppliers.tsx', "  const [deleting, setDeleting] = useState<Supplier | null>(null);", "  const [deleting, setDeleting] = useState<Supplier | null>(null);\n  const [paymentFor, setPaymentFor] = useState<Supplier | null>(null);\n  const [paymentAmount, setPaymentAmount] = useState('');\n  const [paymentMethod, setPaymentMethod] = useState<SupplierPaymentMethod>('cash');\n  const [paymentNote, setPaymentNote] = useState('');")
+          once('src/pages/Suppliers.tsx', "  const productCount = (id: string) => state.products.filter(p => p.supplierId === id).length;", "  const productCount = (id: string) => state.products.filter(p => p.supplierId === id).length;\n  const outstanding = (id: string) => getSupplierOutstanding(id, state.purchases, state.supplierPayments || [], state.purchaseReturns || []);")
+          once('src/pages/Suppliers.tsx', "<th className=\"th\">Products</th><th className=\"th !text-right\">Actions</th>", "<th className=\"th\">Products</th><th className=\"th\">Outstanding</th><th className=\"th !text-right\">Actions</th>")
+          once('src/pages/Suppliers.tsx', "<td className=\"td\">\n                      <Badge tone=\"slate\" className=\"num\"><Package size={10} /> {fmtNum(productCount(s.id))} items</Badge>\n                    </td>\n                    <td className=\"td\">", "<td className=\"td\">\n                      <Badge tone=\"slate\" className=\"num\"><Package size={10} /> {fmtNum(productCount(s.id))} items</Badge>\n                    </td>\n                    <td className=\"td\">\n                      <Badge tone={outstanding(s.id) > 0 ? 'amber' : 'emerald'} className=\"num\">{outstanding(s.id) > 0 ? `Rs. ${outstanding(s.id).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Rs. 0.00'}</Badge>\n                    </td>\n                    <td className=\"td\">")
+          once('src/pages/Suppliers.tsx', "<button className=\"icon-btn !w-8 !h-8\" onClick={() => { setEditing({ ...s }); setIsNew(false); }}><Pencil size={14} /></button>", "<button className=\"btn btn-outline !py-1.5 !px-2.5 !text-xs\" disabled={outstanding(s.id) <= 0} onClick={() => { setPaymentFor(s); setPaymentAmount(''); setPaymentMethod('cash'); setPaymentNote(''); }}><CreditCard size={13} /> Pay</button>\n                        <button className=\"icon-btn !w-8 !h-8\" onClick={() => { setEditing({ ...s }); setIsNew(false); }}><Pencil size={14} /></button>")
+          marker="      <Modal open={!!deleting} onClose={() => setDeleting(null)} title=\"Delete supplier?\" sub={deleting?.name}>"
+          modal="""      <Modal open={!!paymentFor} onClose={() => setPaymentFor(null)} title=\"Record supplier payment\" sub={paymentFor ? `${paymentFor.name} · Outstanding ${outstanding(paymentFor.id).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : undefined}>
+        {paymentFor && (
+          <div className=\"space-y-4\">
+            <Field label=\"Amount (Rs.)\"><input className=\"input num\" type=\"number\" min={0} max={outstanding(paymentFor.id)} value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} placeholder=\"0.00\" /></Field>
+            <Field label=\"Payment method\"><select className=\"input\" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value as SupplierPaymentMethod)}><option value=\"cash\">Cash</option><option value=\"card\">Card</option><option value=\"bank\">Bank</option><option value=\"mobile\">Mobile</option></select></Field>
+            <Field label=\"Note\"><input className=\"input\" value={paymentNote} onChange={e => setPaymentNote(e.target.value)} placeholder=\"Optional reference / note\" /></Field>
+            <div className=\"flex gap-2.5\"><button className=\"btn btn-primary flex-1\" disabled={Number(paymentAmount) <= 0 || Number(paymentAmount) > outstanding(paymentFor.id) + 0.005} onClick={() => { saveSupplierPayment({ supplierId: paymentFor.id, amount: Number(paymentAmount), method: paymentMethod, note: paymentNote.trim() || undefined }); setPaymentFor(null); }}><CreditCard size={15} /> Record payment</button><button className=\"btn btn-soft\" onClick={() => setPaymentFor(null)}>Cancel</button></div>
+          </div>
+        )}
+      </Modal>
+
+"""
+          if marker not in s: raise SystemExit('Suppliers.tsx: delete modal marker missing')
+          s=s.replace(marker,modal+marker,1); p.write_text(s)
+          print('patches applied')
+          PY
+      - name: Verify, remove temporary workflows, and commit
+        run: |
+          npm install
+          npm run typecheck
+          npm run lint
+          npm run build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/_temp_supplier_credit_patch.yml .github/workflows/_temp_supplier_credit_patch2.yml
+          git add src/lib/store.tsx src/lib/supplierPayments.ts src/pages/POS.tsx src/pages/Customers.tsx src/pages/Suppliers.tsx
+          git commit -m 'feat: enforce customer credit limits and add supplier payments'
+          git push
