@@ -7,7 +7,7 @@ import type { Purchase, PurchaseReturn } from '../lib/types';
 
 interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }
 
-function printDebitNote(dn: { dnNo: string; date: string; supplierName: string; items: ReturnLine[]; total: number; reason: string }, shopName: string) {
+function printDebitNote(dn: PurchaseReturn, shopName: string) {
   const w = window.open('', '_blank', 'width=800,height=600');
   if (!w) return;
   const rows = dn.items.filter(i => i.qty > 0).map(i =>
