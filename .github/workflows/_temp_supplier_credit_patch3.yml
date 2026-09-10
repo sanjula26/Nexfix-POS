@@ -1,0 +1,78 @@
+name: Temporary Supplier Credit Patch 3
+on:
+  push:
+    branches:
+      - feature/supplier-credit-controls
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          def once(path, pattern, repl):
+              p=Path(path); s=p.read_text()
+              ns,n=re.subn(pattern,repl,s,count=1,flags=re.M)
+              if n!=1: raise SystemExit(f'{path}: expected 1 match, found {n}')
+              p.write_text(ns)
+          once('src/lib/store.tsx', r"^import \{ buildSeed,", "import type { SupplierPayment } from './supplierPayments';\nfrom_placeholder = ''\nimport { buildSeed,")
+          p=Path('src/lib/store.tsx'); s=p.read_text().replace("from_placeholder = ''\n", '',1); p.write_text(s)
+          once('src/lib/store.tsx', r"^  deleteSupplier: \(id: string\) => void;$", "  deleteSupplier: (id: string) => void;\n  saveSupplierPayment: (p: Omit<SupplierPayment, 'id' | 'date' | 'by'>) => void;\n  deleteSupplierPayment: (id: string) => void;")
+          once('src/lib/store.tsx', r"^    purchaseReturns: s\.purchaseReturns \|\| \[\],$", "    purchaseReturns: s.purchaseReturns || [],\n    supplierPayments: s.supplierPayments || [],")
+          once('src/lib/store.tsx', r"^  /\* ---------------- sales ---------------- \*/$", """  const saveSupplierPayment = useCallback((p: Omit<SupplierPayment, 'id' | 'date' | 'by'>) => {
+    if (!user || !Number.isFinite(p.amount) || p.amount <= 0) return;
+    const supplier = state.suppliers.find(s => s.id === p.supplierId);
+    if (!supplier) return;
+    if (p.purchaseId) {
+      const purchase = state.purchases.find(x => x.id === p.purchaseId);
+      if (!purchase || purchase.supplierId !== p.supplierId || purchase.status !== 'received') return;
+    }
+    const outstanding = getSupplierOutstanding(p.supplierId, state.purchases, state.supplierPayments || [], state.purchaseReturns || []);
+    if (p.amount > outstanding + 0.005) return;
+    const payment: SupplierPayment = { ...p, id: uid(), date: new Date().toISOString(), by: user.name };
+    setState(s => ({ ...s, supplierPayments: [payment, ...(s.supplierPayments || [])] }));
+    pushAudit('CREATE', 'SupplierPayment', `Payment of Rs. ${p.amount.toLocaleString()} to supplier ${supplier.name}`);
+  }, [pushAudit, state.purchaseReturns, state.purchases, state.suppliers, state.supplierPayments, user]);
+
+  const deleteSupplierPayment = useCallback((id: string) => {
+    if (!user || !can('act:deleteRecords')) return;
+    const payment = state.supplierPayments?.find(x => x.id === id);
+    setState(s => ({ ...s, supplierPayments: (s.supplierPayments || []).filter(x => x.id !== id) }));
+    if (payment) pushAudit('DELETE', 'SupplierPayment', `Deleted supplier payment of Rs. ${payment.amount.toLocaleString()}`);
+  }, [can, pushAudit, state.supplierPayments, user]);
+
+  /* ---------------- sales ---------------- */""")
+          once('src/lib/store.tsx', r"^    const balanceDue = isCredit \? Math\.max\(0, total - amountPaid\) : 0;$", "    const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;\n    if (isCredit && cust?.creditLimit && cust.creditLimit > 0 && cust.creditBalance + balanceDue > cust.creditLimit + 0.005) return null;")
+          once('src/lib/store.tsx', r"^    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier,$", "    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,")
+          once('src/lib/store.tsx', r"^import \{ appendInventoryTransaction, type InventoryTransaction \} from './inventoryLedger';$", "import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';\nimport { getSupplierOutstanding } from './supplierPayments';")
+          once('src/pages/POS.tsx', r"^    if \(hasCredit && !can\('act:creditSale'\)\) return setError\('Your role cannot make credit sales'\);$", "    if (hasCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales');\n    if (hasCredit && customer?.creditLimit && customer.creditLimit > 0) {\n      const newBalance = customer.creditBalance + Math.max(0, total - paidNum);\n      if (newBalance > customer.creditLimit + 0.005) return setError(`Credit limit exceeded. Available credit: ${fmtRs(Math.max(0, customer.creditLimit - customer.creditBalance))}`);\n    }")
+          once('src/pages/Customers.tsx', r"^            <Field label=\"Address\">$", "            <Field label=\"Credit Limit (Rs.)\" hint=\"0 = no limit. Credit sales are blocked above this limit\">\n              <input className=\"input num\" type=\"number\" min={0} value={editing.creditLimit || ''} onChange={e => setEditing({ ...editing, creditLimit: Math.max(0, Number(e.target.value) || 0) || undefined })} placeholder=\"0 (unlimited)\" />\n            </Field>\n            <Field label=\"Address\">")
+          once('src/lib/supplierPayments.ts', r"^import type \{ Purchase, Supplier \} from './types';$", "import type { Purchase, PurchaseReturn, Supplier } from './types';")
+          once('src/lib/supplierPayments.ts', r"  type: 'purchase' \| 'payment';$", "  type: 'purchase' | 'purchase_return' | 'payment';")
+          once('src/lib/supplierPayments.ts', r"  payments: readonly SupplierPayment\[\],\n\): SupplierAccountLedgerRow\[\] \{\n  const rows: Array<\{ date: string; type: 'purchase' \| 'payment';", "  payments: readonly SupplierPayment[],\n  purchaseReturns: readonly PurchaseReturn[] = [],\n): SupplierAccountLedgerRow[] {\n  const rows: Array<{ date: string; type: 'purchase' | 'purchase_return' | 'payment';")
+          once('src/lib/supplierPayments.ts', r"^  for \(const payment of payments\) \{$", "  for (const purchaseReturn of purchaseReturns) {\n    if (purchaseReturn.supplierId !== supplier.id || !Number.isFinite(purchaseReturn.total) || purchaseReturn.total <= 0) continue;\n    rows.push({ date: purchaseReturn.date, type: 'purchase_return', reference: purchaseReturn.dnNo, amount: -purchaseReturn.total });\n  }\n\n  for (const payment of payments) {")
+          once('src/lib/supplierPayments.ts', r"  payments: readonly SupplierPayment\[\],\n\): number \{", "  payments: readonly SupplierPayment[],\n  purchaseReturns: readonly PurchaseReturn[] = [],\n): number {")
+          once('src/lib/supplierPayments.ts', r"  const paid = payments\n    \.filter\(p => p\.supplierId === supplierId && Number\.isFinite\(p\.amount\) && p\.amount > 0\)\n    \.reduce\(\(sum, p\) => sum \+ p\.amount, 0\);\n  return Math\.max\(0, Math\.round\(\(purchased - paid\) \* 100\) / 100\);", "  const returned = purchaseReturns.filter(r => r.supplierId === supplierId && Number.isFinite(r.total) && r.total > 0).reduce((sum, r) => sum + r.total, 0);\n  const paid = payments.filter(p => p.supplierId === supplierId && Number.isFinite(p.amount) && p.amount > 0).reduce((sum, p) => sum + p.amount, 0);\n  return Math.max(0, Math.round((purchased - returned - paid) * 100) / 100);")
+          print('patch complete')
+          PY
+      - name: Verify and commit
+        run: |
+          npm install
+          npm run typecheck
+          npm run lint
+          npm run build
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/_temp_supplier_credit_patch.yml .github/workflows/_temp_supplier_credit_patch2.yml .github/workflows/_temp_supplier_credit_patch3.yml
+          git add src/lib/store.tsx src/lib/supplierPayments.ts src/pages/POS.tsx src/pages/Customers.tsx
+          git commit -m 'feat: enforce customer credit limits and add supplier payments'
+          git push
