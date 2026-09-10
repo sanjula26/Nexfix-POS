@@ -16,6 +16,7 @@ import {
 import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
+import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -130,6 +131,77 @@ interface StoreCtx {
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
+
+function applyInventoryLedger(
+  prev: POSState,
+  next: POSState,
+  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT',
+  by?: string,
+): POSState {
+  const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
+  const transactions: InventoryTransaction[] = [];
+  const prevProducts = new Map(prev.products.map(p => [p.id, p]));
+  const nextProducts = new Map(next.products.map(p => [p.id, p]));
+  const now = new Date().toISOString();
+  const add = (tx: Omit<InventoryTransaction, 'id' | 'occurredAt'> & { id: string }) => transactions.push({ ...tx, occurredAt: now, by });
+
+  if (operation === 'SALE') {
+    const ids = new Set(prev.sales.map(x => x.id));
+    for (const sale of next.sales) if (!ids.has(sale.id)) for (const item of sale.items) if (item.qty > 0) {
+      add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+    }
+  }
+
+  if (operation === 'REFUND') {
+    for (const sale of next.sales) {
+      const old = prev.sales.find(x => x.id === sale.id);
+      if (!old || old.status === 'refunded' || sale.status !== 'refunded') continue;
+      for (const item of sale.items) if (item.qty > 0) {
+        add({ id: 'inv:refund:' + sale.id + ':' + item.productId, type: 'REFUND', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+      }
+    }
+  }
+
+  if (operation === 'PURCHASE_RECEIVE') {
+    for (const purchase of next.purchases) {
+      const old = prev.purchases.find(x => x.id === purchase.id);
+      if (!old || old.status === 'received' || purchase.status !== 'received') continue;
+      for (const item of purchase.items) if (item.qty > 0) {
+        add({ id: 'inv:purchase:' + purchase.id + ':' + item.productId, type: 'PURCHASE_RECEIVE', productId: item.productId, quantity: item.qty, referenceId: purchase.id, referenceNo: purchase.poNo });
+      }
+    }
+  }
+
+  if (operation === 'EXCHANGE') {
+    const ids = new Set(prev.exchanges.map(x => x.id));
+    for (const ex of next.exchanges) if (!ids.has(ex.id)) {
+      const returned = new Map<string, number>();
+      for (const item of ex.items) if (item.qty > 0) {
+        returned.set(item.productId, (returned.get(item.productId) || 0) + item.qty);
+        add({ id: 'inv:exchange:' + ex.id + ':' + item.productId + ':return', type: 'EXCHANGE_RETURN', productId: item.productId, quantity: item.qty, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
+      }
+      for (const [productId, qtyReturned] of returned) {
+        const netDelta = (nextProducts.get(productId)?.stock || 0) - (prevProducts.get(productId)?.stock || 0);
+        const outgoing = qtyReturned - netDelta;
+        if (outgoing > 0) add({ id: 'inv:exchange:' + ex.id + ':' + productId + ':out', type: 'SALE', productId, quantity: -outgoing, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
+      }
+    }
+  }
+
+  if (operation === 'STOCK_ADJUSTMENT') {
+    for (const [productId, product] of nextProducts) {
+      const before = prevProducts.get(productId)?.stock;
+      if (before === undefined) continue;
+      const delta = product.stock - before;
+      if (delta) add({ id: 'inv:adjust:' + productId + ':' + product.stock + ':' + delta, type: 'STOCK_ADJUSTMENT', productId, quantity: delta, reason: 'Stock adjustment' });
+    }
+  }
+
+  let updated = ledger;
+  for (const tx of transactions) updated = appendInventoryTransaction(updated, tx);
+  return updated === next.inventoryTransactions ? next : { ...next, inventoryTransactions: updated };
+}
+
 
 function migrate(s: POSState): POSState {
   // Upgrade plaintext passwords → SHA-256 hashes (one-time migration)
@@ -318,6 +390,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [session, state.users],
   );
   const viewingAs: Role = user?.role || 'admin';
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT', updater: (prev: POSState) => POSState) => {
+    setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
+  }, [user?.email]);
+
 
   const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
     const ok = verifyPassword(pin || '', state.settings.adminPinHash);
@@ -478,7 +554,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const adjustStock = useCallback((id: string, delta: number, reason: string) => {
     const p = state.products.find(x => x.id === id);
-    setState(s => {
+    setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
       const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
       syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
       return {
@@ -617,7 +693,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
 
-    setState(prev => ({
+    setStateWithInventoryLedger('SALE', prev => ({
       ...prev,
       products: updatedProducts,
       customers: prev.customers.map(c =>
@@ -657,7 +733,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     sale.items.forEach(it => {
       refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);
     });
-    setState(s => ({
+    setStateWithInventoryLedger('REFUND', s => ({
       ...s,
       sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),
       products: s.products.map(p => {
@@ -714,7 +790,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!po || po.status !== 'pending') return;
     const plan = buildPurchaseReceivePlan(po, state.products);
     if (!plan) return;
-    setState(s => {
+    setStateWithInventoryLedger('PURCHASE_RECEIVE', s => {
       const currentPo = s.purchases.find(x => x.id === id);
       if (!currentPo || currentPo.status !== 'pending') return s;
       const currentPlan = buildPurchaseReceivePlan(currentPo, s.products);
@@ -796,9 +872,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (requested.size === 0) return;
 
-    setState(s => {
+    setStateWithInventoryLedger('EXCHANGE', s => {
+      const priorReturnedByLine = new Map<string, number>();
       const priorReturnedByProduct = new Map<string, number>();
       s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {
+        const lineKey = item.itemIdx !== undefined ? 'i:' + item.itemIdx : 'p:' + item.productId;
+        priorReturnedByLine.set(lineKey, (priorReturnedByLine.get(lineKey) || 0) + item.qty);
         priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);
       });
 
@@ -809,7 +888,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       for (const [itemIdx, requestedQty] of requested) {
         const it = sale.items[itemIdx];
-        const alreadyReturned = priorReturnedByProduct.get(it.productId) || 0;
+        const lineKey = 'i:' + itemIdx;
+        const alreadyReturned = priorReturnedByLine.has(lineKey)
+          ? (priorReturnedByLine.get(lineKey) || 0)
+          : (priorReturnedByProduct.get(it.productId) || 0);
         const availableQty = Math.max(0, it.qty - alreadyReturned);
         const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).length;
         const qty = Math.min(requestedQty, availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : requestedQty);
@@ -819,11 +901,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
         const unitIds = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).slice(0, qty);
 
-        exItems.push({ productId: it.productId, name: it.name, qty, amount });
+        exItems.push({ itemIdx, productId: it.productId, name: it.name, qty, amount });
         if (mode === 'refund') refund += amount;
         restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
         returnedUnitIds.push(...unitIds);
-        priorReturnedByProduct.set(it.productId, alreadyReturned + qty);
+        priorReturnedByLine.set(lineKey, alreadyReturned + qty);
+        priorReturnedByProduct.set(it.productId, (priorReturnedByProduct.get(it.productId) || 0) + qty);
       }
 
       if (exItems.length === 0) return s;
@@ -834,7 +917,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         billNo: sale.billNo, customerName: sale.customerName, reason,
         items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
       };
-      const allReturned = sale.items.every(it => (priorReturnedByProduct.get(it.productId) || 0) >= it.qty);
+      const allReturned = sale.items.every((it, idx) => {
+        const returned = priorReturnedByLine.has('i:' + idx)
+          ? (priorReturnedByLine.get('i:' + idx) || 0)
+          : (priorReturnedByProduct.get(it.productId) || 0);
+        return returned >= it.qty;
+      });
 
       return {
         ...s,
