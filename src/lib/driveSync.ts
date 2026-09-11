@@ -46,6 +46,17 @@ export function setGoogleApiKey(value: string): void {
   try { if (key) localStorage.setItem(API_KEY_STORAGE, key); else localStorage.removeItem(API_KEY_STORAGE); } catch { /* ignore */ }
 }
 
+function requestGoogleApiKey(): string {
+  const existing = getGoogleApiKey();
+  if (existing || typeof window === 'undefined') return existing;
+  try {
+    const entered = window.prompt('Enter the Nexfix Google Apps Script API key configured as NEXFIX_API_KEY:');
+    if (!entered?.trim()) return '';
+    setGoogleApiKey(entered);
+    return entered.trim();
+  } catch { return ''; }
+}
+
 export function isGoogleSyncEnabled(): boolean { try { return localStorage.getItem(ENABLED_KEY) === '1'; } catch { return false; } }
 export function setGoogleSyncEnabled(on: boolean): void { try { localStorage.setItem(ENABLED_KEY, on ? '1' : '0'); } catch { /* ignore */ } }
 
@@ -82,7 +93,7 @@ function readJsonpStatus(url: string, requestId: string, apiKey: string, timeout
 
 async function postToScript(body: Record<string, unknown>): Promise<boolean> {
   if (!isGoogleSyncEnabled() || (typeof navigator !== 'undefined' && !navigator.onLine) || typeof document === 'undefined') return false;
-  const url = getGoogleScriptUrl(); const apiKey = getGoogleApiKey();
+  const url = getGoogleScriptUrl(); const apiKey = requestGoogleApiKey();
   if (!url || !apiKey) return false;
   const requestId = makeRequestId();
   try { await submitCrossOriginPost(url, { ...body, requestId, apiKey }); return await readJsonpStatus(url, requestId, apiKey); }
@@ -93,7 +104,7 @@ export async function syncToGoogleDrive(tableName: string, dataRows: unknown[]):
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> { return postToScript({ action: 'backupState', kind, exportedAt: new Date().toISOString(), state }); }
 
 export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]> {
-  const base = getGoogleScriptUrl(); const apiKey = getGoogleApiKey();
+  const base = getGoogleScriptUrl(); const apiKey = requestGoogleApiKey();
   if (!base || !apiKey || !isGoogleSyncEnabled() || typeof document === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) return [];
   return new Promise((resolve) => {
     const callbackName = `nexfixRows_${Date.now()}_${Math.random().toString(36).slice(2)}`;
