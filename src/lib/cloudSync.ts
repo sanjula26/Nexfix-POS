@@ -124,6 +124,28 @@ export async function completeSaleAtomic(input: {
   return { ok: true, alreadyCommitted: row.already_committed === true, saleId: row.sale_id, billNo: row.bill_no, total: Number(row.total) };
 }
 
+export async function resolveSaleReturnLines(input: {
+  shopId: string;
+  saleId: string;
+  lines: Array<{ product_id: string; qty: number; unit_ids?: string[] }>;
+}): Promise<{ ok: boolean; lines?: Array<{ sale_item_id: string; qty: number; unit_ids?: string[] }>; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  if (!input.shopId || !input.saleId || !input.lines.length) return { ok: false, error: 'Return identifiers and lines are required' };
+  const { data, error } = await supabase.rpc('resolve_sale_return_items', {
+    p_shop_id: input.shopId,
+    p_sale_id: input.saleId,
+    p_lines: input.lines,
+  });
+  if (error) return { ok: false, error: error.message };
+  const rows = Array.isArray(data) ? data : [];
+  if (!rows.length) return { ok: false, error: 'Cloud sale item could not be matched' };
+  return { ok: true, lines: rows as Array<{ sale_item_id: string; qty: number; unit_ids?: string[] }> };
+}
+
 export async function processSaleReturnAtomic(input: {
   shopId: string;
   returnId: string;
