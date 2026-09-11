@@ -1,0 +1,55 @@
+name: Patch refund integrity
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/patch-refund-integrity.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch source
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+          old = '''  const refundSale = useCallback((saleId: string) => {\n    const sale = state.sales.find(x => x.id === saleId);\n    if (!sale || sale.status !== 'completed') return;\n    const returnedUnitIds = sale.items.flatMap(it => it.unitIds || []);\n    const refundQtyByProduct = new Map<string, number>();\n    sale.items.forEach(it => {\n      refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);\n    });\n    setStateWithInventoryLedger('REFUND', s => ({\n      ...s,\n      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),\n      products: s.products.map(p => {\n        const qty = refundQtyByProduct.get(p.id);\n        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;\n      }),\n      customers: s.customers.map(c => c.id === sale.customerId\n        ? {\n            ...c,\n            creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)),\n            loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)),\n          }\n        : c\n      ),\n      units: (s.units || []).map(u =>\n        returnedUnitIds.includes(u.id)\n          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }\n          : u,\n      ),\n    }));\n    pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${sale.total.toLocaleString()}${returnedUnitIds.length ? ` · ${returnedUnitIds.length} unit(s) returned` : ''}`);\n  }, [state.sales, pushAudit]);'''
+          new = '''  const refundSale = useCallback((saleId: string) => {\n    const sale = state.sales.find(x => x.id === saleId);\n    if (!sale || sale.status !== 'completed') return;\n\n    // A sale may already have partial returns/exchanges. Only the still-sold\n    // quantity/value is refundable; this prevents double-restocking and\n    // double-refunding after a partial exchange.\n    const priorReturnedByLine = new Map<number, number>();\n    for (const ex of state.exchanges.filter(x => x.billNo === sale.billNo)) {\n      for (const item of ex.items) {\n        if (item.itemIdx !== undefined) {\n          priorReturnedByLine.set(item.itemIdx, (priorReturnedByLine.get(item.itemIdx) || 0) + item.qty);\n        }\n      }\n    }\n\n    const remainingItems = sale.items.map((it, idx) => ({\n      it,\n      idx,\n      qty: Math.max(0, it.qty - (priorReturnedByLine.get(idx) || 0)),\n    })).filter(x => x.qty > 0);\n    if (remainingItems.length === 0) return;\n\n    const returnedUnitIds = remainingItems.flatMap(({ it }) => it.unitIds || []).filter(id =>\n      state.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id),\n    );\n    const refundQtyByProduct = new Map<string, number>();\n    for (const { it, qty } of remainingItems) {\n      refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + qty);\n    }\n\n    const merchandiseGross = remainingItems.reduce((sum, { it, qty }) => sum + it.price * qty, 0);\n    const merchandiseDiscount = remainingItems.reduce((sum, { it, qty }) => {\n      const fullDiscount = it.discount || 0;\n      return sum + (it.qty > 0 ? fullDiscount * (qty / it.qty) : 0);\n    }, 0);\n    const returnedMerchandise = Math.max(0, merchandiseGross - merchandiseDiscount);\n    const saleMerchandise = Math.max(0, sale.subtotal);\n    const merchandiseShare = saleMerchandise > 0 ? Math.min(1, returnedMerchandise / saleMerchandise) : 0;\n    const allocatedSaleDiscount = Math.min(Math.max(0, sale.discount || 0), returnedMerchandise) * merchandiseShare;\n    const taxableShare = Math.max(0, returnedMerchandise - allocatedSaleDiscount);\n    const taxShare = saleMerchandise > 0 ? Math.round((sale.tax || 0) * (taxableShare / Math.max(0, saleMerchandise - Math.max(0, sale.discount || 0))) * 100) / 100 : 0;\n    const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);\n    const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;\n    const refundValue = Math.max(0, Math.round((returnedMerchandise - allocatedSaleDiscount + taxShare + shippingRefund) * 100) / 100);\n\n    setStateWithInventoryLedger('REFUND', s => {\n      const currentSale = s.sales.find(x => x.id === saleId);\n      if (!currentSale || currentSale.status !== 'completed') return s;\n      const currentReturnedByLine = new Map<number, number>();\n      for (const ex of s.exchanges.filter(x => x.billNo === currentSale.billNo)) {\n        for (const item of ex.items) if (item.itemIdx !== undefined) {\n          currentReturnedByLine.set(item.itemIdx, (currentReturnedByLine.get(item.itemIdx) || 0) + item.qty);\n        }\n      }\n      const currentRemaining = currentSale.items.map((it, idx) => Math.max(0, it.qty - (currentReturnedByLine.get(idx) || 0)));\n      if (!currentRemaining.some(q => q > 0)) return s;\n      const qtyByProduct = new Map<string, number>();\n      currentSale.items.forEach((it, idx) => {\n        const qty = currentRemaining[idx];\n        if (qty > 0) qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) || 0) + qty);\n      });\n      const currentReturnedUnits = currentSale.items.flatMap(it => it.unitIds || []).filter(id =>\n        s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === currentSale.id),\n      );\n      const allReturned = currentSale.items.every((it, idx) => currentRemaining[idx] === 0);\n      const creditPortion = currentSale.amountPaid < currentSale.total\n        ? Math.max(0, currentSale.total - currentSale.amountPaid)\n        : 0;\n      const refundableCredit = Math.min(creditPortion, refundValue);\n      const returnedRatio = currentSale.total > 0 ? Math.min(1, refundValue / currentSale.total) : 1;\n      const pointsEarnedToReverse = Math.min(currentSale.pointsEarned || 0, Math.round((currentSale.pointsEarned || 0) * returnedRatio));\n      const pointsToRestore = Math.min(currentSale.pointsRedeemed || 0, Math.round((currentSale.pointsRedeemed || 0) * returnedRatio));\n      return {\n        ...s,\n        sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),\n        products: s.products.map(p => {\n          const qty = qtyByProduct.get(p.id);\n          return qty !== undefined ? { ...p, stock: p.stock + qty } : p;\n        }),\n        customers: s.customers.map(c => c.id === currentSale.customerId\n          ? {\n              ...c,\n              creditBalance: Math.max(0, c.creditBalance - refundableCredit),\n              loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsEarnedToReverse + pointsToRestore),\n            }\n          : c\n        ),\n        units: (s.units || []).map(u =>\n          currentReturnedUnits.includes(u.id)\n            ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }\n            : u,\n        ),\n      };\n    });\n    pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${returnedUnitIds.length ? ` · ${returnedUnitIds.length} unit(s) returned` : ''}`);\n  }, [state.sales, state.exchanges, state.units, pushAudit]);'''
+          if old not in s:
+            raise SystemExit('refundSale block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('src/pages/Exchanges.tsx')
+          s = p.read_text()
+          s = s.replace("<th className=\"th\">Price</th><th className=\"th !text-right\">Amount</th>", "<th className=\"th\">Price</th><th className=\"th !text-right\">Amount</th>")
+          old = """  const selectedSum = useMemo(\n    () => (bill ? selected.reduce((a, i) => {\n      const qty = Math.max(0, Math.min(bill.items[i].qty, returnQty[i] || 0));\n      const discount = bill.items[i].qty > 0 ? (bill.items[i].discount || 0) * (qty / bill.items[i].qty) : 0;\n      return a + bill.items[i].price * qty - discount;\n    }, 0) : 0),\n    [bill, selected, returnQty],\n  );"""
+          new = """  const selectedSum = useMemo(\n    () => (bill ? selected.reduce((a, i) => {\n      const qty = Math.max(0, Math.min(bill.items[i].qty, returnQty[i] || 0));\n      const discount = bill.items[i].qty > 0 ? (bill.items[i].discount || 0) * (qty / bill.items[i].qty) : 0;\n      return a + Math.max(0, bill.items[i].price * qty - discount);\n    }, 0) : 0),\n    [bill, selected, returnQty],\n  );"""
+          if old not in s:
+            raise SystemExit('selectedSum block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          # The UI currently has no replacement-line selector, so make the\n          # semantics explicit instead of implying that a replacement sale is\n          # automatically recorded.\n          s = p.read_text().replace('Restock the selected item(s) and mark the bill as exchanged. Hand the replacement at the counter.', 'Restock the selected returned item(s) and mark the bill as exchanged. The replacement item must be processed as a separate sale so its stock and revenue are recorded.')
+          p.write_text(s)
+      - name: Typecheck
+        run: npm ci && npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx src/pages/Exchanges.tsx
+          git diff --cached --quiet || git commit -m 'fix: harden refund and exchange integrity'
+          git push
+      - name: Remove patch workflow
+        if: always()
+        run: |
+          git rm .github/workflows/patch-refund-integrity.yml || true
+          git commit -m 'chore: remove temporary refund patch workflow' || true
+          git push || true
