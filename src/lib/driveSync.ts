@@ -8,6 +8,8 @@
  * - The acknowledgement and backup reads require the operator-configured API key.
  */
 
+import { supabase } from './supabase';
+
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const API_KEY_STORAGE = 'nexfix_google_api_key_v1';
@@ -57,6 +59,25 @@ function requestGoogleApiKey(): string {
   } catch { return ''; }
 }
 
+/** Full-state Google backup/restore is restricted to shop admins/managers. */
+async function hasGoogleBackupAccess(): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !sessionData.session) return false;
+    const { data: membership, error } = await supabase
+      .from('shop_memberships')
+      .select('role')
+      .eq('user_id', sessionData.session.user.id)
+      .eq('active', true)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) return false;
+    return membership?.role === 'admin' || membership?.role === 'manager';
+  } catch { return false; }
+}
+
 export function isGoogleSyncEnabled(): boolean { try { return localStorage.getItem(ENABLED_KEY) === '1'; } catch { return false; } }
 export function setGoogleSyncEnabled(on: boolean): void { try { localStorage.setItem(ENABLED_KEY, on ? '1' : '0'); } catch { /* ignore */ } }
 
@@ -101,7 +122,11 @@ async function postToScript(body: Record<string, unknown>): Promise<boolean> {
 }
 
 export async function syncToGoogleDrive(tableName: string, dataRows: unknown[]): Promise<boolean> { if (!dataRows?.length) return false; return postToScript({ action: 'saveData', table: tableName, rows: dataRows }); }
-export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> { return postToScript({ action: 'backupState', kind, exportedAt: new Date().toISOString(), state }); }
+
+export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
+  if (!(await hasGoogleBackupAccess())) return false;
+  return postToScript({ action: 'backupState', kind, exportedAt: new Date().toISOString(), state });
+}
 
 export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]> {
   const base = getGoogleScriptUrl(); const apiKey = requestGoogleApiKey();
@@ -120,6 +145,7 @@ export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]
 
 /** Read the latest FullBackup sheet row and return its stored POS state JSON. */
 export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string } | null> {
+  if (!(await hasGoogleBackupAccess())) return null;
   const rows = await fetchFromGoogleDrive('FullBackup');
   if (!rows.length) return null;
   const row = rows[rows.length - 1] as Record<string, unknown>;
