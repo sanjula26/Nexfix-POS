@@ -1,0 +1,61 @@
+name: Atomic Sale Integration Patch
+on:
+  push:
+    paths:
+      - '__atomic_sale_patch.trigger'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch POS atomic sale integration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          store=Path('src/lib/store.tsx'); text=store.read_text()
+          old="import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';\n"
+          new=old+"import { completeSaleAtomic, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';\n"
+          if old not in text: raise SystemExit('store import anchor missing')
+          text=text.replace(old,new,1)
+          old="  /** staff member credited with the sale (defaults to current user) */\n  salesmanId?: string;\n}"
+          new="  /** staff member credited with the sale (defaults to current user) */\n  salesmanId?: string;\n  _saleId?: string;\n  _billNo?: string;\n}"
+          if old not in text: raise SystemExit('sale input anchor missing')
+          text=text.replace(old,new,1)
+          old="  completeSale: (input: NewSaleInput) => Sale | null;\n  refundSale: (saleId: string) => void;"
+          new="  completeSale: (input: NewSaleInput) => Sale | null;\n  completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;\n  refundSale: (saleId: string) => void;"
+          if old not in text: raise SystemExit('ctx anchor missing')
+          text=text.replace(old,new,1)
+          old="const billNo = `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(seq).slice(-4)}`;"
+          new="const billNo = input._billNo || `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(seq).slice(-4)}`;"
+          if old not in text: raise SystemExit('bill anchor missing')
+          text=text.replace(old,new,1)
+          old="id: uid(), billNo, date: new Date().toISOString(),"
+          new="id: input._saleId || uid(), billNo, date: new Date().toISOString(),"
+          if old not in text: raise SystemExit('id anchor missing')
+          text=text.replace(old,new,1)
+          marker="  const refundSale = useCallback((saleId: string) => {"
+          if marker not in text: raise SystemExit('refund marker missing')
+          method='''  const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {\n    if (!user || input.lines.length === 0) return null;\n    const shop = await ensureCloudShop('Nexfix Shop');\n    if (!shop.ok || !shop.shopId) return null;\n    if (user.role === 'admin' || user.role === 'manager') {\n      const catalog = await syncNormalizedCatalog(state, shop.shopId);\n      if (!catalog.ok) return null;\n    }\n    const saleId = uid();\n    const payments = (input.payments && input.payments.length)\n      ? input.payments.filter(p => p.amount > 0).map(p => ({ method: p.method, amount: p.amount }))\n      : [{ method: input.payment, amount: input.amountPaid }];\n    const cloud = await completeSaleAtomic({\n      shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,\n      discount: input.discount, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,\n      note: input.note, salesmanId: input.salesmanId || user.id,\n      lines: input.lines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),\n      payments,\n    });\n    if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId) return null;\n    const localSale = completeSale({ ...input, _saleId: saleId, _billNo: cloud.billNo });\n    if (!localSale) return null;\n    if (cloud.total !== undefined && Math.abs(localSale.total - cloud.total) > 0.01) return null;\n    return localSale;\n  }, [user, state, completeSale]);\n\n'''
+          text=text.replace(marker,method+marker,1); store.write_text(text)
+          pos=Path('src/pages/POS.tsx'); p=pos.read_text()
+          old="const { state, user, can, completeSale, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode } = usePOS();"
+          new="const { state, user, can, completeSaleCloud, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode } = usePOS();"
+          if old not in p: raise SystemExit('POS context anchor missing')
+          p=p.replace(old,new,1)
+          old="const finish = () => {"; new="const finish = async () => {"
+          if old not in p: raise SystemExit('finish anchor missing')
+          p=p.replace(old,new,1)
+          old="const sale = completeSale({"; new="const sale = await completeSaleCloud({"
+          if old not in p: raise SystemExit('sale call anchor missing')
+          p=p.replace(old,new,1)
+          pos.write_text(p)
+          PY
+          rm -f __atomic_sale_patch.trigger .github/workflows/atomic-sale-patch.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx src/pages/POS.tsx __atomic_sale_patch.trigger .github/workflows/atomic-sale-patch.yml
+          git commit -m 'feat: integrate atomic cloud sales into POS flow'
+          git push
