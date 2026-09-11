@@ -105,12 +105,21 @@ export type CloudSyncResult =
   | { status: 'conflict'; remoteRevision: number }
   | { status: 'error'; message: string };
 
+export interface CommittedCloudSale {
+  sale: Record<string, unknown>;
+  items: Array<Record<string, unknown>>;
+  payments: Array<Record<string, unknown>>;
+  products: Array<Record<string, unknown>>;
+  customer: Record<string, unknown> | null;
+  units: Array<Record<string, unknown>>;
+}
+
 export async function completeSaleAtomic(input: {
   shopId: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
-}): Promise<{ ok: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string }> {
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -120,8 +129,22 @@ export async function completeSaleAtomic(input: {
   const { data, error } = await supabase.rpc('complete_sale_atomic', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row?.ok) return { ok: false, error: 'Cloud sale was not committed' };
-  return { ok: true, alreadyCommitted: row.already_committed === true, saleId: row.sale_id, billNo: row.bill_no, total: Number(row.total) };
+  if (!row?.ok || !row.sale) return { ok: false, error: 'Cloud sale was not committed' };
+  return {
+    ok: true,
+    alreadyCommitted: row.already_committed === true,
+    saleId: row.sale_id,
+    billNo: row.bill_no,
+    total: Number(row.total),
+    committed: {
+      sale: row.sale as Record<string, unknown>,
+      items: Array.isArray(row.items) ? row.items as Array<Record<string, unknown>> : [],
+      payments: Array.isArray(row.payments) ? row.payments as Array<Record<string, unknown>> : [],
+      products: Array.isArray(row.products) ? row.products as Array<Record<string, unknown>> : [],
+      customer: row.customer && typeof row.customer === 'object' ? row.customer as Record<string, unknown> : null,
+      units: Array.isArray(row.units) ? row.units as Array<Record<string, unknown>> : [],
+    },
+  };
 }
 
 export async function resolveSaleReturnLines(input: {
@@ -135,11 +158,7 @@ export async function resolveSaleReturnLines(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId || !input.saleId || !input.lines.length) return { ok: false, error: 'Return identifiers and lines are required' };
-  const { data, error } = await supabase.rpc('resolve_sale_return_items', {
-    p_shop_id: input.shopId,
-    p_sale_id: input.saleId,
-    p_lines: input.lines,
-  });
+  const { data, error } = await supabase.rpc('resolve_sale_return_items', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_lines: input.lines });
   if (error) return { ok: false, error: error.message };
   const rows = Array.isArray(data) ? data : [];
   if (!rows.length) return { ok: false, error: 'Cloud sale item could not be matched' };
@@ -162,27 +181,11 @@ export async function processSaleReturnAtomic(input: {
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId || !input.returnId || !input.saleId) return { ok: false, error: 'Missing return identifiers' };
   if (!input.lines.length) return { ok: false, error: 'Return lines are required' };
-  const { data, error } = await supabase.rpc('process_sale_return_atomic', {
-    p_shop_id: input.shopId,
-    p_return_id: input.returnId,
-    p_sale_id: input.saleId,
-    p_reason: input.reason?.trim().slice(0, 500) || '',
-    p_mode: input.mode,
-    p_payment_method: input.paymentMethod || null,
-    p_lines: input.lines,
-  });
+  const { data, error } = await supabase.rpc('process_sale_return_atomic', { p_shop_id: input.shopId, p_return_id: input.returnId, p_sale_id: input.saleId, p_reason: input.reason?.trim().slice(0, 500) || '', p_mode: input.mode, p_payment_method: input.paymentMethod || null, p_lines: input.lines });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud return was not committed' };
-  return {
-    ok: true,
-    alreadyCommitted: row.already_committed === true,
-    returnId: row.return_id,
-    returnNo: row.return_no,
-    refundAmount: Number(row.refund_amount),
-    additionalPayment: Number(row.additional_payment),
-    saleId: row.sale_id,
-  };
+  return { ok: true, alreadyCommitted: row.already_committed === true, returnId: row.return_id, returnNo: row.return_no, refundAmount: Number(row.refund_amount), additionalPayment: Number(row.additional_payment), saleId: row.sale_id };
 }
 
 export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResult> {
