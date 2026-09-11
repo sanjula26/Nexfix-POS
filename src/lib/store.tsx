@@ -819,12 +819,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments,
     });
     if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) return null;
+    const committed = cloud.committed;
 
-    const row = cloud.committed.sale;
+    const row = committed.sale;
     const n = (v: unknown, fallback = 0) => { const x = Number(v); return Number.isFinite(x) ? x : fallback; };
-    const productRows = new Map(cloud.committed.products.map(p => [String(p.id), p]));
-    const unitRows = new Map(cloud.committed.units.map(u => [String(u.id), u]));
-    const committedItems: SaleItem[] = cloud.committed.items.map(item => {
+    const productRows = new Map(committed.products.map(p => [String(p.id), p]));
+    const unitRows = new Map(committed.units.map(u => [String(u.id), u]));
+    const committedItems: SaleItem[] = committed.items.map(item => {
       const product = productRows.get(String(item.product_id));
       const ids = Array.isArray(item.unit_ids) ? item.unit_ids.map(String) : [];
       return {
@@ -836,13 +837,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         warrantyMonths: product ? n(product.warranty_months) || undefined : undefined,
       };
     });
-    const paymentRows: PaymentLeg[] = cloud.committed.payments.map(p => ({ method: String(p.method) as PaymentMethod, amount: n(p.amount) }));
+    const paymentRows: PaymentLeg[] = committed.payments.map(p => ({ method: String(p.method) as PaymentMethod, amount: n(p.amount) }));
     const sale: Sale = {
       id: String(row.id), billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
       cashierId: String(row.cashier_id ?? user.id), cashierName: String(row.cashier_name ?? user.name),
       machineId: getMachineIdentity().id, machineName: getMachineIdentity().name,
       customerId: row.customer_id ? String(row.customer_id) : undefined,
-      customerName: String(row.customer_name ?? cloud.committed.customer?.name ?? 'Walk-in customer'),
+      customerName: String(row.customer_name ?? committed.customer?.name ?? 'Walk-in customer'),
       items: committedItems, subtotal: n(row.subtotal), discount: n(row.discount), tax: n(row.tax),
       shipping: n(row.shipping) || undefined, total: n(row.total),
       payment: paymentRows.length > 1 ? paymentRows[0].method : (paymentRows[0]?.method || input.payment),
@@ -874,7 +875,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           attributes: (product.attributes && typeof product.attributes === 'object') ? product.attributes as Product['attributes'] : local.attributes,
         });
       }
-      const customer = cloud.committed.customer;
+      const customer = committed.customer;
       const updatedCustomers = customer?.id
         ? prev.customers.map(c => c.id === String(customer.id) ? {
             ...c, name: String(customer.name ?? c.name), phone: String(customer.phone ?? c.phone ?? ''),
@@ -902,7 +903,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     });
     try { localStorage.removeItem(pendingKey); } catch { /* ignore */ }
     syncToGoogleDrive('SalesHistory', [sale]);
-    syncToGoogleDrive('Products', cloud.committed.products);
+    syncToGoogleDrive('Products', committed.products);
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
   }, [user, state, pushAudit, completeSale]);
