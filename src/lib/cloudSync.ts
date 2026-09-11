@@ -6,6 +6,7 @@ const SHOP_KEY = 'nexfix_cloud_shop_id';
 const REV_KEY = 'nexfix_cloud_revision';
 const MAX_SHOP_ID_LENGTH = 100;
 const MAX_DEVICE_ID_LENGTH = 200;
+let fallbackDeviceId: string | null = null;
 
 function storage(): Storage | null {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
@@ -19,7 +20,15 @@ function deviceId(): string {
     const id = crypto.randomUUID?.() || `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     s?.setItem(DEVICE_KEY, id);
     return id;
-  } catch { return 'browser-device'; }
+  } catch {
+    // Keep a stable per-runtime fallback instead of the old shared
+    // "browser-device" identifier, which could make separate clients appear
+    // to be the same cloud device when persistent storage is unavailable.
+    if (!fallbackDeviceId) {
+      fallbackDeviceId = `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    return fallbackDeviceId;
+  }
 }
 
 export function getCloudShopId(): string {
