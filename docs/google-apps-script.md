@@ -1,67 +1,32 @@
 # Google Apps Script — Nexfix POS Sync
 
-Your POS already points at a deployed Apps Script URL (Gmail-linked).  
-If you need to **re-deploy** or create a new script, use this template.
+Google Sheets / Apps Script backup is an **optional operator-configured integration**. The application does not ship with a default deployment URL. This prevents the released POS from silently sending data to a deployment that the operator did not configure.
 
 ## 1. Create the script
 
-1. Go to [https://script.google.com](https://script.google.com) while logged into your Gmail
-2. **New project** → paste the code below
-3. Create a Google Sheet and copy its ID from the URL  
-   `https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit`
-4. Replace `YOUR_SHEET_ID` in the code
-5. **Deploy → New deployment → Web app**
+1. Go to `script.google.com` while logged into the Google account that should own the backup.
+2. **New project** → paste the approved `google-apps-script/Code.gs` implementation from this repository.
+3. Create a Google Sheet and copy its ID from the URL.
+4. Configure the sheet ID in the Apps Script project.
+5. **Deploy → New deployment → Web app**.
    - Execute as: **Me**
-   - Who has access: **Anyone**
-6. Copy the `/exec` URL into **Settings → Google Sheets Sync** in the POS
+   - Access: choose the minimum access required by your deployment policy.
+6. Copy only the deployed `/macros/s/.../exec` Web App URL.
+7. Configure that URL in the POS Google Sync settings, or provide it through `VITE_GOOGLE_SCRIPT_URL` at build/deployment time.
 
-## 2. Script code
+> Do not use a `/macros/library/d/...` library URL. The POS accepts only HTTPS `script.google.com/macros/s/.../(exec|dev)` URLs.
 
-```javascript
-const SHEET_ID = 'YOUR_SHEET_ID';
+## 2. Important security note
 
-function doPost(e) {
-  try {
-    const body = JSON.parse(e.postData.contents);
-    const ss = SpreadsheetApp.openById(SHEET_ID);
+The browser must be able to contact the Apps Script deployment, so a secret embedded in the frontend is **not a real secret**. Treat this integration as an optional backup transport, not as the security boundary for the POS.
 
-    if (body.action === 'backupState') {
-      let sh = ss.getSheetByName('FullBackup');
-      if (!sh) sh = ss.insertSheet('FullBackup');
-      sh.appendRow([
-        new Date().toISOString(),
-        body.kind || 'manual',
-        JSON.stringify(body.state),
-      ]);
-      return ContentService.createTextOutput(JSON.stringify({ ok: true }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
+For production use:
 
-    if (body.action === 'saveData') {
-      const table = body.table || 'Data';
-      let sh = ss.getSheetByName(table);
-      if (!sh) sh = ss.insertSheet(table);
-      const rows = body.rows || [];
-      rows.forEach(function (row) {
-        sh.appendRow([new Date().toISOString(), JSON.stringify(row)]);
-      });
-      return ContentService.createTextOutput(JSON.stringify({ ok: true, count: rows.length }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-
-    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: 'unknown action' }))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({ ok: true, app: 'Nexfix POS Sync' }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-```
+- Keep Google Sync **disabled unless explicitly configured and tested**.
+- Use a dedicated backup spreadsheet/account with appropriate access controls.
+- Do not put service-account keys, OAuth client secrets, or other private credentials in the Vite frontend.
+- Verify that the deployed Apps Script accepts only the operations required by this POS and that the Google account/sheet permissions are appropriate.
+- Test both backup and restore before relying on the integration for disaster recovery.
 
 ## 3. What the POS sends
 
@@ -74,5 +39,6 @@ function doGet(e) {
 
 ## 4. Offline behaviour
 
-- While **offline**, local IndexedDB keeps all data; Google calls are skipped.
-- When back **online**, auto-backup can push a full snapshot; live table sync resumes on next sale/product change.
+- While **offline**, local IndexedDB keeps data locally; Google calls are skipped.
+- When online again, Google backup can resume if it has been explicitly enabled and a valid Web App URL is configured.
+- Google backup is not the authoritative POS database. Supabase/cloud sync and the local offline queue remain separate reliability mechanisms.
