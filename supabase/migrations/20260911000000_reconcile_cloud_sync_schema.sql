@@ -172,9 +172,8 @@ begin
     on conflict (shop_id, user_id) do nothing;
   elsif not exists (
     select 1 from public.pos_shop_members m
-    where m.shop_id = v_shop and m.user_id = v_user and m.active_if_exists
+    where m.shop_id = v_shop and m.user_id = v_user
   ) then
-    -- Placeholder intentionally replaced below by the compatibility-safe member check.
     raise exception 'User is not a member of this shop';
   end if;
 
