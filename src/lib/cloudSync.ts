@@ -74,7 +74,11 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: true, shopId: String(created) };
 }
 
-/** Mirror the local catalog into normalized cloud tables before atomic sales are enabled. */
+/**
+ * Mirror only catalog records that do not already exist in the cloud.
+ * Cloud stock, customer balances/points, and tracked-unit status are authoritative;
+ * reconnecting an offline POS must never overwrite newer cloud state with stale local data.
+ */
 export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
@@ -86,12 +90,61 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   const { data: membership, error: membershipError } = await supabase.from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
   if (membershipError) return { ok: false, error: membershipError.message };
   if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
-  const products = state.products.map(p => ({ id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null, description: null, cost: p.cost || 0, price: p.price || 0, stock: p.stock || 0, reorder_level: p.reorderLevel ?? 5, track_imei: !!p.trackImei, track_serial: !!p.trackSerial, track_expiry: !!p.trackExpiry, warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit, is_service: !!p.isService, active: p.active !== false, attributes: p.attributes || {}, image_url: null, category_id: null, brand_id: null, supplier_id: null, created_at: p.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }));
-  if (products.length) { const { error } = await supabase.from('products').upsert(products, { onConflict: 'id' }); if (error) return { ok: false, error: `Products: ${error.message}` }; }
-  const customers = state.customers.map(c => ({ id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null, nic: c.nic || null, address: c.address || null, credit_balance: c.creditBalance || 0, loyalty_points: c.loyaltyPoints || 0, notes: null, created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }));
-  if (customers.length) { const { error } = await supabase.from('customers').upsert(customers, { onConflict: 'id' }); if (error) return { ok: false, error: `Customers: ${error.message}` }; }
-  const units = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({ id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null, expiry_date: u.expiryDate || null, status: 'in_stock', cost: u.cost ?? null, purchase_id: null, sale_id: null, sale_bill_no: null, warranty_months: null, warranty_expires_at: u.warrantyExpiresAt || null, note: u.note || null, created_at: u.createdAt || new Date().toISOString(), sold_at: null }));
-  if (units.length) { const { error } = await supabase.from('inventory_units').upsert(units, { onConflict: 'id' }); if (error) return { ok: false, error: `Inventory units: ${error.message}` }; }
+
+  const productRows = state.products.map(p => ({
+    id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null,
+    description: null, cost: p.cost || 0, price: p.price || 0, reorder_level: p.reorderLevel ?? 5,
+    track_imei: !!p.trackImei, track_serial: !!p.trackSerial, track_expiry: !!p.trackExpiry,
+    warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit, is_service: !!p.isService,
+    active: p.active !== false, attributes: p.attributes || {}, image_url: null,
+    category_id: null, brand_id: null, supplier_id: null, created_at: p.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
+  if (productRows.length) {
+    const ids = productRows.map(p => p.id);
+    const { data: existing, error: existingError } = await supabase.from('products').select('id').eq('shop_id', shopId).in('id', ids);
+    if (existingError) return { ok: false, error: `Products lookup: ${existingError.message}` };
+    const existingIds = new Set((existing || []).map(row => row.id));
+    const missing = productRows.filter(row => !existingIds.has(row.id));
+    if (missing.length) {
+      const { error } = await supabase.from('products').insert(missing);
+      if (error) return { ok: false, error: `Products: ${error.message}` };
+    }
+  }
+
+  const customerRows = state.customers.map(c => ({
+    id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
+    nic: c.nic || null, address: c.address || null, notes: null,
+    created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
+  }));
+  if (customerRows.length) {
+    const ids = customerRows.map(c => c.id);
+    const { data: existing, error: existingError } = await supabase.from('customers').select('id').eq('shop_id', shopId).in('id', ids);
+    if (existingError) return { ok: false, error: `Customers lookup: ${existingError.message}` };
+    const existingIds = new Set((existing || []).map(row => row.id));
+    const missing = customerRows.filter(row => !existingIds.has(row.id));
+    if (missing.length) {
+      const { error } = await supabase.from('customers').insert(missing);
+      if (error) return { ok: false, error: `Customers: ${error.message}` };
+    }
+  }
+
+  const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({
+    id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
+    expiry_date: u.expiryDate || null, cost: u.cost ?? null, warranty_expires_at: u.warrantyExpiresAt || null,
+    note: u.note || null, created_at: u.createdAt || new Date().toISOString(),
+  }));
+  if (unitRows.length) {
+    const ids = unitRows.map(u => u.id);
+    const { data: existing, error: existingError } = await supabase.from('inventory_units').select('id').eq('shop_id', shopId).in('id', ids);
+    if (existingError) return { ok: false, error: `Inventory units lookup: ${existingError.message}` };
+    const existingIds = new Set((existing || []).map(row => row.id));
+    const missing = unitRows.filter(row => !existingIds.has(row.id));
+    if (missing.length) {
+      const { error } = await supabase.from('inventory_units').insert(missing);
+      if (error) return { ok: false, error: `Inventory units: ${error.message}` };
+    }
+  }
   return { ok: true };
 }
 
