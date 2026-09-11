@@ -776,8 +776,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
     if (!user || input.lines.length === 0) return null;
+    // Offline/unconfigured cloud must retain the existing durable local POS path.
+    // Atomic cloud commit is used only when an authenticated cloud session is available.
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);
     const shop = await ensureCloudShop('Nexfix Shop');
-    if (!shop.ok || !shop.shopId) return null;
+    if (!shop.ok || !shop.shopId) {
+      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'Cloud session is not available' || shop.error === 'offline') {
+        return completeSale(input);
+      }
+      return null;
+    }
     if (user.role === 'admin' || user.role === 'manager') {
       const catalog = await syncNormalizedCatalog(state, shop.shopId);
       if (!catalog.ok) return null;
