@@ -19,46 +19,28 @@ function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{
 function idbReq<T>(req: IDBRequest<T>): Promise<T> { return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);}); }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
-
-/** Reuse one IndexedDB connection instead of opening/closing the database for every operation. */
 function getDB(): Promise<IDBDatabase> {
   if (!dbPromise) {
     dbPromise = openDB().then(db => {
-      db.onversionchange = () => {
-        db.close();
-        dbPromise = null;
-      };
+      db.onversionchange = () => { db.close(); dbPromise = null; };
       return db;
-    }).catch(error => {
-      dbPromise = null;
-      throw error;
-    });
+    }).catch(error => { dbPromise = null; throw error; });
   }
   return dbPromise;
 }
 
 export async function idbLoadState():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));return row?.value??null;}catch{ return null; }}
 export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()}));return true;}catch{ return false; }}
-/** Save a pre-restore safety snapshot in the same IndexedDB database. The caller can keep this until restore verification completes. */
 export async function idbSaveRestoreCheckpoint(state:POSState):Promise<boolean>{
-  try{
-    const db=await getDB();
-    const tx=db.transaction(STORE_STATE,'readwrite');
-    tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});
-    await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Restore checkpoint failed'));tx.onabort=()=>reject(tx.error||new Error('Restore checkpoint aborted'));});
-    return true;
-  }catch{return false;}
+  try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Restore checkpoint failed'));tx.onabort=()=>reject(tx.error||new Error('Restore checkpoint aborted'));});return true;}catch{return false;}
 }
-export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{
-  try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}
-}
-export async function idbClearRestoreCheckpoint():Promise<boolean>{
-  try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).delete('restore_checkpoint'));return true;}catch{return false;}
-}
-/** Returns false when the durable queue could not persist the operation; callers must not treat that as queued. */
-export async function idbEnqueue(op:Omit<QueueOp,'id'|'ts'>&{id?:string;ts?:string}):Promise<boolean>{try{const db=await getDB();const entry={id:op.id||(crypto.randomUUID?.()||String(Date.now())),ts:op.ts||new Date().toISOString(),...op} as QueueOp;await idbReq(db.transaction(STORE_QUEUE,'readwrite').objectStore(STORE_QUEUE).put(entry));return true;}catch{return false;}}
+export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
+export async function idbClearRestoreCheckpoint():Promise<boolean>{try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).delete('restore_checkpoint'));return true;}catch{return false;}}
+
+type QueueInput = { type: QueueOp['type']; id?: string; ts?: string; note?: string; payload?: string };
+/** Returns false when the durable queue could not persist the operation. */
+export async function idbEnqueue(op:QueueInput):Promise<boolean>{try{const db=await getDB();const entry={id:op.id||(crypto.randomUUID?.()||String(Date.now())),ts:op.ts||new Date().toISOString(),...op} as QueueOp;await idbReq(db.transaction(STORE_QUEUE,'readwrite').objectStore(STORE_QUEUE).put(entry));return true;}catch{return false;}}
 export async function idbListQueue():Promise<QueueOp[]>{try{const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}catch{return[];}}
-/** Acknowledge all supplied queue entries in one transaction to avoid sequential transaction overhead. */
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Queue acknowledgement failed'));tx.onabort=()=>reject(tx.error||new Error('Queue acknowledgement aborted'));});}catch{/* best-effort cleanup */}}
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();await idbReq(db.transaction(STORE_QUEUE,'readwrite').objectStore(STORE_QUEUE).delete(id));}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
