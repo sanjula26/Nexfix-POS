@@ -42,6 +42,6 @@ create index if not exists idx_sales_salesman_id_fk on public.sales(salesman_id)
 create index if not exists idx_suppliers_shop_id_fk on public.suppliers(shop_id);
 create index if not exists idx_warranty_claims_created_by_fk on public.warranty_claims(created_by);
 create index if not exists idx_warranty_claims_customer_id_fk on public.warranty_claims(customer_id);
-create index if not exists idx_warranty_claims_sale_id_fk on public.sale_items(product_id);
+create index if not exists idx_warranty_claims_sale_id_fk on public.warranty_claims(sale_id);
 create index if not exists idx_warranty_claims_shop_id_fk on public.warranty_claims(shop_id);
 create index if not exists idx_warranty_claims_unit_id_fk on public.warranty_claims(unit_id);
