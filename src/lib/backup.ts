@@ -27,9 +27,7 @@ function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function hasArray(value: unknown): value is unknown[] {
-  return Array.isArray(value);
-}
+function hasArray(value: unknown): value is unknown[] { return Array.isArray(value); }
 
 /** Strictly validate the top-level POS collections before any restore can occur. */
 function hasValidStateShape(value: unknown): value is POSState {
@@ -47,9 +45,8 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
 
-  // Backup files are untrusted input. Keep the same role allowlist used by
-  // the current user-management UI so a crafted restore cannot inject an
-  // unsupported elevated staff role or malformed authentication record.
+  // Backup files are untrusted input. Accept only roles supported by the current
+  // POS role model; malformed authentication records are rejected before restore.
   const users = state.users as unknown[];
   if (!users.every((u) => {
     if (!hasPlainObjectShape(u)) return false;
@@ -57,7 +54,7 @@ function hasValidStateShape(value: unknown): value is POSState {
       && typeof u.name === 'string'
       && typeof u.email === 'string'
       && typeof u.password === 'string'
-      && (u.role === 'admin' || u.role === 'cashier')
+      && (u.role === 'admin' || u.role === 'cashier' || u.role === 'manager' || u.role === 'technician')
       && typeof u.active === 'boolean'
       && typeof u.createdAt === 'string';
   })) return false;
@@ -65,12 +62,6 @@ function hasValidStateShape(value: unknown): value is POSState {
   return true;
 }
 
-/**
- * Fill only collections introduced after the original backup format.
- * Existing values are preserved byte-for-byte by reference; missing optional
- * collections become empty arrays so current screens and reports can safely
- * consume a legacy backup without changing any business data.
- */
 function normalizeRestoredState(state: POSState): POSState {
   return {
     ...state,
@@ -96,70 +87,33 @@ export function validateBackup(input: unknown): input is BackupEnvelope {
 }
 
 export function parseBackup(raw: string): BackupEnvelope | null {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return validateBackup(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  try { const parsed: unknown = JSON.parse(raw); return validateBackup(parsed) ? parsed : null; } catch { return null; }
 }
 
-/**
- * Validate a backup before any restore operation. This intentionally performs
- * no writes: callers can validate first and only then replace application state.
- */
 export function validateBackupForRestore(input: unknown): BackupEnvelope {
-  if (!validateBackup(input)) {
-    throw new Error('Invalid or unsupported Nexfix POS backup. Restore was not performed.');
-  }
-  return {
-    ...input,
-    state: normalizeRestoredState(input.state),
-  };
+  if (!validateBackup(input)) throw new Error('Invalid or unsupported Nexfix POS backup. Restore was not performed.');
+  return { ...input, state: normalizeRestoredState(input.state) };
 }
 
-export interface BackupOptions {
-  download?: boolean;
-  cloud?: boolean;
-}
+export interface BackupOptions { download?: boolean; cloud?: boolean; }
 
-/**
- * Manual or auto backup of full state.
- * A cloud failure never advances the successful-backup timestamp when cloud
- * sync is enabled, so the auto-backup scheduler will retry instead of silently
- * treating an unsent cloud backup as complete.
- */
-export async function downloadBackup(
-  state: POSState,
-  kind: 'manual' | 'auto' = 'manual',
-  options: BackupOptions = {},
-): Promise<{ local: boolean; cloud: boolean }> {
+export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<{ local: boolean; cloud: boolean }> {
   const wantDownload = options.download !== false;
   const wantCloud = options.cloud !== false && isGoogleSyncEnabled();
   let local = false;
   let cloud = false;
-  const payload: BackupEnvelope = {
-    _meta: { app: 'Nexfix POS', version: 2, exportedAt: new Date().toISOString(), kind },
-    state,
-  };
+  const payload: BackupEnvelope = { _meta: { app: 'Nexfix POS', version: 2, exportedAt: new Date().toISOString(), kind }, state };
 
   if (wantDownload) {
     try {
-      downloadFile(
-        buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'),
-        JSON.stringify(payload, null, 2),
-        'application/json',
-      );
+      downloadFile(buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'), JSON.stringify(payload, null, 2), 'application/json');
       local = true;
-    } catch { /* local export failed; metadata must not claim success */ }
+    } catch { /* metadata must not claim local success */ }
   }
-
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
     try { cloud = await backupStateToGoogle(payload, kind); } catch { cloud = false; }
   }
 
-  // A configured cloud backup is only successful when the cloud dispatch
-  // succeeds. If cloud sync is disabled, a successful local export is enough.
   const successful = wantCloud ? cloud : local;
   if (successful) {
     const now = new Date().toISOString();
@@ -168,7 +122,6 @@ export async function downloadBackup(
       ? { lastAutoBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) }
       : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
   }
-
   return { local, cloud };
 }
 
