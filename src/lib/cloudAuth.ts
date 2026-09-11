@@ -1,4 +1,5 @@
 import { supabase, supabaseConfigured } from './supabase';
+import { ensureCloudShop } from './cloudSync';
 
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
@@ -31,11 +32,17 @@ export async function ensureCloudSession(
   fullName: string,
 ): Promise<{ ok: boolean; error?: string; needsEmailConfirmation?: boolean }> {
   const signedIn = await signInToCloud(email, password);
-  if (signedIn.ok) return signedIn;
+  if (signedIn.ok) {
+    await ensureCloudShop('Nexfix Shop');
+    return signedIn;
+  }
   if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return signedIn;
 
   const created = await signUpToCloud(email, password, fullName);
   if (!created.ok) return { ok: false, error: created.error };
+  if (created.ok && !created.needsEmailConfirmation) {
+    await ensureCloudShop('Nexfix Shop');
+  }
   return created;
 }
 
