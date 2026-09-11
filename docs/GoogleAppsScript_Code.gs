@@ -1,7 +1,8 @@
-/** Nexfix POS Google Apps Script API */
+/** Nexfix POS Google Apps Script API. Deploy as Web app: Execute as Me. */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '1.1.0';
+var VERSION = '1.2.0';
 var STATUS_PREFIX = 'nexfix_backup_status_';
+var API_KEY_PROPERTY = 'NEXFIX_API_KEY';
 
 function json(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
@@ -26,6 +27,10 @@ function fail(err) {
   return { ok: false, status: 'error', version: VERSION, message: String(err) };
 }
 
+function unauthorized() {
+  return { ok: false, status: 'unauthorized', version: VERSION, message: 'Unauthorized' };
+}
+
 function value(v) {
   if (v === undefined || v === null) return '';
   return typeof v === 'object' ? JSON.stringify(v) : v;
@@ -37,6 +42,16 @@ function remember(requestId, result) {
     STATUS_PREFIX + requestId,
     JSON.stringify({ savedAt: new Date().toISOString(), result: result })
   );
+}
+
+function expectedApiKey() {
+  return String(PropertiesService.getScriptProperties().getProperty(API_KEY_PROPERTY) || '').trim();
+}
+
+function isAuthorized(provided) {
+  var expected = expectedApiKey();
+  if (!expected || !provided) return false;
+  return String(provided) === expected;
 }
 
 function syncTable(ss, table, rows) {
@@ -89,6 +104,11 @@ function doPost(e) {
       contents = JSON.parse(raw);
     }
     requestId = contents.requestId || '';
+    if (!isAuthorized(contents.apiKey)) {
+      var denied = unauthorized();
+      remember(requestId, denied);
+      return json(denied);
+    }
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var result;
     if (contents.action === 'backupState') {
@@ -127,12 +147,14 @@ function doGet(e) {
     var callback = p.callback || '';
     if (p.action === 'ping' || !p.action) return respond(ok({ message: 'Nexfix POS Sync API is running' }), callback);
     if (p.action === 'backupStatus') {
+      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
       var raw = PropertiesService.getScriptProperties().getProperty(STATUS_PREFIX + (p.requestId || ''));
       if (!raw) return respond({ ok: false, status: 'pending', version: VERSION }, callback);
       var stored = JSON.parse(raw);
       return respond(stored.result, callback);
     }
     if (p.action === 'getTable' && p.table) {
+      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
       return respond(ok({ action: 'getTable', table: p.table, rows: getTable(SpreadsheetApp.getActiveSpreadsheet(), p.table) }), callback);
     }
     return respond(fail('Unknown GET action'), callback);
