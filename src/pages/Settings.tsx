@@ -9,10 +9,12 @@ import {
   getGoogleScriptUrl, setGoogleScriptUrl, isGoogleSyncEnabled, setGoogleSyncEnabled,
   backupStateToGoogle,
 } from '../lib/driveSync';
+import { applyBackupRestore } from '../lib/restore';
+import { queueWrite } from '../lib/offline';
 
 export default function Settings() {
   const {
-    state, user, updateSettings, importData, resetData, can, changeAdminPin,
+    state, user, updateSettings, resetData, can, changeAdminPin,
     connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
@@ -77,12 +79,23 @@ export default function Settings() {
   };
 
   const onImport = (file: File) => {
+    if (!window.confirm('Import this backup? Current local POS data will be replaced. A safety checkpoint will be created first.')) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const ok = importData(String(reader.result));
-      setImportMsg(ok ? 'Backup restored successfully' : 'Invalid backup file');
-      setTimeout(() => setImportMsg(''), 3000);
+    reader.onload = async () => {
+      setImportMsg('Validating backup and creating safety checkpoint…');
+      try {
+        const restored = await applyBackupRestore(state, String(reader.result));
+        void restored;
+        await queueWrite('backup_restore');
+        setImportMsg('Backup restored safely. Reloading…');
+        window.setTimeout(() => window.location.reload(), 450);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Restore failed';
+        setImportMsg(message);
+        window.setTimeout(() => setImportMsg(''), 5000);
+      }
     };
+    reader.onerror = () => setImportMsg('Could not read backup file');
     reader.readAsText(file);
   };
 
@@ -152,7 +165,7 @@ export default function Settings() {
             <div className="flex flex-wrap gap-2 mb-4 text-[11px] font-semibold"><span className={`badge ${connectivity === 'online' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-500'}`}>{connectivity === 'online' ? '● ONLINE' : '● OFFLINE'}</span>{pendingQueueCount > 0 && <span className="badge bg-amber-500/15 text-amber-600">{pendingQueueCount} queued write(s)</span>}{backupMeta.lastManualBackupAt && <span className="badge bg-sky-500/10 text-sky-600">Last manual: {new Date(backupMeta.lastManualBackupAt).toLocaleString()}</span>}{backupMeta.lastAutoBackupAt && <span className="badge bg-violet-500/10 text-violet-600">Last auto: {new Date(backupMeta.lastAutoBackupAt).toLocaleString()}</span>}{backupMeta.lastCloudBackupAt && <span className="badge bg-emerald-500/10 text-emerald-600">Last cloud: {new Date(backupMeta.lastCloudBackupAt).toLocaleString()}</span>}</div>
             <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4"><div className="text-[12px] font-bold text-ink mb-2">Auto backup interval</div><div className="flex flex-wrap items-center gap-2">{[0, 0.25, 0.5, 1, 3, 6, 12, 24].map(h => <button key={h} type="button" className={`btn !py-1.5 !px-3 text-[12px] ${autoHours === h ? 'btn-primary' : 'btn-soft'}`} onClick={async () => { setAutoHours(h); await setAutoBackupHours(h); setBackupMsg(h === 0 ? 'Auto-backup disabled' : `Auto-backup every ${h}h`); }}>{h === 0 ? 'OFF' : h < 1 ? `${Math.round(h * 60)}m` : `${h}h`}</button>)}</div><p className="text-[11px] text-faint mt-2">When due, a JSON snapshot is downloaded automatically.</p></div>
             <div className="flex flex-wrap gap-2.5">{can('act:export') && <button className="btn btn-soft" onClick={async () => { await runManualBackup(); setBackupMsg('Manual backup downloaded'); }}><Download size={15} /> Export backup</button>}<button className="btn btn-soft" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</button><input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />{pendingQueueCount > 0 && connectivity === 'online' && <button className="btn btn-emerald" onClick={async () => { const n = await flushOfflineQueue(); setBackupMsg(`Flushed ${n} queued write(s)`); }}>Sync now</button>}</div>
-            {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') ? 'text-emerald-500' : 'text-rose-500'}`}>{importMsg || backupMsg}</p>}
+            {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') || (importMsg || backupMsg).includes('Reloading') ? 'text-emerald-500' : 'text-rose-500'}`}>{importMsg || backupMsg}</p>}
           </div>
 
           {user?.role === 'admin' && <div className="card p-6 border border-rose-500/25"><h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3><p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p><button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button></div>}
