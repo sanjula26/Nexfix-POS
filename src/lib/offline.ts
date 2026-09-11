@@ -7,16 +7,23 @@ export function getConnectivity(): Connectivity { if(typeof navigator==='undefin
 export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { const up=()=>cb('online'); const down=()=>cb('offline'); window.addEventListener('online',up); window.addEventListener('offline',down); return()=>{window.removeEventListener('online',up);window.removeEventListener('offline',down);}; }
 
 /**
- * Persists a pending local write. While offline, materialize the current local sales
- * into durable normalized transaction jobs as well. Job IDs are derived from sale IDs,
- * so repeated offline state writes overwrite the same job instead of duplicating it.
+ * Persists a pending local write. While offline, materialize local sales into
+ * durable normalized transaction jobs. A sale job is keyed by its stable sale ID,
+ * and existing queued sale IDs are checked before writing so repeated local-state
+ * persistence does not repeatedly serialize/rewrite the same pending sale jobs.
  */
 export async function queueWrite(note?:string):Promise<void>{
   const queued=await idbEnqueue({type:'state_write',note});
   if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');
   const state=await idbLoadState();
   if(!state) return;
+  const existingSaleIds=new Set(
+    (await idbListQueue())
+      .filter(op=>op.type==='sale_create')
+      .map(op=>op.id.slice('sale:'.length)),
+  );
   for(const sale of state.sales){
+    if(existingSaleIds.has(sale.id)) continue;
     const payload={
       saleId:sale.id,
       input:{
@@ -92,7 +99,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const state=await idbLoadState();
     if(!state) return {flushed,pending:remaining.length,synced:false,conflict:false};
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
-    if(!snapshotOps.length) return {flushed,pending:remaining.length,synced:true,conflict:false};
+    if(!snapshotOps.length) return {flushed:flushed,pending:remaining.length,synced:true,conflict:false};
     const result=await syncStateSnapshot(state);
     if(result.status==='synced'){
       const ids=snapshotOps.map(op=>op.id);
