@@ -79,3 +79,5 @@ jobs:
           $tag = "v3.0.0-build.${{ github.run_number }}"
           $title = "Nexfix POS $tag"
           gh release create $tag release/*.exe release/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --title $title --generate-notes
+
+# CI validation marker for the authoritative cloud-sale reconciliation fix.
