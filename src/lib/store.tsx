@@ -17,6 +17,7 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
+import { completeSaleAtomic, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -48,6 +49,8 @@ interface NewSaleInput {
   note?: string;
   /** staff member credited with the sale (defaults to current user) */
   salesmanId?: string;
+  _saleId?: string;
+  _billNo?: string;
 }
 
 export type { NewSaleInput, PaymentLeg };
@@ -82,6 +85,7 @@ interface StoreCtx {
   deleteSupplierPayment: (id: string) => void;
   // sales
   completeSale: (input: NewSaleInput) => Sale | null;
+  completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
   refundSale: (saleId: string) => void;
   // held
   holdSale: (h: Omit<HeldSale, 'id' | 'heldAt'>) => void;
@@ -697,7 +701,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return Number.isFinite(n) ? Math.max(m, n) : m;
     }, 0);
     const seq = Math.max(s.counters.bill, maxSaleSeq + 1);
-    const billNo = `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(seq).slice(-4)}`;
+    const billNo = input._billNo || `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(seq).slice(-4)}`;
     const salesman = input.salesmanId
       ? s.users.find(u => u.id === input.salesmanId && u.active)
       : undefined;
@@ -718,7 +722,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
     const sale: Sale = {
-      id: uid(), billNo, date: new Date().toISOString(),
+      id: input._saleId || uid(), billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
       machineId: machine.id, machineName: machine.name,
       note: input.note?.trim() || undefined,
@@ -769,6 +773,40 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     );
     return sale;
   }, [user, state, pushAudit]);
+
+  const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
+    if (!user || input.lines.length === 0) return null;
+    // Offline/unconfigured cloud must retain the existing durable local POS path.
+    // Atomic cloud commit is used only when an authenticated cloud session is available.
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);
+    const shop = await ensureCloudShop('Nexfix Shop');
+    if (!shop.ok || !shop.shopId) {
+      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'Cloud session is not available' || shop.error === 'offline') {
+        return completeSale(input);
+      }
+      return null;
+    }
+    if (user.role === 'admin' || user.role === 'manager') {
+      const catalog = await syncNormalizedCatalog(state, shop.shopId);
+      if (!catalog.ok) return null;
+    }
+    const saleId = uid();
+    const payments = (input.payments && input.payments.length)
+      ? input.payments.filter(p => p.amount > 0).map(p => ({ method: p.method, amount: p.amount }))
+      : [{ method: input.payment, amount: input.amountPaid }];
+    const cloud = await completeSaleAtomic({
+      shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
+      discount: input.discount, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
+      note: input.note, salesmanId: input.salesmanId || user.id,
+      lines: input.lines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
+      payments,
+    });
+    if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId) return null;
+    const localSale = completeSale({ ...input, _saleId: saleId, _billNo: cloud.billNo });
+    if (!localSale) return null;
+    if (cloud.total !== undefined && Math.abs(localSale.total - cloud.total) > 0.01) return null;
+    return localSale;
+  }, [user, state, completeSale]);
 
   const refundSale = useCallback((saleId: string) => {
     const sale = state.sales.find(x => x.id === saleId);
@@ -1339,7 +1377,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
     saveProduct, deleteProduct, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
-    completeSale, refundSale, holdSale, resumeHold, deleteHold,
+    completeSale, completeSaleCloud, refundSale, holdSale, resumeHold, deleteHold,
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
