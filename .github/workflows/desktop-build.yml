@@ -64,7 +64,7 @@ jobs:
         run: |
           $exeFiles = Get-ChildItem -Path release -Filter *.exe -File | Sort-Object Name
           if ($exeFiles.Count -lt 2) { throw "Expected at least two Windows .exe artifacts before checksum generation." }
-          $lines = foreach ($file in $exeFiles {
+          $lines = foreach ($file in $exeFiles) {
             $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
             "$hash  $($file.Name)"
           }
