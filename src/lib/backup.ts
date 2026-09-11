@@ -46,6 +46,22 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
+
+  // Backup files are untrusted input. Keep the same role allowlist used by
+  // the current user-management UI so a crafted restore cannot inject an
+  // unsupported elevated staff role or malformed authentication record.
+  const users = state.users as unknown[];
+  if (!users.every((u) => {
+    if (!hasPlainObjectShape(u)) return false;
+    return typeof u.id === 'string' && u.id.length > 0
+      && typeof u.name === 'string'
+      && typeof u.email === 'string'
+      && typeof u.password === 'string'
+      && (u.role === 'admin' || u.role === 'cashier')
+      && typeof u.active === 'boolean'
+      && typeof u.createdAt === 'string';
+  })) return false;
+
   return true;
 }
 
