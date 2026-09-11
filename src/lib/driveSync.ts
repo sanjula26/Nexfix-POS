@@ -1,11 +1,5 @@
 /**
- * Google Apps Script / Google Sheets backup integration.
- *
- * Browser-safe transport:
- * - Cross-origin POST uses a hidden form/iframe instead of fetch(no-cors), so
- *   browser CORS/redirect behavior cannot incorrectly report a network failure.
- * - The Apps Script stores an acknowledgement keyed by requestId.
- * - The acknowledgement and backup reads require the operator-configured API key.
+ * Google Apps Script / Google Sheets backup/restore integration.
  */
 
 import { supabase } from './supabase';
@@ -143,15 +137,36 @@ export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]
   });
 }
 
-/** Read the latest FullBackup sheet row and return its stored POS state JSON. */
+/** Read the latest FullBackup row through its dedicated restricted endpoint. */
 export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string } | null> {
   if (!(await hasGoogleBackupAccess())) return null;
-  const rows = await fetchFromGoogleDrive('FullBackup');
-  if (!rows.length) return null;
-  const row = rows[rows.length - 1] as Record<string, unknown>;
-  const raw = row?.StateJSON;
-  if (typeof raw !== 'string' || !raw.trim()) return null;
-  try {
-    return { state: JSON.parse(raw), backedUpAt: typeof row.Timestamp === 'string' ? row.Timestamp : undefined, kind: typeof row.BackupType === 'string' ? row.BackupType : undefined };
-  } catch { return null; }
+  const base = getGoogleScriptUrl(); const apiKey = requestGoogleApiKey();
+  if (!base || !apiKey || !isGoogleSyncEnabled() || typeof document === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) return null;
+  return new Promise((resolve) => {
+    const callbackName = `nexfixLatestBackup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement('script'); let settled = false;
+    const finish = (result: { state: unknown; backedUpAt?: string; kind?: string } | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      script.remove();
+      try { delete (window as unknown as Record<string, unknown>)[callbackName]; } catch { /* ignore */ }
+      resolve(result);
+    };
+    const timer = window.setTimeout(() => finish(null), 12000);
+    (window as unknown as Record<string, unknown>)[callbackName] = (payload: unknown) => {
+      const data = payload as { ok?: boolean; backup?: { state?: unknown; timestamp?: unknown; backupType?: unknown } | null } | null;
+      if (!data?.ok || !data.backup || typeof data.backup.state !== 'string') return finish(null);
+      try {
+        finish({
+          state: JSON.parse(data.backup.state),
+          backedUpAt: typeof data.backup.timestamp === 'string' ? data.backup.timestamp : undefined,
+          kind: typeof data.backup.backupType === 'string' ? data.backup.backupType : undefined,
+        });
+      } catch { finish(null); }
+    };
+    script.onerror = () => finish(null);
+    script.src = `${base}?action=getLatestBackup&apiKey=${encodeURIComponent(apiKey)}&callback=${encodeURIComponent(callbackName)}`;
+    document.head.appendChild(script);
+  });
 }
