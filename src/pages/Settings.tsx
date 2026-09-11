@@ -24,23 +24,16 @@ export default function Settings() {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
     return {
-      shopName: rest.shopName || '',
-      tagline: rest.tagline || '',
-      address: rest.address || '',
-      phone: rest.phone || '',
-      email: rest.email || '',
-      receiptFooter: rest.receiptFooter || '',
-      taxDefault: rest.taxDefault ?? 0,
-      lowStockDefault: rest.lowStockDefault ?? 5,
-      exchangeDays: rest.exchangeDays ?? 7,
-      openingFloat: rest.openingFloat ?? 0,
-      whatsappReceipts: rest.whatsappReceipts !== false,
-      categories: rest.categories,
-      brands: rest.brands,
-      repairWarrantyDays: rest.repairWarrantyDays,
+      shopName: rest.shopName || '', tagline: rest.tagline || '', address: rest.address || '', phone: rest.phone || '', email: rest.email || '',
+      receiptFooter: rest.receiptFooter || '', taxDefault: rest.taxDefault ?? 0, lowStockDefault: rest.lowStockDefault ?? 5,
+      exchangeDays: rest.exchangeDays ?? 7, openingFloat: rest.openingFloat ?? 0, whatsappReceipts: rest.whatsappReceipts !== false,
+      categories: rest.categories, brands: rest.brands, repairWarrantyDays: rest.repairWarrantyDays,
+      invoiceTitle: rest.invoiceTitle || 'INVOICE', invoiceSubtitle: rest.invoiceSubtitle || rest.tagline || 'COMPUTER & PHONE SHOP',
+      invoiceCurrency: rest.invoiceCurrency || 'Rs.', invoiceTaxLabel: rest.invoiceTaxLabel || 'Tax',
+      invoiceTerms: rest.invoiceTerms || '', invoiceFooter: rest.invoiceFooter || rest.receiptFooter || 'Thank you for your purchase!',
+      invoiceShowTax: rest.invoiceShowTax !== false, taxRegistrationNo: rest.taxRegistrationNo || '', invoicePlaceOfSupply: rest.invoicePlaceOfSupply || '',
     };
   });
-  /* security — admin switch password */
   const [pinCur, setPinCur] = useState('');
   const [pinNew, setPinNew] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
@@ -52,39 +45,27 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
-
-  // Keep form in sync when settings load from IndexedDB (first boot)
   useEffect(() => {
     const s = state.settings;
     if (!s) return;
     setForm(f => ({
-      ...f,
-      shopName: s.shopName || f.shopName,
-      tagline: s.tagline || f.tagline,
-      address: s.address || f.address,
-      phone: s.phone || f.phone,
-      email: s.email || f.email,
-      receiptFooter: s.receiptFooter || f.receiptFooter,
-      taxDefault: s.taxDefault ?? f.taxDefault,
-      lowStockDefault: s.lowStockDefault ?? f.lowStockDefault,
-      exchangeDays: s.exchangeDays ?? f.exchangeDays,
-      openingFloat: s.openingFloat ?? f.openingFloat,
-      whatsappReceipts: s.whatsappReceipts !== false,
+      ...f, shopName: s.shopName || f.shopName, tagline: s.tagline || f.tagline, address: s.address || f.address,
+      phone: s.phone || f.phone, email: s.email || f.email, receiptFooter: s.receiptFooter || f.receiptFooter,
+      taxDefault: s.taxDefault ?? f.taxDefault, lowStockDefault: s.lowStockDefault ?? f.lowStockDefault,
+      exchangeDays: s.exchangeDays ?? f.exchangeDays, openingFloat: s.openingFloat ?? f.openingFloat,
+      whatsappReceipts: s.whatsappReceipts !== false, invoiceTitle: s.invoiceTitle || f.invoiceTitle,
+      invoiceSubtitle: s.invoiceSubtitle || f.invoiceSubtitle, invoiceCurrency: s.invoiceCurrency || f.invoiceCurrency,
+      invoiceTaxLabel: s.invoiceTaxLabel || f.invoiceTaxLabel, invoiceTerms: s.invoiceTerms ?? f.invoiceTerms,
+      invoiceFooter: s.invoiceFooter || f.invoiceFooter, invoiceShowTax: s.invoiceShowTax !== false,
+      taxRegistrationNo: s.taxRegistrationNo ?? f.taxRegistrationNo, invoicePlaceOfSupply: s.invoicePlaceOfSupply ?? f.invoicePlaceOfSupply,
     }));
-  }, [state.settings.shopName, state.settings.phone, state.settings.email]);
+  }, [state.settings.shopName, state.settings.phone, state.settings.email, state.settings.invoiceTitle, state.settings.invoiceTerms]);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.type === 'number' ? Number(e.target.value) || 0 : e.target.value }));
-
-  const save = () => {
-    updateSettings(form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
+  const save = () => { updateSettings(form); setSaved(true); setTimeout(() => setSaved(false), 2000); };
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
-  void set;
 
   const submitPin = () => {
     setPinMsg(null);
@@ -107,134 +88,82 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeading
-        chip="System" chipTone="slate"
-        title="Settings"
-        sub={`${state.settings.shopName} · v3.1`}
-        actions={
-          <button className="btn btn-primary" onClick={save}>
-            <CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}
-          </button>
-        }
-      />
+      <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.1`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
-        {/* shop profile */}
         <div className="card p-6">
-          <h3 className="font-bold text-ink flex items-center gap-2 mb-5">
-            <span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><Store size={15} /></span>
-            Shop Profile
-          </h3>
+          <h3 className="font-bold text-ink flex items-center gap-2 mb-5"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><Store size={15} /></span>Shop Profile</h3>
           <div className="space-y-4">
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Shop name"><input className="input" value={form.shopName ?? ''} onChange={set('shopName')} /></Field>
-              <Field label="Tagline"><input className="input" value={form.tagline ?? ''} onChange={set('tagline')} /></Field>
-            </div>
+            <div className="grid sm:grid-cols-2 gap-4"><Field label="Shop name"><input className="input" value={form.shopName ?? ''} onChange={set('shopName')} /></Field><Field label="Tagline"><input className="input" value={form.tagline ?? ''} onChange={set('tagline')} /></Field></div>
             <Field label="Address"><input className="input" value={form.address ?? ''} onChange={set('address')} /></Field>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Phone"><input className="input" value={form.phone ?? ''} onChange={set('phone')} /></Field>
-              <Field label="Email"><input className="input" value={form.email ?? ''} onChange={set('email')} /></Field>
-            </div>
+            <div className="grid sm:grid-cols-2 gap-4"><Field label="Phone"><input className="input" value={form.phone ?? ''} onChange={set('phone')} /></Field><Field label="Email"><input className="input" value={form.email ?? ''} onChange={set('email')} /></Field></div>
             <Field label="Receipt footer"><textarea className="input min-h-[70px] resize-none" value={form.receiptFooter ?? ''} onChange={set('receiptFooter')} /></Field>
           </div>
         </div>
 
         <div className="space-y-5">
-          {/* pos prefs */}
+          <div className="card p-6 border border-sky-500/20">
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><ReceiptText size={15} /></span>A4 Invoice Design</h3>
+            <p className="text-xs text-faint mb-4">This controls the professional A4 invoice. Each shop can use its own business identity; no product photos are printed in the item table.</p>
+            <div className="space-y-3.5">
+              <div className="grid sm:grid-cols-2 gap-3.5">
+                <Field label="Invoice title"><input className="input" value={form.invoiceTitle ?? ''} onChange={set('invoiceTitle')} placeholder="INVOICE / TAX INVOICE" /></Field>
+                <Field label="Invoice subtitle"><input className="input" value={form.invoiceSubtitle ?? ''} onChange={set('invoiceSubtitle')} placeholder="COMPUTER & PHONE SHOP" /></Field>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3.5">
+                <Field label="Currency label"><input className="input" value={form.invoiceCurrency ?? ''} onChange={set('invoiceCurrency')} placeholder="Rs." /></Field>
+                <Field label="Tax label"><input className="input" value={form.invoiceTaxLabel ?? ''} onChange={set('invoiceTaxLabel')} placeholder="VAT" /></Field>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3.5">
+                <Field label="Tax registration / TIN" hint="Leave blank when not applicable"><input className="input" value={form.taxRegistrationNo ?? ''} onChange={set('taxRegistrationNo')} /></Field>
+                <Field label="Place of supply"><input className="input" value={form.invoicePlaceOfSupply ?? ''} onChange={set('invoicePlaceOfSupply')} /></Field>
+              </div>
+              <Field label="Invoice terms & conditions" hint="One line per condition"><textarea className="input min-h-[90px] resize-y" value={form.invoiceTerms ?? ''} onChange={set('invoiceTerms')} /></Field>
+              <Field label="Invoice footer"><textarea className="input min-h-[65px] resize-y" value={form.invoiceFooter ?? ''} onChange={set('invoiceFooter')} /></Field>
+              <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 cursor-pointer"><span className="text-sm font-medium text-ink">Show tax line on A4 invoice</span><Toggle checked={form.invoiceShowTax !== false} onChange={v => setForm(f => ({ ...f, invoiceShowTax: v }))} /></label>
+            </div>
+          </div>
+
           <div className="card p-6">
-            <h3 className="font-bold text-ink flex items-center gap-2 mb-5">
-              <span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><SlidersHorizontal size={15} /></span>
-              POS Preferences
-            </h3>
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-5"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><SlidersHorizontal size={15} /></span>POS Preferences</h3>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Default tax %"><input className="input num" value={form.taxDefault || ''} onChange={num('taxDefault')} /></Field>
               <Field label="Low-stock default"><input className="input num" value={form.lowStockDefault || ''} onChange={num('lowStockDefault')} /></Field>
               <Field label="Exchange window (days)" hint="Bills older than this can't be exchanged"><input className="input num" value={form.exchangeDays || ''} onChange={num('exchangeDays')} /></Field>
               <Field label="Opening float (Rs.)" hint="Per cashier, per day"><input className="input num" value={form.openingFloat || ''} onChange={num('openingFloat')} /></Field>
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer">
-              <span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill ("kamathi nam" toggle)</span></span>
-              <Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} />
-            </label>
+            <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} /></label>
           </div>
 
-          {/* security */}
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Security</h3>
             <p className="text-xs text-faint mb-4">Required whenever someone switches the sidebar role from <Badge tone="emerald" className="!text-[9px]">CASHIER</Badge> to <Badge tone="violet" className="!text-[9px]">ADMIN</Badge>. Stored as a hash, never in plain text.</p>
             <div className="space-y-3.5">
-              <Field label="Current password" hint="Demo default: admin123">
-                <div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder="Current admin switch password" /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div>
-              </Field>
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                <Field label="New password"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field>
-                <Field label="Confirm new password"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field>
-              </div>
+              <Field label="Current password" hint="Demo default: admin123"><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder="Current admin switch password" /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
+              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="New password"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field><Field label="Confirm new password"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field></div>
               {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
               <button className="btn btn-primary" onClick={submitPin} disabled={!pinCur || !pinNew || !pinConfirm}><ShieldCheck size={15} /> Update switch password</button>
             </div>
           </div>
 
-          {/* data */}
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Database size={15} /></span>Data &amp; Backup</h3>
             <p className="text-xs text-faint mb-3">Primary store: <b className="text-ink">IndexedDB</b> (large capacity). localStorage kept as fast cache. Works fully offline — auto-syncs when the network returns.</p>
-            <div className="flex flex-wrap gap-2 mb-4 text-[11px] font-semibold">
-              <span className={`badge ${connectivity === 'online' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-500'}`}>{connectivity === 'online' ? '● ONLINE' : '● OFFLINE'}</span>
-              {pendingQueueCount > 0 && <span className="badge bg-amber-500/15 text-amber-600">{pendingQueueCount} queued write(s)</span>}
-              {backupMeta.lastManualBackupAt && <span className="badge bg-sky-500/10 text-sky-600">Last manual: {new Date(backupMeta.lastManualBackupAt).toLocaleString()}</span>}
-              {backupMeta.lastAutoBackupAt && <span className="badge bg-violet-500/10 text-violet-600">Last auto: {new Date(backupMeta.lastAutoBackupAt).toLocaleString()}</span>}
-              {backupMeta.lastCloudBackupAt && <span className="badge bg-emerald-500/10 text-emerald-600">Last cloud: {new Date(backupMeta.lastCloudBackupAt).toLocaleString()}</span>}
-            </div>
-            <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4">
-              <div className="text-[12px] font-bold text-ink mb-2">Auto backup interval</div>
-              <div className="flex flex-wrap items-center gap-2">{[0, 0.25, 0.5, 1, 3, 6, 12, 24].map(h => <button key={h} type="button" className={`btn !py-1.5 !px-3 text-[12px] ${autoHours === h ? 'btn-primary' : 'btn-soft'}`} onClick={async () => { setAutoHours(h); await setAutoBackupHours(h); setBackupMsg(h === 0 ? 'Auto-backup disabled' : `Auto-backup every ${h}h`); }}>{h === 0 ? 'OFF' : h < 1 ? `${Math.round(h * 60)}m` : `${h}h`}</button>)}</div>
-              <p className="text-[11px] text-faint mt-2">When due, a JSON snapshot is downloaded automatically. Change browser download settings if you want silent saves.</p>
-            </div>
-            <div className="flex flex-wrap gap-2.5">
-              {can('act:export') && <button className="btn btn-soft" onClick={async () => { await runManualBackup(); setBackupMsg('Manual backup downloaded'); }}><Download size={15} /> Export backup</button>}
-              <button className="btn btn-soft" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</button>
-              <input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />
-              {pendingQueueCount > 0 && connectivity === 'online' && <button className="btn btn-emerald" onClick={async () => { const n = await flushOfflineQueue(); setBackupMsg(`Flushed ${n} queued write(s)`); }}>Sync now</button>}
-            </div>
+            <div className="flex flex-wrap gap-2 mb-4 text-[11px] font-semibold"><span className={`badge ${connectivity === 'online' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-500'}`}>{connectivity === 'online' ? '● ONLINE' : '● OFFLINE'}</span>{pendingQueueCount > 0 && <span className="badge bg-amber-500/15 text-amber-600">{pendingQueueCount} queued write(s)</span>}{backupMeta.lastManualBackupAt && <span className="badge bg-sky-500/10 text-sky-600">Last manual: {new Date(backupMeta.lastManualBackupAt).toLocaleString()}</span>}{backupMeta.lastAutoBackupAt && <span className="badge bg-violet-500/10 text-violet-600">Last auto: {new Date(backupMeta.lastAutoBackupAt).toLocaleString()}</span>}{backupMeta.lastCloudBackupAt && <span className="badge bg-emerald-500/10 text-emerald-600">Last cloud: {new Date(backupMeta.lastCloudBackupAt).toLocaleString()}</span>}</div>
+            <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4"><div className="text-[12px] font-bold text-ink mb-2">Auto backup interval</div><div className="flex flex-wrap items-center gap-2">{[0, 0.25, 0.5, 1, 3, 6, 12, 24].map(h => <button key={h} type="button" className={`btn !py-1.5 !px-3 text-[12px] ${autoHours === h ? 'btn-primary' : 'btn-soft'}`} onClick={async () => { setAutoHours(h); await setAutoBackupHours(h); setBackupMsg(h === 0 ? 'Auto-backup disabled' : `Auto-backup every ${h}h`); }}>{h === 0 ? 'OFF' : h < 1 ? `${Math.round(h * 60)}m` : `${h}h`}</button>)}</div><p className="text-[11px] text-faint mt-2">When due, a JSON snapshot is downloaded automatically.</p></div>
+            <div className="flex flex-wrap gap-2.5">{can('act:export') && <button className="btn btn-soft" onClick={async () => { await runManualBackup(); setBackupMsg('Manual backup downloaded'); }}><Download size={15} /> Export backup</button>}<button className="btn btn-soft" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</button><input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />{pendingQueueCount > 0 && connectivity === 'online' && <button className="btn btn-emerald" onClick={async () => { const n = await flushOfflineQueue(); setBackupMsg(`Flushed ${n} queued write(s)`); }}>Sync now</button>}</div>
             {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') ? 'text-emerald-500' : 'text-rose-500'}`}>{importMsg || backupMsg}</p>}
           </div>
 
-          {/* Danger Zone — demo data is only available to an authenticated admin */}
-          {user?.role === 'admin' && (
-            <div className="card p-6 border border-rose-500/25">
-              <h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3>
-              <p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p>
-              <button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button>
-            </div>
-          )}
+          {user?.role === 'admin' && <div className="card p-6 border border-rose-500/25"><h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3><p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p><button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button></div>}
 
-          {/* Google Sheets / Gmail backup */}
-          <div className="card p-6">
-            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Sheets Sync &amp; Cloud Backup</h3>
-            <p className="text-xs text-faint mb-3">Linked to your Gmail via Google Apps Script. Sales, products and customers sync live when online. Full state also backs up to Google on auto/manual backup.</p>
-            <div className="flex items-center justify-between gap-3 mb-3"><span className="text-sm font-medium text-ink">Enable Google sync</span><Toggle checked={gEnabled} onChange={v => { setGEnabled(v); setGoogleSyncEnabled(v); setGMsg(v ? 'Google sync enabled' : 'Google sync disabled'); }} /></div>
-            <Field label="Apps Script Web App URL" hint="Deploy as web app → Anyone → copy URL"><input className="w-full px-3 py-2 rounded-lg border border-line bg-raised text-sm" value={gUrl} onChange={e => setGUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></Field>
-            <div className="flex flex-wrap gap-2 mt-3">
-              <button type="button" className="btn btn-soft" onClick={() => { setGoogleScriptUrl(gUrl); setGMsg('Google Script URL saved'); }}>Save URL</button>
-              <button type="button" className="btn btn-emerald" disabled={!gEnabled || connectivity !== 'online'} onClick={async () => { setGMsg('Sending full backup to Google…'); const ok = await backupStateToGoogle(state, 'manual'); setGMsg(ok ? 'Full backup sent to Google Sheets' : 'Failed (offline or script error)'); }}><Cloud size={15} /> Backup now to Google</button>
-            </div>
-            {gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('disabled') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}
-          </div>
+          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Sheets Sync &amp; Cloud Backup</h3><p className="text-xs text-faint mb-3">Linked to your Gmail via Google Apps Script. Sales, products and customers sync live when online. Full state also backs up to Google on auto/manual backup.</p><div className="flex items-center justify-between gap-3 mb-3"><span className="text-sm font-medium text-ink">Enable Google sync</span><Toggle checked={gEnabled} onChange={v => { setGEnabled(v); setGoogleSyncEnabled(v); setGMsg(v ? 'Google sync enabled' : 'Google sync disabled'); }} /></div><Field label="Apps Script Web App URL" hint="Deploy as web app → Anyone → copy URL"><input className="w-full px-3 py-2 rounded-lg border border-line bg-raised text-sm" value={gUrl} onChange={e => setGUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></Field><div className="flex flex-wrap gap-2 mt-3"><button type="button" className="btn btn-soft" onClick={() => { setGoogleScriptUrl(gUrl); setGMsg('Google Script URL saved'); }}>Save URL</button><button type="button" className="btn btn-emerald" disabled={!gEnabled || connectivity !== 'online'} onClick={async () => { setGMsg('Sending full backup to Google…'); const ok = await backupStateToGoogle(state, 'manual'); setGMsg(ok ? 'Full backup sent to Google Sheets' : 'Failed (offline or script error)'); }}><Cloud size={15} /> Backup now to Google</button></div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('disabled') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}</div>
 
-          {/* receipt preview meta */}
-          <div className="card p-6">
-            <h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3>
-            <div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div>
-            <p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p>
-          </div>
+          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3><div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div><p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p></div>
         </div>
       </div>
 
-      <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed">
-        <div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div>
-        <div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { resetData(); setConfirmReset(false); }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div>
-      </Modal>
+      <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { resetData(); setConfirmReset(false); }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div></Modal>
     </div>
   );
 }
