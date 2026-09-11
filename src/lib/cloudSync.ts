@@ -74,6 +74,67 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: true, shopId: String(created) };
 }
 
+/**
+ * Mirror the local catalog into the normalized cloud tables before atomic sales
+ * are enabled. Only the authenticated admin/manager may perform this bootstrap
+ * because product stock and prices are authoritative business data.
+ *
+ * Existing sold/returned units are intentionally not copied with foreign-key
+ * references to local-only sales. In-stock units are copied because they are
+ * the units the atomic sale transaction can safely reserve/sell in the cloud.
+ */
+export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  const uid = sessionData.session?.user.id;
+  if (!uid) return { ok: false, error: 'Cloud session is not available' };
+
+  const { data: membership, error: membershipError } = await supabase
+    .from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
+  if (membershipError) return { ok: false, error: membershipError.message };
+  if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
+
+  const products = state.products.map(p => ({
+    id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null,
+    description: null, cost: p.cost || 0, price: p.price || 0, stock: p.stock || 0,
+    reorder_level: p.reorderLevel ?? 5, track_imei: !!p.trackImei, track_serial: !!p.trackSerial,
+    track_expiry: !!p.trackExpiry, warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit,
+    is_service: !!p.isService, active: p.active !== false, attributes: p.attributes || {},
+    image_url: null, category_id: null, brand_id: null, supplier_id: null,
+    created_at: p.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
+  }));
+  if (products.length) {
+    const { error } = await supabase.from('products').upsert(products, { onConflict: 'id' });
+    if (error) return { ok: false, error: `Products: ${error.message}` };
+  }
+
+  const customers = state.customers.map(c => ({
+    id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
+    nic: c.nic || null, address: c.address || null, credit_balance: c.creditBalance || 0,
+    loyalty_points: c.loyaltyPoints || 0, notes: null, created_at: c.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
+  if (customers.length) {
+    const { error } = await supabase.from('customers').upsert(customers, { onConflict: 'id' });
+    if (error) return { ok: false, error: `Customers: ${error.message}` };
+  }
+
+  const units = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({
+    id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
+    expiry_date: u.expiryDate || null, status: 'in_stock', cost: u.cost ?? null, purchase_id: null,
+    sale_id: null, sale_bill_no: null, warranty_months: null, warranty_expires_at: u.warrantyExpiresAt || null,
+    note: u.note || null, created_at: u.createdAt || new Date().toISOString(), sold_at: null,
+  }));
+  if (units.length) {
+    const { error } = await supabase.from('inventory_units').upsert(units, { onConflict: 'id' });
+    if (error) return { ok: false, error: `Inventory units: ${error.message}` };
+  }
+  return { ok: true };
+}
+
 function getRevision(): number {
   try {
     const value = Number(storage()?.getItem(REV_KEY) || '0');
