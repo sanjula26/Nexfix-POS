@@ -51,7 +51,7 @@ const fmtMoneyInput = (raw: string): string => {
 interface Toast { id: string; msg: string; tone: 'rose' | 'amber' }
 
 export default function POS() {
-  const { state, user, can, completeSale, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode } = usePOS();
+  const { state, user, can, completeSaleCloud, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode } = usePOS();
   const navigate = useNavigate();
 
   /* catalog */
@@ -338,7 +338,7 @@ export default function POS() {
   };
 
   /* ---------- finish ---------- */
-  const finish = () => {
+  const finish = async () => {
     setError('');
     if (lines.length === 0) return setError('Add at least one item to the cart');
     if ((discCart > 0 || lineDisc > 0) && !can('act:discount')) return setError('Your role cannot apply discounts');
@@ -359,7 +359,7 @@ export default function POS() {
     } else if (!hasCredit && paidNum < total) {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
-    const sale = completeSale({
+    const sale = await completeSaleCloud({
       lines: lines.map(l => {
         const p = products.find(x => x.id === l.productId)!;
         const base: { productId: string; qty: number; discount: number; price?: number; unitIds?: string[] } = {
