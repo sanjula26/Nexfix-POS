@@ -1,6 +1,6 @@
 /** Nexfix POS Google Apps Script API. Deploy as Web app: Execute as Me. */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '1.3.0';
+var VERSION = '1.3.1';
 var STATUS_PREFIX = 'nexfix_backup_status_';
 var API_KEY_PROPERTY = 'NEXFIX_API_KEY';
 
@@ -119,6 +119,27 @@ function backupState(ss, contents) {
   return { action: 'backupState', backupType: contents.kind || 'manual', timestamp: now.toISOString(), sheet: BACKUP_SHEET };
 }
 
+function latestBackup(ss) {
+  var sheet = ss.getSheetByName(BACKUP_SHEET);
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 4) return null;
+  var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(4, sheet.getLastColumn())).getValues();
+  var headers = values[0];
+  var timestampIndex = headers.indexOf('Timestamp');
+  var typeIndex = headers.indexOf('BackupType');
+  var versionIndex = headers.indexOf('Version');
+  var stateIndex = headers.indexOf('StateJSON');
+  if (stateIndex < 0) return null;
+  var row = values[values.length - 1];
+  var raw = row[stateIndex];
+  if (raw === undefined || raw === null || String(raw).trim() === '') return null;
+  return {
+    timestamp: timestampIndex >= 0 ? row[timestampIndex] : '',
+    backupType: typeIndex >= 0 ? row[typeIndex] : '',
+    version: versionIndex >= 0 ? row[versionIndex] : VERSION,
+    state: String(raw)
+  };
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   var requestId = '';
@@ -182,6 +203,12 @@ function doGet(e) {
       if (!raw) return respond({ ok: false, status: 'pending', version: VERSION }, callback);
       var stored = JSON.parse(raw);
       return respond(stored.result, callback);
+    }
+    if (p.action === 'getLatestBackup') {
+      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
+      var backup = latestBackup(SpreadsheetApp.getActiveSpreadsheet());
+      if (!backup) return respond(ok({ action: 'getLatestBackup', backup: null }), callback);
+      return respond(ok({ action: 'getLatestBackup', backup: backup }), callback);
     }
     if (p.action === 'getTable' && isAllowedDataTable(p.table)) {
       if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
