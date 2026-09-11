@@ -1,0 +1,29 @@
+name: Atomic Sale Follow-up Fix
+on:
+  push:
+    paths:
+      - '__atomic_sale_fix.trigger'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve offline local sales
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/store.tsx'); t=p.read_text()
+          old="""  const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {\n    if (!user || input.lines.length === 0) return null;\n    const shop = await ensureCloudShop('Nexfix Shop');\n    if (!shop.ok || !shop.shopId) return null;\n"""
+          new="""  const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {\n    if (!user || input.lines.length === 0) return null;\n    // Offline/unconfigured cloud must retain the existing durable local POS path.\n    // Atomic cloud commit is used only when an authenticated cloud session is available.\n    if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);\n    const shop = await ensureCloudShop('Nexfix Shop');\n    if (!shop.ok || !shop.shopId) {\n      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'Cloud session is not available' || shop.error === 'offline') {\n        return completeSale(input);\n      }\n      return null;\n    }\n"""
+          if old not in t: raise SystemExit('cloud sale fallback anchor missing')
+          t=t.replace(old,new,1); p.write_text(t)
+          PY
+          rm -f __atomic_sale_fix.trigger .github/workflows/atomic-sale-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx __atomic_sale_fix.trigger .github/workflows/atomic-sale-fix.yml
+          git commit -m 'fix: preserve offline local sales path'
+          git push
