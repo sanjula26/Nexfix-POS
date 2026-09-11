@@ -1,0 +1,1 @@
+Temporary CI validation marker for the cloud-sale authoritative reconciliation change.
