@@ -1,14 +1,44 @@
 /** Durable connectivity helpers and local sync queue. */
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
 import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, ensureCloudShop } from './cloudSync';
-import type { NewSaleInput } from './store';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
 export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { const up=()=>cb('online'); const down=()=>cb('offline'); window.addEventListener('online',up); window.addEventListener('offline',down); return()=>{window.removeEventListener('online',up);window.removeEventListener('offline',down);}; }
-/** Persists a pending write; failure is surfaced so the UI cannot report a write as safely queued when storage is unavailable. */
-export async function queueWrite(note?:string):Promise<void>{const queued=await idbEnqueue({type:'state_write',note});if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');}
-export async function queueSaleCreate(saleId:string,input:NewSaleInput):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
+
+/**
+ * Persists a pending local write. While offline, materialize the current local sales
+ * into durable normalized transaction jobs as well. Job IDs are derived from sale IDs,
+ * so repeated offline state writes overwrite the same job instead of duplicating it.
+ */
+export async function queueWrite(note?:string):Promise<void>{
+  const queued=await idbEnqueue({type:'state_write',note});
+  if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');
+  const state=await idbLoadState();
+  if(!state) return;
+  for(const sale of state.sales){
+    const payload={
+      saleId:sale.id,
+      input:{
+        customerId:sale.customerId,
+        shipping:sale.shipping,
+        discount:sale.discount,
+        taxPct:sale.subtotal>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount)) * 100 : 0,
+        pointsRedeemed:sale.pointsRedeemed,
+        note:sale.note,
+        salesmanId:sale.cashierId,
+        lines:sale.items.map(item=>({productId:item.productId,qty:item.qty,discount:item.discount,price:item.price,unitIds:item.unitIds})),
+        payment:sale.payment,
+        amountPaid:sale.amountPaid,
+        payments:sale.payments,
+      },
+    };
+    const ok=await idbEnqueue({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
+    if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
+  }
+}
+
+export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
 export async function getPendingSyncOperations(){return idbListQueue();}
 
@@ -25,7 +55,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     for(const op of ops){
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:NewSaleInput};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           const payments=(parsed.input.payments&&parsed.input.payments.length)
