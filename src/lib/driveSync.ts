@@ -5,13 +5,14 @@
  * - Cross-origin POST uses a hidden form/iframe instead of fetch(no-cors), so
  *   browser CORS/redirect behavior cannot incorrectly report a network failure.
  * - The Apps Script stores an acknowledgement keyed by requestId.
- * - The acknowledgement is read through JSONP, which is intentionally used
- *   only for this public, non-secret status endpoint.
+ * - The acknowledgement and backup reads require the operator-configured API key.
  */
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
+const API_KEY_STORAGE = 'nexfix_google_api_key_v1';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
+const ENV_API_KEY = (import.meta.env.VITE_GOOGLE_SCRIPT_API_KEY || '').trim();
 
 function isAllowedScriptUrl(value: string): boolean {
   try {
@@ -30,6 +31,19 @@ export function setGoogleScriptUrl(url: string): void {
   const value = url.trim();
   if (value && !isAllowedScriptUrl(value)) throw new Error('Invalid Google Apps Script Web App URL. Use the deployed /macros/s/.../exec URL, not a /macros/library/d/... URL.');
   try { if (value) localStorage.setItem(URL_KEY, value); else localStorage.removeItem(URL_KEY); } catch { /* ignore */ }
+}
+
+export function getGoogleApiKey(): string {
+  try {
+    const fromLs = localStorage.getItem(API_KEY_STORAGE) || '';
+    if (fromLs.trim()) return fromLs.trim();
+  } catch { /* ignore */ }
+  return ENV_API_KEY;
+}
+
+export function setGoogleApiKey(value: string): void {
+  const key = value.trim();
+  try { if (key) localStorage.setItem(API_KEY_STORAGE, key); else localStorage.removeItem(API_KEY_STORAGE); } catch { /* ignore */ }
 }
 
 export function isGoogleSyncEnabled(): boolean { try { return localStorage.getItem(ENABLED_KEY) === '1'; } catch { return false; } }
@@ -53,7 +67,7 @@ function submitCrossOriginPost(url: string, body: Record<string, unknown>): Prom
   });
 }
 
-function readJsonpStatus(url: string, requestId: string, timeoutMs = 12000): Promise<boolean> {
+function readJsonpStatus(url: string, requestId: string, apiKey: string, timeoutMs = 12000): Promise<boolean> {
   return new Promise((resolve) => {
     const callbackName = `nexfixBackupAck_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script'); let settled = false;
@@ -61,16 +75,17 @@ function readJsonpStatus(url: string, requestId: string, timeoutMs = 12000): Pro
     const timer = window.setTimeout(() => finish(false), timeoutMs);
     (window as unknown as Record<string, unknown>)[callbackName] = (payload: unknown) => { const result = payload as { ok?: boolean; status?: string } | null; finish(Boolean(result?.ok && result.status === 'success')); };
     script.onerror = () => finish(false);
-    script.src = `${url}?action=backupStatus&requestId=${encodeURIComponent(requestId)}&callback=${encodeURIComponent(callbackName)}`;
+    script.src = `${url}?action=backupStatus&requestId=${encodeURIComponent(requestId)}&apiKey=${encodeURIComponent(apiKey)}&callback=${encodeURIComponent(callbackName)}`;
     document.head.appendChild(script);
   });
 }
 
 async function postToScript(body: Record<string, unknown>): Promise<boolean> {
   if (!isGoogleSyncEnabled() || (typeof navigator !== 'undefined' && !navigator.onLine) || typeof document === 'undefined') return false;
-  const url = getGoogleScriptUrl(); if (!url) return false;
+  const url = getGoogleScriptUrl(); const apiKey = getGoogleApiKey();
+  if (!url || !apiKey) return false;
   const requestId = makeRequestId();
-  try { await submitCrossOriginPost(url, { ...body, requestId }); return await readJsonpStatus(url, requestId); }
+  try { await submitCrossOriginPost(url, { ...body, requestId, apiKey }); return await readJsonpStatus(url, requestId, apiKey); }
   catch (error) { console.error('[Google Sync] failed', error); return false; }
 }
 
@@ -78,8 +93,8 @@ export async function syncToGoogleDrive(tableName: string, dataRows: unknown[]):
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> { return postToScript({ action: 'backupState', kind, exportedAt: new Date().toISOString(), state }); }
 
 export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]> {
-  const base = getGoogleScriptUrl();
-  if (!base || !isGoogleSyncEnabled() || typeof document === 'undefined') return [];
+  const base = getGoogleScriptUrl(); const apiKey = getGoogleApiKey();
+  if (!base || !apiKey || !isGoogleSyncEnabled() || typeof document === 'undefined' || (typeof navigator !== 'undefined' && !navigator.onLine)) return [];
   return new Promise((resolve) => {
     const callbackName = `nexfixRows_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script'); let settled = false;
@@ -87,7 +102,7 @@ export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]
     const timer = window.setTimeout(() => finish([]), 12000);
     (window as unknown as Record<string, unknown>)[callbackName] = (payload: unknown) => { const data = payload as { ok?: boolean; rows?: unknown[] } | null; finish(data?.ok && Array.isArray(data.rows) ? data.rows : []); };
     script.onerror = () => finish([]);
-    script.src = `${base}?action=getTable&table=${encodeURIComponent(tableName)}&callback=${encodeURIComponent(callbackName)}`;
+    script.src = `${base}?action=getTable&table=${encodeURIComponent(tableName)}&apiKey=${encodeURIComponent(apiKey)}&callback=${encodeURIComponent(callbackName)}`;
     document.head.appendChild(script);
   });
 }
