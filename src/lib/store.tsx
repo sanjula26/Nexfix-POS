@@ -811,34 +811,64 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const refundSale = useCallback((saleId: string) => {
     const sale = state.sales.find(x => x.id === saleId);
     if (!sale || sale.status !== 'completed') return;
-    const returnedUnitIds = sale.items.flatMap(it => it.unitIds || []);
+
+    const priorReturnedByLine = new Map<number, number>();
+    for (const ex of state.exchanges.filter(x => x.billNo === sale.billNo)) {
+      for (const item of ex.items) if (item.itemIdx !== undefined) {
+        priorReturnedByLine.set(item.itemIdx, (priorReturnedByLine.get(item.itemIdx) || 0) + item.qty);
+      }
+    }
+    const remainingItems = sale.items.map((it, idx) => ({ it, idx, qty: Math.max(0, it.qty - (priorReturnedByLine.get(idx) || 0)) })).filter(x => x.qty > 0);
+    if (remainingItems.length === 0) return;
+
     const refundQtyByProduct = new Map<string, number>();
-    sale.items.forEach(it => {
-      refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + it.qty);
+    for (const { it, qty } of remainingItems) refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + qty);
+    const merchandiseGross = remainingItems.reduce((sum, { it, qty }) => sum + it.price * qty, 0);
+    const merchandiseDiscount = remainingItems.reduce((sum, { it, qty }) => sum + (it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0), 0);
+    const returnedMerchandise = Math.max(0, merchandiseGross - merchandiseDiscount);
+    const saleSubtotal = Math.max(0, sale.subtotal);
+    const saleDiscount = Math.min(Math.max(0, sale.discount || 0), saleSubtotal);
+    const postDiscountSubtotal = Math.max(0, saleSubtotal - saleDiscount);
+    const allocatedDiscount = Math.min(saleDiscount, returnedMerchandise * (saleSubtotal > 0 ? saleDiscount / saleSubtotal : 0));
+    const taxableReturned = Math.max(0, returnedMerchandise - allocatedDiscount);
+    const taxRefund = postDiscountSubtotal > 0 ? Math.round((sale.tax || 0) * (taxableReturned / postDiscountSubtotal) * 100) / 100 : 0;
+    const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);
+    const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
+    const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund) * 100) / 100);
+
+    setStateWithInventoryLedger('REFUND', s => {
+      const currentSale = s.sales.find(x => x.id === saleId);
+      if (!currentSale || currentSale.status !== 'completed') return s;
+      const currentReturnedByLine = new Map<number, number>();
+      for (const ex of s.exchanges.filter(x => x.billNo === currentSale.billNo)) {
+        for (const item of ex.items) if (item.itemIdx !== undefined) {
+          currentReturnedByLine.set(item.itemIdx, (currentReturnedByLine.get(item.itemIdx) || 0) + item.qty);
+        }
+      }
+      const currentRemaining = currentSale.items.map((it, idx) => Math.max(0, it.qty - (currentReturnedByLine.get(idx) || 0)));
+      if (!currentRemaining.some(q => q > 0)) return s;
+      const qtyByProduct = new Map<string, number>();
+      currentSale.items.forEach((it, idx) => {
+        const qty = currentRemaining[idx];
+        if (qty > 0) qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) || 0) + qty);
+      });
+      const returnedUnitIds = currentSale.items.flatMap(it => it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === currentSale.id));
+      const allReturned = currentRemaining.every(q => q === 0);
+      const creditDue = currentSale.amountPaid < currentSale.total ? Math.max(0, currentSale.total - currentSale.amountPaid) : 0;
+      const creditReduction = Math.min(creditDue, refundValue);
+      const returnedRatio = currentSale.total > 0 ? Math.min(1, refundValue / currentSale.total) : 1;
+      const pointsEarnedToReverse = Math.min(currentSale.pointsEarned || 0, Math.round((currentSale.pointsEarned || 0) * returnedRatio));
+      const pointsToRestore = Math.min(currentSale.pointsRedeemed || 0, Math.round((currentSale.pointsRedeemed || 0) * returnedRatio));
+      return {
+        ...s,
+        sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed' } : x),
+        products: s.products.map(p => { const qty = qtyByProduct.get(p.id); return qty !== undefined ? { ...p, stock: p.stock + qty } : p; }),
+        customers: s.customers.map(c => c.id === currentSale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - creditReduction), loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsEarnedToReverse + pointsToRestore) } : c),
+        units: (s.units || []).map(u => returnedUnitIds.includes(u.id) ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u),
+      };
     });
-    setStateWithInventoryLedger('REFUND', s => ({
-      ...s,
-      sales: s.sales.map(x => (x.id === saleId ? { ...x, status: 'refunded' } : x)),
-      products: s.products.map(p => {
-        const qty = refundQtyByProduct.get(p.id);
-        return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
-      }),
-      customers: s.customers.map(c => c.id === sale.customerId
-        ? {
-            ...c,
-            creditBalance: Math.max(0, c.creditBalance - Math.max(0, sale.total - sale.amountPaid)),
-            loyaltyPoints: Math.max(0, c.loyaltyPoints - (sale.pointsEarned || 0) + (sale.pointsRedeemed || 0)),
-          }
-        : c,
-      ),
-      units: (s.units || []).map(u =>
-        returnedUnitIds.includes(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
-          : u,
-      ),
-    }));
-    pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${sale.total.toLocaleString()}${returnedUnitIds.length ? ` · ${returnedUnitIds.length} unit(s) returned` : ''}`);
-  }, [state.sales, pushAudit]);
+    pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${sale.items.flatMap(it => it.unitIds || []).length ? ` · tracked unit(s) returned` : ''}`);
+  }, [state.sales, state.exchanges, state.units, pushAudit]);
 
   /* ---------------- held sales ---------------- */
   const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {

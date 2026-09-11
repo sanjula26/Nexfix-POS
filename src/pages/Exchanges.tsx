@@ -55,7 +55,7 @@ export default function Exchanges() {
     () => (bill ? selected.reduce((a, i) => {
       const qty = Math.max(0, Math.min(bill.items[i].qty, returnQty[i] || 0));
       const discount = bill.items[i].qty > 0 ? (bill.items[i].discount || 0) * (qty / bill.items[i].qty) : 0;
-      return a + bill.items[i].price * qty - discount;
+      return a + Math.max(0, bill.items[i].price * qty - discount);
     }, 0) : 0),
     [bill, selected, returnQty],
   );
@@ -243,7 +243,7 @@ export default function Exchanges() {
         <p className="text-sm text-sub">
           {mode === 'refund'
             ? <>Return <b className="num text-ink">{fmtRs(selectedSum)}</b> cash to the customer and mark the bill as exchanged.</>
-            : <>Restock the selected item(s) and mark the bill as exchanged. Hand the replacement at the counter.</>}
+            : <>Restock the selected returned item(s) and mark the bill as exchanged. The replacement item must be processed as a separate sale so its stock and revenue are recorded.</>}
         </p>
         <div className="flex gap-2.5 mt-5">
           <button className="btn btn-primary flex-1" onClick={doProcess}>
