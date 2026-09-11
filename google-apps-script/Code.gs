@@ -1,8 +1,25 @@
 /** Nexfix POS Google Apps Script API. Deploy as Web app: Execute as Me. */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '1.2.0';
+var VERSION = '1.3.0';
 var STATUS_PREFIX = 'nexfix_backup_status_';
 var API_KEY_PROPERTY = 'NEXFIX_API_KEY';
+
+// Only these application-owned sheets may be accessed through the generic
+// table API. FullBackup is deliberately excluded because it contains the
+// complete POS state and is handled only by the admin/manager backup flow.
+var ALLOWED_DATA_TABLES = {
+  'saleshistory': true,
+  'products': true,
+  'customers': true,
+  'suppliers': true,
+  'purchases': true,
+  'expenses': true,
+  'exchanges': true,
+  'repairs': true,
+  'units': true,
+  'quotations': true,
+  'warrantyclaims': true
+};
 
 function json(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
@@ -54,17 +71,28 @@ function isAuthorized(provided) {
   return String(provided) === expected;
 }
 
+function normalizeTableName(table) {
+  return String(table || '').trim();
+}
+
+function isAllowedDataTable(table) {
+  var normalized = normalizeTableName(table);
+  return normalized && ALLOWED_DATA_TABLES[normalized.toLowerCase()] === true;
+}
+
 function syncTable(ss, table, rows) {
-  var sheet = ss.getSheetByName(table) || ss.insertSheet(table);
+  if (!isAllowedDataTable(table)) throw new Error('Table is not allowed');
+  var safeTable = normalizeTableName(table);
+  var sheet = ss.getSheetByName(safeTable) || ss.insertSheet(safeTable);
   rows = Array.isArray(rows) ? rows : [];
-  if (!rows.length) return { table: table, rows: 0 };
+  if (!rows.length) return { table: safeTable, rows: 0 };
 
   var headers = Object.keys(rows[0]);
   var values = rows.map(function(row) {
     return headers.map(function(h) { return value(row[h]); });
   });
 
-  if (table.toLowerCase() === 'products') {
+  if (safeTable.toLowerCase() === 'products') {
     sheet.clearContents();
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.getRange(2, 1, values.length, headers.length).setValues(values);
@@ -78,7 +106,7 @@ function syncTable(ss, table, rows) {
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, appendValues.length, existing.length).setValues(appendValues);
   }
-  return { table: table, rows: rows.length };
+  return { table: safeTable, rows: rows.length };
 }
 
 function backupState(ss, contents) {
@@ -113,10 +141,10 @@ function doPost(e) {
     var result;
     if (contents.action === 'backupState') {
       result = ok(backupState(ss, contents));
-    } else if (contents.action === 'saveData' && contents.table) {
+    } else if (contents.action === 'saveData' && isAllowedDataTable(contents.table)) {
       result = ok(syncTable(ss, contents.table, contents.rows));
     } else {
-      throw new Error('Unsupported action or missing table');
+      throw new Error('Unsupported action or table is not allowed');
     }
     remember(requestId, result);
     return json(result);
@@ -130,7 +158,9 @@ function doPost(e) {
 }
 
 function getTable(ss, table) {
-  var sheet = ss.getSheetByName(table);
+  if (!isAllowedDataTable(table)) throw new Error('Table is not allowed');
+  var safeTable = normalizeTableName(table);
+  var sheet = ss.getSheetByName(safeTable);
   if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 1) return [];
   var values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
   var headers = values[0];
@@ -153,11 +183,11 @@ function doGet(e) {
       var stored = JSON.parse(raw);
       return respond(stored.result, callback);
     }
-    if (p.action === 'getTable' && p.table) {
+    if (p.action === 'getTable' && isAllowedDataTable(p.table)) {
       if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
-      return respond(ok({ action: 'getTable', table: p.table, rows: getTable(SpreadsheetApp.getActiveSpreadsheet(), p.table) }), callback);
+      return respond(ok({ action: 'getTable', table: normalizeTableName(p.table), rows: getTable(SpreadsheetApp.getActiveSpreadsheet(), p.table) }), callback);
     }
-    return respond(fail('Unknown GET action'), callback);
+    return respond(fail('Unknown GET action or table is not allowed'), callback);
   } catch (err) {
     return respond(fail(err), (e && e.parameter && e.parameter.callback) || '');
   }
