@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot } from './cloudSync';
+import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, ensureCloudShop } from './cloudSync';
 import type { NewSaleInput } from './store';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
@@ -14,11 +14,7 @@ export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 
-/**
- * Flush transactional operations first. Each normalized cloud RPC is idempotent by its
- * stable sale/return identifier. Snapshot writes are handled afterwards so they never
- * substitute for a missing normalized transaction.
- */
+/** Flush normalized transactions first, then legacy snapshot writes. */
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=(async()=>{
@@ -30,15 +26,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       if(op.type==='sale_create'){
         try{
           const parsed=JSON.parse(op.payload) as {saleId:string;input:NewSaleInput};
-          const { ensureCloudShop, syncNormalizedCatalog } = await import('./cloudSync');
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
-          const state=await idbLoadState();
-          if(!state) break;
-          if(state.users.some(u=>u.id===parsed.input.salesmanId) || state.users.length>0){
-            const catalog=await syncNormalizedCatalog(state,shop.shopId);
-            if(!catalog.ok) break;
-          }
           const payments=(parsed.input.payments&&parsed.input.payments.length)
             ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
             : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
@@ -56,7 +45,6 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       if(op.type==='return_create'){
         try{
           const parsed=JSON.parse(op.payload) as {returnId:string;input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}};
-          const { ensureCloudShop } = await import('./cloudSync');
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           const resolved=await resolveSaleReturnLines({shopId:shop.shopId,saleId:parsed.input.saleId,lines:parsed.input.lines});
