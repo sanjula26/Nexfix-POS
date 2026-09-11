@@ -1377,7 +1377,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
     saveProduct, deleteProduct, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
-    completeSale, refundSale, holdSale, resumeHold, deleteHold,
+    completeSale, completeSaleCloud, refundSale, holdSale, resumeHold, deleteHold,
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
