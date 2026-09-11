@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, ensureCloudShop } from './cloudSync';
+import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -58,6 +58,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
+    const state=await idbLoadState();
 
     for(const op of ops){
       if(op.type==='sale_create'){
@@ -65,6 +66,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          // If the local durable snapshot was last changed by an admin/manager,
+          // publish its catalog first so newly-added offline products/customers/units
+          // exist before their queued sales are replayed. Cashiers continue with the
+          // already-synced catalog and are not granted catalog-write privileges.
+          if(state) {
+            const catalog=await syncNormalizedCatalog(state, shop.shopId);
+            if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
+          }
           const payments=(parsed.input.payments&&parsed.input.payments.length)
             ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
             : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
@@ -96,11 +105,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
     if(acknowledged.length) await idbAcknowledgeQueue(acknowledged);
     const remaining=await idbListQueue();
-    const state=await idbLoadState();
-    if(!state) return {flushed,pending:remaining.length,synced:false,conflict:false};
+    const latestState=await idbLoadState();
+    if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
     if(!snapshotOps.length) return {flushed:flushed,pending:remaining.length,synced:true,conflict:false};
-    const result=await syncStateSnapshot(state);
+    const result=await syncStateSnapshot(latestState);
     if(result.status==='synced'){
       const ids=snapshotOps.map(op=>op.id);
       await idbAcknowledgeQueue(ids);
