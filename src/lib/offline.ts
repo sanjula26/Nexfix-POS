@@ -107,6 +107,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       const after=await idbListQueue();
       return {flushed:flushed+ids.length,pending:after.length,synced:true,conflict:false};
     }
+    if(result.status==='conflict' && typeof window !== 'undefined'){
+      window.setTimeout(() => {
+        window.alert('Nexfix POS: Another PC has changed the cloud snapshot. Your local data was NOT overwritten. Pending sync items were kept safe. Review the cloud/local data before trying Sync again.');
+      }, 0);
+    }
     return {flushed,pending:remaining.length,synced:false,conflict:result.status==='conflict'};
   })().finally(()=>{flushInFlight=null;});
   return flushInFlight;
