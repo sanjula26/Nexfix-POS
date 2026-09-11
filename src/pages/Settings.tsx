@@ -7,7 +7,7 @@ import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   getGoogleScriptUrl, setGoogleScriptUrl, isGoogleSyncEnabled, setGoogleSyncEnabled,
-  backupStateToGoogle,
+  backupStateToGoogle, fetchLatestGoogleBackup,
 } from '../lib/driveSync';
 import { applyBackupRestore } from '../lib/restore';
 import { queueWrite } from '../lib/offline';
@@ -22,6 +22,8 @@ export default function Settings() {
   const [gUrl, setGUrl] = useState(() => getGoogleScriptUrl());
   const [gEnabled, setGEnabled] = useState(() => isGoogleSyncEnabled());
   const [gMsg, setGMsg] = useState('');
+  const [gRestoreBusy, setGRestoreBusy] = useState(false);
+  const [confirmGoogleRestore, setConfirmGoogleRestore] = useState<{ state: unknown; backedUpAt?: string; kind?: string } | null>(null);
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
@@ -99,6 +101,45 @@ export default function Settings() {
     reader.readAsText(file);
   };
 
+  const requestGoogleRestore = async () => {
+    if (!gEnabled) return setGMsg('Enable Google sync before restoring a cloud backup');
+    if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
+    if (!getGoogleScriptUrl()) return setGMsg('Save the Google Apps Script URL first');
+    setGRestoreBusy(true);
+    setGMsg('Reading the latest Google backup…');
+    try {
+      const latest = await fetchLatestGoogleBackup();
+      if (!latest) {
+        setGMsg('No valid FullBackup was found in Google Sheets');
+        return;
+      }
+      setConfirmGoogleRestore(latest);
+      setGMsg('Latest cloud backup loaded. Confirm the restore before replacing local data.');
+    } catch (error) {
+      setGMsg(error instanceof Error ? error.message : 'Could not read the Google backup');
+    } finally {
+      setGRestoreBusy(false);
+    }
+  };
+
+  const confirmGoogleRestoreNow = async () => {
+    if (!confirmGoogleRestore) return;
+    setGRestoreBusy(true);
+    setGMsg('Validating cloud backup and creating safety checkpoint…');
+    try {
+      await applyBackupRestore(state, confirmGoogleRestore.state);
+      await queueWrite('google_backup_restore');
+      setConfirmGoogleRestore(null);
+      setGMsg('Google backup restored safely. Reloading…');
+      window.setTimeout(() => window.location.reload(), 450);
+    } catch (error) {
+      setGMsg(error instanceof Error ? error.message : 'Google restore failed');
+      setConfirmGoogleRestore(null);
+    } finally {
+      setGRestoreBusy(false);
+    }
+  };
+
   return (
     <div>
       <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.1`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
@@ -170,12 +211,13 @@ export default function Settings() {
 
           {user?.role === 'admin' && <div className="card p-6 border border-rose-500/25"><h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3><p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p><button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button></div>}
 
-          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Sheets Sync &amp; Cloud Backup</h3><p className="text-xs text-faint mb-3">Linked to your Gmail via Google Apps Script. Sales, products and customers sync live when online. Full state also backs up to Google on auto/manual backup.</p><div className="flex items-center justify-between gap-3 mb-3"><span className="text-sm font-medium text-ink">Enable Google sync</span><Toggle checked={gEnabled} onChange={v => { setGEnabled(v); setGoogleSyncEnabled(v); setGMsg(v ? 'Google sync enabled' : 'Google sync disabled'); }} /></div><Field label="Apps Script Web App URL" hint="Deploy as web app → Anyone → copy URL"><input className="w-full px-3 py-2 rounded-lg border border-line bg-raised text-sm" value={gUrl} onChange={e => setGUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></Field><div className="flex flex-wrap gap-2 mt-3"><button type="button" className="btn btn-soft" onClick={() => { setGoogleScriptUrl(gUrl); setGMsg('Google Script URL saved'); }}>Save URL</button><button type="button" className="btn btn-emerald" disabled={!gEnabled || connectivity !== 'online'} onClick={async () => { setGMsg('Sending full backup to Google…'); const ok = await backupStateToGoogle(state, 'manual'); setGMsg(ok ? 'Full backup sent to Google Sheets' : 'Failed (offline or script error)'); }}><Cloud size={15} /> Backup now to Google</button></div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('disabled') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}</div>
+          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Sheets Sync &amp; Cloud Backup</h3><p className="text-xs text-faint mb-3">Linked to your Gmail via Google Apps Script. Sales, products and customers sync live when online. Full state also backs up to Google on auto/manual backup.</p><div className="flex items-center justify-between gap-3 mb-3"><span className="text-sm font-medium text-ink">Enable Google sync</span><Toggle checked={gEnabled} onChange={v => { setGEnabled(v); setGoogleSyncEnabled(v); setGMsg(v ? 'Google sync enabled' : 'Google sync disabled'); }} /></div><Field label="Apps Script Web App URL" hint="Deploy as web app → Anyone → copy URL"><input className="w-full px-3 py-2 rounded-lg border border-line bg-raised text-sm" value={gUrl} onChange={e => setGUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></Field><div className="flex flex-wrap gap-2 mt-3"><button type="button" className="btn btn-soft" onClick={() => { try { setGoogleScriptUrl(gUrl); setGMsg('Google Script URL saved'); } catch (error) { setGMsg(error instanceof Error ? error.message : 'Invalid Google Script URL'); } }}>Save URL</button><button type="button" className="btn btn-emerald" disabled={!gEnabled || connectivity !== 'online'} onClick={async () => { setGMsg('Sending full backup to Google…'); const ok = await backupStateToGoogle(state, 'manual'); setGMsg(ok ? 'Full backup sent to Google Sheets' : 'Failed (offline or script error)'); }}><Cloud size={15} /> Backup now to Google</button><button type="button" className="btn btn-soft" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={requestGoogleRestore}><RotateCcw size={15} /> {gRestoreBusy ? 'Reading backup…' : 'Restore latest Google backup'}</button></div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('disabled') || gMsg.includes('requires') || gMsg.includes('No valid') || gMsg.includes('Invalid') || gMsg.includes('Could not') || gMsg.includes('failed') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}<p className="text-[11px] text-faint mt-3">Restore downloads the newest <b>FullBackup</b> snapshot, validates it, creates a local safety checkpoint, then replaces local data only after confirmation.</p></div>
 
           <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3><div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div><p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p></div>
         </div>
       </div>
 
+      <Modal open={confirmGoogleRestore !== null} onClose={() => !gRestoreBusy && setConfirmGoogleRestore(null)} title="Restore latest Google backup?" sub="This will replace the current local POS data"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" /><span>The selected cloud snapshot will replace the current local dataset. A safety checkpoint is created first, and the restore is cancelled if the checkpoint cannot be saved.</span></div>{confirmGoogleRestore && <div className="rounded-xl bg-raised border border-line px-4 py-3 mt-4 text-xs text-faint"><div><b className="text-ink">Backup type:</b> {confirmGoogleRestore.kind || 'unknown'}</div>{confirmGoogleRestore.backedUpAt && <div className="mt-1"><b className="text-ink">Backed up:</b> {new Date(confirmGoogleRestore.backedUpAt).toLocaleString()}</div>}</div>}<div className="flex gap-2.5 mt-5"><button className="btn btn-primary flex-1" disabled={gRestoreBusy} onClick={confirmGoogleRestoreNow}><Cloud size={15} /> {gRestoreBusy ? 'Restoring…' : 'Restore backup'}</button><button className="btn btn-soft flex-1" disabled={gRestoreBusy} onClick={() => setConfirmGoogleRestore(null)}>Cancel</button></div></Modal>
       <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { resetData(); setConfirmReset(false); }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div></Modal>
     </div>
   );
