@@ -6,6 +6,7 @@ import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
 import { ensureCloudShop, processSaleReturnAtomic, resolveSaleReturnLines } from '../lib/cloudSync';
+import { queueReturnCreate } from '../lib/offline';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 
 export default function Exchanges() {
@@ -62,23 +63,26 @@ export default function Exchanges() {
     setProcessing(true); setError('');
     try {
       const online = typeof navigator === 'undefined' || navigator.onLine;
+      if (!pendingReturnId.current) pendingReturnId.current = crypto.randomUUID();
+      const returnId = pendingReturnId.current;
+      const returnLines = selectedItems.map(({ itemIdx, qty }) => ({
+        product_id: bill.items[itemIdx].productId,
+        qty,
+        unit_ids: bill.items[itemIdx].unitIds,
+      }));
+
       if (online && supabaseConfigured && supabase) {
         const shop = await ensureCloudShop('Nexfix Shop');
         if (!shop.ok || !shop.shopId) throw new Error(shop.error || 'Cloud shop is unavailable');
         const resolve = await resolveSaleReturnLines({
           shopId: shop.shopId,
           saleId: bill.id,
-          lines: selectedItems.map(({ itemIdx, qty }) => ({
-            product_id: bill.items[itemIdx].productId,
-            qty,
-            unit_ids: bill.items[itemIdx].unitIds,
-          })),
+          lines: returnLines,
         });
         if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
-        if (!pendingReturnId.current) pendingReturnId.current = crypto.randomUUID();
         const cloud = await processSaleReturnAtomic({
           shopId: shop.shopId,
-          returnId: pendingReturnId.current,
+          returnId,
           saleId: bill.id,
           reason,
           mode,
@@ -86,6 +90,17 @@ export default function Exchanges() {
           lines: resolve.lines,
         });
         if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
+      } else {
+        // Commit the local return immediately, but durably queue the exact normalized
+        // transaction for replay when connectivity returns. The stable return id makes
+        // retries idempotent at the cloud RPC boundary.
+        await queueReturnCreate(returnId, {
+          saleId: bill.id,
+          reason,
+          mode,
+          paymentMethod: mode === 'refund' ? 'cash' : undefined,
+          lines: returnLines,
+        });
       }
       processExchange(bill.id, selectedItems, reason, mode);
       setBill(null); setQuery(''); setSearched(false); setConfirm(false); setSelected([]); setReturnQty({}); resetPendingReturn();
