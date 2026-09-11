@@ -74,15 +74,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: true, shopId: String(created) };
 }
 
-/**
- * Mirror the local catalog into the normalized cloud tables before atomic sales
- * are enabled. Only the authenticated admin/manager may perform this bootstrap
- * because product stock and prices are authoritative business data.
- *
- * Existing sold/returned units are intentionally not copied with foreign-key
- * references to local-only sales. In-stock units are copied because they are
- * the units the atomic sale transaction can safely reserve/sell in the cloud.
- */
+/** Mirror the local catalog into normalized cloud tables before atomic sales are enabled. */
 export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
@@ -91,61 +83,20 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (sessionError) return { ok: false, error: sessionError.message };
   const uid = sessionData.session?.user.id;
   if (!uid) return { ok: false, error: 'Cloud session is not available' };
-
-  const { data: membership, error: membershipError } = await supabase
-    .from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
+  const { data: membership, error: membershipError } = await supabase.from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
   if (membershipError) return { ok: false, error: membershipError.message };
   if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
-
-  const products = state.products.map(p => ({
-    id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null,
-    description: null, cost: p.cost || 0, price: p.price || 0, stock: p.stock || 0,
-    reorder_level: p.reorderLevel ?? 5, track_imei: !!p.trackImei, track_serial: !!p.trackSerial,
-    track_expiry: !!p.trackExpiry, warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit,
-    is_service: !!p.isService, active: p.active !== false, attributes: p.attributes || {},
-    image_url: null, category_id: null, brand_id: null, supplier_id: null,
-    created_at: p.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
-  }));
-  if (products.length) {
-    const { error } = await supabase.from('products').upsert(products, { onConflict: 'id' });
-    if (error) return { ok: false, error: `Products: ${error.message}` };
-  }
-
-  const customers = state.customers.map(c => ({
-    id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
-    nic: c.nic || null, address: c.address || null, credit_balance: c.creditBalance || 0,
-    loyalty_points: c.loyaltyPoints || 0, notes: null, created_at: c.createdAt || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }));
-  if (customers.length) {
-    const { error } = await supabase.from('customers').upsert(customers, { onConflict: 'id' });
-    if (error) return { ok: false, error: `Customers: ${error.message}` };
-  }
-
-  const units = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({
-    id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
-    expiry_date: u.expiryDate || null, status: 'in_stock', cost: u.cost ?? null, purchase_id: null,
-    sale_id: null, sale_bill_no: null, warranty_months: null, warranty_expires_at: u.warrantyExpiresAt || null,
-    note: u.note || null, created_at: u.createdAt || new Date().toISOString(), sold_at: null,
-  }));
-  if (units.length) {
-    const { error } = await supabase.from('inventory_units').upsert(units, { onConflict: 'id' });
-    if (error) return { ok: false, error: `Inventory units: ${error.message}` };
-  }
+  const products = state.products.map(p => ({ id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null, description: null, cost: p.cost || 0, price: p.price || 0, stock: p.stock || 0, reorder_level: p.reorderLevel ?? 5, track_imei: !!p.trackImei, track_serial: !!p.trackSerial, track_expiry: !!p.trackExpiry, warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit, is_service: !!p.isService, active: p.active !== false, attributes: p.attributes || {}, image_url: null, category_id: null, brand_id: null, supplier_id: null, created_at: p.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }));
+  if (products.length) { const { error } = await supabase.from('products').upsert(products, { onConflict: 'id' }); if (error) return { ok: false, error: `Products: ${error.message}` }; }
+  const customers = state.customers.map(c => ({ id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null, nic: c.nic || null, address: c.address || null, credit_balance: c.creditBalance || 0, loyalty_points: c.loyaltyPoints || 0, notes: null, created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString() }));
+  if (customers.length) { const { error } = await supabase.from('customers').upsert(customers, { onConflict: 'id' }); if (error) return { ok: false, error: `Customers: ${error.message}` }; }
+  const units = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({ id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null, expiry_date: u.expiryDate || null, status: 'in_stock', cost: u.cost ?? null, purchase_id: null, sale_id: null, sale_bill_no: null, warranty_months: null, warranty_expires_at: u.warrantyExpiresAt || null, note: u.note || null, created_at: u.createdAt || new Date().toISOString(), sold_at: null }));
+  if (units.length) { const { error } = await supabase.from('inventory_units').upsert(units, { onConflict: 'id' }); if (error) return { ok: false, error: `Inventory units: ${error.message}` }; }
   return { ok: true };
 }
 
-function getRevision(): number {
-  try {
-    const value = Number(storage()?.getItem(REV_KEY) || '0');
-    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-  } catch { return 0; }
-}
-
-function setRevision(revision: number): void {
-  if (!Number.isSafeInteger(revision) || revision < 0) return;
-  try { storage()?.setItem(REV_KEY, String(revision)); } catch { /* ignore */ }
-}
+function getRevision(): number { try { const value = Number(storage()?.getItem(REV_KEY) || '0'); return Number.isSafeInteger(value) && value >= 0 ? value : 0; } catch { return 0; } }
+function setRevision(revision: number): void { if (!Number.isSafeInteger(revision) || revision < 0) return; try { storage()?.setItem(REV_KEY, String(revision)); } catch { /* ignore */ } }
 
 export type CloudSyncResult =
   | { status: 'disabled' }
@@ -155,15 +106,8 @@ export type CloudSyncResult =
   | { status: 'error'; message: string };
 
 export async function completeSaleAtomic(input: {
-  shopId: string;
-  saleId: string;
-  customerId?: string;
-  shipping?: number;
-  discount?: number;
-  taxPct?: number;
-  pointsRedeemed?: number;
-  note?: string;
-  salesmanId?: string;
+  shopId: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
+  pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
 }): Promise<{ ok: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string }> {
@@ -173,29 +117,49 @@ export async function completeSaleAtomic(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
-
-  const { data, error } = await supabase.rpc('complete_sale_atomic', {
-    p_shop_id: input.shopId,
-    p_sale_id: input.saleId,
-    p_customer_id: input.customerId || null,
-    p_shipping: input.shipping ?? 0,
-    p_discount: input.discount ?? 0,
-    p_tax_pct: input.taxPct ?? 0,
-    p_points_redeemed: input.pointsRedeemed ?? 0,
-    p_note: input.note || null,
-    p_salesman_id: input.salesmanId || null,
-    p_lines: input.lines,
-    p_payments: input.payments,
-  });
+  const { data, error } = await supabase.rpc('complete_sale_atomic', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud sale was not committed' };
+  return { ok: true, alreadyCommitted: row.already_committed === true, saleId: row.sale_id, billNo: row.bill_no, total: Number(row.total) };
+}
+
+export async function processSaleReturnAtomic(input: {
+  shopId: string;
+  returnId: string;
+  saleId: string;
+  reason?: string;
+  mode: 'refund' | 'replace';
+  paymentMethod?: string;
+  lines: Array<{ sale_item_id: string; qty: number; unit_ids?: string[] }>;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; returnId?: string; returnNo?: string; refundAmount?: number; additionalPayment?: number; saleId?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  if (!input.shopId || !input.returnId || !input.saleId) return { ok: false, error: 'Missing return identifiers' };
+  if (!input.lines.length) return { ok: false, error: 'Return lines are required' };
+  const { data, error } = await supabase.rpc('process_sale_return_atomic', {
+    p_shop_id: input.shopId,
+    p_return_id: input.returnId,
+    p_sale_id: input.saleId,
+    p_reason: input.reason?.trim().slice(0, 500) || '',
+    p_mode: input.mode,
+    p_payment_method: input.paymentMethod || null,
+    p_lines: input.lines,
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: 'Cloud return was not committed' };
   return {
     ok: true,
     alreadyCommitted: row.already_committed === true,
+    returnId: row.return_id,
+    returnNo: row.return_no,
+    refundAmount: Number(row.refund_amount),
+    additionalPayment: Number(row.additional_payment),
     saleId: row.sale_id,
-    billNo: row.bill_no,
-    total: Number(row.total),
   };
 }
 
