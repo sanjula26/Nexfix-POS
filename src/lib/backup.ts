@@ -42,7 +42,30 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('kitItems' in state && !hasArray(state.kitItems)) return false;
   if ('quotations' in state && !hasArray(state.quotations)) return false;
   if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
+  if ('purchaseReturns' in state && !hasArray(state.purchaseReturns)) return false;
+  if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
+  if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
+  if ('grns' in state && !hasArray(state.grns)) return false;
   return true;
+}
+
+/**
+ * Fill only collections introduced after the original backup format.
+ * Existing values are preserved byte-for-byte by reference; missing optional
+ * collections become empty arrays so current screens and reports can safely
+ * consume a legacy backup without changing any business data.
+ */
+function normalizeRestoredState(state: POSState): POSState {
+  return {
+    ...state,
+    kitItems: state.kitItems ?? [],
+    quotations: state.quotations ?? [],
+    warrantyClaims: state.warrantyClaims ?? [],
+    purchaseReturns: state.purchaseReturns ?? [],
+    supplierPayments: state.supplierPayments ?? [],
+    inventoryTransactions: state.inventoryTransactions ?? [],
+    grns: state.grns ?? [],
+  };
 }
 
 export function validateBackup(input: unknown): input is BackupEnvelope {
@@ -73,7 +96,10 @@ export function validateBackupForRestore(input: unknown): BackupEnvelope {
   if (!validateBackup(input)) {
     throw new Error('Invalid or unsupported Nexfix POS backup. Restore was not performed.');
   }
-  return input;
+  return {
+    ...input,
+    state: normalizeRestoredState(input.state),
+  };
 }
 
 export interface BackupOptions {
