@@ -37,29 +37,16 @@ jobs:
           s = s.replace("return a + bill.items[i].price * qty - discount;", "return a + Math.max(0, bill.items[i].price * qty - discount);", 1)
           s = s.replace('Restock the selected item(s) and mark the bill as exchanged. Hand the replacement at the counter.', 'Restock the selected returned item(s) and mark the bill as exchanged. The replacement item must be processed as a separate sale so its stock and revenue are recorded.', 1)
           p.write_text(s)
-          temp = Path('.github/workflows/patch-refund-integrity.yml')
-          if temp.exists(): temp.unlink()
       - name: Typecheck
         run: npm run typecheck
       - name: Lint
         run: npm run lint
       - name: Production build
         run: npm run build
-      - name: Commit patched source and restore CI
+      - name: Commit patched source
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('.github/workflows/ci.yml')
-          s = p.read_text()
-          marker = "      - name: Apply refund integrity patch\n"
-          start = s.find(marker)
-          if start >= 0:
-              end = s.find("      - name: Typecheck\n", start)
-              s = s[:start] + s[end:]
-              p.write_text(s)
-          PY
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/lib/store.tsx src/pages/Exchanges.tsx .github/workflows/ci.yml .github/workflows/patch-refund-integrity.yml
+          git add src/lib/store.tsx src/pages/Exchanges.tsx
           git commit -m 'fix: harden refund and exchange integrity'
           git push
