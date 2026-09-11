@@ -9,10 +9,10 @@
  *   only for this public, non-secret status endpoint.
  */
 
-// Current deployed Google Apps Script Web App URL.
-// IMPORTANT: this is the /macros/s/.../exec Web App URL, not the /macros/library/d/... URL.
-const DEFAULT_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbwqgFn-6tKzAIYsaIT2zLAG6rsmCRPvqQ0iHfL4som0Pb1VoJbceaNG1EciTnpb4Yg/exec';
+// No Google Apps Script deployment URL is shipped with the application.
+// Operators must explicitly configure a deployed /macros/s/.../exec URL either
+// through VITE_GOOGLE_SCRIPT_URL or the application's local settings.
+// This keeps an old/unknown deployment from being silently contacted.
 
 // Version the storage key so an older, broken deployment URL saved by a previous
 // build cannot silently override the current working Web App URL.
@@ -42,7 +42,7 @@ export function getGoogleScriptUrl(): string {
   }
 
   if (isAllowedScriptUrl(ENV_URL)) return ENV_URL;
-  return isAllowedScriptUrl(DEFAULT_SCRIPT_URL) ? DEFAULT_SCRIPT_URL : '';
+  return '';
 }
 
 export function setGoogleScriptUrl(url: string): void {
