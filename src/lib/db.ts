@@ -10,7 +10,9 @@ const STORE_META = 'meta';
 export type QueueOp =
   | { id: string; ts: string; type: 'state_write'; note?: string }
   | { id: string; ts: string; type: 'backup'; note?: string }
-  | { id: string; ts: string; type: 'custom'; note: string; payload?: string };
+  | { id: string; ts: string; type: 'custom'; note: string; payload?: string }
+  | { id: string; ts: string; type: 'sale_create'; payload: string }
+  | { id: string; ts: string; type: 'return_create'; payload: string };
 export interface BackupMeta { lastAutoBackupAt?: string; lastManualBackupAt?: string; lastCloudBackupAt?: string; autoBackupHours: number; backupCount: number; }
 
 function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{ const req=indexedDB.open(DB_NAME,DB_VERSION); req.onerror=()=>reject(req.error||new Error('IDB open failed')); req.onsuccess=()=>resolve(req.result); req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});if(!db.objectStoreNames.contains(STORE_QUEUE)){const q=db.createObjectStore(STORE_QUEUE,{keyPath:'id'});q.createIndex('ts','ts',{unique:false});}if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});};}); }
@@ -58,6 +60,7 @@ export async function idbEnqueue(op:Omit<QueueOp,'id'|'ts'>&{id?:string;ts?:stri
 export async function idbListQueue():Promise<QueueOp[]>{try{const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}catch{return[];}}
 /** Acknowledge all supplied queue entries in one transaction to avoid sequential transaction overhead. */
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Queue acknowledgement failed'));tx.onabort=()=>reject(tx.error||new Error('Queue acknowledgement aborted'));});}catch{/* best-effort cleanup */}}
+export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();await idbReq(db.transaction(STORE_QUEUE,'readwrite').objectStore(STORE_QUEUE).delete(id));}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
 export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
