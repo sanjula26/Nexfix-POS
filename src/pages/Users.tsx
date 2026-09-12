@@ -15,7 +15,6 @@ export default function Users() {
   const [formErr, setFormErr] = useState('');
   const [formOk, setFormOk] = useState('');
 
-
   const save = () => {
     setFormErr('');
     setFormOk('');
@@ -136,7 +135,7 @@ export default function Users() {
                 <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" />
               </span>
             </Field>
-            <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored as SHA-256 hash' : 'Leave blank to keep current password'}>
+            <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored securely as a password hash' : 'Leave blank to keep current password'}>
               <span className="relative block">
                 <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
                 <input
