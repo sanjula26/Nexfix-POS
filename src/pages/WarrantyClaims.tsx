@@ -25,13 +25,13 @@ function persistClaims(list: WarrantyClaim[], countersPatch?: Record<string, num
     data.warrantyClaims = list;
     if (countersPatch) data.counters = { ...data.counters, ...countersPatch };
     localStorage.setItem('nexfix_pos_v2', JSON.stringify(data));
-  } catch { /* ignore */ }
+  } catch { /* ignore storage failures */ }
 }
 
 export default function WarrantyClaims() {
   const { state, user, logAudit } = usePOS();
   const [q, setQ] = useState('');
-  const [claims, setClaims] = useState<WarrantyClaim[]>(() => loadClaims());
+  const [claims, setClaims] = useState<WarrantyClaim[]>(() => state.warrantyClaims?.length ? state.warrantyClaims : loadClaims());
   const [editing, setEditing] = useState<WarrantyClaim | null>(null);
   const [isNew, setIsNew] = useState(false);
 
@@ -42,23 +42,30 @@ export default function WarrantyClaims() {
   }, [claims, q]);
 
   const openNew = () => {
-    setEditing({ id: uid(), claimNo: 'CL-TEMP', productName: '', issueDescription: '', status: 'open', createdAt: new Date().toISOString(), by: user?.name || 'Staff' });
+    if (!user) return;
+    setEditing({ id: uid(), claimNo: 'CL-TEMP', productName: '', issueDescription: '', status: 'open', createdAt: new Date().toISOString(), by: user.name });
     setIsNew(true);
   };
 
   const save = () => {
     if (!editing || !editing.productName.trim() || !editing.issueDescription.trim()) return;
+    const productName = editing.productName.trim();
+    const issueDescription = editing.issueDescription.trim();
+    const validStatuses: ClaimStatus[] = ['open', 'approved', 'rejected', 'replaced', 'repaired', 'closed'];
+    if (!validStatuses.includes(editing.status)) return;
+    const duplicate = claims.some(x => x.id !== editing.id && x.claimNo.trim().toLowerCase() === editing.claimNo.trim().toLowerCase() && editing.claimNo !== 'CL-TEMP');
+    if (duplicate) return;
     const seq = ((state.counters as { claim?: number }).claim || claims.length || 0) + 1;
-    const claimNo = isNew ? `CL-${String(seq).padStart(4, '0')}` : editing.claimNo;
     const saved: WarrantyClaim = {
       ...editing,
-      claimNo,
-      productName: editing.productName.trim(),
-      issueDescription: editing.issueDescription.trim(),
+      claimNo: isNew ? `CL-${String(seq).padStart(4, '0')}` : editing.claimNo,
+      productName,
+      issueDescription,
       customerName: editing.customerName?.trim() || undefined,
       imeiOrSerial: editing.imeiOrSerial?.trim() || undefined,
       resolutionNotes: editing.resolutionNotes?.trim() || undefined,
       closedAt: editing.status === 'closed' ? (editing.closedAt || new Date().toISOString()) : undefined,
+      by: editing.by || user?.name || 'Staff',
     };
     const next = isNew ? [saved, ...claims] : claims.map(x => x.id === saved.id ? saved : x);
     setClaims(next);
