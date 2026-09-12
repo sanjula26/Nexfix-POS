@@ -28,9 +28,9 @@ jobs:
           p.write_text(s)
       - name: Verify cleanup
         run: |
-          grep -q "useEffect" src/pages/GRN.tsx && exit 1 || true
-          grep -q "syncedPricePurchases" src/pages/GRN.tsx && exit 1 || true
-          grep -q "saveProduct" src/pages/GRN.tsx && exit 1 || true
+          if grep -q "useEffect" src/pages/GRN.tsx; then exit 1; fi
+          if grep -q "syncedPricePurchases" src/pages/GRN.tsx; then exit 1; fi
+          if grep -q "saveProduct" src/pages/GRN.tsx; then exit 1; fi
       - name: Commit cleanup
         run: |
           git config user.name 'github-actions[bot]'
