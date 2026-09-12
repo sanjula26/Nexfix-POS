@@ -1,0 +1,175 @@
+name: Apply inventory store hardening
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch inventory store logic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+
+          old = '''  const saveProduct = useCallback((p: Product) => {
+    setState(s => {
+      const exists = s.products.some(x => x.id === p.id);
+      const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return { ...s, products: updatedProducts };
+    });
+    pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
+  }, [pushAudit, state.products]);
+
+  const deleteProduct = useCallback((id: string) => {
+    const p = state.products.find(x => x.id === id);
+    setState(s => {
+      const updatedProducts = s.products.filter(x => x.id !== id);
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return { ...s, products: updatedProducts };
+    });
+    if (p) pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
+  }, [pushAudit, state.products]);
+
+  const adjustStock = useCallback((id: string, delta: number, reason: string) => {
+    const p = state.products.find(x => x.id === id);
+    setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
+      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
+      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      return {
+        ...s,
+        products: updatedProducts,
+      };
+    });
+    if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} — ${reason}`);
+  }, [pushAudit, state.products]);
+'''
+          new = '''  const saveProduct = useCallback((p: Product) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Product', 'Blocked product save without stock-management permission');
+      return;
+    }
+    const name = String(p.name || '').trim();
+    const sku = String(p.sku || '').trim();
+    const barcode = String(p.barcode || '').trim();
+    const numeric = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];
+    if (!p.id || !name || numeric.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel) || !Number.isInteger(p.warrantyMonths ?? 0)) {
+      pushAudit('DENIED', 'Product', `Blocked invalid product input: ${name || p.id || 'unknown'}`);
+      return;
+    }
+    const skuKey = sku.toLowerCase();
+    const barcodeKey = barcode.toLowerCase();
+    const duplicate = state.products.find(x => x.id !== p.id && ((skuKey && String(x.sku || '').trim().toLowerCase() === skuKey) || (barcodeKey && String(x.barcode || '').trim().toLowerCase() === barcodeKey)));
+    if (duplicate) {
+      pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${name}`);
+      return;
+    }
+    const next: Product = { ...p, name, sku, barcode, stock: Math.max(0, Math.floor(p.stock)), reorderLevel: Math.max(0, Math.floor(p.reorderLevel)), warrantyMonths: Math.max(0, Math.floor(p.warrantyMonths ?? 0)) };
+    const exists = state.products.some(x => x.id === p.id);
+    setState(s => {
+      const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? next : x)) : [next, ...s.products];
+      syncToGoogleDrive('Products', updatedProducts);
+      return { ...s, products: updatedProducts };
+    });
+    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Product', `${exists ? 'Updated' : 'Added'} product ${name}`);
+  }, [can, pushAudit, state.products, user]);
+
+  const deleteProduct = useCallback((id: string) => {
+    if (!user || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'Product', 'Blocked product deletion without delete permission');
+      return;
+    }
+    const p = state.products.find(x => x.id === id);
+    if (!p) return;
+    const referenced = state.products.some(x => x.id === id) && (
+      p.stock > 0 ||
+      (state.units || []).some(u => u.productId === id) ||
+      state.sales.some(sale => sale.items.some(item => item.productId === id)) ||
+      state.purchases.some(po => po.items.some(item => item.productId === id))
+    );
+    if (referenced) {
+      pushAudit('DENIED', 'Product', `Blocked deletion of referenced product ${p.name}`);
+      return;
+    }
+    setState(s => {
+      const updatedProducts = s.products.filter(x => x.id !== id);
+      syncToGoogleDrive('Products', updatedProducts);
+      return { ...s, products: updatedProducts };
+    });
+    pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
+  }, [can, pushAudit, state.products, state.purchases, state.sales, state.units, user]);
+
+  const adjustStock = useCallback((id: string, delta: number, reason: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Product', 'Blocked stock adjustment without stock-management permission');
+      return;
+    }
+    const productId = String(id || '').trim();
+    const amount = Number(delta);
+    const note = String(reason || '').trim();
+    const p = state.products.find(x => x.id === productId);
+    if (!p || !Number.isFinite(amount) || amount === 0 || !note || !Number.isInteger(amount)) {
+      pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${productId || 'unknown'}`);
+      return;
+    }
+    const nextStock = p.stock + amount;
+    if (!Number.isSafeInteger(nextStock) || nextStock < 0) {
+      pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${p.name}`);
+      return;
+    }
+    setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
+      const current = s.products.find(x => x.id === productId);
+      if (!current || current.stock + amount < 0 || !Number.isSafeInteger(current.stock + amount)) return s;
+      const updatedProducts = s.products.map(x => (x.id === productId ? { ...x, stock: x.stock + amount } : x));
+      syncToGoogleDrive('Products', updatedProducts);
+      return { ...s, products: updatedProducts };
+    });
+    pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
+  }, [can, pushAudit, setStateWithInventoryLedger, state.products, user]);
+'''
+          if old not in s:
+              raise SystemExit('target inventory block not found')
+          s = s.replace(old, new, 1)
+
+          old2 = """        return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}) };"""
+          new2 = """        const sellingPrice = currentPo.items.find(item => item.productId === p.id)?.updateSellingPrice
+          ? currentPo.items.find(item => item.productId === p.id)?.sellingPrice
+          : undefined;
+        return {
+          ...p,
+          stock: p.stock + delta,
+          ...(cost !== undefined ? { cost } : {}),
+          ...(sellingPrice !== undefined ? { price: sellingPrice } : {}),
+        };"""
+          if old2 not in s:
+              raise SystemExit('GRN product update target not found')
+          s = s.replace(old2, new2, 1)
+
+          p.write_text(s)
+          PY
+      - name: Verify changed source
+        run: |
+          grep -n "Blocked product save\|Blocked stock adjustment\|sellingPrice" src/lib/store.tsx
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run build
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/store.tsx
+          git commit -m "fix: harden inventory store operations" || exit 0
+          git push
