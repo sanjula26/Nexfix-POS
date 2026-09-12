@@ -75,7 +75,11 @@ export default function CashierBalances() {
 
   const settle = () => {
     if (!settling) return;
-    closeSession(settling, Number(counted) || 0, note.trim());
+    const amount = Number(counted);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    const session = state.sessions.find(x => x.cashierId === settling && x.date === today);
+    if (!session || session.closed) return;
+    closeSession(settling, Math.round(amount * 100) / 100, note.trim());
     setSettling(null);
     setCounted('');
     setNote('');
@@ -84,13 +88,15 @@ export default function CashierBalances() {
   const startDay = () => {
     if (!openFloatId) return;
     const existing = state.sessions.find(x => x.cashierId === openFloatId && x.date === today);
-    if (existing && !existing.closed) {
-      window.alert(`This cashier already has an open session for ${today}. The existing session will be kept unchanged.`);
+    if (existing?.closed) {
+      window.alert(`This cashier's session for ${today} is already closed. A closed session cannot be reopened.`);
       setOpenFloatId(null);
       setOpeningInput('');
       return;
     }
-    openSession(openFloatId, Number(openingInput) || 0);
+    const opening = Number(openingInput);
+    if (!Number.isFinite(opening) || opening < 0) return;
+    openSession(openFloatId, Math.round(opening * 100) / 100);
     setOpenFloatId(null);
     setOpeningInput('');
   };
@@ -248,6 +254,8 @@ export default function CashierBalances() {
             <input
               className="input num"
               type="number"
+              min={0}
+              step={0.01}
               value={openingInput}
               onChange={e => setOpeningInput(e.target.value)}
               autoFocus
@@ -257,7 +265,7 @@ export default function CashierBalances() {
             <button type="button" className="btn btn-soft" onClick={() => setOpenFloatId(null)}>
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={startDay}>
+            <button type="button" className="btn btn-primary" onClick={startDay} disabled={!Number.isFinite(Number(openingInput)) || Number(openingInput) < 0}>
               <CheckCircle2 size={15} /> Save opening
             </button>
           </div>
@@ -270,6 +278,8 @@ export default function CashierBalances() {
             <input
               className="input num"
               type="number"
+              min={0}
+              step={0.01}
               value={counted}
               onChange={e => setCounted(e.target.value)}
               autoFocus
@@ -282,7 +292,7 @@ export default function CashierBalances() {
             <button type="button" className="btn btn-soft" onClick={() => setSettling(null)}>
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={settle}>
+            <button type="button" className="btn btn-primary" onClick={settle} disabled={!Number.isFinite(Number(counted)) || Number(counted) < 0}>
               <Lock size={15} /> Close day
             </button>
           </div>
