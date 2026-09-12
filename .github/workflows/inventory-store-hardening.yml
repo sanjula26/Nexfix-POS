@@ -16,107 +16,116 @@ jobs:
         with:
           fetch-depth: 1
       - name: Apply inventory store hardening
-        shell: python
+        shell: bash
         run: |
+          python3 - <<'PY'
           from pathlib import Path
           p = Path('src/lib/store.tsx')
           s = p.read_text(encoding='utf-8')
 
           old_save = '''  const saveProduct = useCallback((p: Product) => {
-    setState(s => {
-      const exists = s.products.some(x => x.id === p.id);
-      const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return { ...s, products: updatedProducts };
-    });
-    pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
-  }, [pushAudit, state.products]);
-'''
+            setState(s => {
+              const exists = s.products.some(x => x.id === p.id);
+              const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
+              syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+              return { ...s, products: updatedProducts };
+            });
+            pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
+          }, [pushAudit, state.products]);
+          '''
           new_save = '''  const saveProduct = useCallback((p: Product) => {
-    if (!user || !can('act:manageStock')) {
-      pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
-      return;
-    }
-    const name = String(p.name || '').trim();
-    const sku = String(p.sku || '').trim();
-    const barcode = String(p.barcode || '').trim();
-    const numeric = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];
-    if (!name || !sku || !barcode || numeric.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel)) {
-      pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
-      return;
-    }
-    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), warrantyMonths: Math.round(p.warrantyMonths ?? 0) };
-    setState(s => {
-      const exists = s.products.some(x => x.id === normalized.id);
-      const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === sku.toLowerCase());
-      const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === barcode);
-      if (duplicateSku || duplicateBarcode) return s;
-      const updatedProducts = exists ? s.products.map(x => (x.id === normalized.id ? normalized : x)) : [normalized, ...s.products];
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return { ...s, products: updatedProducts };
-    });
-    pushAudit(state.products.some(x => x.id === normalized.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === normalized.id) ? 'Updated' : 'Added'} product ${normalized.name}`);
-  }, [can, pushAudit, state.products, user]);
-'''
+            if (!user || !can('act:manageStock')) {
+              pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
+              return;
+            }
+            const name = String(p.name || '').trim();
+            const sku = String(p.sku || '').trim();
+            const barcode = String(p.barcode || '').trim();
+            const numeric = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];
+            if (!name || !sku || !barcode || numeric.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel)) {
+              pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
+              return;
+            }
+            const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), warrantyMonths: Math.round(p.warrantyMonths ?? 0) };
+            let saved = false;
+            let duplicate = false;
+            setState(s => {
+              const exists = s.products.some(x => x.id === normalized.id);
+              const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === sku.toLowerCase());
+              const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === barcode);
+              if (duplicateSku || duplicateBarcode) {
+                duplicate = true;
+                return s;
+              }
+              saved = true;
+              const updatedProducts = exists ? s.products.map(x => (x.id === normalized.id ? normalized : x)) : [normalized, ...s.products];
+              syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+              return { ...s, products: updatedProducts };
+            });
+            if (duplicate) pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
+            else if (saved) pushAudit(state.products.some(x => x.id === normalized.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === normalized.id) ? 'Updated' : 'Added'} product ${normalized.name}`);
+          }, [can, pushAudit, state.products, user]);
+          '''
           if old_save not in s:
               raise SystemExit('saveProduct target not found')
           s = s.replace(old_save, new_save, 1)
 
           old_adjust = '''  const adjustStock = useCallback((id: string, delta: number, reason: string) => {
-    const p = state.products.find(x => x.id === id);
-    setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
-      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return {
-        ...s,
-        products: updatedProducts,
-      };
-    });
-    if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} — ${reason}`);
-  }, [pushAudit, state.products]);
-'''
+            const p = state.products.find(x => x.id === id);
+            setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
+              const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
+              syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+              return {
+                ...s,
+                products: updatedProducts,
+              };
+            });
+            if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} — ${reason}`);
+          }, [pushAudit, state.products]);
+          '''
           new_adjust = '''  const adjustStock = useCallback((id: string, delta: number, reason: string) => {
-    if (!user || !can('act:manageStock')) {
-      pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`);
-      return;
-    }
-    const amount = Number(delta);
-    const note = String(reason || '').trim();
-    if (!Number.isFinite(amount) || amount === 0 || !Number.isInteger(amount) || !note) {
-      pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`);
-      return;
-    }
-    const p = state.products.find(x => x.id === id);
-    if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) {
-      pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`);
-      return;
-    }
-    setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
-      const current = s.products.find(x => x.id === id);
-      if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
-      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: x.stock + amount } : x));
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return { ...s, products: updatedProducts };
-    });
-    pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
-  }, [can, pushAudit, state.products, user]);
-'''
+            if (!user || !can('act:manageStock')) {
+              pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`);
+              return;
+            }
+            const amount = Number(delta);
+            const note = String(reason || '').trim();
+            if (!Number.isFinite(amount) || amount === 0 || !Number.isInteger(amount) || !note) {
+              pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`);
+              return;
+            }
+            const p = state.products.find(x => x.id === id);
+            if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) {
+              pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`);
+              return;
+            }
+            setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
+              const current = s.products.find(x => x.id === id);
+              if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
+              const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: x.stock + amount } : x));
+              syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+              return { ...s, products: updatedProducts };
+            });
+            pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
+          }, [can, pushAudit, state.products, user]);
+          '''
           if old_adjust not in s:
               raise SystemExit('adjustStock target not found')
           s = s.replace(old_adjust, new_adjust, 1)
 
           old_receive = '''      return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}) };
-'''
+          '''
           new_receive = '''      const purchaseItem = currentPo.items.find(item => item.productId === p.id);
-      const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
-      if (sellingPrice !== undefined && (!Number.isFinite(sellingPrice) || sellingPrice < 0)) return p;
-      return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
-'''
+            const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
+            if (sellingPrice !== undefined && (!Number.isFinite(sellingPrice) || sellingPrice < 0)) return p;
+            return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
+          '''
           if old_receive not in s:
               raise SystemExit('receivePurchase target not found')
           s = s.replace(old_receive, new_receive, 1)
 
           p.write_text(s, encoding='utf-8')
+          PY
       - name: Commit hardened store
         run: |
           git config user.name "github-actions[bot]"
