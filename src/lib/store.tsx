@@ -576,12 +576,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const name = String(p.name || '').trim();
     const sku = String(p.sku || '').trim();
     const barcode = String(p.barcode || '').trim();
-    const values = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];
-    if (!name || !sku || !barcode || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel)) {
+    const values = [p.cost, p.price, p.stock, p.reorderLevel, ...(p.warrantyMonths === undefined ? [] : [p.warrantyMonths])];
+    if (!name || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel) || (p.warrantyMonths !== undefined && !Number.isInteger(p.warrantyMonths))) {
       pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
       return;
     }
-    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), warrantyMonths: Math.round(p.warrantyMonths ?? 0) };
+    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
     const exists = state.products.some(x => x.id === normalized.id);
     let duplicate = false;
     setState(s => {
@@ -600,13 +600,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked product delete for ${id}`); return; }
     const p = state.products.find(x => x.id === id);
     if (!p) return;
-    if (p.stock > 0 || (state.units || []).some(u => u.productId === id)) {
-      pushAudit('DENIED', 'Product', `Blocked deletion of ${p.name}: stock or tracked units exist`);
+    const referencedByHistory = state.sales.some(x => x.items.some(i => i.productId === id))
+      || state.purchases.some(x => x.items.some(i => i.productId === id))
+      || (state.purchaseReturns || []).some(x => x.items.some(i => i.productId === id))
+      || state.exchanges.some(x => x.items.some(i => i.productId === id))
+      || state.repairs.some(x => x.parts.some(part => part.productId === id))
+      || (state.kitItems || []).some(x => x.kitProductId === id || x.componentProductId === id)
+      || (state.quotations || []).some(x => x.items.some(i => i.productId === id))
+      || (state.warrantyClaims || []).some(x => x.productName === p.name || (x.unitId && (state.units || []).some(u => u.id === x.unitId && u.productId === id)));
+    if (p.stock > 0 || (state.units || []).some(u => u.productId === id) || referencedByHistory) {
+      pushAudit('DENIED', 'Product', `Blocked deletion of ${p.name}: stock, tracked units, or historical references exist`);
       return;
     }
     setState(s => ({ ...s, products: s.products.filter(x => x.id !== id) }));
     pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
-  }, [can, pushAudit, state.products, state.units, user]);
+  }, [can, pushAudit, state.products, state.units, state.sales, state.purchases, state.purchaseReturns, state.exchanges, state.repairs, state.kitItems, state.quotations, state.warrantyClaims, user]);
 
   const adjustStock = useCallback((id: string, delta: number, reason: string) => {
     if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return; }
