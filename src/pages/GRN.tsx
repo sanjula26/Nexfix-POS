@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
@@ -17,7 +17,7 @@ function printGRN(grn: Purchase, shopName: string) {
 }
 
 export default function GRN() {
-  const { state, user, saveGRNDraft, updateGRNDraft, processGRN, deletePurchase, can } = usePOS();
+  const { state, user, saveGRNDraft, updateGRNDraft, processGRN, saveProduct, deletePurchase, can } = usePOS();
   const [view, setView] = useState<'list' | 'form'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [supplierId, setSupplierId] = useState('');
@@ -28,11 +28,30 @@ export default function GRN() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<Array<{ name: string; old: number; next: number }>>([]);
+  const syncedPricePurchases = useRef(new Set<string>());
 
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
   const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q)).sort((a, b) => +new Date(b.date) - +new Date(a.date));
+
+  useEffect(() => {
+    for (const purchase of processed) {
+      if (syncedPricePurchases.current.has(purchase.id)) continue;
+      const priceItems = purchase.items.filter(item => item.updateSellingPrice && Number.isFinite(item.sellingPrice) && (item.sellingPrice ?? 0) >= 0);
+      if (!priceItems.length) {
+        syncedPricePurchases.current.add(purchase.id);
+        continue;
+      }
+      for (const item of priceItems) {
+        const product = state.products.find(p => p.id === item.productId);
+        if (!product) continue;
+        const nextPrice = item.sellingPrice as number;
+        if (product.price !== nextPrice) saveProduct({ ...product, price: nextPrice });
+      }
+      syncedPricePurchases.current.add(purchase.id);
+    }
+  }, [processed, state.products, saveProduct]);
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
     if (i !== index) return r;
