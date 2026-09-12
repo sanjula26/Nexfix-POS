@@ -12,29 +12,40 @@ export interface PurchaseReceivePlan {
  * receive path must reject them too rather than silently choosing one cost.
  */
 export function buildPurchaseReceivePlan(po: Purchase, products: readonly Product[]): PurchaseReceivePlan | null {
+  if (!po || !po.id || !po.supplierId || !po.supplierName?.trim() || !Array.isArray(po.items) || po.items.length === 0) return null;
+  if (!Number.isFinite(po.total) || po.total < 0) return null;
+
   const productById = new Map(products.map(p => [p.id, p]));
   const productStockDelta = new Map<string, number>();
   const productCost = new Map<string, number>();
   const trackedUnitCount = new Map<string, number>();
+  let calculatedTotal = 0;
 
   for (const item of po.items) {
     const product = productById.get(item.productId);
-    if (!product || !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isFinite(item.cost) || item.cost < 0) {
+    if (!product || !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isInteger(item.qty) || !Number.isFinite(item.cost) || item.cost < 0) {
       return null;
     }
     // Duplicate product lines can carry different costs. Reject them at the
     // business-logic boundary instead of silently losing a line's cost.
     if (productStockDelta.has(item.productId)) return null;
 
+    const lineTotal = item.qty * item.cost;
+    if (!Number.isFinite(lineTotal) || lineTotal < 0) return null;
+    calculatedTotal += lineTotal;
+    if (!Number.isFinite(calculatedTotal)) return null;
+
     productStockDelta.set(item.productId, item.qty);
     productCost.set(item.productId, item.cost);
 
     if (product.trackImei || product.trackSerial) {
-      const qty = Math.floor(item.qty);
-      if (qty !== item.qty) return null;
-      trackedUnitCount.set(item.productId, qty);
+      trackedUnitCount.set(item.productId, item.qty);
     }
   }
+
+  // The persisted PO/GRN total must be derived from its lines, not supplied
+  // independently by the caller. Allow only normal floating-point rounding.
+  if (Math.abs(calculatedTotal - po.total) > 0.01) return null;
 
   return { productStockDelta, productCost, trackedUnitCount };
 }
