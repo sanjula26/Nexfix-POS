@@ -169,8 +169,7 @@ jobs:
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'WarrantyClaim', `${exists ? 'Updated' : 'Created'} ${claimNo || c.id}`);
   }, [state.warrantyClaims, pushAudit, user]);
 '''
-          if old not in s:
-              raise SystemExit('repair block not found')
+          if old not in s: raise SystemExit('repair block not found')
           s = s.replace(old, new)
           s = s.replace('    saveRepair, updateRepairStatus, deleteRepair,\n', '    saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,\n')
           p.write_text(s)
