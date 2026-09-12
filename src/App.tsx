@@ -57,10 +57,10 @@ function CloudAuthLifecycle() {
 }
 
 /**
- * Defense-in-depth for unattended POS terminals. Local POS sessions remain
- * durable across browser restarts when "Remember me" is selected, but an
- * actively unattended terminal is automatically signed out after 30 minutes
- * without user activity. Cloud auth is cleared by CloudAuthLifecycle.
+ * Defense-in-depth for unattended POS terminals. The local "Remember me"
+ * session is capped at 30 days, and any active session is signed out after
+ * 30 minutes without terminal activity. Cloud auth is cleared by the
+ * CloudAuthLifecycle above when the local session ends.
  */
 function SessionSecurity() {
   const { user, signOut } = usePOS();
@@ -68,22 +68,46 @@ function SessionSecurity() {
   useEffect(() => {
     if (!user) return;
     const timeoutMs = 30 * 60 * 1000;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    const rememberMs = 30 * 24 * 60 * 60 * 1000;
+    const startedKey = 'nexfix_session_started_v1';
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    let startedAt = Date.now();
+    try {
+      const raw = localStorage.getItem(startedKey);
+      const parsed = raw ? Number(raw) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) startedAt = parsed;
+      else localStorage.setItem(startedKey, String(startedAt));
+    } catch { /* ignore storage failures */ }
+
+    if (Date.now() - startedAt >= rememberMs) {
+      signOut();
+      return;
+    }
 
     const arm = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => signOut(), timeoutMs);
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => signOut(), timeoutMs);
     };
 
     const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'];
     activityEvents.forEach(event => window.addEventListener(event, arm, { passive: true }));
     arm();
 
+    const remaining = rememberMs - (Date.now() - startedAt);
+    const expiryTimer = setTimeout(() => signOut(), remaining);
+
     return () => {
-      if (timer) clearTimeout(timer);
+      if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(expiryTimer);
       activityEvents.forEach(event => window.removeEventListener(event, arm));
     };
   }, [user, signOut]);
+
+  useEffect(() => {
+    if (user) return;
+    try { localStorage.removeItem('nexfix_session_started_v1'); } catch { /* ignore */ }
+  }, [user]);
 
   return null;
 }
