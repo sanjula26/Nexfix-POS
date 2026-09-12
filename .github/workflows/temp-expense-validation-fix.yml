@@ -1,5 +1,6 @@
 name: Temporary expense validation fix
 
+# One-time repository maintenance workflow.
 on:
   push:
     branches: [main]
