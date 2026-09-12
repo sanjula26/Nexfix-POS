@@ -1,12 +1,16 @@
-/** Nexfix POS Google Apps Script API. Deploy as Web app: Execute as Me. */
+/**
+ * Nexfix POS Google Apps Script API.
+ * Deploy as a Web app: Execute as Me.
+ *
+ * The old shared NEXFIX_API_KEY mechanism has been removed. Requests now
+ * carry a Supabase user JWT from the authenticated Edge Function proxy.
+ * Configure SUPABASE_URL and SUPABASE_ANON_KEY in Script Properties.
+ */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '1.3.1';
-var STATUS_PREFIX = 'nexfix_backup_status_';
-var API_KEY_PROPERTY = 'NEXFIX_API_KEY';
+var VERSION = '2.0.0';
+var SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
+var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
 
-// Only these application-owned sheets may be accessed through the generic
-// table API. FullBackup is deliberately excluded because it contains the
-// complete POS state and is handled only by the admin/manager backup flow.
 var ALLOWED_DATA_TABLES = {
   'saleshistory': true,
   'products': true,
@@ -25,15 +29,6 @@ function json(payload) {
   return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function respond(payload, callback) {
-  if (callback) {
-    var safe = String(callback).replace(/[^a-zA-Z0-9_.$]/g, '');
-    return ContentService.createTextOutput(safe + '(' + JSON.stringify(payload) + ');')
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return json(payload);
-}
-
 function ok(extra) {
   var out = { ok: true, status: 'success', version: VERSION };
   if (extra) Object.keys(extra).forEach(function(k) { out[k] = extra[k]; });
@@ -44,31 +39,13 @@ function fail(err) {
   return { ok: false, status: 'error', version: VERSION, message: String(err) };
 }
 
-function unauthorized() {
-  return { ok: false, status: 'unauthorized', version: VERSION, message: 'Unauthorized' };
+function unauthorized(message) {
+  return { ok: false, status: 'unauthorized', version: VERSION, message: message || 'Unauthorized' };
 }
 
 function value(v) {
   if (v === undefined || v === null) return '';
   return typeof v === 'object' ? JSON.stringify(v) : v;
-}
-
-function remember(requestId, result) {
-  if (!requestId) return;
-  PropertiesService.getScriptProperties().setProperty(
-    STATUS_PREFIX + requestId,
-    JSON.stringify({ savedAt: new Date().toISOString(), result: result })
-  );
-}
-
-function expectedApiKey() {
-  return String(PropertiesService.getScriptProperties().getProperty(API_KEY_PROPERTY) || '').trim();
-}
-
-function isAuthorized(provided) {
-  var expected = expectedApiKey();
-  if (!expected || !provided) return false;
-  return String(provided) === expected;
 }
 
 function normalizeTableName(table) {
@@ -78,6 +55,42 @@ function normalizeTableName(table) {
 function isAllowedDataTable(table) {
   var normalized = normalizeTableName(table);
   return normalized && ALLOWED_DATA_TABLES[normalized.toLowerCase()] === true;
+}
+
+function supabaseConfig() {
+  var url = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_URL_PROPERTY) || '').trim().replace(/\/$/, '');
+  var anonKey = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_ANON_KEY_PROPERTY) || '').trim();
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url) || !anonKey) throw new Error('Supabase configuration is missing from Script Properties');
+  return { url: url, anonKey: anonKey };
+}
+
+function authenticateUser(accessToken) {
+  if (!accessToken || String(accessToken).length < 20) return null;
+  var config = supabaseConfig();
+  var userResponse = UrlFetchApp.fetch(config.url + '/auth/v1/user', {
+    method: 'get',
+    headers: { 'apikey': config.anonKey, 'Authorization': 'Bearer ' + String(accessToken) },
+    muteHttpExceptions: true
+  });
+  if (userResponse.getResponseCode() < 200 || userResponse.getResponseCode() >= 300) return null;
+
+  var user;
+  try { user = JSON.parse(userResponse.getContentText()); } catch (ignore) { return null; }
+  if (!user || !user.id) return null;
+
+  var membershipUrl = config.url + '/rest/v1/shop_memberships?select=role,active&user_id=eq.' + encodeURIComponent(user.id) + '&active=eq.true';
+  var membershipResponse = UrlFetchApp.fetch(membershipUrl, {
+    method: 'get',
+    headers: { 'apikey': config.anonKey, 'Authorization': 'Bearer ' + String(accessToken) },
+    muteHttpExceptions: true
+  });
+  if (membershipResponse.getResponseCode() < 200 || membershipResponse.getResponseCode() >= 300) return null;
+
+  var memberships;
+  try { memberships = JSON.parse(membershipResponse.getContentText()); } catch (ignore2) { return null; }
+  if (!Array.isArray(memberships)) return null;
+  var allowed = memberships.some(function(m) { return m && (m.role === 'admin' || m.role === 'manager') && m.active === true; });
+  return allowed ? user : null;
 }
 
 function syncTable(ss, table, rows) {
@@ -140,39 +153,36 @@ function latestBackup(ss) {
   };
 }
 
+function parsePostBody(e) {
+  var raw = e && e.postData && e.postData.contents ? e.postData.contents : '';
+  if (e && e.parameter && e.parameter.payload) return JSON.parse(e.parameter.payload);
+  return raw ? JSON.parse(raw) : {};
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
-  var requestId = '';
   try {
     lock.waitLock(30000);
-    var raw = e && e.postData && e.postData.contents ? e.postData.contents : '';
-    var contents;
-    if (e && e.parameter && e.parameter.payload) {
-      contents = JSON.parse(e.parameter.payload);
-    } else {
-      contents = JSON.parse(raw);
-    }
-    requestId = contents.requestId || '';
-    if (!isAuthorized(contents.apiKey)) {
-      var denied = unauthorized();
-      remember(requestId, denied);
-      return json(denied);
-    }
+    var contents = parsePostBody(e);
+    var user = authenticateUser(contents.accessToken);
+    if (!user) return json(unauthorized('Valid admin/manager Supabase session required'));
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var result;
     if (contents.action === 'backupState') {
       result = ok(backupState(ss, contents));
     } else if (contents.action === 'saveData' && isAllowedDataTable(contents.table)) {
       result = ok(syncTable(ss, contents.table, contents.rows));
+    } else if (contents.action === 'getLatestBackup') {
+      result = ok({ action: 'getLatestBackup', backup: latestBackup(ss) });
+    } else if (contents.action === 'getTable' && isAllowedDataTable(contents.table)) {
+      result = ok({ action: 'getTable', table: normalizeTableName(contents.table), rows: getTable(ss, contents.table) });
     } else {
-      throw new Error('Unsupported action or table is not allowed');
+      return json(fail('Unsupported action or table is not allowed'));
     }
-    remember(requestId, result);
     return json(result);
   } catch (err) {
-    var result = fail(err);
-    remember(requestId, result);
-    return json(result);
+    return json(fail(err));
   } finally {
     try { lock.releaseLock(); } catch (ignore) {}
   }
@@ -193,29 +203,7 @@ function getTable(ss, table) {
 }
 
 function doGet(e) {
-  try {
-    var p = (e && e.parameter) || {};
-    var callback = p.callback || '';
-    if (p.action === 'ping' || !p.action) return respond(ok({ message: 'Nexfix POS Sync API is running' }), callback);
-    if (p.action === 'backupStatus') {
-      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
-      var raw = PropertiesService.getScriptProperties().getProperty(STATUS_PREFIX + (p.requestId || ''));
-      if (!raw) return respond({ ok: false, status: 'pending', version: VERSION }, callback);
-      var stored = JSON.parse(raw);
-      return respond(stored.result, callback);
-    }
-    if (p.action === 'getLatestBackup') {
-      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
-      var backup = latestBackup(SpreadsheetApp.getActiveSpreadsheet());
-      if (!backup) return respond(ok({ action: 'getLatestBackup', backup: null }), callback);
-      return respond(ok({ action: 'getLatestBackup', backup: backup }), callback);
-    }
-    if (p.action === 'getTable' && isAllowedDataTable(p.table)) {
-      if (!isAuthorized(p.apiKey)) return respond(unauthorized(), callback);
-      return respond(ok({ action: 'getTable', table: normalizeTableName(p.table), rows: getTable(SpreadsheetApp.getActiveSpreadsheet(), p.table) }), callback);
-    }
-    return respond(fail('Unknown GET action or table is not allowed'), callback);
-  } catch (err) {
-    return respond(fail(err), (e && e.parameter && e.parameter.callback) || '');
-  }
+  var p = (e && e.parameter) || {};
+  if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Sync API is running' }));
+  return json(unauthorized('Authenticated POST endpoint required'));
 }
