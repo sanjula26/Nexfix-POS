@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   POSState, Product, Customer, Supplier, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
-  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem,
+  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
 import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash } from './utils';
@@ -132,6 +132,7 @@ interface StoreCtx {
   saveRepair: (r: RepairJob) => void;
   updateRepairStatus: (id: string, status: RepairStatus, patch?: Partial<RepairJob>) => void;
   deleteRepair: (id: string) => void;
+  saveWarrantyClaim: (c: WarrantyClaim) => void;
   saveCategory: (name: string) => void;
   removeCategory: (name: string) => void;
   renameCategory: (oldName: string, newName: string) => void;
@@ -1472,34 +1473,22 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- repairs ---------------- */
   const saveRepair = useCallback((r: RepairJob) => {
-    const exists = (state.repairs || []).some(x => x.id === r.id);
-    setState(s => {
-      let job = r;
-      let counters = s.counters;
-      if (!exists && (!r.jobNo || r.jobNo.startsWith('JOB-TEMP'))) {
-        const seq = (s.counters.job || 0) + 1;
-        job = { ...r, jobNo: `JOB-${String(seq).padStart(4, '0')}` };
-        counters = { ...s.counters, job: seq };
-      }
-      // Deduct parts from stock when first saved with parts (simple model)
-      let products = s.products;
-      if (!exists && job.parts?.length) {
-        products = s.products.map(p => {
-          const part = job.parts.find(pt => pt.productId === p.id);
-          return part ? { ...p, stock: Math.max(0, p.stock - part.qty) } : p;
-        });
-      }
-      return {
-        ...s,
-        products,
-        counters,
-        repairs: exists
-          ? (s.repairs || []).map(x => (x.id === r.id ? job : x))
-          : [job, ...(s.repairs || [])],
-      };
-    });
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Repair', `${exists ? 'Updated' : 'Opened'} ${r.jobNo || 'job'} · ${r.deviceBrand} ${r.deviceModel}`);
-  }, [state.repairs, pushAudit]);
+    if (!user) return;
+    const repairs=state.repairs||[], exists=repairs.some(x=>x.id===r.id), jobNo=(r.jobNo||'').trim();
+    if(!r.customerName.trim()||!r.deviceType.trim()||!r.deviceModel.trim()||!r.fault.trim()) return;
+    if(!Number.isFinite(r.laborCost)||r.laborCost<0) return;
+    if(r.advancePaid!=null&&(!Number.isFinite(r.advancePaid)||r.advancePaid<0)) return;
+    if(r.warrantyDays!=null&&(!Number.isFinite(r.warrantyDays)||r.warrantyDays<0)) return;
+    const parts=(r.parts||[]).map(pt=>({...pt,name:pt.name.trim(),qty:Number(pt.qty),cost:Number(pt.cost),productId:pt.productId?.trim()||undefined}));
+    if(parts.some(pt=>!pt.name||!Number.isInteger(pt.qty)||pt.qty<=0||!Number.isFinite(pt.cost)||pt.cost<0)) return;
+    if(jobNo&&repairs.some(x=>x.id!==r.id&&x.jobNo.trim().toLowerCase()===jobNo.toLowerCase())) return;
+    const old=repairs.find(x=>x.id===r.id), oldBy=new Map<string,number>(), newBy=new Map<string,number>();
+    for(const pt of old?.parts||[]) if(pt.productId) oldBy.set(pt.productId,(oldBy.get(pt.productId)||0)+pt.qty);
+    for(const pt of parts) if(pt.productId) newBy.set(pt.productId,(newBy.get(pt.productId)||0)+pt.qty);
+    for(const id of new Set([...oldBy.keys(),...newBy.keys()])){const d=(newBy.get(id)||0)-(oldBy.get(id)||0),p=state.products.find(x=>x.id===id);if(!p||p.stock-d<0)return;}
+    setState(st=>{let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts,by:r.by||user.name};let counters=st.counters;if(!exists&&(!job.jobNo||job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1;job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`};counters={...st.counters,job:seq};}const products=st.products.map(p=>{const d=(newBy.get(p.id)||0)-(oldBy.get(p.id)||0);return d?{...p,stock:p.stock-d}:p;});return {...st,products,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};});
+    pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
+  }, [state.repairs,state.products,pushAudit,user]);
 
   const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
     setState(s => ({
@@ -1518,10 +1507,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit]);
 
   const deleteRepair = useCallback((id: string) => {
-    const j = (state.repairs || []).find(x => x.id === id);
-    setState(s => ({ ...s, repairs: (s.repairs || []).filter(x => x.id !== id) }));
-    if (j) pushAudit('DELETE', 'Repair', `Deleted ${j.jobNo}`);
-  }, [state.repairs, pushAudit]);
+    if(!can('act:deleteRecords')) return;
+    const repair=(state.repairs||[]).find(x=>x.id===id);if(!repair||!['cancelled','delivered'].includes(repair.status))return;
+    setState(st=>{const used=new Map<string,number>();for(const pt of repair.parts||[])if(pt.productId)used.set(pt.productId,(used.get(pt.productId)||0)+pt.qty);const products=st.products.map(p=>{const q=used.get(p.id)||0;return q?{...p,stock:p.stock+q}:p;});return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};});
+    pushAudit('DELETE','Repair',`Deleted ${repair.jobNo}`);
+  }, [state.repairs,pushAudit,can]);
+
+  const saveWarrantyClaim = useCallback((c: WarrantyClaim) => {
+    if(!user)return;const claims=state.warrantyClaims||[],exists=claims.some(x=>x.id===c.id),no=(c.claimNo||'').trim();const valid:ClaimStatus[]=['open','approved','rejected','replaced','repaired','closed'];
+    if(!c.productName.trim()||!c.issueDescription.trim()||!valid.includes(c.status))return;
+    if(no&&claims.some(x=>x.id!==c.id&&x.claimNo.trim().toLowerCase()===no.toLowerCase()))return;
+    setState(st=>{let claim:WarrantyClaim={...c,productName:c.productName.trim(),issueDescription:c.issueDescription.trim(),claimNo:no||c.claimNo,by:c.by||user.name};let counters=st.counters;if(!exists&&(!claim.claimNo||claim.claimNo==='CL-TEMP')){const seq=(st.counters.claim||0)+1;claim={...claim,claimNo:`CL-${String(seq).padStart(4,'0')}`};counters={...st.counters,claim:seq};}claim=claim.status==='closed'?{...claim,closedAt:claim.closedAt||new Date().toISOString()}:{...claim,closedAt:undefined};return {...st,counters,warrantyClaims:exists?(st.warrantyClaims||[]).map(x=>x.id===c.id?claim:x):[claim,...(st.warrantyClaims||[])]};});
+    pushAudit(exists?'UPDATE':'CREATE','WarrantyClaim',`${exists?'Updated':'Created'} ${no||'claim'} · ${c.productName}`);
+  }, [state.warrantyClaims,pushAudit,user]);
 
   const saveCategory = useCallback((name: string) => {
     const n = name.trim();
@@ -1637,7 +1635,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, deleteUnit, findUnitByCode,
-    saveRepair, updateRepairStatus, deleteRepair,
+    saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
     saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
 
