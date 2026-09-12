@@ -1,0 +1,44 @@
+name: One-time inventory finalize
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Harden product validation and deletion safety
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+          old = """    const values = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];\n    if (!name || !sku || !barcode || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel)) {"""
+          new = """    const values = [p.cost, p.price, p.stock, p.reorderLevel, ...(p.warrantyMonths === undefined ? [] : [p.warrantyMonths])];\n    if (!name || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel) || (p.warrantyMonths !== undefined && !Number.isInteger(p.warrantyMonths))) {"""
+          if old not in s: raise SystemExit('validation target not found')
+          s = s.replace(old, new, 1)
+          old = """    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), warrantyMonths: Math.round(p.warrantyMonths ?? 0) };"""
+          new = """    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };"""
+          if old not in s: raise SystemExit('normalization target not found')
+          s = s.replace(old, new, 1)
+          old = """    if (p.stock > 0 || (state.units || []).some(u => u.productId === id)) {\n      pushAudit('DENIED', 'Product', `Blocked deletion of ${p.name}: stock or tracked units exist`);\n      return;\n    }"""
+          new = """    const referencedByHistory = state.sales.some(x => x.items.some(i => i.productId === id))\n      || state.purchases.some(x => x.items.some(i => i.productId === id))\n      || (state.purchaseReturns || []).some(x => x.items.some(i => i.productId === id))\n      || state.exchanges.some(x => x.items.some(i => i.productId === id))\n      || state.repairs.some(x => x.parts.some(part => part.productId === id))\n      || (state.kitItems || []).some(x => x.kitProductId === id || x.componentProductId === id)\n      || (state.quotations || []).some(x => x.items.some(i => i.productId === id))\n      || (state.warrantyClaims || []).some(x => x.productName === p.name || (x.unitId && (state.units || []).some(u => u.id === x.unitId && u.productId === id)));\n    if (p.stock > 0 || (state.units || []).some(u => u.productId === id) || referencedByHistory) {\n      pushAudit('DENIED', 'Product', `Blocked deletion of ${p.name}: stock, tracked units, or historical references exist`);\n      return;\n    }"""
+          if old not in s: raise SystemExit('deletion target not found')
+          s = s.replace(old, new, 1)
+          s = s.replace("  }, [can, pushAudit, state.products, state.units, user]);", "  }, [can, pushAudit, state.products, state.units, state.sales, state.purchases, state.purchaseReturns, state.exchanges, state.repairs, state.kitItems, state.quotations, state.warrantyClaims, user]);", 1)
+          p.write_text(s)
+      - name: Verify source
+        run: |
+          grep -q "historical references exist" src/lib/store.tsx
+          grep -q "p.warrantyMonths === undefined" src/lib/store.tsx
+          ! grep -q "!name || !sku || !barcode" src/lib/store.tsx
+      - name: Commit source change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx
+          git diff --cached --quiet || git commit -m 'fix: preserve optional product identifiers and history'
+          git push
