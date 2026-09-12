@@ -15,10 +15,10 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
           p = Path('src/lib/store.tsx')
           text = p.read_text()
-          customer = '''  const saveCustomer = useCallback((c: Customer) => {
+          replacements = {
+          'saveCustomer': '''  const saveCustomer = useCallback((c: Customer) => {
             if (!user) { pushAudit('DENIED', 'Customer', `Blocked customer save for ${c.name || c.id}`); return; }
             const name = String(c.name || '').trim();
             const phone = String(c.phone || '').trim();
@@ -32,24 +32,39 @@ jobs:
               pushAudit('DENIED', 'Customer', `Blocked invalid customer input for ${c.id}`);
               return;
             }
-            const exists = state.customers.find(x => x.id === c.id);
+            const existing = state.customers.find(x => x.id === c.id);
             let duplicate = false;
             setState(s => {
               const normalizedPhone = phone.replace(/[\\s()-]/g, '');
               const duplicatePhone = s.customers.some(x => x.id !== c.id && x.phone.replace(/[\\s()-]/g, '') === normalizedPhone);
               const duplicateNic = !!nic && s.customers.some(x => x.id !== c.id && (x.nic || '').trim().toLowerCase() === nic.toLowerCase());
               if (duplicatePhone || duplicateNic) { duplicate = true; return s; }
-              const updated: Customer = exists
-                ? { ...exists, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined }
+              const updated: Customer = existing
+                ? { ...existing, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined }
                 : { ...c, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditBalance: 0, loyaltyPoints, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined };
-              const updatedCustomers = exists ? s.customers.map(x => x.id === c.id ? updated : x) : [updated, ...s.customers];
+              const updatedCustomers = existing ? s.customers.map(x => x.id === c.id ? updated : x) : [updated, ...s.customers];
               syncToGoogleDrive('Customers', updatedCustomers);
               return { ...s, customers: updatedCustomers };
             });
             if (duplicate) pushAudit('DENIED', 'Customer', `Blocked duplicate phone/NIC for ${name}`);
-            else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Customer', `${exists ? 'Updated' : 'Created'} customer ${name}`);
-          }, [pushAudit, state.customers, user]);'''
-          supplier = '''  const saveSupplier = useCallback((sp: Supplier) => {
+            else pushAudit(existing ? 'UPDATE' : 'CREATE', 'Customer', `${existing ? 'Updated' : 'Created'} customer ${name}`);
+          }, [pushAudit, state.customers, user]);''',
+          'deleteCustomer': '''  const deleteCustomer = useCallback((id: string) => {
+            if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Customer', `Blocked customer delete for ${id}`); return; }
+            const c = state.customers.find(x => x.id === id);
+            if (!c) return;
+            const referencedByHistory = state.sales.some(x => x.customerId === id)
+              || (state.quotations || []).some(x => x.customerId === id)
+              || (state.warrantyClaims || []).some(x => x.customerId === id)
+              || state.repairs.some(x => x.customerId === id);
+            if (c.creditBalance > 0 || referencedByHistory) {
+              pushAudit('DENIED', 'Customer', `Blocked deletion of ${c.name}: balance or historical references exist`);
+              return;
+            }
+            setState(s => ({ ...s, customers: s.customers.filter(x => x.id !== id) }));
+            pushAudit('DELETE', 'Customer', `Deleted customer ${c.name}`);
+          }, [can, pushAudit, state.customers, state.quotations, state.repairs, state.sales, state.warrantyClaims, user]);''',
+          'saveSupplier': '''  const saveSupplier = useCallback((sp: Supplier) => {
             if (!user) { pushAudit('DENIED', 'Supplier', `Blocked supplier save for ${sp.name || sp.id}`); return; }
             const name = String(sp.name || '').trim();
             const phone = String(sp.phone || '').trim();
@@ -73,23 +88,8 @@ jobs:
             });
             if (duplicate) pushAudit('DENIED', 'Supplier', `Blocked duplicate phone for ${name}`);
             else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Supplier', `${exists ? 'Updated' : 'Created'} supplier ${name}`);
-          }, [pushAudit, state.suppliers, user]);'''
-          customer_delete = '''  const deleteCustomer = useCallback((id: string) => {
-            if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Customer', `Blocked customer delete for ${id}`); return; }
-            const c = state.customers.find(x => x.id === id);
-            if (!c) return;
-            const referencedByHistory = state.sales.some(x => x.customerId === id)
-              || (state.quotations || []).some(x => x.customerId === id)
-              || (state.warrantyClaims || []).some(x => x.customerId === id)
-              || state.repairs.some(x => x.customerId === id);
-            if (c.creditBalance > 0 || referencedByHistory) {
-              pushAudit('DENIED', 'Customer', `Blocked deletion of ${c.name}: balance or historical references exist`);
-              return;
-            }
-            setState(s => ({ ...s, customers: s.customers.filter(x => x.id !== id) }));
-            pushAudit('DELETE', 'Customer', `Deleted customer ${c.name}`);
-          }, [can, pushAudit, state.customers, state.quotations, state.repairs, state.sales, state.warrantyClaims, user]);'''
-          supplier_delete = '''  const deleteSupplier = useCallback((id: string) => {
+          }, [pushAudit, state.suppliers, user]);''',
+          'deleteSupplier': '''  const deleteSupplier = useCallback((id: string) => {
             if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Supplier', `Blocked supplier delete for ${id}`); return; }
             const sp = state.suppliers.find(x => x.id === id);
             if (!sp) return;
@@ -105,13 +105,13 @@ jobs:
             setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x.id !== id) }));
             pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
           }, [can, pushAudit, state.products, state.purchases, state.purchaseReturns, state.supplierPayments, state.suppliers, state.grns, user]);'''
-          def replace_const(src, name, replacement):
-              pattern = rf"  const {name} = useCallback\\(.*?\\n  \\}, \\[[^\\n]*\\]\\);"
-              out, n = re.subn(pattern, replacement, src, count=1, flags=re.S)
-              if n != 1: raise SystemExit(f'Expected exactly one {name} block, found {n}')
-              return out
-          for name, replacement in [('saveCustomer', customer), ('deleteCustomer', customer_delete), ('saveSupplier', supplier), ('deleteSupplier', supplier_delete)]:
-              text = replace_const(text, name, replacement)
+          }
+          for name, replacement in replacements.items():
+              start = text.find(f'  const {name} = useCallback(')
+              if start < 0: raise SystemExit(f'missing {name}')
+              end = text.find('\n\n  ', start + 10)
+              if end < 0: raise SystemExit(f'missing end for {name}')
+              text = text[:start] + replacement + text[end:]
           p.write_text(text)
       - name: Verify and commit
         run: |
@@ -130,4 +130,4 @@ jobs:
           git add .github/workflows/one-time-customer-supplier-hardening.yml
           git commit -m "chore: remove one-time customer supplier hardening workflow"
           git push
-# retrigger after workflow creation
+# retrigger
