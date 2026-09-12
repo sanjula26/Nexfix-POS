@@ -19,33 +19,30 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
           p = Path('src/lib/store.tsx')
           s = p.read_text()
-
-          patches = [
-            ("""  const saveUser = useCallback((u: AppUser) => {\n    const exists = state.users.some(x => x.id === u.id);""",
-             """  const saveUser = useCallback((u: AppUser) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n    const exists = state.users.some(x => x.id === u.id);"""),
-            ("""  const toggleUserActive = useCallback((id: string) => {\n    const target = state.users.find(x => x.id === id);""",
-             """  const toggleUserActive = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);\n      return;\n    }\n    const target = state.users.find(x => x.id === id);"""),
-            ("""  const deleteUser = useCallback((id: string) => {\n    const target = state.users.find(x => x.id === id);""",
-             """  const deleteUser = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);\n      return;\n    }\n    const target = state.users.find(x => x.id === id);"""),
-            ("""  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (role === 'admin') return;""",
-             """  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n    if (role === 'admin') return;"""),
-            ("""  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));""",
-             """  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));"""),
+          guards = [
+            (r"(  const saveUser = useCallback\(\(u: AppUser\) => \{\n)", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n"),
+            (r"(  const toggleUserActive = useCallback\(\(id: string\) => \{\n)", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);\n      return;\n    }\n"),
+            (r"(  const deleteUser = useCallback\(\(id: string\) => \{\n)", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);\n      return;\n    }\n"),
+            (r"(  const setPermission = useCallback\(\(role: Role, key: string, value: boolean\) => \{\n)", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n"),
+            (r"(  const updateSettings = useCallback\(\(patch: Partial<Settings>\) => \{\n)", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n"),
           ]
-
-          for old, new in patches:
-              count = s.count(old)
-              if count != 1:
-                  raise SystemExit(f'Expected exactly one target pattern, found {count}: {old[:80]!r}')
-              s = s.replace(old, new, 1)
-
+          for pattern, replacement in guards:
+              s2, n = re.subn(pattern, lambda m: m.group(1) + replacement, s, count=1)
+              if n != 1:
+                  raise SystemExit(f'Could not find target function: {pattern}')
+              s = s2
           p.write_text(s)
 
       - name: Verify source guards
         run: |
-          grep -n "Blocked user save\|Blocked user status change\|Blocked user delete\|Blocked permission change\|Blocked settings update" src/lib/store.tsx
+          test "$(grep -c "Blocked user save" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked user status change" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked user delete" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked permission change" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked settings update" src/lib/store.tsx)" -eq 1
 
       - name: Install
         run: npm install --no-audit --no-fund
