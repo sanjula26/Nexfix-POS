@@ -1112,11 +1112,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- expenses ---------------- */
   const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => {
+    const amount = Number(e.amount);
+    const category = String(e.category || '').trim();
+    const note = String(e.note || '').trim();
+    if (!Number.isFinite(amount) || amount <= 0 || !category || !note) {
+      pushAudit('DENIED', 'Expense', 'Blocked invalid expense input');
+      return;
+    }
+    const normalizedAmount = Math.round(amount * 100) / 100;
     setState(s => ({
       ...s,
-      expenses: [{ ...e, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
+      expenses: [{ ...e, amount: normalizedAmount, category, note, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
     }));
-    pushAudit('EXPENSE', 'Expense', `${e.category}: ${e.note} · Rs. ${e.amount.toLocaleString()}`);
+    pushAudit('EXPENSE', 'Expense', `${category}: ${note} · Rs. ${normalizedAmount.toLocaleString()}`);
   }, [pushAudit, user?.name]);
 
   const deleteExpense = useCallback((id: string) => {
