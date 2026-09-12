@@ -20,12 +20,25 @@ export default function Suppliers() {
   }, [state.suppliers, search]);
 
   const save = () => {
-    if (!editing || !editing.name.trim() || !editing.phone.trim()) return;
-    saveSupplier(editing);
+    if (!editing) return;
+    const name = editing.name.trim();
+    const phone = editing.phone.trim();
+    const email = (editing.email || '').trim().toLowerCase();
+    if (!name || !phone) return;
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+    saveSupplier({
+      ...editing,
+      name,
+      phone,
+      email: email || undefined,
+      contactPerson: editing.contactPerson?.trim() || undefined,
+      address: editing.address?.trim() || undefined,
+    });
     setEditing(null);
   };
 
   const productCount = (id: string) => state.products.filter(p => p.supplierId === id).length;
+  const emailInvalid = !!editing?.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editing.email.trim());
 
   return (
     <div>
@@ -114,13 +127,14 @@ export default function Suppliers() {
               </Field>
             </div>
             <Field label="Email">
-              <input className="input" value={editing.email || ''} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="orders@supplier.lk" />
+              <input className={`input ${emailInvalid ? 'border-rose-500 focus:border-rose-500' : ''}`} value={editing.email || ''} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="orders@supplier.lk" />
+              {emailInvalid && <div className="text-xs text-rose-500 mt-1">Enter a valid email address.</div>}
             </Field>
             <Field label="Address">
               <input className="input" value={editing.address || ''} onChange={e => setEditing({ ...editing, address: e.target.value })} placeholder="City, District" />
             </Field>
             <div className="flex gap-2.5 pt-1">
-              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || !editing.phone.trim()}>
+              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || !editing.phone.trim() || emailInvalid}>
                 <Plus size={15} /> {isNew ? 'Add supplier' : 'Save changes'}
               </button>
               <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
