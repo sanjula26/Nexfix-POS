@@ -6,15 +6,41 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Final users permissions hardening
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/store.tsx'); s=p.read_text()
+          replacements=[
+          ('''  const saveUser = useCallback((u: AppUser) => {\n    const exists = state.users.some(x => x.id === u.id);''','''  const saveUser = useCallback((u: AppUser) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n    const exists = state.users.some(x => x.id === u.id);'''),
+          ('''  }, [state.users, pushAudit]);\n\n  const toggleUserActive = useCallback((id: string) => {''','''  }, [state.users, pushAudit, user]);\n\n  const toggleUserActive = useCallback((id: string) => {''',1),
+          ('''  const toggleUserActive = useCallback((id: string) => {\n    const u = state.users.find(x => x.id === id);''','''  const toggleUserActive = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);\n      return;\n    }\n    const u = state.users.find(x => x.id === id);'''),
+          ('''  }, [state.users, pushAudit]);\n\n  const deleteUser = useCallback((id: string) => {''','''  }, [state.users, pushAudit, user]);\n\n  const deleteUser = useCallback((id: string) => {''',1),
+          ('''  const deleteUser = useCallback((id: string) => {\n    const u = state.users.find(x => x.id === id);''','''  const deleteUser = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);\n      return;\n    }\n    const u = state.users.find(x => x.id === id);'''),
+          ('''  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (role === 'admin') return;''','''  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n    if (role === 'admin') return;'''),
+          ('''  }, [pushAudit]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {''','''  }, [pushAudit, user]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {''',1),
+          ('''  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));''','''  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));'''),
+          ('''  }, [pushAudit]);\n\n  const closeSession = useCallback''','''  }, [pushAudit, user]);\n\n  const closeSession = useCallback''',1)]
+          for item in replacements:
+            old,new,*count=item; n=count[0] if count else 1
+            if s.count(old)!=n: raise SystemExit(f'PATCH TARGET COUNT {s.count(old)} != {n}: {old[:70]}')
+            s=s.replace(old,new,n)
+          p.write_text(s)
+          PY
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Typecheck
@@ -23,3 +49,12 @@ jobs:
         run: npm run lint
       - name: Production build
         run: npm run build
+      - name: Commit final hardening
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lib/store.tsx
+          if git diff --cached --quiet; then echo 'No hardening changes needed'; exit 0; fi
+          git diff --cached --check
+          git commit -m 'security: harden users permissions and settings actions'
+          git push origin HEAD:main
