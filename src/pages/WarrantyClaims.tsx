@@ -9,13 +9,32 @@ const STATUS_TONE: Record<ClaimStatus, 'slate' | 'blue' | 'emerald' | 'rose' | '
   open: 'amber', approved: 'blue', rejected: 'rose', replaced: 'violet', repaired: 'emerald', closed: 'slate',
 };
 
+function loadClaims(): WarrantyClaim[] {
+  try {
+    const raw = localStorage.getItem('nexfix_pos_v2');
+    if (!raw) return [];
+    return (JSON.parse(raw).warrantyClaims as WarrantyClaim[]) || [];
+  } catch { return []; }
+}
+
+function persistClaims(list: WarrantyClaim[], countersPatch?: Record<string, number>) {
+  try {
+    const raw = localStorage.getItem('nexfix_pos_v2');
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    data.warrantyClaims = list;
+    if (countersPatch) data.counters = { ...data.counters, ...countersPatch };
+    localStorage.setItem('nexfix_pos_v2', JSON.stringify(data));
+  } catch { /* ignore */ }
+}
+
 export default function WarrantyClaims() {
-  const { state, user, saveWarrantyClaim } = usePOS();
+  const { state, user, logAudit } = usePOS();
   const [q, setQ] = useState('');
+  const [claims, setClaims] = useState<WarrantyClaim[]>(() => loadClaims());
   const [editing, setEditing] = useState<WarrantyClaim | null>(null);
   const [isNew, setIsNew] = useState(false);
 
-  const claims = state.warrantyClaims || [];
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
     return claims.filter(c => !query || c.claimNo.toLowerCase().includes(query) || c.productName.toLowerCase().includes(query) ||
@@ -28,17 +47,23 @@ export default function WarrantyClaims() {
   };
 
   const save = () => {
-    if (!editing) return;
+    if (!editing || !editing.productName.trim() || !editing.issueDescription.trim()) return;
+    const seq = ((state.counters as { claim?: number }).claim || claims.length || 0) + 1;
+    const claimNo = isNew ? `CL-${String(seq).padStart(4, '0')}` : editing.claimNo;
     const saved: WarrantyClaim = {
       ...editing,
+      claimNo,
       productName: editing.productName.trim(),
       issueDescription: editing.issueDescription.trim(),
       customerName: editing.customerName?.trim() || undefined,
       imeiOrSerial: editing.imeiOrSerial?.trim() || undefined,
       resolutionNotes: editing.resolutionNotes?.trim() || undefined,
+      closedAt: editing.status === 'closed' ? (editing.closedAt || new Date().toISOString()) : undefined,
     };
-    if (!saved.productName || !saved.issueDescription) return;
-    saveWarrantyClaim(saved);
+    const next = isNew ? [saved, ...claims] : claims.map(x => x.id === saved.id ? saved : x);
+    setClaims(next);
+    persistClaims(next, isNew ? { claim: seq } : undefined);
+    logAudit(isNew ? 'CREATE' : 'UPDATE', 'WarrantyClaim', `${saved.claimNo} · ${saved.productName}`);
     setEditing(null);
     setIsNew(false);
   };
