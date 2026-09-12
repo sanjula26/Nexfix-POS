@@ -1,0 +1,48 @@
+name: Users Permissions Finalize
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/users-permissions-finalize.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Harden store authorization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/lib/store.tsx')
+          s=p.read_text()
+          replacements = [
+            ("  const saveUser = useCallback((u: AppUser) => {\n    const exists = state.users.some(x => x.id === u.id);", "  const saveUser = useCallback((u: AppUser) => {\n    if (!user || user.role !== 'admin') { pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`); return; }\n    const exists = state.users.some(x => x.id === u.id);"),
+            ("  }, [state.users, pushAudit]);\n\n  const toggleUserActive = useCallback((id: string) => {", "  }, [state.users, pushAudit, user]);\n\n  const toggleUserActive = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') { pushAudit('DENIED', 'User', `Blocked user status change for ${id}`); return; }"),
+            ("  }, [state.users, pushAudit]);\n\n  const deleteUser = useCallback((id: string) => {", "  }, [state.users, pushAudit, user]);\n\n  const deleteUser = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') { pushAudit('DENIED', 'User', `Blocked user delete for ${id}`); return; }"),
+            ("  }, [state.users, user?.id, pushAudit]);\n\n  /* ---------------- admin ---------------- */\n  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (role === 'admin') return;", "  }, [state.users, user?.id, pushAudit, user]);\n\n  /* ---------------- admin ---------------- */\n  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (!user || user.role !== 'admin') { pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`); return; }\n    if (role === 'admin') return;"),
+            ("  }, [pushAudit]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {", "  }, [pushAudit, user]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    if (!user || user.role !== 'admin') { pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`); return; }")
+          ]
+          for old,new in replacements:
+              if old not in s: raise SystemExit('expected source pattern not found')
+              s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Verify
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run build
+      - name: Commit source and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/users-permissions-finalize.yml
+          git add src/lib/store.tsx
+          git commit -m 'security: harden users permissions and settings actions'
+          git push origin HEAD:main
