@@ -3,6 +3,7 @@
  */
 
 import { supabase } from './supabase';
+import { ensureCloudShop } from './cloudSync';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
@@ -53,19 +54,20 @@ function requestGoogleApiKey(): string {
   } catch { return ''; }
 }
 
-/** Full-state Google backup/restore is restricted to shop admins/managers. */
+/** Full-state Google backup/restore is restricted to admin/manager members of the active shop. */
 async function hasGoogleBackupAccess(): Promise<boolean> {
   if (!supabase) return false;
   try {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !sessionData.session) return false;
+    const shop = await ensureCloudShop('Nexfix Shop');
+    if (!shop.ok || !shop.shopId) return false;
     const { data: membership, error } = await supabase
       .from('shop_memberships')
       .select('role')
+      .eq('shop_id', shop.shopId)
       .eq('user_id', sessionData.session.user.id)
       .eq('active', true)
-      .order('created_at', { ascending: true })
-      .limit(1)
       .maybeSingle();
     if (error) return false;
     return membership?.role === 'admin' || membership?.role === 'manager';
