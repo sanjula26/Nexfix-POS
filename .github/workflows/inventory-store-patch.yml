@@ -93,12 +93,10 @@ jobs:
     }
     const p = state.products.find(x => x.id === id);
     if (!p) return;
-    const referenced = state.products.some(x => x.id === id) && (
-      p.stock > 0 ||
+    const referenced = p.stock > 0 ||
       (state.units || []).some(u => u.productId === id) ||
       state.sales.some(sale => sale.items.some(item => item.productId === id)) ||
-      state.purchases.some(po => po.items.some(item => item.productId === id))
-    );
+      state.purchases.some(po => po.items.some(item => item.productId === id));
     if (referenced) {
       pushAudit('DENIED', 'Product', `Blocked deletion of referenced product ${p.name}`);
       return;
@@ -137,7 +135,7 @@ jobs:
       return { ...s, products: updatedProducts };
     });
     pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
-  }, [can, pushAudit, setStateWithInventoryLedger, state.products, user]);
+  }, [can, pushAudit, state.products, user]);
 '''
           if old not in s:
               raise SystemExit('target inventory block not found')
@@ -173,3 +171,5 @@ jobs:
           git add src/lib/store.tsx
           git commit -m "fix: harden inventory store operations" || exit 0
           git push
+
+# trigger
