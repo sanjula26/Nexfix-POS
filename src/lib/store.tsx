@@ -290,7 +290,22 @@ async function persistState(state: POSState): Promise<void> {
     localStorage.setItem(STORE_KEY, JSON.stringify(state));
   } catch { /* quota */ }
   if (idbAvailable()) {
-    await idbSaveState(state);
+    const saved = await idbSaveState(state);
+    // Keep the cloud-sale idempotency marker until the authoritative sale is
+    // durably persisted locally. This closes the crash window between the
+    // cloud transaction commit and the debounced local state write.
+    if (saved) {
+      try {
+        const pendingKey = 'nexfix_pending_cloud_sale_v2';
+        const raw = localStorage.getItem(pendingKey);
+        if (raw) {
+          const pending = JSON.parse(raw) as { saleId?: string };
+          if (pending.saleId && state.sales.some(sale => sale.id === pending.saleId)) {
+            localStorage.removeItem(pendingKey);
+          }
+        }
+      } catch { /* ignore malformed/stale marker */ }
+    }
   }
   // Track write for offline queue (future cloud sync)
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -901,7 +916,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         sales: [sale, ...prev.sales], counters: { ...prev.counters, bill: Math.max(prev.counters.bill, maxSaleSeq, Number.isFinite(billSeq) ? billSeq : 0) + 1 },
       };
     });
-    try { localStorage.removeItem(pendingKey); } catch { /* ignore */ }
+    // The pending marker is cleared only after durable local persistence.
     syncToGoogleDrive('SalesHistory', [sale]);
     syncToGoogleDrive('Products', committed.products);
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
