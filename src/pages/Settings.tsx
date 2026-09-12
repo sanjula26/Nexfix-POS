@@ -67,7 +67,19 @@ export default function Settings() {
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [k]: e.target.type === 'number' ? Number(e.target.value) || 0 : e.target.value }));
-  const save = () => { updateSettings(form); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+
+  const save = () => {
+    const taxDefault = Number(form.taxDefault);
+    const lowStockDefault = Number(form.lowStockDefault);
+    const exchangeDays = Number(form.exchangeDays);
+    const openingFloat = Number(form.openingFloat);
+    if (!Number.isFinite(taxDefault) || taxDefault < 0 || taxDefault > 100) return setBackupMsg('Default tax must be between 0% and 100%');
+    if (!Number.isFinite(lowStockDefault) || !Number.isInteger(lowStockDefault) || lowStockDefault < 0) return setBackupMsg('Low-stock default must be a whole number of 0 or more');
+    if (!Number.isFinite(exchangeDays) || !Number.isInteger(exchangeDays) || exchangeDays < 0) return setBackupMsg('Exchange window must be a whole number of 0 or more days');
+    if (!Number.isFinite(openingFloat) || openingFloat < 0) return setBackupMsg('Opening float cannot be negative');
+    setBackupMsg('');
+    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat }); setSaved(true); setTimeout(() => setSaved(false), 2000);
+  };
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
 
@@ -160,18 +172,9 @@ export default function Settings() {
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><ReceiptText size={15} /></span>A4 Invoice Design</h3>
             <p className="text-xs text-faint mb-4">This controls the professional A4 invoice. Each shop can use its own business identity; no product photos are printed in the item table.</p>
             <div className="space-y-3.5">
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                <Field label="Invoice title"><input className="input" value={form.invoiceTitle ?? ''} onChange={set('invoiceTitle')} placeholder="INVOICE / TAX INVOICE" /></Field>
-                <Field label="Invoice subtitle"><input className="input" value={form.invoiceSubtitle ?? ''} onChange={set('invoiceSubtitle')} placeholder="COMPUTER & PHONE SHOP" /></Field>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                <Field label="Currency label"><input className="input" value={form.invoiceCurrency ?? ''} onChange={set('invoiceCurrency')} placeholder="Rs." /></Field>
-                <Field label="Tax label"><input className="input" value={form.invoiceTaxLabel ?? ''} onChange={set('invoiceTaxLabel')} placeholder="VAT" /></Field>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                <Field label="Tax registration / TIN" hint="Leave blank when not applicable"><input className="input" value={form.taxRegistrationNo ?? ''} onChange={set('taxRegistrationNo')} /></Field>
-                <Field label="Place of supply"><input className="input" value={form.invoicePlaceOfSupply ?? ''} onChange={set('invoicePlaceOfSupply')} /></Field>
-              </div>
+              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Invoice title"><input className="input" value={form.invoiceTitle ?? ''} onChange={set('invoiceTitle')} placeholder="INVOICE / TAX INVOICE" /></Field><Field label="Invoice subtitle"><input className="input" value={form.invoiceSubtitle ?? ''} onChange={set('invoiceSubtitle')} placeholder="COMPUTER & PHONE SHOP" /></Field></div>
+              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Currency label"><input className="input" value={form.invoiceCurrency ?? ''} onChange={set('invoiceCurrency')} placeholder="Rs." /></Field><Field label="Tax label"><input className="input" value={form.invoiceTaxLabel ?? ''} onChange={set('invoiceTaxLabel')} placeholder="VAT" /></Field></div>
+              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Tax registration / TIN" hint="Leave blank when not applicable"><input className="input" value={form.taxRegistrationNo ?? ''} onChange={set('taxRegistrationNo')} /></Field><Field label="Place of supply"><input className="input" value={form.invoicePlaceOfSupply ?? ''} onChange={set('invoicePlaceOfSupply')} /></Field></div>
               <Field label="Invoice terms & conditions" hint="One line per condition"><textarea className="input min-h-[90px] resize-y" value={form.invoiceTerms ?? ''} onChange={set('invoiceTerms')} /></Field>
               <Field label="Invoice footer"><textarea className="input min-h-[65px] resize-y" value={form.invoiceFooter ?? ''} onChange={set('invoiceFooter')} /></Field>
               <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 cursor-pointer"><span className="text-sm font-medium text-ink">Show tax line on A4 invoice</span><Toggle checked={form.invoiceShowTax !== false} onChange={v => setForm(f => ({ ...f, invoiceShowTax: v }))} /></label>
@@ -181,10 +184,10 @@ export default function Settings() {
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-5"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><SlidersHorizontal size={15} /></span>POS Preferences</h3>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Default tax %"><input className="input num" value={form.taxDefault || ''} onChange={num('taxDefault')} /></Field>
-              <Field label="Low-stock default"><input className="input num" value={form.lowStockDefault || ''} onChange={num('lowStockDefault')} /></Field>
-              <Field label="Exchange window (days)" hint="Bills older than this can't be exchanged"><input className="input num" value={form.exchangeDays || ''} onChange={num('exchangeDays')} /></Field>
-              <Field label="Opening float (Rs.)" hint="Per cashier, per day"><input className="input num" value={form.openingFloat || ''} onChange={num('openingFloat')} /></Field>
+              <Field label="Default tax %"><input type="number" min="0" max="100" step="0.01" className="input num" value={form.taxDefault || ''} onChange={num('taxDefault')} /></Field>
+              <Field label="Low-stock default"><input type="number" min="0" step="1" className="input num" value={form.lowStockDefault || ''} onChange={num('lowStockDefault')} /></Field>
+              <Field label="Exchange window (days)" hint="Bills older than this can't be exchanged"><input type="number" min="0" step="1" className="input num" value={form.exchangeDays || ''} onChange={num('exchangeDays')} /></Field>
+              <Field label="Opening float (Rs.)" hint="Per cashier, per day"><input type="number" min="0" step="0.01" className="input num" value={form.openingFloat || ''} onChange={num('openingFloat')} /></Field>
             </div>
             <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} /></label>
           </div>
