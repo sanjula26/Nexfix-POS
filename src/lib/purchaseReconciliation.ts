@@ -26,9 +26,11 @@ export function buildPurchaseReceivePlan(po: Purchase, products: readonly Produc
     if (!product || !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isInteger(item.qty) || !Number.isFinite(item.cost) || item.cost < 0) {
       return null;
     }
-    // Duplicate product lines can carry different costs. Reject them at the
-    // business-logic boundary instead of silently losing a line's cost.
     if (productStockDelta.has(item.productId)) return null;
+
+    if (item.updateSellingPrice) {
+      if (!Number.isFinite(item.sellingPrice) || (item.sellingPrice ?? 0) < 0) return null;
+    }
 
     const lineTotal = item.qty * item.cost;
     if (!Number.isFinite(lineTotal) || lineTotal < 0) return null;
