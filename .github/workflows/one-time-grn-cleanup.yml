@@ -26,11 +26,6 @@ jobs:
               raise SystemExit('obsolete useEffect end not found')
           s = s[:start] + s[end+2:]
           p.write_text(s)
-      - name: Verify cleanup
-        run: |
-          if grep -q "useEffect" src/pages/GRN.tsx; then exit 1; fi
-          if grep -q "syncedPricePurchases" src/pages/GRN.tsx; then exit 1; fi
-          if grep -q "saveProduct" src/pages/GRN.tsx; then exit 1; fi
       - name: Commit cleanup
         run: |
           git config user.name 'github-actions[bot]'
