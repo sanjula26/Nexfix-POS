@@ -1,5 +1,7 @@
 name: Users Permissions Final Clean
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [users-permissions-final-clean2]
 permissions:
@@ -11,6 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -18,8 +21,7 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('src/lib/store.tsx')
-          s=p.read_text()
+          p=Path('src/lib/store.tsx'); s=p.read_text()
           replacements=[
           ('''  const saveUser = useCallback((u: AppUser) => {\n    const exists = state.users.some(x => x.id === u.id);''','''  const saveUser = useCallback((u: AppUser) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n    const exists = state.users.some(x => x.id === u.id);'''),
           ('''  }, [state.users, pushAudit]);\n\n  const toggleUserActive = useCallback((id: string) => {''','''  }, [state.users, pushAudit, user]);\n\n  const toggleUserActive = useCallback((id: string) => {''',1),
@@ -29,35 +31,26 @@ jobs:
           ('''  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (role === 'admin') return;''','''  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n    if (role === 'admin') return;'''),
           ('''  }, [pushAudit]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {''','''  }, [pushAudit, user]);\n\n  const updateSettings = useCallback((patch: Partial<Settings>) => {''',1),
           ('''  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));''','''  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));'''),
-          ('''  }, [pushAudit]);\n\n  const closeSession = useCallback''','''  }, [pushAudit, user]);\n\n  const closeSession = useCallback''',1),
-          ]
+          ('''  }, [pushAudit]);\n\n  const closeSession = useCallback''','''  }, [pushAudit, user]);\n\n  const closeSession = useCallback''',1)]
           for item in replacements:
-              old,new,*count=item
-              n=count[0] if count else 1
-              if old not in s:
-                  raise SystemExit('PATCH TARGET NOT FOUND: '+old[:80])
-              if s.count(old)!=n:
-                  raise SystemExit(f'PATCH TARGET COUNT {s.count(old)} != {n}: '+old[:80])
-              s=s.replace(old,new,n)
+            old,new,*count=item; n=count[0] if count else 1
+            if s.count(old)!=n: raise SystemExit(f'PATCH TARGET COUNT {s.count(old)} != {n}: {old[:70]}')
+            s=s.replace(old,new,n)
           p.write_text(s)
           PY
-      - name: Verify source guards
+      - name: Verify and test
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('src/lib/store.tsx').read_text()
-          checks=[
-            "Blocked user save for",
-            "Blocked user status change for",
-            "Blocked user delete for",
-            "Blocked permission change for",
-            "Blocked settings update:",
-          ]
-          missing=[x for x in checks if x not in s]
-          if missing: raise SystemExit('Missing guards: '+str(missing))
-          print('All users/permissions guards present')
-          PY
-      - name: Commit and cleanup
+          grep -q "Blocked user save for" src/lib/store.tsx
+          grep -q "Blocked user status change for" src/lib/store.tsx
+          grep -q "Blocked user delete for" src/lib/store.tsx
+          grep -q "Blocked permission change for" src/lib/store.tsx
+          grep -q "Blocked settings update:" src/lib/store.tsx
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run build
+      - name: Commit source and cleanup
+        if: github.event_name == 'pull_request'
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -66,4 +59,4 @@ jobs:
           git commit -m 'security: harden users permissions and settings actions'
           git rm .github/workflows/users-permissions-final-clean.yml
           git commit -m 'chore: remove users permissions finalizer'
-          git push origin HEAD:users-permissions-final-clean2
+          git push origin HEAD:${{ github.head_ref }}
