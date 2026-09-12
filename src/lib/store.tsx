@@ -569,37 +569,61 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- products ---------------- */
   const saveProduct = useCallback((p: Product) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
+      return;
+    }
+    const name = String(p.name || '').trim();
+    const sku = String(p.sku || '').trim();
+    const barcode = String(p.barcode || '').trim();
+    const values = [p.cost, p.price, p.stock, p.reorderLevel, p.warrantyMonths ?? 0];
+    if (!name || !sku || !barcode || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel)) {
+      pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
+      return;
+    }
+    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), warrantyMonths: Math.round(p.warrantyMonths ?? 0) };
+    const exists = state.products.some(x => x.id === normalized.id);
+    let duplicate = false;
     setState(s => {
-      const exists = s.products.some(x => x.id === p.id);
-      const updatedProducts = exists ? s.products.map(x => (x.id === p.id ? p : x)) : [p, ...s.products];
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
+      const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
+      const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
+      if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
+      const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
+      syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
-    pushAudit(state.products.some(x => x.id === p.id) ? 'UPDATE' : 'CREATE', 'Product', `${state.products.some(x => x.id === p.id) ? 'Updated' : 'Added'} product ${p.name}`);
-  }, [pushAudit, state.products]);
+    if (duplicate) pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
+    else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Product', `${exists ? 'Updated' : 'Added'} product ${normalized.name}`);
+  }, [can, pushAudit, state.products, user]);
 
   const deleteProduct = useCallback((id: string) => {
+    if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked product delete for ${id}`); return; }
     const p = state.products.find(x => x.id === id);
-    setState(s => {
-      const updatedProducts = s.products.filter(x => x.id !== id);
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return { ...s, products: updatedProducts };
-    });
-    if (p) pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
-  }, [pushAudit, state.products]);
+    if (!p) return;
+    if (p.stock > 0 || (state.units || []).some(u => u.productId === id)) {
+      pushAudit('DENIED', 'Product', `Blocked deletion of ${p.name}: stock or tracked units exist`);
+      return;
+    }
+    setState(s => ({ ...s, products: s.products.filter(x => x.id !== id) }));
+    pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
+  }, [can, pushAudit, state.products, state.units, user]);
 
   const adjustStock = useCallback((id: string, delta: number, reason: string) => {
+    if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return; }
+    const amount = Number(delta);
+    const note = String(reason || '').trim();
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return; }
     const p = state.products.find(x => x.id === id);
+    if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return; }
     setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
-      const updatedProducts = s.products.map(x => (x.id === id ? { ...x, stock: Math.max(0, x.stock + delta) } : x));
-      syncToGoogleDrive('Products', updatedProducts); // Auto Google Sync
-      return {
-        ...s,
-        products: updatedProducts,
-      };
+      const current = s.products.find(x => x.id === id);
+      if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
+      const updatedProducts = s.products.map(x => x.id === id ? { ...x, stock: x.stock + amount } : x);
+      syncToGoogleDrive('Products', updatedProducts);
+      return { ...s, products: updatedProducts };
     });
-    if (p) pushAudit('STOCK', 'Product', `Stock ${delta >= 0 ? '+' : ''}${delta} for ${p.name} — ${reason}`);
-  }, [pushAudit, state.products]);
+    pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
+  }, [can, pushAudit, state.products, user]);
 
   /* ---------------- customers / suppliers ---------------- */
   const saveCustomer = useCallback((c: Customer) => {
@@ -1046,7 +1070,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             } as InventoryUnit);
           }
         }
-        return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}) };
+        const purchaseItem = currentPo.items.find(item => item.productId === p.id);
+        const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
+        if (sellingPrice !== undefined && (!Number.isFinite(sellingPrice) || sellingPrice < 0)) return p;
+        return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
       });
       return {
         ...s,
