@@ -1,0 +1,4 @@
+project_id = "ocmzgamnehwbkuwkjdrr"
+
+[functions.google-backup-proxy]
+verify_jwt = true
