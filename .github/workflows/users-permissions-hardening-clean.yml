@@ -24,11 +24,11 @@ jobs:
           p = Path('src/lib/store.tsx')
           s = p.read_text()
           patches = [
-            (r"  const saveUser = useCallback\(\(u: AppUser\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', f'Blocked user save for {u.email or u.name or u.id}')\n      return\n    }\n"),
-            (r"  const toggleUserActive = useCallback\(\(id: string\) => \{\n", "    if (!user || user.role != 'admin') {\n      pushAudit('DENIED', 'User', f'Blocked user status change for {id}')\n      return\n    }\n"),
-            (r"  const deleteUser = useCallback\(\(id: string\) => \{\n", "    if (!user || user.role != 'admin') {\n      pushAudit('DENIED', 'User', f'Blocked user delete for {id}')\n      return\n    }\n"),
-            (r"  const setPermission = useCallback\(\(role: Role, key: string, value: boolean\) => \{\n", "    if (!user || user.role != 'admin') {\n      pushAudit('DENIED', 'Permissions', f'Blocked permission change for {role}:{key}')\n      return\n    }\n"),
-            (r"  const updateSettings = useCallback\(\(patch: Partial<Settings>\) => \{\n", "    if (!user || user.role != 'admin') {\n      pushAudit('DENIED', 'Settings', f'Blocked settings update: {",".join([])}')\n      return\n    }\n"),
+            (r"  const saveUser = useCallback\(\(u: AppUser\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n"),
+            (r"  const toggleUserActive = useCallback\(\(id: string\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);\n      return;\n    }\n"),
+            (r"  const deleteUser = useCallback\(\(id: string\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);\n      return;\n    }\n"),
+            (r"  const setPermission = useCallback\(\(role: Role, key: string, value: boolean\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n"),
+            (r"  const updateSettings = useCallback\(\(patch: Partial<Settings>\) => \{\n", "    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n"),
           ]
           for pattern, body in patches:
               s2, n = re.subn(pattern, lambda m: m.group(0) + body, s, count=1)
@@ -37,12 +37,15 @@ jobs:
               s = s2
           p.write_text(s)
           PY
-      - name: Typecheck
-        run: npm install --no-audit --no-fund && npm run typecheck
-      - name: Lint
-        run: npm run lint
-      - name: Build
-        run: npm run build
+      - name: Verify guards
+        run: |
+          test "$(grep -c "Blocked user save" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked user status change" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked user delete" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked permission change" src/lib/store.tsx)" -eq 1
+          test "$(grep -c "Blocked settings update" src/lib/store.tsx)" -eq 1
+      - name: Install and verify
+        run: npm install --no-audit --no-fund && npm run typecheck && npm run lint && npm run build
       - name: Commit and remove workflow
         run: |
           git config user.name "github-actions[bot]"
