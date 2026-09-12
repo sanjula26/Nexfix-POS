@@ -31,6 +31,8 @@ const NAV: NavDef[] = [
   { to: '/supplier-payments', label: 'Supplier Payments', icon: Wallet, perm: 'page:suppliers', group: 'Operations' },
   { to: '/purchases', label: 'Purchases', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
   { to: '/grn', label: 'Goods Received Notes', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
+  { to: '/grn-report', label: 'GRN Report', icon: FileText, perm: 'page:purchases', group: 'Operations' },
+  { to: '/purchase-return', label: 'Purchase Return', icon: ArrowLeftRight, perm: 'page:purchases', group: 'Operations' },
   { to: '/sales', label: 'Sales History', icon: ReceiptText, perm: 'page:sales', group: 'Operations' },
   { to: '/exchanges', label: 'Exchanges', icon: ArrowLeftRight, perm: 'page:exchanges', group: 'Operations' },
   { to: '/expenses', label: 'Expenses', icon: Wallet, perm: 'page:expenses', group: 'Operations' },
@@ -41,14 +43,17 @@ const NAV: NavDef[] = [
   { to: '/cashier-balances', label: 'Day Cash & Drawer', icon: Landmark, group: 'Administration', adminOnly: true },
   { to: '/permissions', label: 'Permissions', icon: KeyRound, group: 'Administration', adminOnly: true },
   { to: '/audit-log', label: 'Audit Log', icon: ScrollText, group: 'Administration', adminOnly: true },
+  { to: '/csv-import', label: 'CSV Import', icon: FileText, group: 'Administration', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings, group: 'System', adminOnly: true },
 ];
 
 const TITLES: [RegExp, string][] = [
-  [/^\/$/, 'Dashboard'], [/^\/pos/, 'Point of Sale'], [/^\/inventory/, 'Inventory'],
-  [/^\/units/, 'IMEI / Serial Units'], [/^\/repairs/, 'Repairs / Service'],
-  [/^\/customers/, 'Customers'], [/^\/suppliers/, 'Suppliers'], [/^\/supplier-payments/, 'Supplier Payments'], [/^\/grn/, 'Goods Received Notes'], [/^\/purchases/, 'Purchases'],
-  [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
+  [/^\/$/, 'Dashboard'], [/^\/mobile/, 'Mobile Dashboard'], [/^\/pos/, 'Point of Sale'], [/^\/inventory/, 'Inventory'],
+  [/^\/kits/, 'Kits / BOM'], [/^\/units/, 'IMEI / Serial Units'], [/^\/repairs/, 'Repairs / Service'],
+  [/^\/quotations/, 'Quotations'], [/^\/warranty-claims/, 'Warranty Claims'], [/^\/customers/, 'Customers'],
+  [/^\/suppliers/, 'Suppliers'], [/^\/supplier-payments/, 'Supplier Payments'], [/^\/grn-report/, 'GRN Report'],
+  [/^\/grn/, 'Goods Received Notes'], [/^\/purchase-return/, 'Purchase Return'], [/^\/purchases/, 'Purchases'],
+  [/^\/csv-import/, 'CSV Import'], [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
   [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'], [/^\/signup/, 'Customer Signup'],
   [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Day Cash & Drawer'], [/^\/permissions/, 'Permissions'],
   [/^\/audit-log/, 'Audit Log'], [/^\/settings/, 'Settings'],
@@ -91,7 +96,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       className="flex flex-col h-full w-[270px] shrink-0 text-white"
       style={{ background: 'linear-gradient(180deg, #1a1440 0%, #0d0a24 100%)' }}
     >
-      {/* brand */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-4">
         <div className="relative">
           <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-500 via-indigo-500 to-sky-400 flex items-center justify-center shadow-lg shadow-violet-900/50">
@@ -107,7 +111,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
 
-      {/* nav */}
       <nav className="flex-1 overflow-y-auto sidebar-scroll px-3 pb-4">
         {groups.map(g => (
           <div key={g.name} className="mt-3">
@@ -148,7 +151,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      {/* role switch */}
       <div className="px-3 pb-3 space-y-3">
         <div className="grid grid-cols-2 gap-2 bg-black/25 rounded-xl p-1.5 border border-white/[0.06]">
           {(['admin', 'cashier'] as const).map(r => {
@@ -183,7 +185,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           })}
         </div>
 
-        {/* user card */}
         <div className="bg-black/30 border border-white/[0.07] rounded-2xl p-3.5">
           <div className="flex items-center gap-3">
             <Avatar name={user?.name || 'U'} size={38} />
@@ -215,7 +216,6 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-/* ---------- ADMIN elevation prompt (session-nullifying) ---------- */
 const MAX_ATTEMPTS = 3;
 const LOCKOUT_SECS = 30;
 const IDLE_SECS = 30;
@@ -245,7 +245,6 @@ function AdminUnlockModal() {
     setAdminPrompt(false);
   }, [logAudit, setAdminPrompt]);
 
-  /* timers run only while the prompt is visible */
   useEffect(() => {
     if (!adminPrompt) { reset(); return; }
     const tick = setInterval(() => setNow(Date.now()), 500);
@@ -299,7 +298,6 @@ function AdminUnlockModal() {
         animate={shakeKey ? { x: [0, -9, 9, -6, 6, 0] } : { x: 0 }}
         transition={{ duration: 0.4 }}
       >
-        {/* security notice */}
         <div className="flex items-center gap-3.5 rounded-2xl bg-violet-500/[0.07] border border-violet-500/20 p-4 mb-4">
           <span className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-violet-600/30 shrink-0">
             <LockKeyhole size={20} />
@@ -316,7 +314,6 @@ function AdminUnlockModal() {
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-bold tracking-wider uppercase text-sub">Admin password</span>
-              {/* attempt dots */}
               <span className="flex items-center gap-1" title={`${MAX_ATTEMPTS} attempts before a ${LOCKOUT_SECS}s lockout`}>
                 {[0, 1, 2].map(i => (
                   <span key={i} className={`w-2 h-2 rounded-full transition-colors ${i < attempts ? 'bg-rose-500' : 'bg-line'}`} />
@@ -336,12 +333,7 @@ function AdminUnlockModal() {
                 onChange={e => { setPin(e.target.value); setError(''); armIdle(); }}
                 onKeyDown={e => { if (e.key === 'Enter') tryUnlock(); }}
               />
-              <button
-                type="button"
-                onClick={() => setShowPin(s => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink"
-                disabled={lockSecsLeft > 0}
-              >
+              <button type="button" onClick={() => setShowPin(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink" disabled={lockSecsLeft > 0}>
                 {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
@@ -349,19 +341,11 @@ function AdminUnlockModal() {
 
           <AnimatePresence mode="wait">
             {lockSecsLeft > 0 ? (
-              <motion.div
-                key="lockout"
-                initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                className="flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/25 px-3.5 py-2.5 text-[13px] font-semibold text-rose-500"
-              >
+              <motion.div key="lockout" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-2 rounded-xl bg-rose-500/10 border border-rose-500/25 px-3.5 py-2.5 text-[13px] font-semibold text-rose-500">
                 <ShieldAlert size={15} /> Locked — try again in <span className="num font-extrabold">{lockSecsLeft}s</span>
               </motion.div>
             ) : error ? (
-              <motion.p
-                key="err"
-                initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                className="flex items-center gap-1.5 text-[13px] font-semibold text-rose-500"
-              >
+              <motion.p key="err" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex items-center gap-1.5 text-[13px] font-semibold text-rose-500">
                 <AlertCircle size={14} /> {error} — staying in CASHIER mode{attempts > 0 ? ` (${MAX_ATTEMPTS - attempts} attempt${MAX_ATTEMPTS - attempts === 1 ? '' : 's'} left)` : ''}
               </motion.p>
             ) : null}
@@ -372,9 +356,7 @@ function AdminUnlockModal() {
               {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
               Confirm Password
             </button>
-            <button className="btn btn-soft" onClick={() => close()}>
-              Cancel
-            </button>
+            <button className="btn btn-soft" onClick={() => close()}>Cancel</button>
           </div>
           <p className="text-[10.5px] text-faint text-center">
             Prompt auto-cancels after {IDLE_SECS}s of inactivity · Demo default: <b className="text-sub font-mono">admin123</b> · Change under Settings → Security
@@ -403,104 +385,52 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-base">
-      {/* while the admin prompt is open, the current session's UI is fully suspended */}
       <div
         inert={adminPrompt ? true : undefined}
         aria-hidden={adminPrompt}
         className={`flex h-full w-full transition-all duration-300 ${adminPrompt ? 'pointer-events-none select-none blur-[6px] saturate-[0.65] scale-[0.992] opacity-70' : ''}`}
       >
-      {/* desktop sidebar */}
-      <div className="hidden lg:block h-full">
-        <Sidebar />
-      </div>
-      {/* mobile drawer */}
+      <div className="hidden lg:block h-full"><Sidebar /></div>
       {mobileOpen && (
         <div className="lg:hidden fixed inset-0 z-50 flex">
           <div className="absolute inset-0 bg-black/60" onClick={() => setMobileOpen(false)} />
           <div className="relative h-full">
             <Sidebar onNavigate={() => setMobileOpen(false)} />
-            <button className="absolute top-4 -right-11 icon-btn !bg-black/40 !text-white" onClick={() => setMobileOpen(false)}>
-              <X size={18} />
-            </button>
+            <button className="absolute top-4 -right-11 icon-btn !bg-black/40 !text-white" onClick={() => setMobileOpen(false)}><X size={18} /></button>
           </div>
         </div>
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* topbar */}
         <header className="shrink-0 h-16 bg-surface/85 backdrop-blur border-b border-line flex items-center gap-3 px-4 sm:px-6 z-20">
-          <button className="icon-btn lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Menu">
-            <Menu size={18} />
-          </button>
+          <button className="icon-btn lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Menu"><Menu size={18} /></button>
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-1 h-6 rounded-full bg-gradient-to-b from-violet-500 to-indigo-500" />
             <h1 className="font-display font-extrabold text-[15px] sm:text-[17px] text-ink truncate tracking-tight">{title}</h1>
           </div>
-
-          <span className={`hidden sm:inline-flex badge ${viewingAs === 'admin'
-            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'}`}>
-            <Eye size={11} /> VIEWING AS {viewingAs.toUpperCase()}
-            <span className="w-px h-3 bg-current opacity-30" />
-            <EyeOff size={11} className="opacity-60" />
+          <span className={`hidden sm:inline-flex badge ${viewingAs === 'admin' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'}`}>
+            <Eye size={11} /> VIEWING AS {viewingAs.toUpperCase()} <span className="w-px h-3 bg-current opacity-30" /> <EyeOff size={11} className="opacity-60" />
           </span>
-
           <div className="flex-1" />
-
-          <span className={`hidden sm:inline-flex badge border ${
-            connectivity === 'online'
-              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25'
-              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'
-          }`}>
-            <Wifi size={11} /> {connectivity === 'online' ? 'Online' : 'Offline'}
-            <span className={`w-1.5 h-1.5 rounded-full ${connectivity === 'online' ? 'bg-emerald-500 blink' : 'bg-rose-500'}`} />
+          <span className={`hidden sm:inline-flex badge border ${connectivity === 'online' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'}`}>
+            <Wifi size={11} /> {connectivity === 'online' ? 'Online' : 'Offline'} <span className={`w-1.5 h-1.5 rounded-full ${connectivity === 'online' ? 'bg-emerald-500 blink' : 'bg-rose-500'}`} />
           </span>
-          {!ready && (
-            <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">
-              Loading storage…
-            </span>
-          )}
-
+          {!ready && <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">Loading storage…</span>}
           <Clock />
-
-          <button
-            onClick={() => navigate('/inventory?low=1')}
-            className={`badge !py-1.5 !px-3 transition-all hover:brightness-110 cursor-pointer ${
-              lowStock.length > 0
-                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                : 'bg-raised text-faint border border-line'
-            }`}
-            title={lowStock.length ? 'View low stock items' : 'All products well stocked'}
-          >
-            <Bell size={12} />
-            <span className="num">{lowStock.length > 0 ? `${fmtNum(lowStock.length)} low-stock` : 'stock OK'}</span>
+          <button onClick={() => navigate('/inventory?low=1')} className={`badge !py-1.5 !px-3 transition-all hover:brightness-110 cursor-pointer ${lowStock.length > 0 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-raised text-faint border border-line'}`} title={lowStock.length ? 'View low stock items' : 'All products well stocked'}>
+            <Bell size={12} /><span className="num">{lowStock.length > 0 ? `${fmtNum(lowStock.length)} low-stock` : 'stock OK'}</span>
           </button>
-
-          <button
-            type="button"
-            className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors"
-            title="Command palette (Ctrl+K)"
-            onClick={() => window.dispatchEvent(new Event('nexfix:open-palette'))}
-          >
-            <Search size={13} />
-            <span className="hidden md:inline">Search</span>
-            <kbd className="text-[9px] font-mono opacity-70 border border-line rounded px-1">⌘K</kbd>
+          <button type="button" className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors" title="Command palette (Ctrl+K)" onClick={() => window.dispatchEvent(new Event('nexfix:open-palette'))}>
+            <Search size={13} /><span className="hidden md:inline">Search</span><kbd className="text-[9px] font-mono opacity-70 border border-line rounded px-1">⌘K</kbd>
           </button>
-          <button className="icon-btn border !border-line bg-raised" onClick={toggleTheme} aria-label="Toggle theme">
-            {dark ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+          <button className="icon-btn border !border-line bg-raised" onClick={toggleTheme} aria-label="Toggle theme">{dark ? <Sun size={16} /> : <Moon size={16} />}</button>
         </header>
 
-        {/* content */}
         <main className="flex-1 overflow-y-auto">
-          <div key={location.pathname} className="page-enter px-4 sm:px-6 xl:px-8 py-6 max-w-[1500px] mx-auto">
-            <Outlet />
-          </div>
+          <div key={location.pathname} className="page-enter px-4 sm:px-6 xl:px-8 py-6 max-w-[1500px] mx-auto"><Outlet /></div>
         </main>
       </div>
       </div>
-
-      {/* admin elevation prompt — renders above the suspended (inert) shell */}
       <AdminUnlockModal />
       <CommandPalette />
     </div>
