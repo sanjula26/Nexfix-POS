@@ -8,40 +8,90 @@ import type { Product, Customer } from '../lib/types';
 type ImportType = 'products' | 'customers';
 interface ParseResult<T> { valid: T[]; errors: { row: number; msg: string }[] }
 
+function parseCSVLine(line: string): string[] {
+  const out: string[] = [];
+  let value = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') { value += '"'; i++; }
+      else quoted = !quoted;
+    } else if (ch === ',' && !quoted) {
+      out.push(value.trim()); value = '';
+    } else {
+      value += ch;
+    }
+  }
+  out.push(value.trim());
+  return out;
+}
+
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = [];
+  let row = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (quoted && text[i + 1] === '"') { row += '""'; i++; }
+      else { quoted = !quoted; row += ch; }
+    } else if ((ch === '\n' || ch === '\r') && !quoted) {
+      if (row.trim()) rows.push(parseCSVLine(row));
+      row = '';
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+    } else row += ch;
+  }
+  if (row.trim()) rows.push(parseCSVLine(row));
+  return rows;
+}
+
 function parseProductsCSV(text: string, existing: Product[]): ParseResult<Product> {
-  const lines = text.trim().split('\n').filter(Boolean);
-  if (lines.length < 2) return { valid: [], errors: [{ row: 0, msg: 'File is empty or missing header' }] };
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { valid: [], errors: [{ row: 0, msg: 'File is empty or missing header' }] };
   const valid: Product[] = [];
   const errors: { row: number; msg: string }[] = [];
   const existingBarcodes = new Set(existing.map(p => p.barcode).filter(Boolean));
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
-    const [name, category, brand, sku, barcode, cost, price, stock, reorderLevel] = cols;
+  const existingSkus = new Set(existing.map(p => p.sku).filter(Boolean));
+  for (let i = 1; i < rows.length; i++) {
+    const [name, category, brand, sku, barcode, cost, price, stock, reorderLevel] = rows[i];
     if (!name) { errors.push({ row: i + 1, msg: 'Name is required' }); continue; }
-    if (!cost || isNaN(+cost)) { errors.push({ row: i + 1, msg: `Invalid cost: "${cost}"` }); continue; }
-    if (!price || isNaN(+price)) { errors.push({ row: i + 1, msg: `Invalid price: "${price}"` }); continue; }
+    const costNum = Number(cost);
+    const priceNum = Number(price);
+    const stockNum = stock === '' || stock === undefined ? 0 : Number(stock);
+    const reorderNum = reorderLevel === '' || reorderLevel === undefined ? 5 : Number(reorderLevel);
+    if (!Number.isFinite(costNum) || costNum < 0) { errors.push({ row: i + 1, msg: `Invalid cost: "${cost}"` }); continue; }
+    if (!Number.isFinite(priceNum) || priceNum < 0) { errors.push({ row: i + 1, msg: `Invalid price: "${price}"` }); continue; }
+    if (!Number.isInteger(stockNum) || stockNum < 0) { errors.push({ row: i + 1, msg: `Invalid stock: "${stock}"` }); continue; }
+    if (!Number.isInteger(reorderNum) || reorderNum < 0) { errors.push({ row: i + 1, msg: `Invalid reorder level: "${reorderLevel}"` }); continue; }
     if (barcode && existingBarcodes.has(barcode)) { errors.push({ row: i + 1, msg: `Duplicate barcode: ${barcode}` }); continue; }
+    if (sku && existingSkus.has(sku)) { errors.push({ row: i + 1, msg: `Duplicate SKU: ${sku}` }); continue; }
     valid.push({
       id: uid(), name, category: category || 'General', brand: brand || '',
-      sku: sku || '', barcode: barcode || '', cost: +cost, price: +price,
-      stock: Math.max(0, +(stock || 0)), reorderLevel: Math.max(0, +(reorderLevel || 5)),
+      sku: sku || '', barcode: barcode || '', cost: costNum, price: priceNum,
+      stock: stockNum, reorderLevel: reorderNum,
       trackImei: false, active: true, createdAt: new Date().toISOString(),
     });
     if (barcode) existingBarcodes.add(barcode);
+    if (sku) existingSkus.add(sku);
   }
   return { valid, errors };
 }
 
 function parseCustomersCSV(text: string): ParseResult<Customer> {
-  const lines = text.trim().split('\n').filter(Boolean);
-  if (lines.length < 2) return { valid: [], errors: [{ row: 0, msg: 'File is empty or missing header' }] };
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { valid: [], errors: [{ row: 0, msg: 'File is empty or missing header' }] };
   const valid: Customer[] = [];
   const errors: { row: number; msg: string }[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',').map(c => c.replace(/^"|"$/g, '').trim());
-    const [name, phone, email, address, nic] = cols;
+  const phones = new Set<string>();
+  for (let i = 1; i < rows.length; i++) {
+    const [name, phone, email, address, nic] = rows[i];
     if (!name) { errors.push({ row: i + 1, msg: 'Name is required' }); continue; }
     if (!phone) { errors.push({ row: i + 1, msg: 'Phone is required' }); continue; }
+    const normalizedPhone = phone.replace(/\D/g, '');
+    if (!normalizedPhone) { errors.push({ row: i + 1, msg: `Invalid phone: "${phone}"` }); continue; }
+    if (phones.has(normalizedPhone)) { errors.push({ row: i + 1, msg: `Duplicate phone in file: ${phone}` }); continue; }
+    phones.add(normalizedPhone);
     valid.push({
       id: uid(), name, phone, email: email || undefined, address: address || undefined,
       nic: nic || undefined, createdAt: new Date().toISOString(),
@@ -144,7 +194,7 @@ export default function CSVImport() {
           <ul className="mt-3 space-y-1 text-xs text-sub">
             <li>• First row must be the header (download template to see exact format)</li>
             <li>• Name {type === 'products' ? ', Cost, Price' : ', Phone'} are required fields</li>
-            {type === 'products' && <li>• Duplicate barcodes will be skipped with an error</li>}
+            {type === 'products' && <li>• Duplicate barcodes and SKUs will be skipped with an error</li>}
             <li>• Save your spreadsheet as CSV (UTF-8) before uploading</li>
           </ul>
         </div>
