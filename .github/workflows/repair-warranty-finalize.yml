@@ -1,7 +1,7 @@
 name: Repair Warranty Finalize
 on:
-  push:
-    branches: [main]
+  pull_request:
+    types: [opened, synchronize]
 jobs:
   finalize:
     runs-on: ubuntu-latest
@@ -9,20 +9,18 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Patch repair and warranty store logic
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Patch and verify
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
-
-          store = Path('src/lib/store.tsx')
-          s = store.read_text()
-          s = s.replace('InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem,', 'InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,')
-          s = s.replace('  deleteRepair: (id: string) => void;\n', '  deleteRepair: (id: string) => void;\n  saveWarrantyClaim: (c: WarrantyClaim) => void;\n')
-
-          start = s.index('  const saveRepair = useCallback((r: RepairJob) => {')
-          end = s.index('  const updateRepairStatus = useCallback', start)
-          new_save = '''  const saveRepair = useCallback((r: RepairJob) => {
+          store=Path('src/lib/store.tsx'); s=store.read_text()
+          s=s.replace('InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem,','InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,')
+          s=s.replace('  deleteRepair: (id: string) => void;\n','  deleteRepair: (id: string) => void;\n  saveWarrantyClaim: (c: WarrantyClaim) => void;\n')
+          a=s.index('  const saveRepair = useCallback((r: RepairJob) => {'); b=s.index('  const updateRepairStatus = useCallback',a)
+          fn='''  const saveRepair = useCallback((r: RepairJob) => {
     if (!user) return;
     const repairs = state.repairs || [];
     const exists = repairs.some(x => x.id === r.id);
@@ -33,104 +31,50 @@ jobs:
     if (r.warrantyDays != null && (!Number.isFinite(r.warrantyDays) || r.warrantyDays < 0)) return;
     const cleanParts = (r.parts || []).map(pt => ({ ...pt, name: pt.name.trim(), qty: Number(pt.qty), cost: Number(pt.cost), productId: pt.productId?.trim() || undefined }));
     if (cleanParts.some(pt => !pt.name || !Number.isInteger(pt.qty) || pt.qty <= 0 || !Number.isFinite(pt.cost) || pt.cost < 0)) return;
-    if (jobNo && repairs.some(x => x.id !== r.id && x.jobNo.trim().toLowerCase() === jobNo.toLowerCase())) {
-      pushAudit('DENIED', 'Repair', `Duplicate job number blocked: ${jobNo}`);
-      return;
-    }
-    const old = repairs.find(x => x.id === r.id);
-    const oldByProduct = new Map<string, number>();
-    const newByProduct = new Map<string, number>();
-    for (const pt of old?.parts || []) if (pt.productId) oldByProduct.set(pt.productId, (oldByProduct.get(pt.productId) || 0) + pt.qty);
-    for (const pt of cleanParts) if (pt.productId) newByProduct.set(pt.productId, (newByProduct.get(pt.productId) || 0) + pt.qty);
-    for (const id of new Set([...oldByProduct.keys(), ...newByProduct.keys()])) {
-      const delta = (newByProduct.get(id) || 0) - (oldByProduct.get(id) || 0);
-      const product = state.products.find(p => p.id === id);
-      if (!product || product.stock - delta < 0) {
-        pushAudit('DENIED', 'Repair', `Insufficient stock for repair part: ${id}`);
-        return;
-      }
-    }
-    setState(st => {
-      let job: RepairJob = { ...r, jobNo: jobNo || r.jobNo, parts: cleanParts, by: r.by || user.name };
-      let counters = st.counters;
-      if (!exists && (!job.jobNo || job.jobNo.startsWith('JOB-TEMP'))) {
-        const seq = (st.counters.job || 0) + 1;
-        job = { ...job, jobNo: `JOB-${String(seq).padStart(4, '0')}` };
-        counters = { ...st.counters, job: seq };
-      }
-      const products = st.products.map(p => {
-        const delta = (newByProduct.get(p.id) || 0) - (oldByProduct.get(p.id) || 0);
-        return delta ? { ...p, stock: p.stock - delta } : p;
-      });
-      return { ...st, products, counters, repairs: exists ? (st.repairs || []).map(x => x.id === r.id ? job : x) : [job, ...(st.repairs || [])] };
+    if (jobNo && repairs.some(x => x.id !== r.id && x.jobNo.trim().toLowerCase() === jobNo.toLowerCase())) { pushAudit('DENIED','Repair',`Duplicate job number blocked: ${jobNo}`); return; }
+    const old=repairs.find(x=>x.id===r.id), oldBy=new Map<string,number>(), nextBy=new Map<string,number>();
+    for(const pt of old?.parts||[]) if(pt.productId) oldBy.set(pt.productId,(oldBy.get(pt.productId)||0)+pt.qty);
+    for(const pt of cleanParts) if(pt.productId) nextBy.set(pt.productId,(nextBy.get(pt.productId)||0)+pt.qty);
+    for(const id of new Set([...oldBy.keys(),...nextBy.keys()])) { const delta=(nextBy.get(id)||0)-(oldBy.get(id)||0); const product=state.products.find(p=>p.id===id); if(!product || product.stock-delta<0){ pushAudit('DENIED','Repair',`Insufficient stock for repair part: ${id}`); return; } }
+    setState(st=>{
+      let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts:cleanParts,by:r.by||user.name}; let counters=st.counters;
+      if(!exists && (!job.jobNo || job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1; job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`}; counters={...st.counters,job:seq};}
+      const products=st.products.map(p=>{const delta=(nextBy.get(p.id)||0)-(oldBy.get(p.id)||0); return delta?{...p,stock:p.stock-delta}:p;});
+      return {...st,products,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};
     });
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Repair', `${exists ? 'Updated' : 'Opened'} ${jobNo || 'job'} · ${r.deviceBrand} ${r.deviceModel}`);
-  }, [state.repairs, state.products, pushAudit, user]);
+    pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
+  }, [state.repairs,state.products,pushAudit,user]);
 
 '''
-          s = s[:start] + new_save + s[end:]
-
-          marker = "  const deleteRepair = useCallback((id: string) => {"
-          dstart = s.index(marker)
-          dend = s.index('  const saveCategory = useCallback', dstart)
-          replacement = '''  const deleteRepair = useCallback((id: string) => {
+          s=s[:a]+fn+s[b:]
+          a=s.index('  const deleteRepair = useCallback((id: string) => {'); b=s.index('  const saveCategory = useCallback',a)
+          fn='''  const deleteRepair = useCallback((id: string) => {
     if (!can('act:deleteRecords')) return;
-    const repair = (state.repairs || []).find(x => x.id === id);
-    if (!repair || !['cancelled', 'delivered'].includes(repair.status)) return;
-    setState(s => {
-      const tracked = new Map<string, number>();
-      for (const pt of repair.parts || []) if (pt.productId) tracked.set(pt.productId, (tracked.get(pt.productId) || 0) + pt.qty);
-      const products = s.products.map(p => {
-        const qty = tracked.get(p.id) || 0;
-        return qty ? { ...p, stock: p.stock + qty } : p;
-      });
-      return { ...s, products, repairs: (s.repairs || []).filter(x => x.id !== id) };
-    });
-    pushAudit('DELETE', 'Repair', `Deleted ${repair.jobNo}`);
-  }, [state.repairs, pushAudit, can]);
+    const repair=(state.repairs||[]).find(x=>x.id===id); if(!repair || !['cancelled','delivered'].includes(repair.status)) return;
+    setState(st=>{const tracked=new Map<string,number>(); for(const pt of repair.parts||[]) if(pt.productId) tracked.set(pt.productId,(tracked.get(pt.productId)||0)+pt.qty); const products=st.products.map(p=>{const qty=tracked.get(p.id)||0; return qty?{...p,stock:p.stock+qty}:p;}); return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};});
+    pushAudit('DELETE','Repair',`Deleted ${repair.jobNo}`);
+  }, [state.repairs,pushAudit,can]);
 
   const saveWarrantyClaim = useCallback((c: WarrantyClaim) => {
     if (!user) return;
-    const claims = state.warrantyClaims || [];
-    const exists = claims.some(x => x.id === c.id);
-    const claimNo = (c.claimNo || '').trim();
-    const valid: ClaimStatus[] = ['open', 'approved', 'rejected', 'replaced', 'repaired', 'closed'];
-    if (!c.productName.trim() || !c.issueDescription.trim() || !valid.includes(c.status)) return;
-    if (claimNo && claims.some(x => x.id !== c.id && x.claimNo.trim().toLowerCase() === claimNo.toLowerCase())) {
-      pushAudit('DENIED', 'WarrantyClaim', `Duplicate claim number blocked: ${claimNo}`);
-      return;
-    }
-    setState(s => {
-      let claim: WarrantyClaim = { ...c, productName: c.productName.trim(), issueDescription: c.issueDescription.trim(), claimNo: claimNo || c.claimNo, by: c.by || user.name };
-      let counters = s.counters;
-      if (!exists && (!claim.claimNo || claim.claimNo === 'CL-TEMP')) {
-        const seq = (s.counters.claim || 0) + 1;
-        claim = { ...claim, claimNo: `CL-${String(seq).padStart(4, '0')}` };
-        counters = { ...s.counters, claim: seq };
-      }
-      if (claim.status === 'closed') claim = { ...claim, closedAt: claim.closedAt || new Date().toISOString() };
-      else claim = { ...claim, closedAt: undefined };
-      return { ...s, counters, warrantyClaims: exists ? (s.warrantyClaims || []).map(x => x.id === c.id ? claim : x) : [claim, ...(s.warrantyClaims || [])] };
-    });
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'WarrantyClaim', `${exists ? 'Updated' : 'Created'} ${claimNo || 'claim'} · ${c.productName}`);
-  }, [state.warrantyClaims, pushAudit, user]);
+    const claims=state.warrantyClaims||[], exists=claims.some(x=>x.id===c.id), claimNo=(c.claimNo||'').trim();
+    const valid:ClaimStatus[]=['open','approved','rejected','replaced','repaired','closed'];
+    if(!c.productName.trim()||!c.issueDescription.trim()||!valid.includes(c.status)) return;
+    if(claimNo && claims.some(x=>x.id!==c.id && x.claimNo.trim().toLowerCase()===claimNo.toLowerCase())){pushAudit('DENIED','WarrantyClaim',`Duplicate claim number blocked: ${claimNo}`);return;}
+    setState(st=>{let claim:WarrantyClaim={...c,productName:c.productName.trim(),issueDescription:c.issueDescription.trim(),claimNo:claimNo||c.claimNo,by:c.by||user.name};let counters=st.counters;if(!exists&&(!claim.claimNo||claim.claimNo==='CL-TEMP')){const seq=(st.counters.claim||0)+1;claim={...claim,claimNo:`CL-${String(seq).padStart(4,'0')}`};counters={...st.counters,claim:seq};}claim=claim.status==='closed'?{...claim,closedAt:claim.closedAt||new Date().toISOString()}:{...claim,closedAt:undefined};return {...st,counters,warrantyClaims:exists?(st.warrantyClaims||[]).map(x=>x.id===c.id?claim:x):[claim,...(st.warrantyClaims||[])]};});
+    pushAudit(exists?'UPDATE':'CREATE','WarrantyClaim',`${exists?'Updated':'Created'} ${claimNo||'claim'} · ${c.productName}`);
+  }, [state.warrantyClaims,pushAudit,user]);
 
 '''
-          s = s[:dstart] + replacement + s[dend:]
-          store.write_text(s)
-
-          page = Path('src/pages/WarrantyClaims.tsx')
-          p = page.read_text()
-          p = re.sub(r"import \{ fmtDate, uid \} from '../lib/utils';", "import { fmtDate, uid } from '../lib/utils';", p)
-          p = p.replace("  const { state, user, logAudit } = usePOS();", "  const { state, user, saveWarrantyClaim } = usePOS();")
-          p = re.sub(r"\nfunction loadClaims\(\): WarrantyClaim\[\] \{.*?\n\}\n\nfunction persistClaims\(list: WarrantyClaim\[\], countersPatch\?: Record<string, number>\) \{.*?\n\}\n", "\n", p, flags=re.S)
-          p = p.replace("  const [claims, setClaims] = useState<WarrantyClaim[]>(() => state.warrantyClaims?.length ? state.warrantyClaims : loadClaims());", "  const claims = state.warrantyClaims || [];")
-          p = re.sub(r"    const next = isNew \? \[saved, \.\.\.claims\] : claims\.map\(x => x\.id === saved\.id \? saved : x\);\n    setClaims\(next\);\n    persistClaims\(next, isNew \? \{ claim: seq \} : undefined\);\n    logAudit\(isNew \? 'CREATE' : 'UPDATE', 'WarrantyClaim', `\$\{saved\.claimNo\} · \$\{saved\.productName\}`\);", "    saveWarrantyClaim(saved);", p)
-          p = p.replace("  }, [claims, isNew, state.counters, logAudit, user]);", "  }, [claims, isNew, state.counters, saveWarrantyClaim, user]);")
+          s=s[:a]+fn+s[b:]; store.write_text(s)
+          page=Path('src/pages/WarrantyClaims.tsx'); p=page.read_text()
+          p=p.replace("  const { state, user, logAudit } = usePOS();","  const { state, user, saveWarrantyClaim } = usePOS();")
+          p=re.sub(r"\nfunction loadClaims\(\): WarrantyClaim\[\] \{.*?\n\}\n\nfunction persistClaims\(list: WarrantyClaim\[\], countersPatch\?: Record<string, number>\) \{.*?\n\}\n","\n",p,flags=re.S)
+          p=p.replace("  const [claims, setClaims] = useState<WarrantyClaim[]>(() => state.warrantyClaims?.length ? state.warrantyClaims : loadClaims());","  const claims = state.warrantyClaims || [];")
+          p=re.sub(r"    const next = isNew \? \[saved, \.\.\.claims\] : claims\.map\(x => x\.id === saved\.id \? saved : x\);\n    setClaims\(next\);\n    persistClaims\(next, isNew \? \{ claim: seq \} : undefined\);\n    logAudit\(isNew \? 'CREATE' : 'UPDATE', 'WarrantyClaim', `\$\{saved\.claimNo\} · \$\{saved\.productName\}`\);","    saveWarrantyClaim(saved);",p)
+          p=p.replace("  }, [claims, isNew, state.counters, logAudit, user]);","  }, [claims, isNew, state.counters, saveWarrantyClaim, user]);")
           page.write_text(p)
-
-          if 'saveWarrantyClaim' not in store.read_text() or 'saveWarrantyClaim(saved);' not in page.read_text():
-              raise SystemExit('patch verification failed')
+          assert 'saveWarrantyClaim' in store.read_text() and 'saveWarrantyClaim(saved);' in page.read_text()
           PY
       - name: Verify
         run: |
@@ -138,11 +82,11 @@ jobs:
           npm run typecheck
           npm run lint
           npm run build
-      - name: Commit source and remove workflow
+      - name: Commit and remove workflow
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src/lib/store.tsx src/pages/WarrantyClaims.tsx
           git rm .github/workflows/repair-warranty-finalize.yml
           git commit -m 'fix: harden repairs and warranty claims'
-          git push
+          git push origin HEAD:${{ github.head_ref }}
