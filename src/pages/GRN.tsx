@@ -28,8 +28,6 @@ export default function GRN() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<Array<{ name: string; old: number; next: number }>>([]);
-  const syncedPricePurchases = useRef(new Set<string>());
-
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
