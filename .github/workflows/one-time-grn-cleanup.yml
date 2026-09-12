@@ -1,0 +1,40 @@
+name: One-time GRN cleanup
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove obsolete page-level selling-price sync
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/pages/GRN.tsx')
+          s = p.read_text()
+          s = s.replace("import { useEffect, useRef, useState } from 'react';", "import { useState } from 'react';")
+          s = s.replace("  const { state, user, saveGRNDraft, updateGRNDraft, processGRN, saveProduct, deletePurchase, can } = usePOS();", "  const { state, user, saveGRNDraft, updateGRNDraft, processGRN, deletePurchase, can } = usePOS();")
+          start = s.find("  useEffect(() => {\n    for (const purchase of processed) {")
+          if start < 0:
+              raise SystemExit('obsolete useEffect start not found')
+          end = s.find("\n\n  const setRow =", start)
+          if end < 0:
+              raise SystemExit('obsolete useEffect end not found')
+          s = s[:start] + s[end+2:]
+          p.write_text(s)
+      - name: Verify cleanup
+        run: |
+          grep -q "useEffect" src/pages/GRN.tsx && exit 1 || true
+          grep -q "syncedPricePurchases" src/pages/GRN.tsx && exit 1 || true
+          grep -q "saveProduct" src/pages/GRN.tsx && exit 1 || true
+      - name: Commit cleanup
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/GRN.tsx
+          git diff --cached --quiet || git commit -m 'fix: remove obsolete GRN price sync workaround'
+          git push
