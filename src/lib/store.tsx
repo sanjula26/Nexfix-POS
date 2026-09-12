@@ -635,32 +635,95 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- customers / suppliers ---------------- */
   const saveCustomer = useCallback((c: Customer) => {
-    const exists = state.customers.some(x => x.id === c.id);
-    setState(s => {
-      const updatedCustomers = exists ? s.customers.map(x => (x.id === c.id ? c : x)) : [c, ...s.customers];
-      syncToGoogleDrive('Customers', updatedCustomers); // Auto Google Sync
-      return { ...s, customers: updatedCustomers };
-    });
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Customer', `${exists ? 'Updated' : 'Created'} customer ${c.name}`);
-  }, [pushAudit, state.customers]);
+  if (!user) { pushAudit('DENIED', 'Customer', `Blocked customer save for ${c.name || c.id}`); return; }
+  const name = String(c.name || '').trim();
+  const phone = String(c.phone || '').trim();
+  const email = String(c.email || '').trim().toLowerCase();
+  const nic = String(c.nic || '').trim();
+  const tin = String(c.tin || '').trim();
+  const address = String(c.address || '').trim();
+  const creditLimit = c.creditLimit === undefined ? undefined : Number(c.creditLimit);
+  const loyaltyPoints = Number(c.loyaltyPoints);
+  if (!name || !phone || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) || !Number.isFinite(loyaltyPoints) || !Number.isInteger(loyaltyPoints) || loyaltyPoints < 0 || (creditLimit !== undefined && (!Number.isFinite(creditLimit) || creditLimit < 0))) {
+    pushAudit('DENIED', 'Customer', `Blocked invalid customer input for ${c.id}`);
+    return;
+  }
+  const existing = state.customers.find(x => x.id === c.id);
+  let duplicate = false;
+  setState(s => {
+    const normalizedPhone = phone.replace(/[\s()-]/g, '');
+    const duplicatePhone = s.customers.some(x => x.id !== c.id && x.phone.replace(/[\s()-]/g, '') === normalizedPhone);
+    const duplicateNic = !!nic && s.customers.some(x => x.id !== c.id && (x.nic || '').trim().toLowerCase() === nic.toLowerCase());
+    if (duplicatePhone || duplicateNic) { duplicate = true; return s; }
+    const updated: Customer = existing
+      ? { ...existing, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined }
+      : { ...c, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditBalance: 0, loyaltyPoints, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined };
+    const updatedCustomers = existing ? s.customers.map(x => x.id === c.id ? updated : x) : [updated, ...s.customers];
+    syncToGoogleDrive('Customers', updatedCustomers);
+    return { ...s, customers: updatedCustomers };
+  });
+  if (duplicate) pushAudit('DENIED', 'Customer', `Blocked duplicate phone/NIC for ${name}`);
+  else pushAudit(existing ? 'UPDATE' : 'CREATE', 'Customer', `${existing ? 'Updated' : 'Created'} customer ${name}`);
+}, [pushAudit, state.customers, user]);
 
   const deleteCustomer = useCallback((id: string) => {
-    const c = state.customers.find(x => x.id === id);
-    setState(s => ({ ...s, customers: s.customers.filter(x => x.id !== id) }));
-    if (c) pushAudit('DELETE', 'Customer', `Deleted customer ${c.name}`);
-  }, [pushAudit, state.customers]);
+  if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Customer', `Blocked customer delete for ${id}`); return; }
+  const c = state.customers.find(x => x.id === id);
+  if (!c) return;
+  const referencedByHistory = state.sales.some(x => x.customerId === id)
+    || (state.quotations || []).some(x => x.customerId === id)
+    || (state.warrantyClaims || []).some(x => x.customerId === id)
+    || state.repairs.some(x => x.customerId === id);
+  if (c.creditBalance > 0 || referencedByHistory) {
+    pushAudit('DENIED', 'Customer', `Blocked deletion of ${c.name}: balance or historical references exist`);
+    return;
+  }
+  setState(s => ({ ...s, customers: s.customers.filter(x => x.id !== id) }));
+  pushAudit('DELETE', 'Customer', `Deleted customer ${c.name}`);
+}, [can, pushAudit, state.customers, state.quotations, state.repairs, state.sales, state.warrantyClaims, user]);
 
   const saveSupplier = useCallback((sp: Supplier) => {
-    const exists = state.suppliers.some(x => x.id === sp.id);
-    setState(s => ({ ...s, suppliers: exists ? s.suppliers.map(x => (x.id === sp.id ? sp : x)) : [sp, ...s.suppliers] }));
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Supplier', `${exists ? 'Updated' : 'Created'} supplier ${sp.name}`);
-  }, [pushAudit, state.suppliers]);
+  if (!user) { pushAudit('DENIED', 'Supplier', `Blocked supplier save for ${sp.name || sp.id}`); return; }
+  const name = String(sp.name || '').trim();
+  const phone = String(sp.phone || '').trim();
+  const email = String(sp.email || '').trim().toLowerCase();
+  const contactPerson = String(sp.contactPerson || '').trim();
+  const address = String(sp.address || '').trim();
+  if (!name || !phone || (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+    pushAudit('DENIED', 'Supplier', `Blocked invalid supplier input for ${sp.id}`);
+    return;
+  }
+  const exists = state.suppliers.some(x => x.id === sp.id);
+  let duplicate = false;
+  setState(s => {
+    const normalizedPhone = phone.replace(/[\s()-]/g, '');
+    const duplicatePhone = s.suppliers.some(x => x.id !== sp.id && x.phone.replace(/[\s()-]/g, '') === normalizedPhone);
+    if (duplicatePhone) { duplicate = true; return s; }
+    const normalized: Supplier = { ...sp, name, phone, email: email || undefined, contactPerson: contactPerson || undefined, address: address || undefined };
+    const updatedSuppliers = exists ? s.suppliers.map(x => x.id === sp.id ? normalized : x) : [normalized, ...s.suppliers];
+    syncToGoogleDrive('Suppliers', updatedSuppliers);
+    return { ...s, suppliers: updatedSuppliers };
+  });
+  if (duplicate) pushAudit('DENIED', 'Supplier', `Blocked duplicate phone for ${name}`);
+  else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Supplier', `${exists ? 'Updated' : 'Created'} supplier ${name}`);
+}, [pushAudit, state.suppliers, user]);
 
   const deleteSupplier = useCallback((id: string) => {
-    const sp = state.suppliers.find(x => x.id === id);
-    setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x.id !== id) }));
-    if (sp) pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
-  }, [state.suppliers, pushAudit]);
+  if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Supplier', `Blocked supplier delete for ${id}`); return; }
+  const sp = state.suppliers.find(x => x.id === id);
+  if (!sp) return;
+  const referencedByHistory = state.purchases.some(x => x.supplierId === id)
+    || (state.purchaseReturns || []).some(x => x.supplierId === id)
+    || (state.supplierPayments || []).some(x => x.supplierId === id)
+    || state.products.some(x => x.supplierId === id)
+    || (state.grns || []).some(x => x.supplierId === id);
+  if (referencedByHistory) {
+    pushAudit('DENIED', 'Supplier', `Blocked deletion of ${sp.name}: linked products or purchase history exists`);
+    return;
+  }
+  setState(s => ({ ...s, suppliers: s.suppliers.filter(x => x.id !== id) }));
+  pushAudit('DELETE', 'Supplier', `Deleted supplier ${sp.name}`);
+}, [can, pushAudit, state.products, state.purchases, state.purchaseReturns, state.supplierPayments, state.suppliers, state.grns, user]);
 
   const saveSupplierPayment = useCallback((p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => {
     if (!user || !state.suppliers.some(s => s.id === p.supplierId)) return null;
