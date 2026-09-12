@@ -9,29 +9,11 @@ const STATUS_TONE: Record<ClaimStatus, 'slate' | 'blue' | 'emerald' | 'rose' | '
   open: 'amber', approved: 'blue', rejected: 'rose', replaced: 'violet', repaired: 'emerald', closed: 'slate',
 };
 
-function loadClaims(): WarrantyClaim[] {
-  try {
-    const raw = localStorage.getItem('nexfix_pos_v2');
-    if (!raw) return [];
-    return (JSON.parse(raw).warrantyClaims as WarrantyClaim[]) || [];
-  } catch { return []; }
-}
-
-function persistClaims(list: WarrantyClaim[], countersPatch?: Record<string, number>) {
-  try {
-    const raw = localStorage.getItem('nexfix_pos_v2');
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    data.warrantyClaims = list;
-    if (countersPatch) data.counters = { ...data.counters, ...countersPatch };
-    localStorage.setItem('nexfix_pos_v2', JSON.stringify(data));
-  } catch { /* ignore storage failures */ }
-}
 
 export default function WarrantyClaims() {
-  const { state, user, logAudit } = usePOS();
+  const { state, user, saveWarrantyClaim } = usePOS();
   const [q, setQ] = useState('');
-  const [claims, setClaims] = useState<WarrantyClaim[]>(() => state.warrantyClaims?.length ? state.warrantyClaims : loadClaims());
+  const claims = state.warrantyClaims || [];
   const [editing, setEditing] = useState<WarrantyClaim | null>(null);
   const [isNew, setIsNew] = useState(false);
 
@@ -67,10 +49,7 @@ export default function WarrantyClaims() {
       closedAt: editing.status === 'closed' ? (editing.closedAt || new Date().toISOString()) : undefined,
       by: editing.by || user?.name || 'Staff',
     };
-    const next = isNew ? [saved, ...claims] : claims.map(x => x.id === saved.id ? saved : x);
-    setClaims(next);
-    persistClaims(next, isNew ? { claim: seq } : undefined);
-    logAudit(isNew ? 'CREATE' : 'UPDATE', 'WarrantyClaim', `${saved.claimNo} · ${saved.productName}`);
+    saveWarrantyClaim(saved);
     setEditing(null);
     setIsNew(false);
   };
