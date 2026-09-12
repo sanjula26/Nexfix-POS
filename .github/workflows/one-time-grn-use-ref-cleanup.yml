@@ -1,0 +1,31 @@
+name: One-time GRN useRef cleanup
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove stale useRef state
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/pages/GRN.tsx')
+          s = p.read_text()
+          s = s.replace('  const syncedPricePurchases = useRef(new Set<string>());\n\n', '')
+          p.write_text(s)
+      - name: Verify
+        run: |
+          ! grep -q 'useRef' src/pages/GRN.tsx
+          ! grep -q 'syncedPricePurchases' src/pages/GRN.tsx
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/pages/GRN.tsx
+          git diff --cached --quiet || git commit -m 'fix: remove stale GRN useRef state'
+          git push
