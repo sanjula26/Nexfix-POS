@@ -29,6 +29,18 @@ export default function SupplierPayments() {
   const supplierPurchases = supplier
     ? state.purchases.filter(p => p.supplierId === supplier.id && p.status === 'received').sort((a, b) => +new Date(b.date) - +new Date(a.date))
     : [];
+  const selectedPurchase = purchaseId ? supplierPurchases.find(p => p.id === purchaseId) : undefined;
+  const purchasePaid = selectedPurchase
+    ? payments.filter(p => p.purchaseId === selectedPurchase.id && Number.isFinite(p.amount) && p.amount > 0).reduce((sum, p) => sum + p.amount, 0)
+    : 0;
+  const purchaseReturned = selectedPurchase
+    ? (state.purchaseReturns || [])
+      .filter(r => r.purchaseId === selectedPurchase.id && Number.isFinite(r.total) && r.total > 0)
+      .reduce((sum, r) => sum + r.total, 0)
+    : 0;
+  const selectedPurchaseOutstanding = selectedPurchase
+    ? Math.max(0, Math.round((selectedPurchase.total - purchasePaid - purchaseReturned) * 100) / 100)
+    : outstanding;
 
   const q = search.trim().toLowerCase();
   const rows = [...payments]
@@ -47,6 +59,10 @@ export default function SupplierPayments() {
     if (!supplier) return setError('Select a supplier.');
     if (!Number.isFinite(value) || value <= 0) return setError('Enter a valid payment amount.');
     if (value > outstanding) return setError(`Payment exceeds the supplier outstanding balance of ${fmtRs(outstanding)}.`);
+    if (purchaseId && !selectedPurchase) return setError('Selected purchase is no longer available.');
+    if (purchaseId && value > selectedPurchaseOutstanding) {
+      return setError(`Payment exceeds the selected purchase outstanding balance of ${fmtRs(selectedPurchaseOutstanding)}.`);
+    }
     const payment = saveSupplierPayment({ supplierId: supplier.id, amount: Math.round(value * 100) / 100, method, purchaseId: purchaseId || undefined, note: note.trim() || undefined });
     if (!payment) return setError('Payment could not be saved.');
     setAmount(''); setPurchaseId(''); setNote('');
@@ -63,9 +79,9 @@ export default function SupplierPayments() {
       <div className="card p-4 mb-5">
         <div className="grid md:grid-cols-2 gap-4">
           <Field label="Supplier"><select className="input" value={supplierId} onChange={e => { setSupplierId(e.target.value); setPurchaseId(''); setError(''); }}><option value="">Select supplier...</option>{state.suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-          <Field label="Amount (Rs.)" hint={supplier ? `Outstanding: ${fmtRs(outstanding)}` : undefined}><input className="input num" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></Field>
+          <Field label="Amount (Rs.)" hint={supplier ? (purchaseId && selectedPurchase ? `Purchase outstanding: ${fmtRs(selectedPurchaseOutstanding)}` : `Outstanding: ${fmtRs(outstanding)}`) : undefined}><input className="input num" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></Field>
           <Field label="Payment method"><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{METHODS.map(m => { const Icon = m.icon; return <button key={m.value} type="button" className={`btn !px-2 ${method === m.value ? 'btn-primary' : 'btn-soft'}`} onClick={() => setMethod(m.value)}><Icon size={13} /> {m.label}</button>; })}</div></Field>
-          <Field label="Against purchase (optional)"><select className="input" value={purchaseId} onChange={e => setPurchaseId(e.target.value)} disabled={!supplier}><option value="">General supplier payment</option>{supplierPurchases.map(p => <option key={p.id} value={p.id}>{p.poNo} · {fmtRs(p.total)}</option>)}</select></Field>
+          <Field label="Against purchase (optional)"><select className="input" value={purchaseId} onChange={e => { setPurchaseId(e.target.value); setError(''); }} disabled={!supplier}><option value="">General supplier payment</option>{supplierPurchases.map(p => <option key={p.id} value={p.id}>{p.poNo} · {fmtRs(p.total)}</option>)}</select></Field>
           <Field label="Note"><input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="Optional reference or note" /></Field>
         </div>
         {error && <p className="text-sm text-rose-500 font-medium mt-3">{error}</p>}
