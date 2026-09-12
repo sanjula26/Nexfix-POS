@@ -144,14 +144,19 @@ export default function Reports() {
     return [...m.values()].sort((a, b) => b.revenue - a.revenue);
   }, [salesA]);
 
+  const csvCell = (value: unknown) => {
+    const text = String(value ?? '');
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+
   const exportCsv = () => {
     const rows = [
-      ['Bill No', 'Date', 'Customer', 'Cashier', 'Items', 'Payment', 'Status', 'Total', 'Profit'].join(','),
+      ['Bill No', 'Date', 'Customer', 'Cashier', 'Items', 'Payment', 'Status', 'Total', 'Profit'].map(csvCell).join(','),
       ...salesA.map(s => [
-        s.billNo, new Date(s.date).toISOString(), `"${s.customerName}"`, `"${s.cashierName}"`,
+        s.billNo, new Date(s.date).toISOString(), s.customerName, s.cashierName,
         s.items.reduce((a, i) => a + i.qty, 0), s.payments && s.payments.length > 1 ? 'SPLIT' : s.payment,
         s.status, s.total.toFixed(2), s.profit.toFixed(2),
-      ].join(',')),
+      ].map(csvCell).join(',')),
     ];
     downloadFile(`nexfix-sales-${dkey(from)}_to_${dkey(to)}.csv`, rows.join('\n'), 'text/csv');
   };
@@ -260,290 +265,54 @@ export default function Reports() {
 
         {/* compare with */}
         <div className="mt-5 pt-4 border-t border-line">
-          <span className="block text-[10px] font-extrabold tracking-[0.14em] text-faint uppercase mb-2.5 flex items-center gap-1.5">
+          <span className="block text-[10px] font-extrabold tracking-[0.14em] text-faint uppercase mb-2 flex items-center gap-1.5">
             <GitCompareArrows size={12} /> Compare With
           </span>
           <div className="flex flex-wrap items-center gap-2">
-            {([
-              { k: 'none', label: 'No comparison' },
-              { k: 'previous', label: 'Previous period' },
-              { k: 'custom', label: 'Custom date…' },
-            ] as { k: CompareMode; label: string }[]).map(o => (
-              <button
-                key={o.k}
-                onClick={() => setCompareMode(o.k)}
-                className={`px-3.5 py-1.5 rounded-xl text-[12px] font-semibold transition-all border ${
-                  compareMode === o.k ? 'bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-500/25' : 'bg-raised text-sub border-line hover:text-ink'
-                }`}
-              >
-                {o.label}
+            {(['previous', 'none', 'custom'] as CompareMode[]).map(m => (
+              <button key={m} onClick={() => setCompareMode(m)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold border ${compareMode === m ? 'bg-sky-500 text-white border-sky-500' : 'bg-raised text-sub border-line'}`}>
+                {m === 'previous' ? 'Previous Period' : m === 'none' ? 'No Compare' : 'Custom'}
               </button>
             ))}
+            {compareMode === 'custom' && <DatePicker value={compareFrom} onChange={v => v && setCompareFrom(v)} />}
           </div>
-
-          {compareMode === 'custom' && (
-            <div className="flex flex-wrap items-end gap-3 mt-3.5">
-              <div className="w-56 max-w-full">
-                <span className="block text-[10px] font-bold tracking-wider uppercase text-sub mb-1.5">Compare from</span>
-                <DatePicker value={compareFrom} onChange={setCompareFrom} label="mm/dd/yyyy" />
-              </div>
-              {compareFrom ? (
-                <Badge tone="blue" className="num !text-[11px] mb-2">
-                  Selected start: {compareFrom} · {compareText}
-                </Badge>
-              ) : (
-                <span className="text-[11.5px] text-faint mb-2.5">Pick a start date — the same length as your selected period is compared</span>
-              )}
-            </div>
-          )}
-
-          {/* showing strip */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mt-4 text-[12px] text-sub">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-violet-500" />
-              Showing: <b className="text-amber-600 dark:text-amber-400">{quickLabel(period)}</b>
-              <span className="num text-faint">({rangeText})</span>
-            </span>
-            {compareRange && (
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-sky-500" />
-                Compared to: <b className="text-sky-600 dark:text-sky-400">{compareMode === 'previous' ? 'Previous period' : 'Custom period'}</b>
-                <span className="num text-faint">({compareText})</span>
-              </span>
-            )}
-          </div>
+          {comparing && <p className="text-[11px] text-sub mt-2">Current: {rangeText} · Compare: {compareText}</p>}
         </div>
       </div>
 
-      {/* ============ empty / data ============ */}
-      {salesA.length === 0 ? (
-        <div className="card mb-6">
-          <EmptyState
-            icon={<CalendarX2 size={26} />}
-            title="No data available for the selected period"
-            sub="Try another quick filter, or pick a different range — sales will appear here as soon as they exist in this window."
-          />
-        </div>
-      ) : null}
-
-      {/* KPI cards with comparison deltas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+      {/* ============ KPI cards ============ */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
         {cards.map(c => {
-          const d = comparing && c.b !== null ? delta(c.a, c.b) : null;
-          return (
-            <div key={c.label} className="card p-5">
-              <div className="flex items-start justify-between">
-                <div className="kpi-label text-sub">{c.label}</div>
-                <span className={`w-9 h-9 rounded-xl bg-gradient-to-br ${c.tint} text-white flex items-center justify-center shadow-md`}>
-                  <c.icon size={16} />
-                </span>
-              </div>
-              <div className="num text-[22px] font-extrabold text-ink mt-2">
-                {c.plain ? fmtNum(c.a) : fmtRs(c.a)}
-              </div>
-              {d !== null && (
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <Badge tone={d > 0 ? 'emerald' : d < 0 ? 'rose' : 'slate'} className="num !text-[10px]">
-                    {d > 0 ? <ArrowUpRight size={10} /> : d < 0 ? <ArrowDownRight size={10} /> : <Minus size={10} />}
-                    {d > 0 ? '+' : ''}{d}%
-                  </Badge>
-                  <span className="text-[10.5px] text-faint num">vs {c.plain ? fmtNum(c.b!) : fmtRs(c.b!, false)}</span>
-                </div>
-              )}
-            </div>
-          );
+          const Icon = c.icon;
+          const change = c.b == null ? null : delta(c.a, c.b);
+          return <div key={c.label} className="card p-4">
+            <div className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-sub">{c.label}</span><Icon size={17} className="text-faint" /></div>
+            <div className="text-xl font-extrabold text-ink num mt-2">{c.plain ? fmtNum(c.a) : fmtRs(c.a)}</div>
+            {change !== null && <div className={`text-[11px] mt-1 font-bold ${change >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{change >= 0 ? <ArrowUpRight size={12} className="inline" /> : <ArrowDownRight size={12} className="inline" />} {Math.abs(change)}% vs previous</div>}
+          </div>;
         })}
       </div>
 
-      {/* side-by-side period summary */}
-      {comparing && (
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-3 items-stretch mb-5">
-          <PeriodCard
-            dot="bg-violet-500" name={`${quickLabel(period)} · selected`} range={rangeText}
-            revenue={A.revenue} profit={A.profit} bills={A.bills} tone="violet"
-            empty={salesA.length === 0}
-          />
-          <div className="hidden md:flex flex-col items-center justify-center px-2">
-            <span className="w-9 h-9 rounded-xl bg-raised border border-line flex items-center justify-center text-faint"><GitCompareArrows size={16} /></span>
-            <Badge tone={delta(A.revenue, B.revenue) >= 0 ? 'emerald' : 'rose'} className="num mt-2">
-              {delta(A.revenue, B.revenue) >= 0 ? '+' : ''}{delta(A.revenue, B.revenue)}%
-            </Badge>
-          </div>
-          <PeriodCard
-            dot="bg-sky-500" name={compareMode === 'previous' ? 'Previous period' : 'Custom period'} range={compareText}
-            revenue={B.revenue} profit={B.profit} bills={B.bills} tone="blue"
-            empty={salesB.length === 0}
-          />
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-5">
-        {/* revenue trend */}
-        <div className="card p-5 xl:col-span-2">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <h3 className="font-bold text-ink">Revenue &amp; Profit Trend</h3>
-            <div className="flex items-center gap-3 text-[10.5px] font-semibold text-sub">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-500" /> Revenue</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Profit</span>
-              {comparing && <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400" /> Compare revenue</span>}
-            </div>
-          </div>
-          <p className="text-xs text-faint mb-4">Daily performance across selected period</p>
-          {salesA.length === 0 ? (
-            <p className="text-sm text-faint text-center py-20">No data available for the selected period</p>
-          ) : (
-            <div className="h-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={daily} margin={{ left: 4, right: 8, top: 4 }}>
-                  <defs>
-                    <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.02} />
-                    </linearGradient>
-                    <linearGradient id="pro" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 6" stroke="rgba(130,135,170,0.22)" vertical={false} />
-                  <XAxis dataKey="d" tick={{ fontSize: 10, fill: '#9397b8' }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10, fill: '#9397b8' }} tickLine={false} axisLine={false} width={54}
-                    tickFormatter={v => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
-                  <Tooltip contentStyle={tipStyle} formatter={fmtTip} />
-                  {comparing && (
-                    <Area type="monotone" dataKey="compare" stroke="#38bdf8" strokeWidth={2} strokeDasharray="6 4" fill="transparent" name="Compare revenue" />
-                  )}
-                  <Area type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.4} fill="url(#rev)" name="Revenue" />
-                  <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.2} fill="url(#pro)" name="Profit" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
-        {/* payment split */}
-        <div className="card p-5">
-          <h3 className="font-bold text-ink mb-1">Payment Methods</h3>
-          <p className="text-xs text-faint mb-2">Share of revenue · selected period</p>
-          {paySplit.length === 0 ? (
-            <p className="text-sm text-faint text-center py-16">No data available for the selected period</p>
-          ) : (
-            <>
-              <div className="h-[220px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={paySplit} dataKey="value" nameKey="name" innerRadius={52} outerRadius={78} paddingAngle={3} strokeWidth={0}>
-                      {paySplit.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                    </Pie>
-                    <Tooltip contentStyle={tipStyle} formatter={fmtTip} />
-                    <Legend iconSize={8} formatter={(v: string) => <span style={{ fontSize: 11, color: '#9397b8' }}>{v}</span>} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-1.5 mt-2">
-                {paySplit.map((p, i) => {
-                  const Icon = PAY_ICON[p.name.toLowerCase()] || Bank;
-                  return (
-                    <div key={p.name} className="flex items-center justify-between text-[12px]">
-                      <span className="flex items-center gap-2 text-sub font-medium">
-                        <span className="w-2 h-2 rounded-full" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                        <Icon size={12} className="text-faint" /> {p.name}
-                      </span>
-                      <span className="num font-bold text-ink">{fmtRs(p.value, false)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
+      {/* ============ daily chart ============ */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between gap-3 mb-4"><div><h2 className="text-base font-extrabold text-ink">Daily Sales Trend</h2><p className="text-xs text-sub">Revenue and profit by day</p></div><Badge tone="violet">{rangeText}</Badge></div>
+        {daily.length ? <div className="h-72"><ResponsiveContainer width="100%" height="100%"><AreaChart data={daily}><defs><linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25}/><stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="d"/><YAxis tickFormatter={v => fmtRs(Number(v), false)}/><Tooltip formatter={(v: unknown) => fmtTip(v)} contentStyle={tipStyle}/><Area type="monotone" dataKey="revenue" stroke="#8b5cf6" fill="url(#revenueFill)" name="Revenue"/><Area type="monotone" dataKey="profit" stroke="#10b981" fill="none" name="Profit"/>{comparing && <Area type="monotone" dataKey="compare" stroke="#38bdf8" fill="none" strokeDasharray="5 5" name="Compare"/>}</AreaChart></ResponsiveContainer></div> : <EmptyState icon={<CalendarX2 size={22}/>} title="No sales in this period" description="Choose another date range to view the sales trend."/>}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* top products */}
-        <div className="card p-5 xl:col-span-2">
-          <h3 className="font-bold text-ink mb-1 flex items-center gap-2"><Trophy size={15} className="text-amber-500" /> Top Selling Products</h3>
-          <p className="text-xs text-faint mb-4">By revenue in selected period</p>
-          {topProducts.length === 0 ? (
-            <p className="text-sm text-faint text-center py-12">No data available for the selected period</p>
-          ) : (
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topProducts} layout="vertical" margin={{ left: 4, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 6" stroke="rgba(130,135,170,0.22)" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: '#9397b8' }} tickLine={false} axisLine={false}
-                    tickFormatter={v => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
-                  <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11, fill: '#9397b8' }} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={tipStyle} formatter={fmtTip} />
-                  <Bar dataKey="revenue" fill="#8b5cf6" radius={[0, 8, 8, 0]} barSize={18} name="Revenue" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
-        {/* cashier performance */}
-        <div className="card overflow-hidden">
-          <div className="px-5 pt-5 pb-3">
-            <h3 className="font-bold text-ink">Cashier Performance</h3>
-            <p className="text-xs text-faint mt-0.5">Selected period</p>
-          </div>
-          <table className="w-full">
-            <thead>
-              <tr><th className="th">Cashier</th><th className="th">Bills</th><th className="th !text-right">Revenue</th></tr>
-            </thead>
-            <tbody>
-              {cashierRows.map((c, i) => (
-                <tr key={c.name} className="hover:bg-raised/40">
-                  <td className="td">
-                    <span className="inline-flex items-center gap-2">
-                      <Avatar name={c.name} size={26} />
-                      <span className="text-[13px] font-semibold">{c.name}</span>
-                      {i === 0 && <Badge tone="amber">TOP</Badge>}
-                    </span>
-                  </td>
-                  <td className="td num">{c.bills}</td>
-                  <td className="td num font-bold text-right">{fmtRs(c.revenue, false)}</td>
-                </tr>
-              ))}
-              {cashierRows.length === 0 && (
-                <tr><td className="td text-center text-faint" colSpan={3}>No sales in period</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      {/* ============ product + payment charts ============ */}
+      <div className="grid xl:grid-cols-2 gap-6 mb-6">
+        <div className="card p-5"><div className="flex items-center gap-2 mb-4"><Trophy size={17}/><div><h2 className="text-base font-extrabold text-ink">Top Products</h2><p className="text-xs text-sub">By sales revenue</p></div></div>{topProducts.length ? <div className="space-y-3">{topProducts.map((p, i) => <div key={p.name + i} className="flex items-center gap-3"><div className="w-7 h-7 rounded-lg bg-raised flex items-center justify-center text-xs font-extrabold">{i + 1}</div><div className="flex-1 min-w-0"><div className="text-sm font-bold truncate">{p.name}</div><div className="text-[11px] text-sub">{fmtNum(p.qty)} units</div></div><div className="text-sm font-extrabold num">{fmtRs(p.revenue)}</div></div>)}</div> : <EmptyState title="No product sales" description="No sold products for this period."/>}</div>
+        <div className="card p-5"><h2 className="text-base font-extrabold text-ink">Payment Mix</h2><p className="text-xs text-sub mt-1">Collected sales by payment method</p>{paySplit.length ? <div className="h-64"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={paySplit} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={82} label>{paySplit.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]}/>)}</Pie><Tooltip formatter={(v: unknown) => fmtTip(v)} contentStyle={tipStyle}/><Legend/></PieChart></ResponsiveContainer></div> : <EmptyState title="No payment data" description="No sales for this period."/>}</div>
       </div>
-    </div>
-  );
-}
 
-function PeriodCard({ dot, name, range, revenue, profit, bills, tone, empty }: {
-  dot: string; name: string; range: string; revenue: number; profit: number; bills: number;
-  tone: 'violet' | 'blue'; empty: boolean;
-}) {
-  return (
-    <div className={`card p-5 border-l-4 ${tone === 'violet' ? '!border-l-violet-500' : '!border-l-sky-500'}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <span className={`w-2 h-2 rounded-full ${dot}`} />
-        <span className="text-[13px] font-bold text-ink">{name}</span>
-        <span className="text-[11px] text-faint num ml-auto">{range}</span>
+      {/* ============ machine + cashier detail ============ */}
+      <div className="grid xl:grid-cols-2 gap-6 mb-6">
+        <div className="card p-5"><h2 className="text-base font-extrabold text-ink mb-4">Machine Performance Detail</h2><div className="overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead><tr className="text-left text-[10px] uppercase text-faint border-b border-line"><th className="py-2">Machine</th><th className="py-2">Bills</th><th className="py-2">Revenue</th><th className="py-2">Profit</th></tr></thead><tbody>{machineRows.map(r => <tr key={r.id} className="border-b border-line last:border-0"><td className="py-3 font-bold">{r.name}</td><td className="py-3 num">{fmtNum(r.bills)}</td><td className="py-3 num">{fmtRs(r.revenue)}</td><td className="py-3 num text-emerald-600">{fmtRs(r.profit)}</td></tr>)}</tbody></table></div></div>
+        <div className="card p-5"><h2 className="text-base font-extrabold text-ink mb-4">Cashier Performance</h2><div className="overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead><tr className="text-left text-[10px] uppercase text-faint border-b border-line"><th className="py-2">Cashier</th><th className="py-2">Bills</th><th className="py-2">Revenue</th><th className="py-2">Profit</th></tr></thead><tbody>{cashierRows.map(r => <tr key={r.name} className="border-b border-line last:border-0"><td className="py-3 font-bold">{r.name}</td><td className="py-3 num">{fmtNum(r.bills)}</td><td className="py-3 num">{fmtRs(r.revenue)}</td><td className="py-3 num text-emerald-600">{fmtRs(r.profit)}</td></tr>)}</tbody></table></div></div>
       </div>
-      {empty ? (
-        <p className="text-[13px] text-faint py-3 text-center">No data available for this period</p>
-      ) : (
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            ['Revenue', fmtRs(revenue, false)],
-            ['Profit', fmtRs(profit, false)],
-            ['Bills', fmtNum(bills)],
-          ].map(([l, v]) => (
-            <div key={l as string}>
-              <div className="text-[9.5px] font-extrabold tracking-wider uppercase text-faint">{l}</div>
-              <div className="num text-[15px] font-extrabold text-ink mt-0.5">{v}</div>
-            </div>
-          ))}
-        </div>
-      )}
+
+      {/* ============ sales detail ============ */}
+      <div className="card p-5"><div className="flex items-center justify-between gap-3 mb-4"><div><h2 className="text-base font-extrabold text-ink">Sales Detail</h2><p className="text-xs text-sub">{fmtNum(salesA.length)} bills in selected period</p></div><Badge tone="emerald">{fmtRs(A.revenue)}</Badge></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line"><th className="py-2">Bill No</th><th className="py-2">Date</th><th className="py-2">Customer</th><th className="py-2">Cashier</th><th className="py-2">Items</th><th className="py-2">Payment</th><th className="py-2">Status</th><th className="py-2 text-right">Total</th><th className="py-2 text-right">Profit</th></tr></thead><tbody>{salesA.map(s => <tr key={s.id} className="border-b border-line last:border-0"><td className="py-3 font-bold">{s.billNo}</td><td className="py-3 text-sub">{new Date(s.date).toLocaleString()}</td><td className="py-3">{s.customerName}</td><td className="py-3">{s.cashierName}</td><td className="py-3 num">{fmtNum(s.items.reduce((a, i) => a + i.qty, 0))}</td><td className="py-3">{s.payments && s.payments.length > 1 ? 'SPLIT' : s.payment}</td><td className="py-3">{s.status}</td><td className="py-3 text-right num font-semibold">{fmtRs(s.total)}</td><td className="py-3 text-right num text-emerald-600">{fmtRs(s.profit)}</td></tr>)}</tbody></table></div>{!salesA.length && <EmptyState title="No sales found" description="There are no sales matching the selected period."/>}</div>
     </div>
   );
 }
