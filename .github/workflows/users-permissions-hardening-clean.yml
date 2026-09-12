@@ -1,0 +1,70 @@
+name: Users Permissions Hardening (one-time)
+
+on:
+  push:
+    branches: [users-permissions-hardening-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch store guards
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/lib/store.tsx')
+          s = p.read_text()
+
+          patches = [
+            ("""  const saveUser = useCallback((u: AppUser) => {\n    const exists = state.users.some(x => x.id === u.id);""",
+             """  const saveUser = useCallback((u: AppUser) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);\n      return;\n    }\n    const exists = state.users.some(x => x.id === u.id);"""),
+            ("""  const toggleUserActive = useCallback((id: string) => {\n    const target = state.users.find(x => x.id === id);""",
+             """  const toggleUserActive = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);\n      return;\n    }\n    const target = state.users.find(x => x.id === id);"""),
+            ("""  const deleteUser = useCallback((id: string) => {\n    const target = state.users.find(x => x.id === id);""",
+             """  const deleteUser = useCallback((id: string) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);\n      return;\n    }\n    const target = state.users.find(x => x.id === id);"""),
+            ("""  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (role === 'admin') return;""",
+             """  const setPermission = useCallback((role: Role, key: string, value: boolean) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);\n      return;\n    }\n    if (role === 'admin') return;"""),
+            ("""  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));""",
+             """  const updateSettings = useCallback((patch: Partial<Settings>) => {\n    if (!user || user.role !== 'admin') {\n      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);\n      return;\n    }\n    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));"""),
+          ]
+
+          for old, new in patches:
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one target pattern, found {count}: {old[:80]!r}')
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+
+      - name: Verify source guards
+        run: |
+          grep -n "Blocked user save\|Blocked user status change\|Blocked user delete\|Blocked permission change\|Blocked settings update" src/lib/store.tsx
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit source and remove one-time workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/users-permissions-hardening-clean.yml
+          git add src/lib/store.tsx
+          git diff --cached --check
+          git commit -m "security: harden users permissions and settings actions"
+          git push origin HEAD:users-permissions-hardening-clean
