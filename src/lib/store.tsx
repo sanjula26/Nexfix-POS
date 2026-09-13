@@ -1319,6 +1319,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- users ---------------- */
   const saveUser = useCallback((u: AppUser) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);
+      return;
+    }
     const exists = state.users.some(x => x.id === u.id);
     // Always store password as hash (skip re-hash if already hashed and unchanged)
     const existing = state.users.find(x => x.id === u.id);
@@ -1328,35 +1332,51 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
-  }, [state.users, pushAudit]);
+  }, [state.users, pushAudit, user]);
 
   const toggleUserActive = useCallback((id: string) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);
+      return;
+    }
     const u = state.users.find(x => x.id === id);
     setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
     if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
-  }, [state.users, pushAudit]);
+  }, [state.users, pushAudit, user]);
 
   const deleteUser = useCallback((id: string) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);
+      return;
+    }
     const u = state.users.find(x => x.id === id);
     if (!u || u.id === user?.id) return;
     setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
     pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
-  }, [state.users, user?.id, pushAudit]);
+  }, [state.users, user?.id, pushAudit, user]);
 
   /* ---------------- admin ---------------- */
   const setPermission = useCallback((role: Role, key: string, value: boolean) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);
+      return;
+    }
     if (role === 'admin') return;
     setState(s => ({
       ...s,
       permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } },
     }));
     pushAudit('PERMISSION', 'Permissions', `Set ${key} = ${value ? 'ON' : 'OFF'} for ${role}`);
-  }, [pushAudit]);
+  }, [pushAudit, user]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);
+      return;
+    }
     setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));
     pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`);
-  }, [pushAudit]);
+  }, [pushAudit, user]);
 
   const closeSession = useCallback((cashierId: string, counted: number, note: string) => {
     setState(s => ({
