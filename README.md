@@ -18,7 +18,7 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 
 - Offline queue operations are **never discarded just because the browser becomes online**. A remote acknowledgement is required before a sync operation is acknowledged.
 - Cloud sale and return operations use stable IDs and server-side transactions to prevent duplicate processing during retries.
-- Purchase returns now reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
+- Purchase returns reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
 - Multi-PC state snapshots use a device-bound authenticated RPC and optimistic revision checks; a stale device cannot overwrite a newer cloud snapshot, and conflicts leave pending local writes intact.
 - Cloud POS snapshots are sanitized server-side so local password hashes and the admin PIN hash are not persisted in `pos_state_snapshots`.
 - Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
@@ -74,7 +74,7 @@ VITE_SUPABASE_ANON_KEY=
 VITE_GOOGLE_SCRIPT_URL=
 ```
 
-Do not add Supabase `service_role` or other server secrets to Netlify's client build environment.
+Do not add Supabase `service_role` or other server secrets to the Netlify client build environment.
 
 ## Production checklist
 
@@ -89,7 +89,7 @@ Before real business use:
 - [x] Multi-PC conflict-safe state snapshot synchronization implemented; perform a real two-device acceptance drill before live use
 - [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account
 - [x] Cloud backup and POS snapshot authentication-secret isolation implemented
-- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.207`
+- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.217`
 - [x] Dependency/security audit completed; high-severity npm audit findings remediated
 - [ ] Configure Netlify production environment variables and verify the live deployment
 - [ ] Test printer, barcode scanner and cash drawer hardware
