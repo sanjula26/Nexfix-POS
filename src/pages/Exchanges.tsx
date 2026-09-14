@@ -65,39 +65,32 @@ export default function Exchanges() {
       const online = typeof navigator === 'undefined' || navigator.onLine;
       if (!pendingReturnId.current) pendingReturnId.current = crypto.randomUUID();
       const returnId = pendingReturnId.current;
+      const trackedPartial = selectedItems.some(({ itemIdx, qty }) =>
+        Boolean(bill.items[itemIdx].unitIds?.length) && qty !== bill.items[itemIdx].qty,
+      );
+      if (trackedPartial) {
+        throw new Error('IMEI/Serial tracked items must be returned in the full sold quantity. Per-unit return selection is required for a partial tracked return.');
+      }
       const returnLines = selectedItems.map(({ itemIdx, qty }) => ({
         product_id: bill.items[itemIdx].productId,
         qty,
-        unit_ids: bill.items[itemIdx].unitIds,
+        unit_ids: bill.items[itemIdx].unitIds && qty === bill.items[itemIdx].qty ? bill.items[itemIdx].unitIds : undefined,
       }));
 
       if (online && supabaseConfigured && supabase) {
         const shop = await ensureCloudShop('Nexfix Shop');
         if (!shop.ok || !shop.shopId) throw new Error(shop.error || 'Cloud shop is unavailable');
-        const resolve = await resolveSaleReturnLines({
-          shopId: shop.shopId,
-          saleId: bill.id,
-          lines: returnLines,
-        });
+        const resolve = await resolveSaleReturnLines({ shopId: shop.shopId, saleId: bill.id, lines: returnLines });
         if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
         const cloud = await processSaleReturnAtomic({
-          shopId: shop.shopId,
-          returnId,
-          saleId: bill.id,
-          reason,
-          mode,
+          shopId: shop.shopId, returnId, saleId: bill.id, reason, mode,
           paymentMethod: mode === 'refund' ? 'cash' : undefined,
           lines: resolve.lines,
         });
         if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
       } else {
-        // Commit the local return immediately, but durably queue the exact normalized
-        // transaction for replay when connectivity returns. The stable return id makes
-        // retries idempotent at the cloud RPC boundary.
         await queueReturnCreate(returnId, {
-          saleId: bill.id,
-          reason,
-          mode,
+          saleId: bill.id, reason, mode,
           paymentMethod: mode === 'refund' ? 'cash' : undefined,
           lines: returnLines,
         });
