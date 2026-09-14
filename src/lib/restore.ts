@@ -1,6 +1,7 @@
 import type { POSState } from './types';
 import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint, idbSaveState } from './db';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
+import { isCloudSafeBackup } from './driveSync';
 
 const SESSION_KEY = 'nexfix_session_v1';
 
@@ -46,6 +47,18 @@ function isBackupEnvelope(input: unknown): input is BackupEnvelope {
 }
 
 function asRestoreEnvelope(input: unknown): BackupEnvelope {
+  if (isCloudSafeBackup(input)) {
+    const cloud = input as { state?: unknown };
+    return {
+      _meta: {
+        app: 'Nexfix POS',
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        kind: 'manual',
+      },
+      state: cloud.state as POSState,
+    };
+  }
   if (isBackupEnvelope(input)) return input;
   return {
     _meta: {
@@ -58,26 +71,45 @@ function asRestoreEnvelope(input: unknown): BackupEnvelope {
   };
 }
 
+function restoreLocalAuthentication(current: POSState, restored: POSState): POSState {
+  const currentUsersById = new Map(current.users.map(user => [user.id, user]));
+  const users = restored.users.map(user => {
+    const local = currentUsersById.get(user.id);
+    return local ? { ...user, password: local.password } : user;
+  });
+
+  return {
+    ...restored,
+    users,
+    settings: {
+      ...restored.settings,
+      adminPinHash: current.settings.adminPinHash,
+    },
+  };
+}
+
 /**
  * Validate and apply a backup as one guarded local restore flow.
  * Restore is an admin-only destructive operation. A checkpoint is created
  * before any state replacement. If the new state cannot be persisted, the
  * previous state is restored from that checkpoint.
  *
- * Google restore returns the parsed POS state rather than the local backup
- * envelope, so it is wrapped in a synthetic manual envelope before the same
- * strict validator is applied. This keeps one validation path for both local
- * and Google restores without weakening backup validation.
+ * Google backups are deliberately stored without local password hashes or
+ * the admin PIN hash. During a cloud restore, authentication secrets from the
+ * current device are merged back into matching users and settings so a cloud
+ * backup can never replace or erase the device's local credentials.
  */
 export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
+  const cloudSafe = isCloudSafeBackup(input);
   const backup = await restoreBackup(asRestoreEnvelope(input));
+  const nextState = cloudSafe ? restoreLocalAuthentication(current, backup.state) : backup.state;
   await prepareRestore(current);
   try {
-    const saved = await idbSaveState(backup.state);
+    const saved = await idbSaveState(nextState);
     if (!saved) throw new Error('Could not persist restored POS state.');
     await idbClearRestoreCheckpoint();
-    return backup.state;
+    return nextState;
   } catch (error) {
     const rolledBack = await rollbackRestore();
     if (!rolledBack) {
