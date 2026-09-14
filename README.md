@@ -13,93 +13,13 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Multi-shop isolation: every cloud device, snapshot and Google backup request is scoped to an explicit `shop_id`; one shop cannot use another shop's cloud data
 - Web deployment: Netlify-compatible Vite build; GitHub Pages preview workflow is also configured
 - Desktop target: Windows Electron wrapper (build separately)
-- Backup target: Google Apps Script/Drive, explicitly configured by the operator
+- Backup target: one dedicated Google account / one Apps Script deployment / one bound spreadsheet can serve all shops; each shop is isolated into its own `shop_id`-derived backup partitions
 
 ## Important safety changes
 
 - Offline queue operations are **never discarded just because the browser becomes online**. A remote acknowledgement is required before a sync operation is acknowledged.
-- Cloud sale and return operations use stable IDs and server-side transactions to prevent duplicate processing during retries.
-- Purchase returns reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
-- Multi-PC state snapshots use a device-bound authenticated RPC and optimistic revision checks; a stale device cannot overwrite a newer cloud snapshot, and conflicts leave pending local writes intact.
-- Cloud POS snapshots are sanitized server-side so local password hashes and the admin PIN hash are not persisted in `pos_state_snapshots`.
-- Cloud synchronization is designed for many shops and many PCs; `shop_id` is the isolation boundary rather than a fixed PC count.
-- Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
-- Google cloud backups omit local authentication secrets; cloud restore retains the current device's authentication credentials and local-only users.
-- Google backup/restore requests now carry the active `shop_id`, and the Supabase proxy verifies that the signed-in user is an active admin/manager of that exact shop before forwarding the request.
-- The deployed Apps Script implementation independently validates the exact shop membership and stores each shop in a deterministic partitioned sheet namespace.
-- Only HTTPS `script.google.com` URLs are accepted by the Google backup configuration.
-- Keep `.env.local`, passwords, service-role keys, database credentials and other secrets out of Git.
-
-## Local development
-
-```bash
-npm install
-npm run dev
-```
-
-Build and preview:
-
-```bash
-npm run build
-npm run preview
-```
-
-## Environment
-
-Copy `.env.example` to `.env.local` and configure only public client settings:
-
-```text
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-VITE_GOOGLE_SCRIPT_URL=
-```
-
-Never put a Supabase `service_role`/secret key in browser environment variables.
-
-## Supabase status
-
-The application uses Supabase for authenticated cloud shop/catalog synchronization, multi-PC snapshot synchronization, and server-side transactional sales/returns. Database migrations and RLS policies should remain under review whenever the schema or transaction functions change.
-
-## Offline safety
-
-The local IndexedDB store remains the source of truth while offline. Pending sale/return operations remain durable until the cloud transaction path confirms successful processing. Stable idempotency keys and server-side transactions are used for sale/return retries. General state writes are also durably queued and use cloud snapshot revision checks when connectivity returns.
-
-## Google backup
-
-Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Every request is scoped to the active Nexfix `shop_id`, and the Apps Script stores each shop in its own deterministic sheet partition. Test a restore before relying on backups for disaster recovery.
-
-## Netlify deployment
-
-The repository includes `netlify.toml` with `npm run build`, `dist` publishing, SPA fallback/security headers, and Node.js 22 to match CI. Configure the following public environment variables in the Netlify site before production use:
-
-```text
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-VITE_GOOGLE_SCRIPT_URL=
-```
-
-Do not add Supabase `service_role` or other server secrets to the Netlify client build environment.
-
-## Production checklist
-
-Before real business use:
-
-- [x] Demo/seed data is opt-in only (`VITE_SEED_DEMO=true`); the normal production build does not enable the demo seed
-- [x] Supabase authentication and core RLS hardening implemented for the current cloud workflows
-- [x] Server-side transactional sales/stock operations implemented for cloud sales
-- [x] Server-side transactional return/stock operations implemented for cloud returns
-- [x] Durable offline sale/return queue with idempotent retry handling implemented
-- [x] Purchase-return tracked-unit reconciliation implemented and verified in CI
-- [x] Multi-PC conflict-safe state snapshot synchronization implemented; perform a real multi-device acceptance drill before live use
-- [x] Multi-shop cloud isolation enforced by shop-scoped device/snapshot access and Google proxy authorization
-- [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account and confirm separate storage partitions per shop
-- [x] Cloud backup and POS snapshot authentication-secret isolation implemented
-- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.227`
-- [x] Dependency/security audit completed; high-severity npm audit findings remediated
-- [ ] Configure Netlify production environment variables and verify the live deployment
-- [ ] Test printer, barcode scanner and cash drawer hardware
-- [ ] Perform a full restore drill before storing live business data
-
-## Dependency security
-
-The production dependency audit was run with `npm audit --audit-level=high`. High-severity findings in Electron and transitive packages were remediated; Electron was upgraded to `44.3.0`, and the final audit completed with no high-severity findings. The standard CI pipeline also passed typecheck, lint and production build after the upgrade.
+- Private Supabase implementation RPCs are not executable by the authenticated client role; public wrapper RPCs remain the supported boundary.
+- Google backup is not separated by email address. A single dedicated Google backup account can serve many shops, while `shop_id`, authenticated membership and deterministic shop-specific partitions enforce isolation.
+- Google backup and restore requests are checked at both the Supabase proxy and Apps Script layers for an active `admin`/`manager` membership in the exact requested shop.
+- Cloud backup payloads intentionally omit local POS authentication secrets; restore preserves the current device's local authentication state.
+- Google backup remains an optional secondary backup transport. Supabase/cloud state and the local offline store remain separate reliability mechanisms.
