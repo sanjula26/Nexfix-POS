@@ -10,9 +10,12 @@ export default defineConfig(({ mode }) => {
     processEnvDefines[`process.env.${key}`] = JSON.stringify(value)
   }
 
+  const isGitHubPages = mode === 'github-pages'
+
   return {
-    // Netlify / root hosting — use '/' (not a GitHub Pages subdirectory)
-    base: '/',
+    // Keep root hosting for normal/Netlify builds; GitHub Pages project sites
+    // are served from /Nexfix-POS/.
+    base: isGitHubPages ? '/Nexfix-POS/' : '/',
     plugins: [react(), tailwindcss()],
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
