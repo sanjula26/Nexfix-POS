@@ -1,49 +1,67 @@
-# Production hardening audit
+# Production hardening status
 
-## Findings from the current codebase
+This document reflects the current Nexfix POS implementation on `main`. It is an audit/status document, not a list of unfinished historical findings.
 
-1. **Offline queue data-loss risk — fixed in this commit.** The previous `flushSyncQueue()` cleared queued operations without a remote acknowledgement. It now leaves pending operations intact until a real sync adapter can confirm them.
-2. **Hard-coded Google Apps Script endpoint — fixed in this commit.** The production source no longer contains the previous deployment URL. Google backup is disabled by default and accepts only HTTPS `script.google.com` URLs.
-3. **Cloud sync is not yet a real sync implementation.** The existing application is IndexedDB-first and the SQL schema is only a cloud-ready foundation. Do not market the current queue as multi-PC synchronization until a Supabase adapter, idempotency, retries, conflict handling and server-side transactions are implemented.
-4. **Supabase RLS needs a complete policy model.** The existing schema contains broad/basic policies and should not be treated as production authorization. Policies must be scoped by authenticated user, role, shop/branch and operation.
-5. **Sales/stock concurrency needs server-side transactions.** Multi-PC inventory correctness requires atomic stock movement and sale operations on PostgreSQL rather than trusting browser state.
-6. **Demo credentials must not be used in production.** Seed/demo accounts and passwords must be removed or converted to a first-run setup flow before live deployment.
-7. **Windows desktop packaging is not currently part of the existing package scripts.** Electron packaging should be added only after the cloud/local boundary is finalized, with secure context isolation and no Node integration in the renderer.
+## Implemented and verified in the repository
 
-## Required production sequence
+### Authentication and authorization
+- Supabase authentication is used for cloud workflows.
+- Production database tables are protected by RLS.
+- Cloud POS operations require authenticated shop membership.
+- Device registration and snapshot writes are bound to the authenticated shop/device relationship.
+- Production Security Advisor currently reports zero findings for the inspected database state.
 
-### Phase A — Cloud foundation
-- Add Supabase client using public publishable/anon credentials only.
-- Apply migrations rather than manually mutating a live database.
-- Complete RLS policies.
-- Add server-side RPC/transaction functions for sales, returns and stock movements.
-- Add immutable audit events.
+### Transaction integrity
+- Cloud sales use server-side atomic processing with stable sale IDs for idempotent retries.
+- Cloud sale returns use server-side atomic processing with stable return IDs.
+- Purchase returns reconcile IMEI/serial-tracked inventory units and mark returned units unavailable for sale.
+- Offline sale/return operations remain durable until a successful remote acknowledgement is received.
 
-### Phase B — Durable synchronization
-- Add an operation/outbox table locally.
-- Give every operation a UUID/idempotency key.
-- Upload pending operations in order where required.
-- Acknowledge/delete locally only after a successful server response.
-- Retry transient failures with backoff.
-- Record rejected/conflicting operations for operator review.
+### Multi-PC synchronization
+- General state changes are durably queued locally.
+- Cloud snapshots use optimistic revision checks so a stale device cannot overwrite a newer snapshot.
+- Device registration and snapshot RPCs enforce active shop membership and device ownership.
+- Snapshot authentication secrets are sanitized server-side: password hashes and the admin PIN hash are not stored in cloud snapshots.
+- A real two-device acceptance drill is still required before live multi-PC use.
 
-### Phase C — Desktop
-- Add Electron main/preload process.
-- Keep renderer isolated from Node APIs.
-- Use a local database appropriate for desktop durability.
-- Add controlled backup/export and recovery.
-- Produce signed Windows builds when certificates are available.
+### Google backup and restore
+- Google backup is opt-in and disabled by default.
+- Google requests use the authenticated Supabase proxy path rather than a shared client API key.
+- Only HTTPS `script.google.com` deployment URLs are accepted.
+- Google backup payloads exclude local password hashes, local user records, and the admin PIN hash.
+- Cloud restore preserves the current device's authentication credentials and local-only users while restoring business data.
+- The restore path validates backup structure before applying it and rolls back through the local checkpoint path if persistence fails.
+- End-to-end testing against a real deployed Apps Script and Google account remains an external acceptance gate.
 
-### Phase D — Mobile/admin
-- Use the same authenticated Supabase backend.
-- Restrict mobile access to reporting/administration permissions.
-- Never expose service-role credentials in mobile/web code.
+### Desktop packaging
+- Electron uses context isolation, sandboxing, disabled Node integration, and restricted navigation.
+- Windows installer and portable artifacts are produced by electron-builder.
+- Release build `v3.0.0-build.217` contains the Windows installer/portable release artifacts.
+- Physical printer, barcode scanner, and cash drawer compatibility still requires hardware testing.
 
-### Phase E — Disaster recovery
-- Keep Google Drive backup as a secondary backup target, not the primary transaction database.
-- Version backups and verify their integrity.
-- Test restore regularly on a separate environment.
+### Web deployment
+- `netlify.toml` builds `dist`, provides SPA fallback/security headers, and uses Node.js 22 to match CI.
+- GitHub Pages preview deployment is configured and the latest checked deployment succeeded.
+- Actual Netlify production environment configuration/deployment remains an external acceptance gate.
 
-## Release gate
+## Remaining production acceptance gates
 
-The POS should not be considered production-ready until build, authentication, RLS, sale transaction atomicity, offline recovery, multi-PC synchronization, backup/restore and Windows packaging have all been tested end-to-end.
+1. Remove/replace demo credentials and seed accounts before live use.
+2. Complete a real two-PC cloud synchronization drill using separate devices/accounts.
+3. Deploy and configure the Google Apps Script integration and perform a backup/restore test with a real Google account.
+4. Configure Netlify public environment variables and verify the live production site.
+5. Test the actual receipt printer, barcode scanner, and cash drawer hardware.
+6. Perform a complete disaster-recovery restore drill using a known-good backup before storing live business data.
+7. Keep the repository private for production source distribution when the operator is ready; GitHub repository visibility must be changed through GitHub settings because the connected integration does not expose that visibility mutation.
+
+## Release verification
+
+The repository CI pipeline checks dependency installation, TypeScript typechecking, ESLint, and the production Vite build. Security CI separately runs the high-severity production dependency audit. Windows release artifacts are generated by the desktop release workflow. The release checklist should only mark an external gate complete after the corresponding real-world test has actually been performed.
+
+## Security principles
+
+- Never commit `.env.local`, Supabase service-role keys, database passwords, Google credentials, or other secrets.
+- Browser builds may contain only public Supabase URL/anon-key configuration and the operator-configured Google deployment URL.
+- Do not treat Google Drive backups as the primary transaction database.
+- Keep cloud snapshots free of local authentication secrets.
+- Preserve idempotency keys and server-side transaction boundaries when changing sale, return, inventory, or synchronization code.
