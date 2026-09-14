@@ -26,6 +26,7 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
 - Google cloud backups omit local authentication secrets; cloud restore retains the current device's authentication credentials and local-only users.
 - Google backup/restore requests now carry the active `shop_id`, and the Supabase proxy verifies that the signed-in user is an active admin/manager of that exact shop before forwarding the request.
+- The deployed Apps Script implementation independently validates the exact shop membership and stores each shop in a deterministic partitioned sheet namespace.
 - Only HTTPS `script.google.com` URLs are accepted by the Google backup configuration.
 - Keep `.env.local`, passwords, service-role keys, database credentials and other secrets out of Git.
 
@@ -65,7 +66,7 @@ The local IndexedDB store remains the source of truth while offline. Pending sal
 
 ## Google backup
 
-Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Every request is scoped to the active Nexfix `shop_id`, so different shops must use separate backup partitions in the external Google store. Test a restore before relying on backups for disaster recovery.
+Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Every request is scoped to the active Nexfix `shop_id`, and the Apps Script stores each shop in its own deterministic sheet partition. Test a restore before relying on backups for disaster recovery.
 
 ## Netlify deployment
 
@@ -83,7 +84,7 @@ Do not add Supabase `service_role` or other server secrets to the Netlify client
 
 Before real business use:
 
-- [ ] Replace/remove demo credentials and seed accounts
+- [x] Demo/seed data is opt-in only (`VITE_SEED_DEMO=true`); the normal production build does not enable the demo seed
 - [x] Supabase authentication and core RLS hardening implemented for the current cloud workflows
 - [x] Server-side transactional sales/stock operations implemented for cloud sales
 - [x] Server-side transactional return/stock operations implemented for cloud returns
