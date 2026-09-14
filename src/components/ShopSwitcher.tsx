@@ -101,7 +101,10 @@ export default function ShopSwitcher() {
     void listMemberships().then(items => {
       if (cancelled) return;
       setShops(items);
-      if (!getCloudShopId() && items[0]) setCloudShopId(items[0].id);
+      const selected = getCloudShopId();
+      if (!selected || !items.some(item => item.id === selected)) {
+        if (items[0]) setCloudShopId(items[0].id);
+      }
     });
     return () => { cancelled = true; };
   }, [user?.id]);
