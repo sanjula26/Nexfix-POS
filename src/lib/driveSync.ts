@@ -11,6 +11,7 @@ import { supabase } from './supabase';
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
+const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
 
 function isAllowedScriptUrl(value: string): boolean {
   try {
@@ -76,6 +77,37 @@ async function invokeProxy(body: Record<string, unknown>): Promise<Record<string
   }
 }
 
+/**
+ * Google Sheets is a secondary backup location, not an authentication store.
+ * Passwords and the local admin PIN are intentionally not exported there.
+ * Restore keeps the current device's authentication records instead.
+ */
+function sanitizeCloudBackup(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+  const envelope = input as Record<string, unknown>;
+  const stateValue = envelope.state;
+  if (!stateValue || typeof stateValue !== 'object' || Array.isArray(stateValue)) return input;
+
+  const state = stateValue as Record<string, unknown>;
+  const safeState: Record<string, unknown> = { ...state };
+  if (Array.isArray(state.users)) {
+    safeState.users = state.users.map((user) => {
+      if (!user || typeof user !== 'object' || Array.isArray(user)) return user;
+      return { ...(user as Record<string, unknown>), password: '' };
+    });
+  }
+  if (state.settings && typeof state.settings === 'object' && !Array.isArray(state.settings)) {
+    safeState.settings = { ...(state.settings as Record<string, unknown>), adminPinHash: '' };
+  }
+
+  return { ...envelope, state: safeState, [CLOUD_SAFE_MARKER]: true };
+}
+
+export function isCloudSafeBackup(input: unknown): boolean {
+  return !!input && typeof input === 'object' && !Array.isArray(input)
+    && (input as Record<string, unknown>)[CLOUD_SAFE_MARKER] === true;
+}
+
 export async function syncToGoogleDrive(tableName: string, dataRows: unknown[]): Promise<boolean> {
   if (!dataRows?.length) return false;
   const result = await invokeProxy({ action: 'saveData', table: tableName, rows: dataRows });
@@ -87,7 +119,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     action: 'backupState',
     kind,
     exportedAt: new Date().toISOString(),
-    state,
+    state: sanitizeCloudBackup(state),
   });
   return result?.ok === true;
 }
@@ -106,7 +138,7 @@ export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backe
   if (typeof backup.state !== 'string') return null;
   try {
     return {
-      state: JSON.parse(backup.state),
+      state: { [CLOUD_SAFE_MARKER]: true, state: JSON.parse(backup.state) },
       backedUpAt: typeof backup.timestamp === 'string' ? backup.timestamp : undefined,
       kind: typeof backup.backupType === 'string' ? backup.backupType : undefined,
     };
