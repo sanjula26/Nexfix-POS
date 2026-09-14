@@ -10,6 +10,7 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Cloud sales: server-side atomic sale completion with idempotent sale IDs
 - Cloud returns: server-side atomic sale-return processing with idempotent return IDs
 - Cloud state sync: authenticated multi-PC snapshot revisioning with durable conflict-safe queueing
+- Multi-shop isolation: every cloud device, snapshot and Google backup request is scoped to an explicit `shop_id`; one shop cannot use another shop's cloud data
 - Web deployment: Netlify-compatible Vite build; GitHub Pages preview workflow is also configured
 - Desktop target: Windows Electron wrapper (build separately)
 - Backup target: Google Apps Script/Drive, explicitly configured by the operator
@@ -21,8 +22,10 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Purchase returns reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
 - Multi-PC state snapshots use a device-bound authenticated RPC and optimistic revision checks; a stale device cannot overwrite a newer cloud snapshot, and conflicts leave pending local writes intact.
 - Cloud POS snapshots are sanitized server-side so local password hashes and the admin PIN hash are not persisted in `pos_state_snapshots`.
+- Cloud synchronization is designed for many shops and many PCs; `shop_id` is the isolation boundary rather than a fixed PC count.
 - Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
 - Google cloud backups omit local authentication secrets; cloud restore retains the current device's authentication credentials and local-only users.
+- Google backup/restore requests now carry the active `shop_id`, and the Supabase proxy verifies that the signed-in user is an active admin/manager of that exact shop before forwarding the request.
 - Only HTTPS `script.google.com` URLs are accepted by the Google backup configuration.
 - Keep `.env.local`, passwords, service-role keys, database credentials and other secrets out of Git.
 
@@ -62,7 +65,7 @@ The local IndexedDB store remains the source of truth while offline. Pending sal
 
 ## Google backup
 
-Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Test a restore before relying on backups for disaster recovery.
+Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Every request is scoped to the active Nexfix `shop_id`, so different shops must use separate backup partitions in the external Google store. Test a restore before relying on backups for disaster recovery.
 
 ## Netlify deployment
 
@@ -86,8 +89,9 @@ Before real business use:
 - [x] Server-side transactional return/stock operations implemented for cloud returns
 - [x] Durable offline sale/return queue with idempotent retry handling implemented
 - [x] Purchase-return tracked-unit reconciliation implemented and verified in CI
-- [x] Multi-PC conflict-safe state snapshot synchronization implemented; perform a real two-device acceptance drill before live use
-- [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account
+- [x] Multi-PC conflict-safe state snapshot synchronization implemented; perform a real multi-device acceptance drill before live use
+- [x] Multi-shop cloud isolation enforced by shop-scoped device/snapshot access and Google proxy authorization
+- [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account and confirm separate storage partitions per shop
 - [x] Cloud backup and POS snapshot authentication-secret isolation implemented
 - [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.217`
 - [x] Dependency/security audit completed; high-severity npm audit findings remediated
