@@ -4,9 +4,13 @@
  * The browser never stores or sends a shared Google API key. Requests are
  * authorized by the signed-in Supabase user and proxied server-side through
  * the authenticated google-backup-proxy Edge Function.
+ *
+ * Every Google backup request is explicitly scoped to the currently selected
+ * Nexfix shop so installations can support many shops and many PCs safely.
  */
 
 import { supabase } from './supabase';
+import { getCloudShopId } from './cloudSync';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
@@ -62,9 +66,17 @@ async function invokeProxy(body: Record<string, unknown>): Promise<Record<string
   if (!supabase || !isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
 
+  const shopId = getCloudShopId();
+  if (!shopId) return null;
+
   try {
     const { data, error } = await supabase.functions.invoke('google-backup-proxy', {
-      body: { ...body, scriptUrl: getGoogleScriptUrl(), requestId: makeRequestId() },
+      body: {
+        ...body,
+        shopId,
+        scriptUrl: getGoogleScriptUrl(),
+        requestId: makeRequestId(),
+      },
     });
     if (error || !data || typeof data !== 'object') {
       console.error('[Google Sync] proxy failed', error);
@@ -123,7 +135,7 @@ export async function fetchFromGoogleDrive(tableName: string): Promise<unknown[]
   return result?.ok === true && Array.isArray(result.rows) ? result.rows : [];
 }
 
-/** Read the latest FullBackup row through the authenticated proxy. */
+/** Read the latest FullBackup row for the currently selected shop. */
 export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string } | null> {
   const result = await invokeProxy({ action: 'getLatestBackup' });
   if (result?.ok !== true || !result.backup || typeof result.backup !== 'object') return null;
