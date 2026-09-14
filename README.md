@@ -70,7 +70,7 @@ Before real business use:
 - [x] Durable offline sale/return queue with idempotent retry handling implemented
 - [ ] Complete multi-PC conflict handling beyond the current transactional sale/return paths
 - [ ] Verify Google backup and restore end-to-end
-- [ ] Build/test Windows installer
+- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.181`
 - [ ] Configure Netlify production environment variables
 - [ ] Run dependency/security audit and resolve high-severity findings
 - [ ] Test printer, barcode scanner and cash drawer hardware
