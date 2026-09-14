@@ -64,22 +64,15 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
-
-  // Every persisted collection with first-class IDs must not contain duplicate
-  // IDs. Duplicates can make restore non-deterministic and break later updates.
   const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns'];
   for (const key of idCollections) {
     const collection = state[key];
     if (collection !== undefined && (!hasArray(collection) || !hasUniqueStringIds(collection))) return false;
   }
-
   if (state.inventoryTransactions !== undefined) {
     const ledger = state.inventoryTransactions;
     if (!hasArray(ledger) || !ledger.every(isValidInventoryTransaction) || !hasUniqueStringIds(ledger)) return false;
   }
-
-  // Backup files are untrusted input. Accept only roles supported by the current
-  // POS role model; malformed authentication records are rejected before restore.
   const users = state.users as unknown[];
   if (!users.every((u) => {
     if (!hasPlainObjectShape(u)) return false;
@@ -92,7 +85,6 @@ function hasValidStateShape(value: unknown): value is POSState {
       && typeof u.createdAt === 'string'
       && isValidIsoDate(u.createdAt);
   })) return false;
-
   return true;
 }
 
@@ -137,7 +129,6 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   let local = false;
   let cloud = false;
   const payload: BackupEnvelope = { _meta: { app: 'Nexfix POS', version: 2, exportedAt: new Date().toISOString(), kind }, state };
-
   if (wantDownload) {
     try {
       downloadFile(buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'), JSON.stringify(payload, null, 2), 'application/json');
@@ -147,7 +138,6 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
     try { cloud = await backupStateToGoogle(payload, kind); } catch { cloud = false; }
   }
-
   const successful = wantCloud ? cloud : local;
   if (successful) {
     const now = new Date().toISOString();
@@ -161,21 +151,25 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
 
 export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void): () => void {
   let running = false;
-  const tick = async () => {
+  const tick = async (force = false) => {
     if (running) return;
     try {
       const meta = await idbGetMeta();
-      if (!meta.autoBackupHours || meta.autoBackupHours <= 0) return;
+      const online = typeof navigator === 'undefined' || navigator.onLine;
       const last = meta.lastAutoBackupAt ? new Date(meta.lastAutoBackupAt).getTime() : 0;
-      if (Date.now() - last < meta.autoBackupHours * 60 * 60 * 1000) return;
+      const due = Date.now() - last >= meta.autoBackupHours * 60 * 60 * 1000;
+      if (!force && (!meta.autoBackupHours || meta.autoBackupHours <= 0 || !due)) return;
+      if (!online) return;
       running = true;
-      const result = await downloadBackup(getState(), 'auto', { download: true, cloud: true });
+      const result = await downloadBackup(getState(), 'auto', { download: false, cloud: true });
       const cloudRequired = isGoogleSyncEnabled();
-      const successful = cloudRequired ? result.cloud : result.local;
+      const successful = cloudRequired ? result.cloud : false;
       if (successful) onBackup?.(new Date().toISOString());
     } catch { /* retry on next tick */ } finally { running = false; }
   };
-  const t0 = window.setTimeout(tick, 5_000);
-  const interval = window.setInterval(tick, 15_000);
-  return () => { clearTimeout(t0); clearInterval(interval); };
+  const onOnline = () => { void tick(true); };
+  window.addEventListener('online', onOnline);
+  const t0 = window.setTimeout(() => { void tick(false); }, 5_000);
+  const interval = window.setInterval(() => { void tick(false); }, 15_000);
+  return () => { window.removeEventListener('online', onOnline); clearTimeout(t0); clearInterval(interval); };
 }
