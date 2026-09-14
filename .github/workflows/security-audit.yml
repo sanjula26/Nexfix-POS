@@ -48,6 +48,12 @@ jobs:
           test -d supabase/migrations
           test -n "$(find supabase/migrations -type f -name '*.sql' -print -quit)"
 
+      - name: Dependency security audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --audit-level=high --omit=dev
+
       - name: Check security workflow configuration
         shell: bash
         run: |
