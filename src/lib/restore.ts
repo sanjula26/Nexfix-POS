@@ -73,10 +73,14 @@ function asRestoreEnvelope(input: unknown): BackupEnvelope {
 
 function restoreLocalAuthentication(current: POSState, restored: POSState): POSState {
   const currentUsersById = new Map(current.users.map(user => [user.id, user]));
+  const restoredUserIds = new Set(restored.users.map(user => user.id));
   const users = restored.users.map(user => {
     const local = currentUsersById.get(user.id);
-    return local ? { ...user, password: local.password } : user;
+    return local ? { ...user, password: local.password } : local ?? user;
   });
+  for (const local of current.users) {
+    if (!restoredUserIds.has(local.id)) users.push(local);
+  }
 
   return {
     ...restored,
@@ -95,9 +99,9 @@ function restoreLocalAuthentication(current: POSState, restored: POSState): POSS
  * previous state is restored from that checkpoint.
  *
  * Google backups are deliberately stored without local password hashes or
- * the admin PIN hash. During a cloud restore, authentication secrets from the
- * current device are merged back into matching users and settings so a cloud
- * backup can never replace or erase the device's local credentials.
+ * the admin PIN hash. During a cloud restore, authentication secrets and
+ * local-only users are retained from the current device so a cloud backup
+ * can never replace or erase the device's local credentials.
  */
 export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
