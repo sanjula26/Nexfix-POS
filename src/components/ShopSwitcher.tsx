@@ -4,6 +4,7 @@ import { usePOS } from '../lib/store';
 import { buildSeed } from '../lib/seed';
 import { idbSaveState, idbListQueue } from '../lib/db';
 import { getCloudShopId, setCloudShopId } from '../lib/cloudSync';
+import { getCloudDeviceId } from '../lib/cloudDevice';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { runSyncNow } from '../lib/syncManager';
 import type { POSState } from '../lib/types';
@@ -52,6 +53,15 @@ async function listMemberships(): Promise<ShopOption[]> {
   const { data: shops } = await supabase.from('shops').select('id, name').in('id', ids);
   const names = new Map((shops || []).map(row => [String(row.id), String(row.name || 'Nexfix Shop')]));
   return memberships.map(row => ({ id: String(row.shop_id), name: names.get(String(row.shop_id)) || `Shop ${String(row.shop_id).slice(0, 8)}`, role: String(row.role) }));
+}
+
+async function registerDeviceForShop(shopId: string): Promise<void> {
+  if (!supabaseConfigured || !supabase) throw new Error('Cloud authentication is not configured');
+  const { data, error } = await supabase.rpc('register_pos_device', {
+    p_shop_id: shopId,
+    p_device_id: getCloudDeviceId(),
+  });
+  if (error || !data?.ok) throw new Error(error?.message || 'Could not register this device for the selected shop');
 }
 
 async function downloadShopSnapshot(shopId: string): Promise<{ state: POSState; revision: number } | null> {
@@ -113,6 +123,7 @@ export default function ShopSwitcher() {
       writeCachedState(currentId, state);
       await idbSaveState(state);
 
+      await registerDeviceForShop(target.id);
       const remote = await downloadShopSnapshot(target.id);
       const cached = remote ? null : readCachedState(target.id);
       const base = remote?.state || cached || buildSeed();
