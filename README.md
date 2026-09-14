@@ -93,7 +93,7 @@ Before real business use:
 - [x] Multi-shop cloud isolation enforced by shop-scoped device/snapshot access and Google proxy authorization
 - [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account and confirm separate storage partitions per shop
 - [x] Cloud backup and POS snapshot authentication-secret isolation implemented
-- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.217`
+- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.227`
 - [x] Dependency/security audit completed; high-severity npm audit findings remediated
 - [ ] Configure Netlify production environment variables and verify the live deployment
 - [ ] Test printer, barcode scanner and cash drawer hardware
