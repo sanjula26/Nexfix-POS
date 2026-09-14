@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
@@ -41,7 +41,7 @@ function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null;
 
 function CloudAuthLifecycle() {
   const { user } = usePOS();
-  const hadLocalSession = React.useRef(Boolean(user));
+  const hadLocalSession = useRef(Boolean(user));
 
   useEffect(() => {
     if (user) {
@@ -109,7 +109,7 @@ function SessionSecurity() {
 
 function CloudSyncStateBridge() {
   const { state, ready } = usePOS();
-  const initial = React.useRef(true);
+  const initial = useRef(true);
 
   useEffect(() => {
     if (!ready) return;
