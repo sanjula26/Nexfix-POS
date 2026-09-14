@@ -79,8 +79,8 @@ async function invokeProxy(body: Record<string, unknown>): Promise<Record<string
 
 /**
  * Google Sheets is a secondary backup location, not an authentication store.
- * Passwords and the local admin PIN are intentionally not exported there.
- * Restore keeps the current device's authentication records instead.
+ * Local user records, password hashes and the admin PIN are intentionally not
+ * exported there. Restore keeps the current device's complete auth state.
  */
 function sanitizeCloudBackup(input: unknown): unknown {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
@@ -89,13 +89,7 @@ function sanitizeCloudBackup(input: unknown): unknown {
   if (!stateValue || typeof stateValue !== 'object' || Array.isArray(stateValue)) return input;
 
   const state = stateValue as Record<string, unknown>;
-  const safeState: Record<string, unknown> = { ...state };
-  if (Array.isArray(state.users)) {
-    safeState.users = state.users.map((user) => {
-      if (!user || typeof user !== 'object' || Array.isArray(user)) return user;
-      return { ...(user as Record<string, unknown>), password: '' };
-    });
-  }
+  const safeState: Record<string, unknown> = { ...state, users: [] };
   if (state.settings && typeof state.settings === 'object' && !Array.isArray(state.settings)) {
     safeState.settings = { ...(state.settings as Record<string, unknown>), adminPinHash: '' };
   }
