@@ -2,6 +2,24 @@
 
 The Google Apps Script deployment is authorized with the signed-in Supabase user. The POS browser does **not** store a shared Google API key.
 
+## One Google account for all shops
+
+Use **one dedicated Google account and one bound Google Spreadsheet for all Nexfix shops**. A separate Gmail account is not required for each shop.
+
+The spreadsheet is logically partitioned by `shopId`:
+
+```text
+One Google account / one spreadsheet
+  |
+  +-- Shop A -> isolated partitions
+  +-- Shop B -> isolated partitions
+  +-- Shop C -> isolated partitions
+  +-- Shop D -> isolated partitions
+  +-- ...
+```
+
+The email/account owns the backup infrastructure; it is **not** the security boundary. `shopId` plus server-side membership checks provide the actual isolation.
+
 ## Script Properties
 
 In the Apps Script project, open **Project Settings → Script Properties** and add:
@@ -15,7 +33,7 @@ These values are used by the script to validate the Supabase user JWT and check 
 
 1. Deploy the script as a **Web app**.
 2. Execute as the script owner (`Me`) so the script can write to the bound spreadsheet.
-3. Keep the deployment URL in the Nexfix POS Google Sync setting.
+3. Keep the single deployment URL in the Nexfix POS Google Sync setting.
 4. After changing `Code.gs`, create a new deployment/version so the `/exec` URL serves the new code.
 
 The POS app calls the Apps Script through the Supabase `google-backup-proxy` Edge Function. The browser sends its Supabase session and active `shopId` to that function; the Edge Function verifies the user and exact-shop membership before forwarding the user JWT to Apps Script. Apps Script independently validates the JWT and exact-shop `admin`/`manager` membership.
