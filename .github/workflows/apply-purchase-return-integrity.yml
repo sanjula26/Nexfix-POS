@@ -105,3 +105,5 @@ jobs:
           git diff --cached --check
           git commit -m "fix: preserve tracked units on purchase returns"
           git push
+
+# Trigger after workflow registration without changing application source.
