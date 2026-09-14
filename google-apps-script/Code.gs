@@ -2,14 +2,18 @@
  * Nexfix POS Google Apps Script API.
  * Deploy as a Web app: Execute as Me.
  *
- * The old shared NEXFIX_API_KEY mechanism has been removed. Requests now
- * carry a Supabase user JWT from the authenticated Edge Function proxy.
+ * Requests carry a Supabase user JWT from the authenticated Edge Function proxy.
  * Configure SUPABASE_URL and SUPABASE_ANON_KEY in Script Properties.
+ *
+ * Every operation is additionally bound to an explicit shopId and stored in a
+ * deterministic, shop-specific sheet partition. This protects the external
+ * backup store even if the Web App URL is reached without the Supabase proxy.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '2.0.0';
+var VERSION = '2.1.0';
 var SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
 var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
+var SHOP_ID_MAX_LENGTH = 100;
 
 var ALLOWED_DATA_TABLES = {
   'saleshistory': true,
@@ -57,6 +61,29 @@ function isAllowedDataTable(table) {
   return normalized && ALLOWED_DATA_TABLES[normalized.toLowerCase()] === true;
 }
 
+function normalizeShopId(shopId) {
+  var value = String(shopId || '').trim();
+  if (!value || value.length > SHOP_ID_MAX_LENGTH) throw new Error('Valid shopId is required');
+  return value;
+}
+
+/**
+ * Convert a shop id to a stable sheet-safe partition key without exposing the
+ * raw shop id in the Google spreadsheet tab name.
+ */
+function shopPartitionKey(shopId) {
+  var normalized = normalizeShopId(shopId);
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, normalized, Utilities.Charset.UTF_8);
+  return digest.map(function(byte) {
+    var n = byte < 0 ? byte + 256 : byte;
+    return ('0' + n.toString(16)).slice(-2);
+  }).join('').slice(0, 24);
+}
+
+function partitionedSheetName(baseName, shopId) {
+  return String(baseName).slice(0, 70) + '_' + shopPartitionKey(shopId);
+}
+
 function supabaseConfig() {
   var url = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_URL_PROPERTY) || '').trim().replace(/\/$/, '');
   var anonKey = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_ANON_KEY_PROPERTY) || '').trim();
@@ -64,8 +91,11 @@ function supabaseConfig() {
   return { url: url, anonKey: anonKey };
 }
 
-function authenticateUser(accessToken) {
+function authenticateUser(accessToken, shopId) {
   if (!accessToken || String(accessToken).length < 20) return null;
+  var normalizedShopId;
+  try { normalizedShopId = normalizeShopId(shopId); } catch (ignore) { return null; }
+
   var config = supabaseConfig();
   var userResponse = UrlFetchApp.fetch(config.url + '/auth/v1/user', {
     method: 'get',
@@ -75,10 +105,10 @@ function authenticateUser(accessToken) {
   if (userResponse.getResponseCode() < 200 || userResponse.getResponseCode() >= 300) return null;
 
   var user;
-  try { user = JSON.parse(userResponse.getContentText()); } catch (ignore) { return null; }
+  try { user = JSON.parse(userResponse.getContentText()); } catch (ignore2) { return null; }
   if (!user || !user.id) return null;
 
-  var membershipUrl = config.url + '/rest/v1/shop_memberships?select=role,active&user_id=eq.' + encodeURIComponent(user.id) + '&active=eq.true';
+  var membershipUrl = config.url + '/rest/v1/shop_memberships?select=role,active&user_id=eq.' + encodeURIComponent(user.id) + '&shop_id=eq.' + encodeURIComponent(normalizedShopId) + '&active=eq.true';
   var membershipResponse = UrlFetchApp.fetch(membershipUrl, {
     method: 'get',
     headers: { 'apikey': config.anonKey, 'Authorization': 'Bearer ' + String(accessToken) },
@@ -87,18 +117,19 @@ function authenticateUser(accessToken) {
   if (membershipResponse.getResponseCode() < 200 || membershipResponse.getResponseCode() >= 300) return null;
 
   var memberships;
-  try { memberships = JSON.parse(membershipResponse.getContentText()); } catch (ignore2) { return null; }
+  try { memberships = JSON.parse(membershipResponse.getContentText()); } catch (ignore3) { return null; }
   if (!Array.isArray(memberships)) return null;
   var allowed = memberships.some(function(m) { return m && (m.role === 'admin' || m.role === 'manager') && m.active === true; });
   return allowed ? user : null;
 }
 
-function syncTable(ss, table, rows) {
+function syncTable(ss, table, rows, shopId) {
   if (!isAllowedDataTable(table)) throw new Error('Table is not allowed');
   var safeTable = normalizeTableName(table);
-  var sheet = ss.getSheetByName(safeTable) || ss.insertSheet(safeTable);
+  var sheetName = partitionedSheetName(safeTable, shopId);
+  var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
   rows = Array.isArray(rows) ? rows : [];
-  if (!rows.length) return { table: safeTable, rows: 0 };
+  if (!rows.length) return { table: safeTable, rows: 0, shopPartition: shopPartitionKey(shopId) };
 
   var headers = Object.keys(rows[0]);
   var values = rows.map(function(row) {
@@ -119,30 +150,33 @@ function syncTable(ss, table, rows) {
     });
     sheet.getRange(sheet.getLastRow() + 1, 1, appendValues.length, existing.length).setValues(appendValues);
   }
-  return { table: safeTable, rows: rows.length };
+  return { table: safeTable, rows: rows.length, shopPartition: shopPartitionKey(shopId) };
 }
 
-function backupState(ss, contents) {
-  var sheet = ss.getSheetByName(BACKUP_SHEET) || ss.insertSheet(BACKUP_SHEET);
+function backupState(ss, contents, shopId) {
+  var sheetName = partitionedSheetName(BACKUP_SHEET, shopId);
+  var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
   var state = contents.state || {};
   var now = new Date();
   sheet.clearContents();
-  sheet.getRange(1, 1, 1, 4).setValues([['Timestamp', 'BackupType', 'Version', 'StateJSON']]);
-  sheet.getRange(2, 1, 1, 4).setValues([[now, contents.kind || 'manual', VERSION, JSON.stringify(state)]]);
-  return { action: 'backupState', backupType: contents.kind || 'manual', timestamp: now.toISOString(), sheet: BACKUP_SHEET };
+  sheet.getRange(1, 1, 1, 5).setValues([['Timestamp', 'BackupType', 'Version', 'ShopPartition', 'StateJSON']]);
+  sheet.getRange(2, 1, 1, 5).setValues([[now, contents.kind || 'manual', VERSION, shopPartitionKey(shopId), JSON.stringify(state)]]);
+  return { action: 'backupState', backupType: contents.kind || 'manual', timestamp: now.toISOString(), sheet: sheetName, shopPartition: shopPartitionKey(shopId) };
 }
 
-function latestBackup(ss) {
-  var sheet = ss.getSheetByName(BACKUP_SHEET);
-  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 4) return null;
-  var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(4, sheet.getLastColumn())).getValues();
+function latestBackup(ss, shopId) {
+  var sheet = ss.getSheetByName(partitionedSheetName(BACKUP_SHEET, shopId));
+  if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 5) return null;
+  var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(5, sheet.getLastColumn())).getValues();
   var headers = values[0];
   var timestampIndex = headers.indexOf('Timestamp');
   var typeIndex = headers.indexOf('BackupType');
   var versionIndex = headers.indexOf('Version');
   var stateIndex = headers.indexOf('StateJSON');
-  if (stateIndex < 0) return null;
+  var partitionIndex = headers.indexOf('ShopPartition');
+  if (stateIndex < 0 || partitionIndex < 0 || String(values[0][partitionIndex]) !== 'ShopPartition') return null;
   var row = values[values.length - 1];
+  if (String(row[partitionIndex]) !== shopPartitionKey(shopId)) return null;
   var raw = row[stateIndex];
   if (raw === undefined || raw === null || String(raw).trim() === '') return null;
   return {
@@ -164,19 +198,21 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var contents = parsePostBody(e);
-    var user = authenticateUser(contents.accessToken);
-    if (!user) return json(unauthorized('Valid admin/manager Supabase session required'));
+    var shopId;
+    try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(unauthorized('A valid shopId is required')); }
+    var user = authenticateUser(contents.accessToken, shopId);
+    if (!user) return json(unauthorized('Valid admin/manager Supabase session required for this shop'));
 
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var result;
     if (contents.action === 'backupState') {
-      result = ok(backupState(ss, contents));
+      result = ok(backupState(ss, contents, shopId));
     } else if (contents.action === 'saveData' && isAllowedDataTable(contents.table)) {
-      result = ok(syncTable(ss, contents.table, contents.rows));
+      result = ok(syncTable(ss, contents.table, contents.rows, shopId));
     } else if (contents.action === 'getLatestBackup') {
-      result = ok({ action: 'getLatestBackup', backup: latestBackup(ss) });
+      result = ok({ action: 'getLatestBackup', backup: latestBackup(ss, shopId) });
     } else if (contents.action === 'getTable' && isAllowedDataTable(contents.table)) {
-      result = ok({ action: 'getTable', table: normalizeTableName(contents.table), rows: getTable(ss, contents.table) });
+      result = ok({ action: 'getTable', table: normalizeTableName(contents.table), rows: getTable(ss, contents.table, shopId) });
     } else {
       return json(fail('Unsupported action or table is not allowed'));
     }
@@ -188,10 +224,10 @@ function doPost(e) {
   }
 }
 
-function getTable(ss, table) {
+function getTable(ss, table, shopId) {
   if (!isAllowedDataTable(table)) throw new Error('Table is not allowed');
   var safeTable = normalizeTableName(table);
-  var sheet = ss.getSheetByName(safeTable);
+  var sheet = ss.getSheetByName(partitionedSheetName(safeTable, shopId));
   if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 1) return [];
   var values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
   var headers = values[0];
