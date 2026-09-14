@@ -48,6 +48,24 @@ jobs:
           test -d supabase/migrations
           test -n "$(find supabase/migrations -type f -name '*.sql' -print -quit)"
 
+      - name: Check Google backup is shop isolated
+        shell: bash
+        run: |
+          set -euo pipefail
+          file='google-apps-script/Code.gs'
+          test -f "$file"
+          grep -q 'function normalizeShopId' "$file"
+          grep -q 'shop_id=eq.' "$file"
+          grep -q 'function shopPartitionKey' "$file"
+          grep -q 'function partitionedSheetName' "$file"
+          grep -q 'partitionedSheetName(BACKUP_SHEET, shopId)' "$file"
+          grep -q 'partitionedSheetName(safeTable, shopId)' "$file"
+          grep -q 'authenticateUser(contents.accessToken, shopId)' "$file"
+          if grep -q "getSheetByName(BACKUP_SHEET)" "$file"; then
+            echo 'Unscoped FullBackup sheet access is forbidden.'
+            exit 1
+          fi
+
       - name: Dependency security audit
         shell: bash
         run: |
