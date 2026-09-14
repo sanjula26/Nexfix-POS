@@ -156,9 +156,11 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
     try {
       const meta = await idbGetMeta();
       const online = typeof navigator === 'undefined' || navigator.onLine;
+      const intervalHours = Number(meta.autoBackupHours) || 0;
+      if (intervalHours <= 0) return;
       const last = meta.lastAutoBackupAt ? new Date(meta.lastAutoBackupAt).getTime() : 0;
-      const due = Date.now() - last >= meta.autoBackupHours * 60 * 60 * 1000;
-      if (!force && (!meta.autoBackupHours || meta.autoBackupHours <= 0 || !due)) return;
+      const due = Date.now() - last >= intervalHours * 60 * 60 * 1000;
+      if (!force && !due) return;
       if (!online) return;
       running = true;
       const result = await downloadBackup(getState(), 'auto', { download: false, cloud: true });
