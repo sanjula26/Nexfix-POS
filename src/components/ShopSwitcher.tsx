@@ -13,11 +13,13 @@ interface ShopOption { id: string; name: string; role: string; }
 
 const CACHE_PREFIX = 'nexfix_shop_state_cache_v1:';
 const HYDRATED_PREFIX = 'nexfix_shop_hydrated_v1:';
+const MEMBERSHIP_PREFIX = 'nexfix_shop_memberships_v1:';
 const STORE_KEY = 'nexfix_pos_v2';
 const REVISION_KEY = 'nexfix_cloud_revision';
 
 function cacheKey(shopId: string): string { return `${CACHE_PREFIX}${shopId}`; }
 function hydratedKey(shopId: string): string { return `${HYDRATED_PREFIX}${shopId}`; }
+function membershipKey(userId: string): string { return `${MEMBERSHIP_PREFIX}${userId}`; }
 
 function preserveLocalAuthentication(current: POSState, next: POSState): POSState {
   return { ...next, users: current.users, settings: { ...next.settings, adminPinHash: current.settings.adminPinHash } };
@@ -32,17 +34,40 @@ function validState(input: unknown): input is POSState {
     && !!s.permissions && typeof s.permissions === 'object';
 }
 
-async function listMemberships(): Promise<ShopOption[]> {
-  if (!supabaseConfigured || !supabase) return [];
+function validShopOptions(input: unknown): input is ShopOption[] {
+  return Array.isArray(input) && input.every(item => !!item && typeof item === 'object'
+    && typeof (item as ShopOption).id === 'string' && (item as ShopOption).id.length > 0
+    && typeof (item as ShopOption).name === 'string'
+    && typeof (item as ShopOption).role === 'string');
+}
+
+function readCachedMemberships(userId: string): ShopOption[] {
+  try {
+    const raw = localStorage.getItem(membershipKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return validShopOptions(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function writeCachedMemberships(userId: string, shops: ShopOption[]): void {
+  try { localStorage.setItem(membershipKey(userId), JSON.stringify(shops)); } catch { /* ignore quota */ }
+}
+
+async function listMemberships(userId: string): Promise<ShopOption[]> {
+  const cached = readCachedMemberships(userId);
+  if (!supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) return cached;
   const { data: session } = await supabase.auth.getSession();
   const uid = session.session?.user.id;
-  if (!uid) return [];
+  if (!uid) return cached;
   const { data: memberships, error } = await supabase.from('shop_memberships').select('shop_id, role, created_at').eq('user_id', uid).eq('active', true).order('created_at', { ascending: true });
-  if (error || !memberships?.length) return [];
+  if (error || !memberships?.length) return cached;
   const ids = memberships.map(row => String(row.shop_id));
   const { data: shops } = await supabase.from('shops').select('id, name').in('id', ids);
   const names = new Map((shops || []).map(row => [String(row.id), String(row.name || 'Nexfix Shop')]));
-  return memberships.map(row => ({ id: String(row.shop_id), name: names.get(String(row.shop_id)) || `Shop ${String(row.shop_id).slice(0, 8)}`, role: String(row.role) }));
+  const result = memberships.map(row => ({ id: String(row.shop_id), name: names.get(String(row.shop_id)) || `Shop ${String(row.shop_id).slice(0, 8)}`, role: String(row.role) }));
+  writeCachedMemberships(userId, result);
+  return result;
 }
 
 async function registerDeviceForShop(shopId: string): Promise<void> {
@@ -71,7 +96,7 @@ function readCachedState(shopId: string): POSState | null {
 function writeCachedState(shopId: string, state: POSState): void { try { localStorage.setItem(cacheKey(shopId), JSON.stringify(state)); } catch { /* ignore quota */ } }
 function markShopHydrated(shopId: string): void { try { localStorage.setItem(hydratedKey(shopId), '1'); } catch { /* ignore */ } }
 function isShopHydrated(shopId: string): boolean { try { return localStorage.getItem(hydratedKey(shopId)) === '1'; } catch { return false; } }
-function writeActiveStoreState(state: POSState): void { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore quota */ } }
+function writeActiveStoreState(state: POSState): void { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ } }
 
 export default function ShopSwitcher() {
   const { user, state } = usePOS();
@@ -86,7 +111,7 @@ export default function ShopSwitcher() {
   useEffect(() => {
     let cancelled = false;
     if (!user) { setShops([]); setBootstrapping(false); return; }
-    void listMemberships().then(items => {
+    void listMemberships(user.id).then(items => {
       if (cancelled) return;
       setShops(items);
       const selected = getCloudShopId();
@@ -103,10 +128,15 @@ export default function ShopSwitcher() {
     setBootstrapping(true); setError('');
     void (async () => {
       try {
-        await registerDeviceForShop(activeShop.id);
-        const remote = await downloadShopSnapshot(activeShop.id);
+        const online = typeof navigator === 'undefined' || navigator.onLine;
+        let remote: { state: POSState; revision: number } | null = null;
+        if (online) {
+          await registerDeviceForShop(activeShop.id);
+          remote = await downloadShopSnapshot(activeShop.id);
+        }
         const cached = remote ? null : readCachedState(activeShop.id);
         if (!remote && !cached) {
+          if (!online) throw new Error('This shop is not cached on this device yet. Connect once to prepare it for offline use.');
           writeCachedState(activeShop.id, state);
           writeActiveStoreState(state);
           await idbSaveState(state);
@@ -144,9 +174,16 @@ export default function ShopSwitcher() {
       }
       writeCachedState(activeShop.id, state);
       await idbSaveState(state);
-      await registerDeviceForShop(target.id);
-      const remote = await downloadShopSnapshot(target.id);
+      const online = typeof navigator === 'undefined' || navigator.onLine;
+      let remote: { state: POSState; revision: number } | null = null;
+      if (online) {
+        await registerDeviceForShop(target.id);
+        remote = await downloadShopSnapshot(target.id);
+      }
       const cached = remote ? null : readCachedState(target.id);
+      if (!remote && !cached) throw new Error(online
+        ? 'Could not load the selected shop. Try again.'
+        : 'The selected shop is not cached on this device yet. Connect once before switching to it offline.');
       const next = preserveLocalAuthentication(state, remote?.state || cached || buildSeed());
       setCloudShopId(target.id);
       try { localStorage.setItem(REVISION_KEY, String(remote?.revision ?? 0)); } catch { /* ignore */ }
