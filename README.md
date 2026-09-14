@@ -20,7 +20,9 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Cloud sale and return operations use stable IDs and server-side transactions to prevent duplicate processing during retries.
 - Purchase returns now reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
 - Multi-PC state snapshots use a device-bound authenticated RPC and optimistic revision checks; a stale device cannot overwrite a newer cloud snapshot, and conflicts leave pending local writes intact.
+- Cloud POS snapshots are sanitized server-side so local password hashes and the admin PIN hash are not persisted in `pos_state_snapshots`.
 - Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
+- Google cloud backups omit local authentication secrets; cloud restore retains the current device's authentication credentials and local-only users.
 - Only HTTPS `script.google.com` URLs are accepted by the Google backup configuration.
 - Keep `.env.local`, passwords, service-role keys, database credentials and other secrets out of Git.
 
@@ -60,7 +62,19 @@ The local IndexedDB store remains the source of truth while offline. Pending sal
 
 ## Google backup
 
-Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Test a restore before relying on backups for disaster recovery.
+Configure the Apps Script URL through the application settings or `VITE_GOOGLE_SCRIPT_URL`. Enable Google sync only after verifying the destination account and backup/restore process. Google backup payloads intentionally exclude local password hashes and the admin PIN hash. A cloud restore keeps the current device's authentication credentials and local-only users while restoring business data. Test a restore before relying on backups for disaster recovery.
+
+## Netlify deployment
+
+The repository includes `netlify.toml` with `npm run build`, `dist` publishing, SPA fallback/security headers, and Node.js 22 to match CI. Configure the following public environment variables in the Netlify site before production use:
+
+```text
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_GOOGLE_SCRIPT_URL=
+```
+
+Do not add Supabase `service_role` or other server secrets to Netlify's client build environment.
 
 ## Production checklist
 
@@ -73,10 +87,11 @@ Before real business use:
 - [x] Durable offline sale/return queue with idempotent retry handling implemented
 - [x] Purchase-return tracked-unit reconciliation implemented and verified in CI
 - [x] Multi-PC conflict-safe state snapshot synchronization implemented; perform a real two-device acceptance drill before live use
-- [ ] Verify Google backup and restore end-to-end
+- [ ] Verify Google backup and restore end-to-end with the deployed Google Apps Script/account
+- [x] Cloud backup and POS snapshot authentication-secret isolation implemented
 - [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.207`
 - [x] Dependency/security audit completed; high-severity npm audit findings remediated
-- [ ] Configure Netlify production environment variables
+- [ ] Configure Netlify production environment variables and verify the live deployment
 - [ ] Test printer, barcode scanner and cash drawer hardware
 - [ ] Perform a full restore drill before storing live business data
 
