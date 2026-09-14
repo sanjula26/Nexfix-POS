@@ -17,6 +17,7 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 
 - Offline queue operations are **never discarded just because the browser becomes online**. A remote acknowledgement is required before a sync operation is acknowledged.
 - Cloud sale and return operations use stable IDs and server-side transactions to prevent duplicate processing during retries.
+- Purchase returns now reconcile IMEI/serial-tracked inventory units: returned units are marked `returned`, removed from sale eligibility, and linked to the supplier debit note.
 - Google backup is **OFF by default** and no real Google Apps Script deployment URL is hard-coded in the source.
 - Only HTTPS `script.google.com` URLs are accepted by the Google backup configuration.
 - Keep `.env.local`, passwords, service-role keys, database credentials and other secrets out of Git.
@@ -68,10 +69,15 @@ Before real business use:
 - [x] Server-side transactional sales/stock operations implemented for cloud sales
 - [x] Server-side transactional return/stock operations implemented for cloud returns
 - [x] Durable offline sale/return queue with idempotent retry handling implemented
+- [x] Purchase-return tracked-unit reconciliation implemented and verified in CI
 - [ ] Complete multi-PC conflict handling beyond the current transactional sale/return paths
 - [ ] Verify Google backup and restore end-to-end
-- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.181`
+- [x] Windows installer and portable builds verified in GitHub Actions release build `v3.0.0-build.207`
+- [x] Dependency/security audit completed; high-severity npm audit findings remediated
 - [ ] Configure Netlify production environment variables
-- [ ] Run dependency/security audit and resolve high-severity findings
 - [ ] Test printer, barcode scanner and cash drawer hardware
 - [ ] Perform a full restore drill before storing live business data
+
+## Dependency security
+
+The production dependency audit was run with `npm audit --audit-level=high`. High-severity findings in Electron and transitive packages were remediated; Electron was upgraded to `44.3.0`, and the final audit completed with no high-severity findings. The standard CI pipeline also passed typecheck, lint and production build after the upgrade.
