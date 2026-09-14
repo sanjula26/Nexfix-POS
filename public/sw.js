@@ -1,5 +1,5 @@
 /* Nexfix POS Service Worker — offline shell cache */
-const CACHE = 'nexfix-pos-v4';
+const CACHE = 'nexfix-pos-v5';
 const BASE_URL = new URL('./', self.registration.scope);
 const INDEX_URL = new URL('./index.html', self.registration.scope);
 const SHELL = [BASE_URL.href, INDEX_URL.href];
