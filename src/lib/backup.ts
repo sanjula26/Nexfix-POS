@@ -138,7 +138,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
     try { cloud = await backupStateToGoogle(payload, kind); } catch { cloud = false; }
   }
-  const successful = wantCloud ? cloud : local;
+  const successful = local || cloud;
   if (successful) {
     const now = new Date().toISOString();
     const meta = await idbGetMeta();
