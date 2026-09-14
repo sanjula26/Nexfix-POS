@@ -66,10 +66,6 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
-          // If the local durable snapshot was last changed by an admin/manager,
-          // publish its catalog first so newly-added offline products/customers/units
-          // exist before their queued sales are replayed. Cashiers continue with the
-          // already-synced catalog and are not granted catalog-write privileges.
           if(state) {
             const catalog=await syncNormalizedCatalog(state, shop.shopId);
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
@@ -125,4 +121,17 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
   })().finally(()=>{flushInFlight=null;});
   return flushInFlight;
 }
-export async function registerServiceWorker():Promise<boolean>{if(!('serviceWorker'in navigator))return false;try{const reg=await navigator.serviceWorker.register('/sw.js',{scope:'/'});if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});return true;}catch{return false;}}
+
+export async function registerServiceWorker():Promise<boolean>{
+  if(!('serviceWorker' in navigator)) return false;
+  try {
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const serviceWorkerUrl = new URL('sw.js', new URL(baseUrl, window.location.origin));
+    const scope = new URL(baseUrl, window.location.origin).pathname;
+    const reg = await navigator.serviceWorker.register(serviceWorkerUrl, { scope });
+    if(reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'});
+    return true;
+  } catch {
+    return false;
+  }
+}
