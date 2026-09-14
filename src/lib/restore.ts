@@ -72,19 +72,11 @@ function asRestoreEnvelope(input: unknown): BackupEnvelope {
 }
 
 function restoreLocalAuthentication(current: POSState, restored: POSState): POSState {
-  const currentUsersById = new Map(current.users.map(user => [user.id, user]));
-  const restoredUserIds = new Set(restored.users.map(user => user.id));
-  const users = restored.users.map(user => {
-    const local = currentUsersById.get(user.id);
-    return local ? { ...user, password: local.password } : local ?? user;
-  });
-  for (const local of current.users) {
-    if (!restoredUserIds.has(local.id)) users.push(local);
-  }
-
   return {
     ...restored,
-    users,
+    // User credentials are device-local authentication data, never business
+    // backup data. Keep the complete current user set and the current admin PIN.
+    users: current.users,
     settings: {
       ...restored.settings,
       adminPinHash: current.settings.adminPinHash,
@@ -98,10 +90,9 @@ function restoreLocalAuthentication(current: POSState, restored: POSState): POSS
  * before any state replacement. If the new state cannot be persisted, the
  * previous state is restored from that checkpoint.
  *
- * Google backups are deliberately stored without local password hashes or
- * the admin PIN hash. During a cloud restore, authentication secrets and
- * local-only users are retained from the current device so a cloud backup
- * can never replace or erase the device's local credentials.
+ * Google backups deliberately contain no local user records or authentication
+ * secrets. A cloud restore therefore cannot create, modify, erase or replace
+ * device credentials.
  */
 export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
