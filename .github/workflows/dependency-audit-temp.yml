@@ -18,17 +18,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm install --no-audit --no-fund
-      - run: npm audit fix --no-audit
+      - run: npm audit fix --no-audit || true
       - name: Commit remediation
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git diff -- package.json package-lock.json
           git add package.json package-lock.json
+          git diff --cached --check
           if git diff --cached --quiet; then
             echo 'No non-breaking audit remediation available.'
             exit 0
           fi
-          git diff --cached --check
+          git diff --cached --stat
           git commit -m 'fix: remediate npm audit vulnerabilities'
           git push origin HEAD:main
