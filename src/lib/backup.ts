@@ -124,14 +124,15 @@ export function validateBackupForRestore(input: unknown): BackupEnvelope {
 export interface BackupOptions { download?: boolean; cloud?: boolean; }
 
 export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<{ local: boolean; cloud: boolean }> {
-  const wantDownload = options.download !== false;
+  // Automatic/reconnect backups are cloud-only. A local JSON file is an explicit manual action.
+  const wantDownload = kind === 'manual' && options.download !== false;
   const wantCloud = options.cloud !== false && isGoogleSyncEnabled();
   let local = false;
   let cloud = false;
   const payload: BackupEnvelope = { _meta: { app: 'Nexfix POS', version: 2, exportedAt: new Date().toISOString(), kind }, state };
   if (wantDownload) {
     try {
-      downloadFile(buildBackupFilename(kind === 'auto' ? 'nexfix-auto' : 'nexfix-backup'), JSON.stringify(payload, null, 2), 'application/json');
+      downloadFile(buildBackupFilename('nexfix-backup'), JSON.stringify(payload, null, 2), 'application/json');
       local = true;
     } catch { /* metadata must not claim local success */ }
   }
