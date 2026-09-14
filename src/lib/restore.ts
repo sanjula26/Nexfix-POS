@@ -41,15 +41,37 @@ export async function restoreBackup(input: unknown): Promise<BackupEnvelope> {
   return validateBackupForRestore(input);
 }
 
+function isBackupEnvelope(input: unknown): input is BackupEnvelope {
+  return !!input && typeof input === 'object' && '_meta' in input && 'state' in input;
+}
+
+function asRestoreEnvelope(input: unknown): BackupEnvelope {
+  if (isBackupEnvelope(input)) return input;
+  return {
+    _meta: {
+      app: 'Nexfix POS',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      kind: 'manual',
+    },
+    state: input as POSState,
+  };
+}
+
 /**
  * Validate and apply a backup as one guarded local restore flow.
  * Restore is an admin-only destructive operation. A checkpoint is created
  * before any state replacement. If the new state cannot be persisted, the
  * previous state is restored from that checkpoint.
+ *
+ * Google restore returns the parsed POS state rather than the local backup
+ * envelope, so it is wrapped in a synthetic manual envelope before the same
+ * strict validator is applied. This keeps one validation path for both local
+ * and Google restores without weakening backup validation.
  */
 export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
-  const backup = await restoreBackup(input);
+  const backup = await restoreBackup(asRestoreEnvelope(input));
   await prepareRestore(current);
   try {
     const saved = await idbSaveState(backup.state);
