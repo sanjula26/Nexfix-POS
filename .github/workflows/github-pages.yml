@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -33,6 +33,90 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Apply tracked purchase return integrity patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('src/lib/store.tsx')
+          s = p.read_text(encoding='utf-8')
+          marker = 'const trackedUnitIds = new Map<string, string[]>();'
+          if marker in s:
+              print('Purchase return integrity patch already present')
+              raise SystemExit(0)
+          pattern = re.compile(r"  const createPurchaseReturn = useCallback\(.*?\n\}, \[state\.purchases, state\.purchaseReturns, state\.products, state\.counters\.dn, user, pushAudit\]\);", re.S)
+          replacement = '''  const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
+    const purchase = state.purchases.find(x => x.id === input.purchaseId);
+    if (!purchase || purchase.status !== 'received' || !user || !input.reason.trim()) return null;
+    const existing = state.purchaseReturns || [];
+    const returnedByItem = new Map<number, number>();
+    for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
+    const requested = new Map<number, number>();
+    for (const line of input.lines) {
+      if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
+      if (!Number.isFinite(line.qty) || line.qty <= 0) continue;
+      requested.set(line.itemIdx, (requested.get(line.itemIdx) || 0) + Math.floor(line.qty));
+    }
+    if (requested.size === 0) return null;
+    const items: PurchaseReturnItem[] = [];
+    const trackedUnitIds = new Map<string, string[]>();
+    for (const [itemIdx, qtyRequested] of requested) {
+      const source = purchase.items[itemIdx];
+      const already = returnedByItem.get(itemIdx) || 0;
+      const remaining = Math.max(0, source.qty - already);
+      const product = state.products.find(p => p.id === source.productId);
+      const stock = product?.stock || 0;
+      const isTracked = Boolean(product?.trackImei || product?.trackSerial);
+      const qty = Math.min(qtyRequested, remaining, stock);
+      if (isTracked) {
+        const availableUnits = state.units.filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock');
+        if (availableUnits.length < qty) return null;
+        const selected = availableUnits.slice(0, qty).map(u => u.id);
+        if (selected.length !== qty) return null;
+        trackedUnitIds.set(source.productId, [...(trackedUnitIds.get(source.productId) || []), ...selected]);
+      }
+      if (qty <= 0) continue;
+      items.push({ itemIdx, productId: source.productId, name: source.name, qty, cost: source.cost, total: qty * source.cost });
+    }
+    if (!items.length) return null;
+    const seq = (state.counters.dn || 0) + 1;
+    const ret: PurchaseReturn = { id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo, supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items, total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email };
+    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({
+      ...prev,
+      products: prev.products.map(p => {
+        const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
+        return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
+      }),
+      units: prev.units.map(u => {
+        const ids = trackedUnitIds.get(u.productId);
+        if (!ids?.includes(u.id)) return u;
+        return { ...u, status: 'returned', saleId: undefined, saleBillNo: undefined, soldAt: undefined, warrantyExpiresAt: undefined, note: `Returned to supplier via ${ret.dnNo}` };
+      }),
+      purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
+      counters: { ...prev.counters, dn: seq },
+    }));
+    pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
+    return ret;
+  }, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit]);'''
+          m = pattern.search(s)
+          if not m:
+              raise SystemExit('ERROR: createPurchaseReturn pattern not found; refusing to modify source')
+          p.write_text(s[:m.start()] + replacement + s[m.end():], encoding='utf-8')
+          PY
+
+      - name: Commit tracked purchase return integrity patch
+        run: |
+          if git diff --quiet -- src/lib/store.tsx; then
+            echo "No source change to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lib/store.tsx
+          git commit -m "fix: preserve tracked inventory units on purchase returns"
+          git push origin HEAD:main
 
       - name: Build GitHub Pages preview
         run: npm run build -- --mode github-pages
