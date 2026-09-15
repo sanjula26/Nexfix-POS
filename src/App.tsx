@@ -152,8 +152,28 @@ function SessionSecurity() {
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let startedAt = Date.now();
     try {
-      const raw = localStorage.getItem(startedKey); const parsed = raw ? Number(raw) : NaN;
-      if (Number.isFinite(parsed) && parsed > 0) startedAt = parsed; else localStorage.setItem(startedKey, String(startedAt));
+      const raw = localStorage.getItem(startedKey);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { userId?: string; startedAt?: number };
+          if (parsed.userId === user.id && Number.isFinite(parsed.startedAt) && parsed.startedAt! > 0) {
+            startedAt = parsed.startedAt!;
+          } else {
+            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+          }
+        } catch {
+          // Migrate the legacy numeric marker and bind the new marker to this user.
+          const legacyStartedAt = Number(raw);
+          if (Number.isFinite(legacyStartedAt) && legacyStartedAt > 0 && Date.now() - legacyStartedAt < rememberMs) {
+            startedAt = legacyStartedAt;
+            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+          } else {
+            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+          }
+        }
+      } else {
+        localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+      }
     } catch { /* ignore storage failures */ }
     if (Date.now() - startedAt >= rememberMs) { signOut(); return; }
     const arm = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => signOut(), timeoutMs); };
