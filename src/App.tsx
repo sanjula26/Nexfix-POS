@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from 'react';
+import { lazy, Suspense, useEffect, useRef, useLayoutEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
@@ -43,12 +43,12 @@ function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null;
 function SessionRecovery() {
   const { user, ready, state, exportData, importData } = usePOS();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!ready || user) return;
     try {
       const DEFAULT_EMAIL = 'admin@nexfixsolution.com';
       const LEGACY_DEFAULT_EMAIL = 'admin@nexfix.lk';
-      const REPAIR_MARKER = 'nexfix_default_admin_v3';
+      const REPAIR_MARKER = 'nexfix_default_admin_v4';
       const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
 
       if (!repaired) {
