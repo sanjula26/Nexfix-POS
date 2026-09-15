@@ -27,7 +27,7 @@ jobs:
           assert old in s, 'POS quotation line mapping not found'
           s = s.replace(old, new, 1)
           old = """      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);\n      setError('');"""
-          new = """      if (data.discount !== undefined) { setDiscMode('rs'); setDiscount(String(Math.max(0, data.discount || 0))); }\n      if (data.tax !== undefined) {\n        const grossAfterLines = next.reduce((sum, l) => sum + l.price * l.qty - l.discount, 0);\n        const taxableAfterDiscount = Math.max(0, grossAfterLines - Math.max(0, data.discount || 0));\n        setTaxPct(taxableAfterDiscount > 0 ? String(((Math.max(0, data.tax || 0) / taxableAfterDiscount) * 100)) : '0');\n      }\n      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);\n      setError('');"""
+          new = """      if (data.discount !== undefined) { setDiscMode('rs'); setDiscount(String(Math.max(0, data.discount || 0))); }\n      if (data.tax !== undefined) {\n        const grossAfterLines = next.reduce((sum, l) => sum + l.price * l.qty - l.discount, 0);\n        const taxableAfterDiscount = Math.max(0, grossAfterLines - Math.max(0, data.discount || 0));\n        setTaxPct(taxableAfterDiscount > 0 ? String((Math.max(0, data.tax || 0) / taxableAfterDiscount) * 100) : '0');\n      }\n      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);\n      setError('');"""
           assert old in s, 'POS quotation totals import block not found'
           s = s.replace(old, new, 1)
           p.write_text(s)
@@ -35,7 +35,7 @@ jobs:
           q = Path('src/pages/Quotations.tsx')
           s = q.read_text()
           old = """  return value.replace(/[&<>\\\\\\\"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch] || ch));"""
-          new = """  return value.replace(/[&<>\"] /g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch] || ch));""".replace('\"] /g','\"]/g')
+          new = """  return value.replace(/[&<>"] /g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch] || ch));""".replace('] /g', ']/g')
           assert old in s, 'quotation escape helper not found'
           s = s.replace(old, new, 1)
           q.write_text(s)
