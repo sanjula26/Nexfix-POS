@@ -153,7 +153,16 @@ function CloudSyncStateBridge() {
   return null;
 }
 
-function Protected() { const { user } = usePOS(); const location = useLocation(); if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />; return <AppLayout />; }
+function Protected() {
+  const { user, ready } = usePOS();
+  const location = useLocation();
+  // Do not redirect while IndexedDB/session recovery is still hydrating.
+  // A transient null user here used to send a successful login straight back
+  // to the Sign In screen before SessionRecovery could restore the state.
+  if (!ready) return <RouteFallback />;
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  return <AppLayout />;
+}
 function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boolean; children: React.ReactNode }) { const { user, can } = usePOS(); if (!user) return null; if (adminOnly && user.role !== 'admin') return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; if (perm && !can(perm)) return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; return <>{children}</>; }
 
 function RouteFallback() {
