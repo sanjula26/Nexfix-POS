@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, EyeOff, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
+import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
 import { usePOS } from '../lib/store';
-import { ensureCloudSession } from '../lib/cloudAuth';
 import { hashPasswordAsync } from '../lib/passwordAsync';
 import { uid } from '../lib/utils';
 
@@ -15,7 +14,7 @@ const features = [
 ];
 
 export default function Login() {
-  const { signIn, user, state, saveUser, updateSettings } = usePOS();
+  const { signIn, user, state, exportData, importData } = usePOS();
   const navigate = useNavigate();
   const firstRun = state.users.length === 0;
   const [email, setEmail] = useState('');
@@ -44,9 +43,7 @@ export default function Login() {
         setError(res.error || 'Sign in failed');
         return;
       }
-      const cloud = await ensureCloudSession(email, password, email.trim());
       setLoading(false);
-      if (cloud.needsEmailConfirmation) setError('Signed in locally. Check your email to enable cloud sync on this account.');
       navigate('/', { replace: true });
     }, 650);
   };
@@ -62,13 +59,27 @@ export default function Login() {
     if (setupPin.trim().length < 6) return setError('Admin security PIN must be at least 6 characters');
     setLoading(true);
     try {
+      const userId = uid();
       const passwordHash = await hashPasswordAsync(setupPassword);
       const pinHash = await hashPasswordAsync(setupPin.trim());
-      saveUser({ id: uid(), name, email: mail, password: passwordHash, role: 'admin', active: true, createdAt: new Date().toISOString() });
-      updateSettings({ adminPinHash: pinHash });
-      const res = await signIn(mail, setupPassword, true);
-      if (!res.ok) throw new Error(res.error || 'Could not start the administrator session');
-      navigate('/', { replace: true });
+      const next = JSON.parse(exportData()) as typeof state;
+      next.users = [{ id: userId, name, email: mail, password: passwordHash, role: 'admin', active: true, createdAt: new Date().toISOString() }, ...next.users];
+      next.settings = { ...next.settings, adminPinHash: pinHash };
+
+      // First-run has no logged-in admin, so saveUser/updateSettings correctly
+      // reject privileged mutations. Import the fully validated state atomically
+      // instead, then create the normal persistent session for the new admin.
+      if (!importData(JSON.stringify(next))) {
+        throw new Error('Could not save the administrator account');
+      }
+
+      localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
+      sessionStorage.removeItem('nexfix_session_v1');
+
+      // Give the debounced local/IndexedDB persistence a chance to commit before
+      // the reload. The reload makes the provider pick up the newly created session.
+      await new Promise(resolve => setTimeout(resolve, 300));
+      window.location.reload();
     } catch (err) {
       setLoading(false);
       setError(err instanceof Error ? err.message : 'Initial setup failed');
