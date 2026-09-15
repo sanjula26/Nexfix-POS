@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
 import { usePOS } from '../lib/store';
+import { ensureCloudSession } from '../lib/cloudAuth';
 import { hashPasswordAsync } from '../lib/passwordAsync';
 import { uid } from '../lib/utils';
 
@@ -43,7 +44,9 @@ export default function Login() {
         setError(res.error || 'Sign in failed');
         return;
       }
+      const cloud = await ensureCloudSession(email, password, email.trim());
       setLoading(false);
+      if (cloud.needsEmailConfirmation) setError('Signed in locally. Check your email to enable cloud sync on this account.');
       navigate('/', { replace: true });
     }, 650);
   };
