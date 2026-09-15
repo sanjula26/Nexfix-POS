@@ -79,9 +79,10 @@ export default function Login() {
       localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
       sessionStorage.removeItem('nexfix_session_v1');
 
-      // Give the debounced local/IndexedDB persistence a chance to commit before
-      // the reload. The reload makes the provider pick up the newly created session.
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Wait long enough for the debounced local + IndexedDB persistence to finish
+      // before reloading. This prevents the boot-time IndexedDB read from restoring
+      // the pre-setup state and discarding the newly created administrator.
+      await new Promise(resolve => setTimeout(resolve, 1500));
       window.location.reload();
     } catch (err) {
       setLoading(false);
@@ -130,7 +131,7 @@ export default function Login() {
                   <form onSubmit={submit} className="mt-7 space-y-4">
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span><div className="relative"><Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 !py-3" placeholder="you@shop.lk" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" /></div></div>
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">PASSWORD</span><div className="relative"><Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 pr-10 !py-3" placeholder="•••••••••••" type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /><button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9a9ebf]"><Eye size={15} /></button></div></div>
-                    <div className="flex items-center justify-between"><label className="flex items-center gap-2 cursor-pointer select-none"><span onClick={() => setRemember(r => !r)} className={`w-[18px] h-[18px] rounded-[5px] flex items-center justify-center border ${remember ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-[#d4d7ea]'}`}>{remember && <CheckCircle2 size={12} className="text-white" />}</span><span className="text-[13px] text-[#5b5f7e] font-medium">Remember me for 30 days</span></label><RefreshCw size={13} className="text-[#c3c6de]" /></div>
+                    <div className="flex items-center justify-between"><label className="flex items-center gap-2 cursor-pointer select-none"><span onClick={() => setRemember(r => !r)} className={`w-[18px] h-[18px] rounded-[5px] flex items-center justify-center border ${remember ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-[#d4d7ea]'}`}>{remember && <CheckCircle2 size={12} className="text-white" />}</span><span className="text-[13px] text-[#5b5f7e] font-medium">Remember me for 30 days</span></label><RefreshCw size={13} className="text-[#c3c6de" /></div>
                     {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
                     <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={17} className="animate-spin" /> : <>Sign in &amp; stay logged in <ArrowRight size={16} /></>}</button>
                   </form>
