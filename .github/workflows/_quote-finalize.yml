@@ -1,0 +1,51 @@
+name: Quote Finalize Patch
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'chore: finalize quotation integration'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Patch quotation conversion and cleanup
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/pages/POS.tsx')
+          s = p.read_text()
+          old = """      const data = JSON.parse(raw) as {\n        quoteNo?: string;\n        customerName?: string;\n        customerPhone?: string;\n        lines?: { productId: string; name: string; qty: number; price: number }[];\n      };"""
+          new = """      const data = JSON.parse(raw) as {\n        quoteNo?: string;\n        customerName?: string;\n        customerPhone?: string;\n        discount?: number;\n        tax?: number;\n        lines?: { productId: string; name: string; qty: number; price: number; discount?: number }[];\n      };"""
+          assert old in s, 'POS conversion payload block not found'
+          s = s.replace(old, new, 1)
+          old = """        next.push({ productId: pid, qty: l.qty || 1, discount: 0, price: l.price });"""
+          new = """        next.push({ productId: pid, qty: l.qty || 1, discount: Math.max(0, l.discount || 0), price: l.price });"""
+          assert old in s, 'POS quotation line mapping not found'
+          s = s.replace(old, new, 1)
+          old = """      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);\n      setError('');"""
+          new = """      if (data.discount !== undefined) { setDiscMode('rs'); setDiscount(String(Math.max(0, data.discount || 0))); }\n      if (data.tax !== undefined) {\n        const grossAfterLines = next.reduce((sum, l) => sum + l.price * l.qty - l.discount, 0);\n        const taxableAfterDiscount = Math.max(0, grossAfterLines - Math.max(0, data.discount || 0));\n        setTaxPct(taxableAfterDiscount > 0 ? String(((Math.max(0, data.tax || 0) / taxableAfterDiscount) * 100)) : '0');\n      }\n      if (data.quoteNo) setNote(`From quote ${data.quoteNo}`);\n      setError('');"""
+          assert old in s, 'POS quotation totals import block not found'
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          q = Path('src/pages/Quotations.tsx')
+          s = q.read_text()
+          old = """  return value.replace(/[&<>\\\\\\\"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch] || ch));"""
+          new = """  return value.replace(/[&<>\"] /g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[ch] || ch));""".replace('\"] /g','\"]/g')
+          assert old in s, 'quotation escape helper not found'
+          s = s.replace(old, new, 1)
+          q.write_text(s)
+      - name: Commit and remove patch workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/_quote-finalize.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pages/POS.tsx src/pages/Quotations.tsx .github/workflows/_quote-finalize.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: finalize quotation integration"
+          git push
