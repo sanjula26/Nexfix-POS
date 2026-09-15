@@ -50,12 +50,6 @@ function CloudAuthLifecycle() {
   return null;
 }
 
-/**
- * POS kiosk boot: opens the protected area directly with an active cashier.
- * If the database has no cashier yet, a dedicated cashier-only kiosk account
- * is created once. Existing business records are preserved. Admin-only areas
- * remain locked behind the existing admin password/PIN flow.
- */
 function KioskSessionBootstrap() {
   const { state, user, ready } = usePOS();
   const everHadUser = useRef(Boolean(user));
@@ -68,12 +62,11 @@ function KioskSessionBootstrap() {
     const existingCashier = state.users.find(u => u.role === 'cashier' && u.active);
     const kioskId = 'u-kiosk-cashier';
     const kiosk = state.users.find(u => u.id === kioskId && u.role === 'cashier' && u.active);
+    const targetId = existingCashier?.id || kiosk?.id || kioskId;
 
     const boot = async () => {
       try {
-        let targetId = existingCashier?.id || kiosk?.id || kioskId;
         let nextState = state;
-
         if (!existingCashier && !kiosk) {
           const kioskUser = {
             id: kioskId,
@@ -93,8 +86,6 @@ function KioskSessionBootstrap() {
             },
           };
         } else if (!state.permissions.cashier['page:pos']) {
-          // Existing cashier accounts may predate the kiosk flow and have an
-          // empty permission map. Grant only the POS page, not admin access.
           nextState = {
             ...state,
             permissions: {
