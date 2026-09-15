@@ -3,58 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 
-const KIOSK_ID = 'u-kiosk-cashier';
-const KIOSK_EMAIL = 'pos@kiosk.local';
-
 export default function Login() {
-  const { user, state, ready, switchRole, exportData, importData } = usePOS();
+  const { user, ready, switchRole } = usePOS();
   const navigate = useNavigate();
   const started = useRef(false);
 
   useEffect(() => {
     if (!ready || user || started.current) return;
     started.current = true;
-
-    try {
-      const existing = state.users.find(u => u.id === KIOSK_ID && u.role === 'cashier' && u.active);
-      if (!existing) {
-        const next = JSON.parse(exportData()) as typeof state;
-        const kiosk = {
-          id: KIOSK_ID,
-          name: 'POS Cashier',
-          email: KIOSK_EMAIL,
-          password: '',
-          role: 'cashier' as const,
-          active: true,
-          createdAt: new Date().toISOString(),
-        };
-        next.users = [...next.users, kiosk];
-        next.permissions = {
-          ...next.permissions,
-          cashier: { ...(next.permissions?.cashier || {}), 'page:pos': true },
-        };
-        if (!importData(JSON.stringify(next))) throw new Error('Could not create POS cashier');
-        started.current = false;
-        return;
-      }
-
-      if (!state.permissions?.cashier?.['page:pos']) {
-        const next = JSON.parse(exportData()) as typeof state;
-        next.permissions = {
-          ...next.permissions,
-          cashier: { ...(next.permissions?.cashier || {}), 'page:pos': true },
-        };
-        if (!importData(JSON.stringify(next))) throw new Error('Could not enable POS access');
-        started.current = false;
-        return;
-      }
-
-      const result = switchRole('cashier');
-      if (!result.ok) throw new Error(result.error || 'Could not start POS cashier session');
-    } catch {
-      started.current = false;
-    }
-  }, [ready, user, state, exportData, importData, switchRole]);
+    const result = switchRole('cashier');
+    if (!result.ok) started.current = false;
+  }, [ready, user, switchRole]);
 
   useEffect(() => {
     if (user) navigate('/pos', { replace: true });
