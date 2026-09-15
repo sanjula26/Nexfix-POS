@@ -4,6 +4,7 @@ import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
+import { SEED_HASH_ADMIN } from './lib/utils';
 import AppLayout from './components/AppLayout';
 import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
@@ -45,13 +46,34 @@ function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null;
  * in-memory state, the persisted session points at a user that temporarily
  * disappears from state.users and Protected() sends the browser back to /login.
  * Restore the newer browser snapshot when a valid local session exists.
+ *
+ * A completely empty local POS installation also gets one local administrator
+ * account here. This keeps first-run login deterministic while leaving all POS
+ * data untouched. The account can be edited after entering the POS from Users.
  */
 function SessionRecovery() {
-  const { user, ready, importData } = usePOS();
+  const { user, ready, state, exportData, importData } = usePOS();
 
   useEffect(() => {
     if (!ready || user) return;
     try {
+      // First-run bootstrap: never leave the login screen dependent on the
+      // interactive setup form. Create only the account when there are no users.
+      if (state.users.length === 0) {
+        const next = JSON.parse(exportData()) as typeof state;
+        next.users = [{
+          id: 'u-admin',
+          name: 'Shop Administrator',
+          email: 'admin@nexfixsolution.com',
+          password: SEED_HASH_ADMIN,
+          role: 'admin',
+          active: true,
+          createdAt: new Date().toISOString(),
+        }, ...next.users];
+        importData(JSON.stringify(next));
+        return;
+      }
+
       const sessionRaw = localStorage.getItem('nexfix_session_v1') || sessionStorage.getItem('nexfix_session_v1');
       const stateRaw = localStorage.getItem('nexfix_pos_v2');
       if (!sessionRaw || !stateRaw) return;
@@ -63,7 +85,7 @@ function SessionRecovery() {
     } catch {
       // Ignore malformed browser storage and keep the normal login flow.
     }
-  }, [ready, user, importData]);
+  }, [ready, user, state.users.length, exportData, importData]);
 
   return null;
 }
