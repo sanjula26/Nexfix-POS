@@ -94,6 +94,8 @@ export default function Quotations() {
     const afterOverall = Math.max(0, baseTotal - overallDiscount);
     const tax = Math.max(0, quote.tax || 0);
     const effectiveTaxBase = afterOverall > 0 ? afterOverall : 1;
+    const posTaxPct = Math.max(0, Number(state.settings.taxDefault || 0));
+    const posTaxFactor = 1 + (posTaxPct / 100);
     let allocatedDiscount = 0;
     let allocatedTax = 0;
     const lines = sourceItems.map((it, index) => {
@@ -109,7 +111,9 @@ export default function Quotations() {
       allocatedTax += taxShare;
       const finalAmount = Math.max(0, net + taxShare);
       const qty = Math.max(1, Number(it.qty) || 1);
-      const price = Math.round((finalAmount / qty) * 100) / 100;
+      // POS applies the shop's default tax after importing a quotation. Convert the final
+      // quote amount back to a pre-tax unit price so the POS total stays identical.
+      const price = Math.round((finalAmount / qty / posTaxFactor) * 10000) / 10000;
       const product = state.products.find(p => p.name.toLowerCase() === it.name.toLowerCase() || p.id === it.productId);
       return { productId: product?.id || '', name: it.name, qty, price, discount: 0 };
     });
