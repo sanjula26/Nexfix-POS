@@ -1,5 +1,7 @@
 /* Nexfix POS Service Worker — offline shell cache */
-const CACHE = 'nexfix-pos-v5';
+// Bump this version whenever application authentication/runtime code changes so
+// existing installed clients cannot keep an obsolete JavaScript bundle.
+const CACHE = 'nexfix-pos-v6';
 const BASE_URL = new URL('./', self.registration.scope);
 const INDEX_URL = new URL('./index.html', self.registration.scope);
 const SHELL = [BASE_URL.href, INDEX_URL.href];
