@@ -51,10 +51,6 @@ function SessionRecovery() {
       const REPAIR_MARKER = 'nexfix_default_admin_v3';
       const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
 
-      // One final, deterministic repair for installations affected by the old
-      // default-account/password mismatch. This runs once per browser only and
-      // only targets the known default administrator account. After this marker
-      // is written, changing the administrator password is never overwritten.
       if (!repaired) {
         const next = JSON.parse(exportData()) as typeof state;
         const existing = next.users.find(u => {
@@ -144,7 +140,7 @@ function SessionSecurity() {
     try {
       const raw = localStorage.getItem(startedKey); const parsed = raw ? Number(raw) : NaN;
       if (Number.isFinite(parsed) && parsed > 0) startedAt = parsed; else localStorage.setItem(startedKey, String(startedAt));
-    } catch {}
+    } catch { /* ignore storage failures */ }
     if (Date.now() - startedAt >= rememberMs) { signOut(); return; }
     const arm = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => signOut(), timeoutMs); };
     const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'];
@@ -152,7 +148,7 @@ function SessionSecurity() {
     const expiryTimer = setTimeout(() => signOut(), rememberMs - (Date.now() - startedAt));
     return () => { if (idleTimer) clearTimeout(idleTimer); clearTimeout(expiryTimer); activityEvents.forEach(event => window.removeEventListener(event, arm)); };
   }, [user, signOut]);
-  useEffect(() => { if (!user) { try { localStorage.removeItem('nexfix_session_started_v1'); } catch {} } }, [user]);
+  useEffect(() => { if (!user) { try { localStorage.removeItem('nexfix_session_started_v1'); } catch { /* ignore storage failures */ } } }, [user]);
   return null;
 }
 
