@@ -29,9 +29,11 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
    const product=products.find(p=>p.id===productId);
    if(!product){setError('Select a product.');return;}
    const normalizedImei=imei.trim(); const normalizedSerial=serial.trim();
+   if(!product.trackImei&&!product.trackSerial){setError('This product is not configured for IMEI/Serial tracking.');return;}
    if(product.trackImei&&!normalizedImei){setError('IMEI is required for this tracked product.');return;}
    if(product.trackSerial&&!normalizedSerial){setError('Serial number is required for this tracked product.');return;}
-   if(isNew&&units.some(x=>x.status==='in_stock'&&((normalizedImei&&x.imei===normalizedImei)||(normalizedSerial&&x.serial===normalizedSerial)))){setError('That IMEI or serial number is already in stock.');return;}
+   const duplicate=units.some(x=>x.id!==(value?.id||'')&&x.status==='in_stock'&&((normalizedImei&&x.imei===normalizedImei)||(normalizedSerial&&x.serial===normalizedSerial)));
+   if(duplicate){setError('That IMEI or serial number is already assigned to another in-stock unit.');return;}
    const unit:InventoryUnit={id:value?.id||uid(),productId:isNew?productId:(value?.productId||productId),imei:normalizedImei||undefined,serial:normalizedSerial||undefined,status:isNew?'in_stock':(value?.status||status),note:note.trim()||undefined,createdAt:value?.createdAt||new Date().toISOString()};
    setError(''); onSave(unit); onClose();
  };
