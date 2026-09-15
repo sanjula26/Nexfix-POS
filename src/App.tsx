@@ -40,17 +40,6 @@ const Kits = lazy(() => import('./pages/Kits'));
 
 function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null; }
 
-/**
- * IndexedDB can contain an older snapshot than the fast browser-storage snapshot
- * immediately after first login/setup. If that stale snapshot replaces the
- * in-memory state, the persisted session points at a user that temporarily
- * disappears from state.users and Protected() sends the browser back to /login.
- * Restore the newer browser snapshot when a valid local session exists.
- *
- * On the first launch after the default-login repair, create/repair the default
- * administrator once and start a local session. The one-time marker prevents a
- * later password change from ever being overwritten on normal sign-out/reload.
- */
 function SessionRecovery() {
   const { user, ready, state, exportData, importData } = usePOS();
 
@@ -59,9 +48,13 @@ function SessionRecovery() {
     try {
       const DEFAULT_EMAIL = 'admin@nexfixsolution.com';
       const LEGACY_DEFAULT_EMAIL = 'admin@nexfix.lk';
-      const REPAIR_MARKER = 'nexfix_default_admin_v2';
+      const REPAIR_MARKER = 'nexfix_default_admin_v3';
       const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
 
+      // One final, deterministic repair for installations affected by the old
+      // default-account/password mismatch. This runs once per browser only and
+      // only targets the known default administrator account. After this marker
+      // is written, changing the administrator password is never overwritten.
       if (!repaired) {
         const next = JSON.parse(exportData()) as typeof state;
         const existing = next.users.find(u => {
@@ -90,8 +83,6 @@ function SessionRecovery() {
         localStorage.setItem(REPAIR_MARKER, '1');
         localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
         sessionStorage.removeItem('nexfix_session_v1');
-        // Reload once so POSProvider starts from the repaired account/session
-        // instead of racing the asynchronous state hydration path.
         window.location.reload();
         return;
       }
@@ -134,103 +125,51 @@ function SessionRecovery() {
 function CloudAuthLifecycle() {
   const { user } = usePOS();
   const hadLocalSession = useRef(Boolean(user));
-
   useEffect(() => {
-    if (user) {
-      hadLocalSession.current = true;
-      return;
-    }
-    if (hadLocalSession.current) {
-      hadLocalSession.current = false;
-      void signOutFromCloud();
-    }
+    if (user) { hadLocalSession.current = true; return; }
+    if (hadLocalSession.current) { hadLocalSession.current = false; void signOutFromCloud(); }
   }, [user]);
-
   return null;
 }
 
 function SessionSecurity() {
   const { user, signOut } = usePOS();
-
   useEffect(() => {
     if (!user) return;
     const timeoutMs = 30 * 60 * 1000;
     const rememberMs = 30 * 24 * 60 * 60 * 1000;
     const startedKey = 'nexfix_session_started_v1';
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
     let startedAt = Date.now();
     try {
-      const raw = localStorage.getItem(startedKey);
-      const parsed = raw ? Number(raw) : NaN;
-      if (Number.isFinite(parsed) && parsed > 0) startedAt = parsed;
-      else localStorage.setItem(startedKey, String(startedAt));
-    } catch { /* ignore storage failures */ }
-
-    if (Date.now() - startedAt >= rememberMs) {
-      signOut();
-      return;
-    }
-
-    const arm = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => signOut(), timeoutMs);
-    };
-
+      const raw = localStorage.getItem(startedKey); const parsed = raw ? Number(raw) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) startedAt = parsed; else localStorage.setItem(startedKey, String(startedAt));
+    } catch {}
+    if (Date.now() - startedAt >= rememberMs) { signOut(); return; }
+    const arm = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => signOut(), timeoutMs); };
     const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'];
-    activityEvents.forEach(event => window.addEventListener(event, arm, { passive: true }));
-    arm();
-
-    const remaining = rememberMs - (Date.now() - startedAt);
-    const expiryTimer = setTimeout(() => signOut(), remaining);
-
-    return () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      clearTimeout(expiryTimer);
-      activityEvents.forEach(event => window.removeEventListener(event, arm));
-    };
+    activityEvents.forEach(event => window.addEventListener(event, arm, { passive: true })); arm();
+    const expiryTimer = setTimeout(() => signOut(), rememberMs - (Date.now() - startedAt));
+    return () => { if (idleTimer) clearTimeout(idleTimer); clearTimeout(expiryTimer); activityEvents.forEach(event => window.removeEventListener(event, arm)); };
   }, [user, signOut]);
-
-  useEffect(() => {
-    if (user) return;
-    try { localStorage.removeItem('nexfix_session_started_v1'); } catch { /* ignore */ }
-  }, [user]);
-
+  useEffect(() => { if (!user) { try { localStorage.removeItem('nexfix_session_started_v1'); } catch {} } }, [user]);
   return null;
 }
 
 function CloudSyncStateBridge() {
-  const { state, ready } = usePOS();
-  const initial = useRef(true);
-
-  useEffect(() => {
-    if (!ready) return;
-    if (initial.current) {
-      initial.current = false;
-      return;
-    }
-    scheduleCloudSync('state_change');
-    return cancelScheduledCloudSync;
-  }, [state, ready]);
-
+  const { state, ready } = usePOS(); const initial = useRef(true);
+  useEffect(() => { if (!ready) return; if (initial.current) { initial.current = false; return; } scheduleCloudSync('state_change'); return cancelScheduledCloudSync; }, [state, ready]);
   return null;
 }
 
 function Protected() {
-  const { user, ready } = usePOS();
-  const location = useLocation();
-  // Do not redirect while IndexedDB/session recovery is still hydrating.
-  // A transient null user here used to send a successful login straight back
-  // to the Sign In screen before SessionRecovery could restore the state.
+  const { user, ready } = usePOS(); const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return <AppLayout />;
 }
 function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boolean; children: React.ReactNode }) { const { user, can } = usePOS(); if (!user) return null; if (adminOnly && user.role !== 'admin') return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; if (perm && !can(perm)) return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; return <>{children}</>; }
-
-function RouteFallback() {
-  return <div className="min-h-[40vh] grid place-items-center text-sm text-slate-500">Loading…</div>;
-}
+function RouteFallback() { return <div className="min-h-[40vh] grid place-items-center text-sm text-slate-500">Loading…</div>; }
 
 export default function App() {
   return <POSProvider><SyncBootstrap /><SessionRecovery /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/audit-log" element={<Guard adminOnly><AuditLog /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
