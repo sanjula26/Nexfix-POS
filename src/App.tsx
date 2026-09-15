@@ -47,9 +47,10 @@ function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null;
  * disappears from state.users and Protected() sends the browser back to /login.
  * Restore the newer browser snapshot when a valid local session exists.
  *
- * A completely empty local POS installation also gets one local administrator
- * account here. This keeps first-run login deterministic while leaving all POS
- * data untouched. The account can be edited after entering the POS from Users.
+ * On a completely empty local POS installation, create the default administrator
+ * and start a local session immediately. This makes first-run access deterministic
+ * without overwriting any existing POS data. The administrator can change the
+ * login email/password from Users after entering the POS.
  */
 function SessionRecovery() {
   const { user, ready, state, exportData, importData } = usePOS();
@@ -57,12 +58,11 @@ function SessionRecovery() {
   useEffect(() => {
     if (!ready || user) return;
     try {
-      // First-run bootstrap: never leave the login screen dependent on the
-      // interactive setup form. Create only the account when there are no users.
       if (state.users.length === 0) {
         const next = JSON.parse(exportData()) as typeof state;
+        const userId = 'u-admin';
         next.users = [{
-          id: 'u-admin',
+          id: userId,
           name: 'Shop Administrator',
           email: 'admin@nexfixsolution.com',
           password: SEED_HASH_ADMIN,
@@ -70,7 +70,12 @@ function SessionRecovery() {
           active: true,
           createdAt: new Date().toISOString(),
         }, ...next.users];
-        importData(JSON.stringify(next));
+        if (!importData(JSON.stringify(next))) return;
+        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
+        sessionStorage.removeItem('nexfix_session_v1');
+        // Reload once so POSProvider starts from the now-persisted account/session
+        // instead of racing the asynchronous state hydration path.
+        window.location.reload();
         return;
       }
 
