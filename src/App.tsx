@@ -71,7 +71,10 @@ function KioskSessionBootstrap() {
 
     const boot = async () => {
       try {
-        if (!existingCashier) {
+        let targetId = existingCashier?.id || kiosk?.id || kioskId;
+        let nextState = state;
+
+        if (!existingCashier && !kiosk) {
           const kioskUser = {
             id: kioskId,
             name: 'POS Cashier',
@@ -81,7 +84,7 @@ function KioskSessionBootstrap() {
             active: true,
             createdAt: new Date().toISOString(),
           };
-          const nextState = {
+          nextState = {
             ...state,
             users: [...state.users, kioskUser],
             permissions: {
@@ -89,10 +92,23 @@ function KioskSessionBootstrap() {
               cashier: { ...state.permissions.cashier, 'page:pos': true },
             },
           };
+        } else if (!state.permissions.cashier['page:pos']) {
+          // Existing cashier accounts may predate the kiosk flow and have an
+          // empty permission map. Grant only the POS page, not admin access.
+          nextState = {
+            ...state,
+            permissions: {
+              ...state.permissions,
+              cashier: { ...state.permissions.cashier, 'page:pos': true },
+            },
+          };
+        }
+
+        if (nextState !== state) {
           localStorage.setItem('nexfix_pos_v2', JSON.stringify(nextState));
           await idbSaveState(nextState);
         }
-        const targetId = existingCashier?.id || kiosk?.id || kioskId;
+
         localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: targetId, remember: true }));
         sessionStorage.removeItem('nexfix_session_v1');
         window.location.reload();
