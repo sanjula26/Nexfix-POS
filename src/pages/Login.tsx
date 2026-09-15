@@ -50,7 +50,10 @@ export default function Login() {
       const cloud = await ensureCloudSession(email, password, email.trim());
       setLoading(false);
       if (cloud.needsEmailConfirmation) setError('Signed in locally. Check your email to enable cloud sync on this account.');
-      navigate('/', { replace: true });
+      // Do not navigate here. signIn updates React state asynchronously; the
+      // user effect above performs the redirect only after the authenticated
+      // user is actually visible to the router. This prevents a Protected-route
+      // redirect race that can send a valid login straight back to /login.
     }, 650);
   };
 
