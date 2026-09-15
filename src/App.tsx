@@ -4,6 +4,8 @@ import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
+import { idbSaveState } from './lib/db';
+import { SEED_HASH_CASHIER } from './lib/utils';
 import AppLayout from './components/AppLayout';
 import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
@@ -49,10 +51,10 @@ function CloudAuthLifecycle() {
 }
 
 /**
- * POS kiosk boot: the protected POS area opens directly with the first active
- * cashier account. This does not create or modify users/data. The normal
- * /login screen remains available for an explicit authenticated login, and
- * signing out still returns to /login without immediately signing back in.
+ * POS kiosk boot: opens the protected area directly with a dedicated cashier
+ * account. Existing users and business records are preserved; the kiosk user
+ * is created only when no active cashier exists. Admin-only areas remain locked
+ * and can be unlocked from the existing ADMIN password/PIN flow.
  */
 function KioskSessionBootstrap() {
   const { state, user, ready } = usePOS();
@@ -60,14 +62,42 @@ function KioskSessionBootstrap() {
     if (!ready || user) return;
     const hash = window.location.hash.split('?')[0];
     if (hash === '#/login' || hash === '#/signup') return;
-    const cashier = state.users.find(u => u.role === 'cashier' && u.active);
-    if (!cashier) return;
-    try {
-      localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: cashier.id, remember: true }));
-      sessionStorage.removeItem('nexfix_session_v1');
-      window.location.reload();
-    } catch { /* keep the normal login flow if storage is unavailable */ }
-  }, [ready, user, state.users]);
+
+    const existingCashier = state.users.find(u => u.role === 'cashier' && u.active);
+    const kioskId = 'u-kiosk-cashier';
+    const kiosk = state.users.find(u => u.id === kioskId && u.role === 'cashier' && u.active);
+
+    const boot = async () => {
+      try {
+        if (!existingCashier) {
+          const kioskUser = {
+            id: kioskId,
+            name: 'POS Cashier',
+            email: 'pos@kiosk.local',
+            password: SEED_HASH_CASHIER,
+            role: 'cashier' as const,
+            active: true,
+            createdAt: new Date().toISOString(),
+          };
+          const nextState = {
+            ...state,
+            users: [...state.users, kioskUser],
+            permissions: {
+              ...state.permissions,
+              cashier: { ...state.permissions.cashier, 'page:pos': true },
+            },
+          };
+          localStorage.setItem('nexfix_pos_v2', JSON.stringify(nextState));
+          await idbSaveState(nextState);
+        }
+        const targetId = existingCashier?.id || kiosk?.id || kioskId;
+        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: targetId, remember: true }));
+        sessionStorage.removeItem('nexfix_session_v1');
+        window.location.reload();
+      } catch { /* keep the normal login flow if storage is unavailable */ }
+    };
+    void boot();
+  }, [ready, user, state]);
   return null;
 }
 
