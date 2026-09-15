@@ -23,8 +23,22 @@ export default function Quotations() {
   const quotes = state.quotations || [];
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
-    return quotes.filter(x => !query || x.quoteNo.toLowerCase().includes(query) || x.customerName.toLowerCase().includes(query) || (x.customerPhone || '').includes(query));
-  }, [quotes, q]);
+    return quotes
+      .map(quote => {
+        // POS records the originating quote number in the completed sale note.
+        // Derive conversion state from the authoritative sale list so a quote
+        // cannot be converted repeatedly after a successful sale.
+        const convertedSale = state.sales.find(s =>
+          s.status !== 'refunded'
+          && typeof s.note === 'string'
+          && s.note.trim() === `From quote ${quote.quoteNo}`,
+        );
+        return convertedSale
+          ? { ...quote, status: 'converted' as const, convertedSaleId: convertedSale.id }
+          : quote;
+      })
+      .filter(x => !query || x.quoteNo.toLowerCase().includes(query) || x.customerName.toLowerCase().includes(query) || (x.customerPhone || '').includes(query));
+  }, [quotes, state.sales, q]);
 
   const commit = (nextQuotes: Quotation[], nextCounter?: number) => {
     const nextState = {
@@ -88,6 +102,15 @@ export default function Quotations() {
   };
 
   const convertToSale = (quote: Quotation) => {
+    const alreadyConverted = state.sales.find(s =>
+      s.status !== 'refunded'
+      && typeof s.note === 'string'
+      && s.note.trim() === `From quote ${quote.quoteNo}`,
+    );
+    if (alreadyConverted) {
+      setMsg(`${quote.quoteNo} has already been converted to bill ${alreadyConverted.billNo}.`);
+      return;
+    }
     const sourceItems = quote.items.filter(it => it.name.trim());
     const baseTotal = sourceItems.reduce((sum, it) => sum + Math.max(0, it.price * it.qty - (it.discount || 0)), 0);
     const overallDiscount = Math.min(Math.max(0, quote.discount || 0), baseTotal);
