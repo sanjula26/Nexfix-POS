@@ -88,21 +88,39 @@ export default function Quotations() {
   };
 
   const convertToSale = (quote: Quotation) => {
-    const lines = quote.items.filter(it => it.name.trim()).map(it => {
+    const sourceItems = quote.items.filter(it => it.name.trim());
+    const baseTotal = sourceItems.reduce((sum, it) => sum + Math.max(0, it.price * it.qty - (it.discount || 0)), 0);
+    const overallDiscount = Math.min(Math.max(0, quote.discount || 0), baseTotal);
+    const afterOverall = Math.max(0, baseTotal - overallDiscount);
+    const tax = Math.max(0, quote.tax || 0);
+    const effectiveTaxBase = afterOverall > 0 ? afterOverall : 1;
+    let allocatedDiscount = 0;
+    let allocatedTax = 0;
+    const lines = sourceItems.map((it, index) => {
+      const lineBase = Math.max(0, it.price * it.qty - (it.discount || 0));
+      const discountShare = index === sourceItems.length - 1
+        ? Math.max(0, overallDiscount - allocatedDiscount)
+        : Math.min(lineBase, Math.round(overallDiscount * (lineBase / Math.max(baseTotal, 1)) * 100) / 100);
+      allocatedDiscount += discountShare;
+      const net = Math.max(0, lineBase - discountShare);
+      const taxShare = index === sourceItems.length - 1
+        ? Math.max(0, tax - allocatedTax)
+        : Math.round(tax * (net / effectiveTaxBase) * 100) / 100;
+      allocatedTax += taxShare;
+      const finalAmount = Math.max(0, net + taxShare);
+      const qty = Math.max(1, Number(it.qty) || 1);
+      const price = Math.round((finalAmount / qty) * 100) / 100;
       const product = state.products.find(p => p.name.toLowerCase() === it.name.toLowerCase() || p.id === it.productId);
-      return { productId: product?.id || '', name: it.name, qty: it.qty, price: it.price, discount: it.discount || 0 };
+      return { productId: product?.id || '', name: it.name, qty, price, discount: 0 };
     });
     try {
       sessionStorage.setItem('nexfix_quote_convert', JSON.stringify({
-        quoteId: quote.id, quoteNo: quote.quoteNo, customerName: quote.customerName, customerPhone: quote.customerPhone,
-        lines, discount: quote.discount, tax: quote.tax,
+        quoteId: quote.id, quoteNo: quote.quoteNo, customerId: quote.customerId,
+        customerName: quote.customerName, customerPhone: quote.customerPhone, lines,
       }));
     } catch { /* ignore */ }
-    const next = quotes.map(x => x.id === quote.id ? { ...x, status: 'converted' as const } : x);
-    if (commit(next)) {
-      logAudit('CONVERT', 'Quotation', `${quote.quoteNo} → POS`);
-      window.location.hash = '#/pos';
-    }
+    logAudit('OPEN_TO_POS', 'Quotation', `${quote.quoteNo} → POS`);
+    window.location.hash = '#/pos';
   };
 
   const printQuote = (quote: Quotation) => {
