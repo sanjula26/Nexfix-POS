@@ -47,10 +47,9 @@ function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null;
  * disappears from state.users and Protected() sends the browser back to /login.
  * Restore the newer browser snapshot when a valid local session exists.
  *
- * On a completely empty local POS installation, create the default administrator
- * and start a local session immediately. This makes first-run access deterministic
- * without overwriting any existing POS data. The administrator can change the
- * login email/password from Users after entering the POS.
+ * On the first launch after the default-login repair, create/repair the default
+ * administrator once and start a local session. The one-time marker prevents a
+ * later password change from ever being overwritten on normal sign-out/reload.
  */
 function SessionRecovery() {
   const { user, ready, state, exportData, importData } = usePOS();
@@ -58,13 +57,52 @@ function SessionRecovery() {
   useEffect(() => {
     if (!ready || user) return;
     try {
+      const DEFAULT_EMAIL = 'admin@nexfixsolution.com';
+      const LEGACY_DEFAULT_EMAIL = 'admin@nexfix.lk';
+      const REPAIR_MARKER = 'nexfix_default_admin_v2';
+      const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
+
+      if (!repaired) {
+        const next = JSON.parse(exportData()) as typeof state;
+        const existing = next.users.find(u => {
+          const email = (u.email || '').trim().toLowerCase();
+          return email === DEFAULT_EMAIL || email === LEGACY_DEFAULT_EMAIL;
+        });
+        const userId = existing?.id || 'u-admin';
+        if (existing) {
+          existing.email = DEFAULT_EMAIL;
+          existing.password = SEED_HASH_ADMIN;
+          existing.role = 'admin';
+          existing.active = true;
+          existing.name = existing.name || 'Shop Administrator';
+        } else {
+          next.users = [{
+            id: userId,
+            name: 'Shop Administrator',
+            email: DEFAULT_EMAIL,
+            password: SEED_HASH_ADMIN,
+            role: 'admin',
+            active: true,
+            createdAt: new Date().toISOString(),
+          }, ...next.users];
+        }
+        if (!importData(JSON.stringify(next))) return;
+        localStorage.setItem(REPAIR_MARKER, '1');
+        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
+        sessionStorage.removeItem('nexfix_session_v1');
+        // Reload once so POSProvider starts from the repaired account/session
+        // instead of racing the asynchronous state hydration path.
+        window.location.reload();
+        return;
+      }
+
       if (state.users.length === 0) {
         const next = JSON.parse(exportData()) as typeof state;
         const userId = 'u-admin';
         next.users = [{
           id: userId,
           name: 'Shop Administrator',
-          email: 'admin@nexfixsolution.com',
+          email: DEFAULT_EMAIL,
           password: SEED_HASH_ADMIN,
           role: 'admin',
           active: true,
@@ -73,8 +111,6 @@ function SessionRecovery() {
         if (!importData(JSON.stringify(next))) return;
         localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
         sessionStorage.removeItem('nexfix_session_v1');
-        // Reload once so POSProvider starts from the now-persisted account/session
-        // instead of racing the asynchronous state hydration path.
         window.location.reload();
         return;
       }
