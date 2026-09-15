@@ -1,11 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useLayoutEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
-import { SEED_HASH_ADMIN } from './lib/utils';
-import { idbSaveState } from './lib/db';
 import AppLayout from './components/AppLayout';
 import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
@@ -31,7 +29,6 @@ const PriceTags = lazy(() => import('./pages/PriceTags'));
 const Users = lazy(() => import('./pages/Users'));
 const CashierBalances = lazy(() => import('./pages/CashierBalances'));
 const Permissions = lazy(() => import('./pages/Permissions'));
-const AuditLog = lazy(() => import('./pages/AuditLog'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Units = lazy(() => import('./pages/Units'));
 const Repairs = lazy(() => import('./pages/Repairs'));
@@ -40,97 +37,6 @@ const WarrantyClaims = lazy(() => import('./pages/WarrantyClaims'));
 const Kits = lazy(() => import('./pages/Kits'));
 
 function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null; }
-
-function SessionRecovery() {
-  const { user, ready, state, exportData } = usePOS();
-
-  useLayoutEffect(() => {
-    if (!ready || user) return;
-    try {
-      const DEFAULT_EMAIL = 'admin@nexfixsolution.com';
-      const LEGACY_DEFAULT_EMAIL = 'admin@nexfix.lk';
-      // v5 repairs the known default admin and durably saves it before reload.
-      // IndexedDB is the authoritative startup store; never re-import a stale
-      // localStorage snapshot after that repair.
-      const REPAIR_MARKER = 'nexfix_default_admin_v5';
-      const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
-
-      if (!repaired) {
-        const next = JSON.parse(exportData()) as typeof state;
-        const existing = next.users.find(u => {
-          const email = (u.email || '').trim().toLowerCase();
-          return email === DEFAULT_EMAIL || email === LEGACY_DEFAULT_EMAIL;
-        });
-        const userId = existing?.id || 'u-admin';
-
-        if (existing) {
-          existing.email = DEFAULT_EMAIL;
-          existing.password = SEED_HASH_ADMIN;
-          existing.role = 'admin';
-          existing.active = true;
-          existing.name = existing.name || 'Shop Administrator';
-        } else {
-          next.users = [{
-            id: userId,
-            name: 'Shop Administrator',
-            email: DEFAULT_EMAIL,
-            password: SEED_HASH_ADMIN,
-            role: 'admin',
-            active: true,
-            createdAt: new Date().toISOString(),
-          }, ...next.users];
-        }
-
-        void (async () => {
-          const saved = await idbSaveState(next);
-          if (!saved) return;
-          try {
-            localStorage.setItem('nexfix_pos_v2', JSON.stringify(next));
-            localStorage.setItem(REPAIR_MARKER, '1');
-            localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
-            sessionStorage.removeItem('nexfix_session_v1');
-          } catch {
-            // IDB is already repaired; browser-storage failures are non-fatal.
-          }
-          window.location.reload();
-        })();
-        return;
-      }
-
-      if (state.users.length === 0) {
-        const next = JSON.parse(exportData()) as typeof state;
-        const userId = 'u-admin';
-        next.users = [{
-          id: userId,
-          name: 'Shop Administrator',
-          email: DEFAULT_EMAIL,
-          password: SEED_HASH_ADMIN,
-          role: 'admin',
-          active: true,
-          createdAt: new Date().toISOString(),
-        }, ...next.users];
-
-        void (async () => {
-          const saved = await idbSaveState(next);
-          if (!saved) return;
-          try {
-            localStorage.setItem('nexfix_pos_v2', JSON.stringify(next));
-            localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
-            sessionStorage.removeItem('nexfix_session_v1');
-          } catch {
-            // IDB is already repaired; browser-storage failures are non-fatal.
-          }
-          window.location.reload();
-        })();
-        return;
-      }
-    } catch {
-      // Ignore malformed browser storage and keep the normal login flow.
-    }
-  }, [ready, user, state.users.length, exportData]);
-
-  return null;
-}
 
 function CloudAuthLifecycle() {
   const { user } = usePOS();
@@ -210,5 +116,5 @@ function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boole
 function RouteFallback() { return <div className="min-h-[40vh] grid place-items-center text-sm text-slate-500">Loading…</div>; }
 
 export default function App() {
-  return <POSProvider><SyncBootstrap /><SessionRecovery /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
+  return <POSProvider><SyncBootstrap /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
 }
