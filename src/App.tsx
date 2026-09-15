@@ -51,15 +51,17 @@ function CloudAuthLifecycle() {
 }
 
 /**
- * POS kiosk boot: opens the protected area directly with a dedicated cashier
- * account. Existing users and business records are preserved; the kiosk user
- * is created only when no active cashier exists. Admin-only areas remain locked
- * and can be unlocked from the existing ADMIN password/PIN flow.
+ * POS kiosk boot: opens the protected area directly with an active cashier.
+ * If the database has no cashier yet, a dedicated cashier-only kiosk account
+ * is created once. Existing business records are preserved. Admin-only areas
+ * remain locked behind the existing admin password/PIN flow.
  */
 function KioskSessionBootstrap() {
   const { state, user, ready } = usePOS();
+  const everHadUser = useRef(Boolean(user));
   useEffect(() => {
-    if (!ready || user) return;
+    if (user) { everHadUser.current = true; return; }
+    if (!ready || everHadUser.current) return;
     const hash = window.location.hash.split('?')[0];
     if (hash === '#/login' || hash === '#/signup') return;
 
