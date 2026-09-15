@@ -39,6 +39,36 @@ const Kits = lazy(() => import('./pages/Kits'));
 
 function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null; }
 
+/**
+ * IndexedDB can contain an older snapshot than the fast localStorage snapshot
+ * immediately after first login/setup. If that stale snapshot replaces the
+ * in-memory state, the persisted session points at a user that temporarily
+ * disappears from state.users and Protected() sends the browser back to /login.
+ * Restore the newer local snapshot when a valid local session exists but the
+ * hydrated state does not contain that session user.
+ */
+function SessionRecovery() {
+  const { user, ready, importData } = usePOS();
+
+  useEffect(() => {
+    if (!ready || user) return;
+    try {
+      const sessionRaw = localStorage.getItem('nexfix_session_v1');
+      const stateRaw = localStorage.getItem('nexfix_pos_v2');
+      if (!sessionRaw || !stateRaw) return;
+
+      const session = JSON.parse(sessionRaw) as { userId?: string };
+      const snapshot = JSON.parse(stateRaw) as { users?: Array<{ id?: string; active?: boolean }> };
+      const sessionUser = snapshot.users?.find(u => u.id === session.userId && u.active);
+      if (sessionUser) importData(stateRaw);
+    } catch {
+      // Ignore malformed browser storage and keep the normal login flow.
+    }
+  }, [ready, user, importData]);
+
+  return null;
+}
+
 function CloudAuthLifecycle() {
   const { user } = usePOS();
   const hadLocalSession = useRef(Boolean(user));
@@ -132,5 +162,5 @@ function RouteFallback() {
 }
 
 export default function App() {
-  return <POSProvider><SyncBootstrap /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/audit-log" element={<Guard adminOnly><AuditLog /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
+  return <POSProvider><SyncBootstrap /><SessionRecovery /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Route>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/audit-log" element={<Guard adminOnly><AuditLog /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
 }
