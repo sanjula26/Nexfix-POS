@@ -20,30 +20,36 @@ export async function signUpToCloud(email: string, password: string, fullName: s
 }
 
 /**
- * Local POS accounts remain the offline authority. After a successful local
- * login, establish the matching Supabase session so RLS-protected cloud sync
- * RPCs can use auth.uid(). If the cloud account does not exist yet, provision
- * it with the same credentials. A missing/disabled cloud configuration never
- * blocks local POS login.
+ * Local POS authentication is authoritative. Cloud authentication is a
+ * background enhancement and must never delay or block entry to the POS.
  */
 export async function ensureCloudSession(
   email: string,
   password: string,
   fullName: string,
 ): Promise<{ ok: boolean; error?: string; needsEmailConfirmation?: boolean }> {
-  const signedIn = await signInToCloud(email, password);
-  if (signedIn.ok) {
-    await ensureCloudShop('Nexfix Shop');
-    return signedIn;
-  }
-  if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return signedIn;
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
-  const created = await signUpToCloud(email, password, fullName);
-  if (!created.ok) return { ok: false, error: created.error };
-  if (created.ok && !created.needsEmailConfirmation) {
-    await ensureCloudShop('Nexfix Shop');
-  }
-  return created;
+  void (async () => {
+    try {
+      const signedIn = await signInToCloud(email, password);
+      if (signedIn.ok) {
+        await ensureCloudShop('Nexfix Shop');
+        return;
+      }
+      if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return;
+
+      const created = await signUpToCloud(email, password, fullName);
+      if (created.ok && !created.needsEmailConfirmation) {
+        await ensureCloudShop('Nexfix Shop');
+      }
+    } catch {
+      // Local POS login must remain usable when Supabase is unavailable.
+    }
+  })();
+
+  return { ok: true };
 }
 
 export async function signOutFromCloud(): Promise<void> {
