@@ -15,9 +15,11 @@ const features = [
 ];
 
 export default function Login() {
-  const { signIn, user, state, exportData, importData } = usePOS();
+  const { signIn, user, state, ready, exportData, importData } = usePOS();
   const navigate = useNavigate();
-  const firstRun = state.users.length === 0;
+  // Never expose first-run setup while IndexedDB is still loading. Otherwise an
+  // empty initial state can race the real persisted state and overwrite it.
+  const firstRun = ready && state.users.length === 0;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
@@ -35,6 +37,7 @@ export default function Login() {
 
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    if (!ready) return;
     if (!email.trim() || !password) { setError('Enter your email and password'); return; }
     setLoading(true); setError('');
     setTimeout(async () => {
@@ -53,6 +56,7 @@ export default function Login() {
 
   const bootstrap = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!ready) return;
     setError('');
     const name = setupName.trim();
     const mail = setupEmail.trim().toLowerCase();
@@ -68,20 +72,9 @@ export default function Login() {
       const next = JSON.parse(exportData()) as typeof state;
       next.users = [{ id: userId, name, email: mail, password: passwordHash, role: 'admin', active: true, createdAt: new Date().toISOString() }, ...next.users];
       next.settings = { ...next.settings, adminPinHash: pinHash };
-
-      // First-run has no logged-in admin, so saveUser/updateSettings correctly
-      // reject privileged mutations. Import the fully validated state atomically
-      // instead, then create the normal persistent session for the new admin.
-      if (!importData(JSON.stringify(next))) {
-        throw new Error('Could not save the administrator account');
-      }
-
+      if (!importData(JSON.stringify(next))) throw new Error('Could not save the administrator account');
       localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
       sessionStorage.removeItem('nexfix_session_v1');
-
-      // Wait long enough for the debounced local + IndexedDB persistence to finish
-      // before reloading. This prevents the boot-time IndexedDB read from restoring
-      // the pre-setup state and discarding the newly created administrator.
       await new Promise(resolve => setTimeout(resolve, 1500));
       window.location.reload();
     } catch (err) {
@@ -89,6 +82,18 @@ export default function Login() {
       setError(err instanceof Error ? err.message : 'Initial setup failed');
     }
   };
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f5f6fb]">
+        <div className="bg-white rounded-3xl shadow-xl border border-[#eceef6] px-8 py-7 text-center">
+          <Loader2 size={28} className="mx-auto text-violet-600 animate-spin" />
+          <p className="mt-3 text-sm font-semibold text-[#17133c]">Loading POS data…</p>
+          <p className="mt-1 text-xs text-[#7b7f9f]">Please wait while your saved account is loaded.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex bg-[#f5f6fb]">
