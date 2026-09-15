@@ -4,8 +4,6 @@ import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
-import { idbSaveState } from './lib/db';
-import { SEED_HASH_CASHIER } from './lib/utils';
 import AppLayout from './components/AppLayout';
 import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
@@ -50,66 +48,6 @@ function CloudAuthLifecycle() {
   return null;
 }
 
-function KioskSessionBootstrap() {
-  const { state, user, ready } = usePOS();
-  const everHadUser = useRef(Boolean(user));
-  useEffect(() => {
-    if (user) { everHadUser.current = true; return; }
-    if (!ready || everHadUser.current) return;
-    const hash = window.location.hash.split('?')[0];
-    if (hash === '#/login' || hash === '#/signup') return;
-
-    const existingCashier = state.users.find(u => u.role === 'cashier' && u.active);
-    const kioskId = 'u-kiosk-cashier';
-    const kiosk = state.users.find(u => u.id === kioskId && u.role === 'cashier' && u.active);
-    const targetId = existingCashier?.id || kiosk?.id || kioskId;
-
-    const boot = async () => {
-      try {
-        let nextState = state;
-        if (!existingCashier && !kiosk) {
-          const kioskUser = {
-            id: kioskId,
-            name: 'POS Cashier',
-            email: 'pos@kiosk.local',
-            password: SEED_HASH_CASHIER,
-            role: 'cashier' as const,
-            active: true,
-            createdAt: new Date().toISOString(),
-          };
-          nextState = {
-            ...state,
-            users: [...state.users, kioskUser],
-            permissions: {
-              ...state.permissions,
-              cashier: { ...state.permissions.cashier, 'page:pos': true },
-            },
-          };
-        } else if (!state.permissions.cashier['page:pos']) {
-          nextState = {
-            ...state,
-            permissions: {
-              ...state.permissions,
-              cashier: { ...state.permissions.cashier, 'page:pos': true },
-            },
-          };
-        }
-
-        if (nextState !== state) {
-          localStorage.setItem('nexfix_pos_v2', JSON.stringify(nextState));
-          await idbSaveState(nextState);
-        }
-
-        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: targetId, remember: true }));
-        sessionStorage.removeItem('nexfix_session_v1');
-        window.location.reload();
-      } catch { /* keep the normal login flow if storage is unavailable */ }
-    };
-    void boot();
-  }, [ready, user, state]);
-  return null;
-}
-
 function SessionSecurity() {
   const { user, signOut } = usePOS();
   const previousUserId = useRef<string | null>(user?.id ?? null);
@@ -128,44 +66,42 @@ function SessionSecurity() {
     try {
       const raw = localStorage.getItem(startedKey);
       if (freshLogin) {
-        startedAt = Date.now();
-        localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+        localStorage.setItem(startedKey, String(Date.now()));
       } else if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as { userId?: string; startedAt?: number };
-          if (parsed.userId === user.id && Number.isFinite(parsed.startedAt) && parsed.startedAt! > 0) {
-            startedAt = parsed.startedAt!;
-          } else {
-            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
-          }
-        } catch {
-          const legacyStartedAt = Number(raw);
-          if (Number.isFinite(legacyStartedAt) && legacyStartedAt > 0 && Date.now() - legacyStartedAt < rememberMs) {
-            startedAt = legacyStartedAt;
-            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
-          } else {
-            localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
-          }
-        }
-      } else {
-        localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed)) startedAt = parsed;
       }
-    } catch { /* ignore storage failures */ }
-    if (Date.now() - startedAt >= rememberMs) { signOut(); return; }
-    const arm = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = setTimeout(() => signOut(), timeoutMs); };
-    const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'wheel'];
-    activityEvents.forEach(event => window.addEventListener(event, arm, { passive: true })); arm();
-    const expiryTimer = setTimeout(() => signOut(), rememberMs - (Date.now() - startedAt));
-    return () => { if (idleTimer) clearTimeout(idleTimer); clearTimeout(expiryTimer); activityEvents.forEach(event => window.removeEventListener(event, arm)); };
+    } catch { /* ignore */ }
+    if (freshLogin) startedAt = Date.now();
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => signOut(), timeoutMs);
+    };
+    const events = ['pointerdown', 'keydown', 'touchstart', 'mousemove'];
+    events.forEach(event => window.addEventListener(event, resetIdle));
+    resetIdle();
+    const rememberTimer = window.setTimeout(() => signOut(), Math.max(1000, rememberMs - Math.max(0, Date.now() - startedAt)));
+    return () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      window.clearTimeout(rememberTimer);
+      events.forEach(event => window.removeEventListener(event, resetIdle));
+    };
   }, [user, signOut]);
-  useEffect(() => { if (!user) { try { localStorage.removeItem('nexfix_session_started_v1'); } catch { /* ignore storage failures */ } } }, [user]);
   return null;
 }
 
 function CloudSyncStateBridge() {
-  const { state, ready } = usePOS(); const initial = useRef(true);
-  useEffect(() => { if (!ready) return; if (initial.current) { initial.current = false; return; } scheduleCloudSync('state_change'); return cancelScheduledCloudSync; }, [state, ready]);
+  const { state, user, connectivity } = usePOS();
+  useEffect(() => {
+    if (!user || connectivity !== 'online') return;
+    scheduleCloudSync(state, user).catch(() => {});
+    return () => cancelScheduledCloudSync();
+  }, [state, user, connectivity]);
   return null;
+}
+
+function RouteFallback() {
+  return <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] font-semibold">Loading…</div>;
 }
 
 function Protected() {
@@ -174,9 +110,59 @@ function Protected() {
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return <AppLayout />;
 }
-function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boolean; children: React.ReactNode }) { const { user, can } = usePOS(); if (!user) return null; if (adminOnly && user.role !== 'admin') return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; if (perm && !can(perm)) return <Navigate to={can('page:pos') ? '/pos' : '/'} replace />; return <>{children}</>; }
-function RouteFallback() { return <div className="min-h-[40vh] grid place-items-center text-sm text-slate-500">Loading…</div>; }
+
+function AppRoutes() {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route element={<Protected />}>
+          <Route path="/" element={<Navigate to="/pos" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/mobile-dashboard" element={<MobileDashboard />} />
+          <Route path="/pos" element={<POS />} />
+          <Route path="/inventory" element={<Inventory />} />
+          <Route path="/customers" element={<Customers />} />
+          <Route path="/suppliers" element={<Suppliers />} />
+          <Route path="/supplier-payments" element={<SupplierPayments />} />
+          <Route path="/purchases" element={<Purchases />} />
+          <Route path="/purchase-return" element={<PurchaseReturn />} />
+          <Route path="/grn" element={<GRN />} />
+          <Route path="/grn-report" element={<GRNReport />} />
+          <Route path="/csv-import" element={<CSVImport />} />
+          <Route path="/sales" element={<SalesHistory />} />
+          <Route path="/exchanges" element={<Exchanges />} />
+          <Route path="/expenses" element={<Expenses />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/pricetags" element={<PriceTags />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/cashier-balances" element={<CashierBalances />} />
+          <Route path="/permissions" element={<Permissions />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/units" element={<Units />} />
+          <Route path="/repairs" element={<Repairs />} />
+          <Route path="/quotations" element={<Quotations />} />
+          <Route path="/warranty-claims" element={<WarrantyClaims />} />
+          <Route path="/kits" element={<Kits />} />
+          <Route path="*" element={<Navigate to="/pos" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
+  );
+}
 
 export default function App() {
-  return <POSProvider><SyncBootstrap /><CloudAuthLifecycle /><KioskSessionBootstrap /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Navigate to="/pos" replace />} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
+  return (
+    <POSProvider>
+      <HashRouter>
+        <SyncBootstrap />
+        <CloudAuthLifecycle />
+        <SessionSecurity />
+        <CloudSyncStateBridge />
+        <ShopSwitcher />
+        <AppRoutes />
+      </HashRouter>
+    </POSProvider>
+  );
 }
