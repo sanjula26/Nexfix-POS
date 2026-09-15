@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
@@ -31,6 +31,13 @@ export default function Login() {
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [showSetupPin, setShowSetupPin] = useState(false);
 
+  // Navigate only after POSProvider has committed the authenticated user.
+  // This prevents / from immediately rendering Protected() with user=null
+  // and bouncing a successful login back to /login.
+  useEffect(() => {
+    if (user) navigate('/', { replace: true });
+  }, [user, navigate]);
+
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!ready || loading) return;
@@ -45,11 +52,11 @@ export default function Login() {
         setError(res.error || 'Sign in failed');
         return;
       }
-      // Local POS authentication is authoritative. Enter the POS immediately;
-      // Supabase/cloud setup is deliberately fire-and-forget and can never
-      // block or cancel a successful local login.
+      // Local POS authentication is authoritative. Cloud authentication is
+      // background-only and cannot block or cancel the local login.
       void ensureCloudSession(mail, password, mail).catch(() => {});
-      navigate('/', { replace: true });
+      // Do not navigate here: signIn() updates React state asynchronously.
+      // The effect above navigates after user becomes non-null.
     } catch {
       setLoading(false);
       setError('Sign in failed. Please try again.');
@@ -138,15 +145,16 @@ export default function Login() {
                   <form onSubmit={submit} className="mt-7 space-y-4">
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span><div className="relative"><Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 !py-3" placeholder="you@shop.lk" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" /></div></div>
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">PASSWORD</span><div className="relative"><Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 pr-10 !py-3" placeholder="•••••••••••" type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /><button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9a9ebf]"><Eye size={15} /></button></div></div>
-                    <div className="flex items-center justify-between"><label className="flex items-center gap-2 cursor-pointer select-none"><span onClick={() => setRemember(r => !r)} className={`w-[18px] h-[18px] rounded-[5px] flex items-center justify-center border ${remember ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-[#d4d7ea]'}`}>{remember && <CheckCircle2 size={12} className="text-white" />}</span><span className="text-[13px] text-[#5b5f7e] font-medium">Remember me for 30 days</span></label><RefreshCw size={13} className="text-[#c3c6de" /></div>
-                    {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
-                    <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={17} className="animate-spin" /> : <>Sign in &amp; stay logged in <ArrowRight size={16} /></>}</button>
+                    <div className="flex items-center justify-between"><label className="inline-flex items-center gap-2 text-xs text-[#5b5f7e]"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="rounded border-[#d8dbea]" /> Remember me</label><Link to="/signup" className="text-xs font-semibold text-violet-600 hover:text-violet-700">Create account</Link></div>
+                    {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
+                    <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={17} className="animate-spin" /> : <>Sign in <ArrowRight size={16} /></>}</button>
                   </form>
-                  <p className="text-center text-[13px] text-[#5b5f7e] mt-6">Don't have an account? <Link to="/signup" className="font-bold text-violet-600 hover:text-violet-700">Sign up</Link></p>
+                  <div className="mt-7 pt-5 border-t border-[#eef0f6] flex items-center justify-center gap-2 text-[11px] text-[#8b8fae]"><ShieldCheck size={13} className="text-emerald-500" /> Secure local authentication · PBKDF2-SHA256</div>
                 </>
               )}
             </div>
           </motion.div>
+          <p className="text-center text-[11px] text-[#8b8fae] mt-5">Your data stays on this device when working offline.</p>
         </div>
       </div>
     </div>
