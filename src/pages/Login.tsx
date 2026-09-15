@@ -5,7 +5,7 @@ import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye
 import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
 import { hashPasswordAsync } from '../lib/passwordAsync';
-import { uid } from '../lib/utils';
+import { uid, SEED_HASH_CASHIER } from '../lib/utils';
 
 const features = [
   { icon: KeyRound, tint: 'from-sky-500 to-blue-600', title: 'Role-Based Login', sub: 'Admin & Cashier' },
@@ -31,11 +31,40 @@ export default function Login() {
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [showSetupPin, setShowSetupPin] = useState(false);
 
-  // Navigate only after POSProvider has committed the authenticated user.
-  // This prevents / from immediately rendering Protected() with user=null
-  // and bouncing a successful login back to /login.
+  // The POS is kiosk-first: authentication is not required to open the sales
+  // screen. A normal active cashier session is created automatically here if
+  // the router ever lands on /login. Sensitive/admin actions remain protected
+  // by the existing admin PIN checks inside the POS.
   useEffect(() => {
-    if (user) navigate('/', { replace: true });
+    if (!ready || user || firstRun) return;
+    const cashier = state.users.find(u => u.active && u.role === 'cashier');
+    if (cashier) {
+      localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: cashier.id, remember: true }));
+      sessionStorage.removeItem('nexfix_session_v1');
+      window.location.replace(`${window.location.origin}${window.location.pathname}#/pos`);
+      return;
+    }
+    const kioskId = 'u-kiosk-cashier';
+    const kiosk = {
+      id: kioskId,
+      name: 'POS Cashier',
+      email: 'pos@kiosk.local',
+      password: SEED_HASH_CASHIER,
+      role: 'cashier' as const,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    const next = JSON.parse(exportData()) as typeof state;
+    next.users = [...next.users, kiosk];
+    next.permissions = { ...next.permissions, cashier: { ...(next.permissions?.cashier || {}), 'page:pos': true } };
+    if (!importData(JSON.stringify(next))) return;
+    localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId: kioskId, remember: true }));
+    sessionStorage.removeItem('nexfix_session_v1');
+    window.location.replace(`${window.location.origin}${window.location.pathname}#/pos`);
+  }, [ready, user, firstRun, state.users, state.permissions, exportData, importData]);
+
+  useEffect(() => {
+    if (user) navigate('/pos', { replace: true });
   }, [user, navigate]);
 
   const submit = async (e?: React.FormEvent) => {
@@ -52,11 +81,7 @@ export default function Login() {
         setError(res.error || 'Sign in failed');
         return;
       }
-      // Local POS authentication is authoritative. Cloud authentication is
-      // background-only and cannot block or cancel the local login.
       void ensureCloudSession(mail, password, mail).catch(() => {});
-      // Do not navigate here: signIn() updates React state asynchronously.
-      // The effect above navigates after user becomes non-null.
     } catch {
       setLoading(false);
       setError('Sign in failed. Please try again.');
@@ -104,6 +129,18 @@ export default function Login() {
     );
   }
 
+  if (!firstRun && !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f5f6fb]">
+        <div className="bg-white rounded-3xl shadow-xl border border-[#eceef6] px-8 py-7 text-center">
+          <Loader2 size={28} className="mx-auto text-violet-600 animate-spin" />
+          <p className="mt-3 text-sm font-semibold text-[#17133c]">Opening POS…</p>
+          <p className="mt-1 text-xs text-[#7b7f9f]">Starting the cashier session.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex bg-[#f5f6fb]">
       <div className="hidden md:flex flex-col justify-center w-[52%] xl:w-1/2 relative overflow-hidden px-12 xl:px-20 py-14 text-white" style={{ background: 'linear-gradient(155deg, #0d0a24 0%, #17123c 55%, #1d1550 100%)' }}>
@@ -139,22 +176,14 @@ export default function Login() {
                   <p className="text-[11px] text-[#7b7f9f] mt-5 leading-relaxed">This setup appears only while there are no local POS accounts. The password and security PIN are stored as salted PBKDF2 hashes; no default login credentials are shipped.</p>
                 </>
               ) : (
-                <>
-                  <h2 className="font-display text-[26px] font-extrabold text-[#17133c] flex items-center gap-2">Welcome back <span className="inline-flex w-7 h-7 rounded-lg bg-amber-100 items-center justify-center"><UserRound size={15} className="text-amber-600" /></span></h2>
-                  <p className="text-sm text-[#5b5f7e] mt-1">Sign in to access your dashboard</p>
-                  <form onSubmit={submit} className="mt-7 space-y-4">
-                    <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span><div className="relative"><Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 !py-3" placeholder="you@shop.lk" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" /></div></div>
-                    <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">PASSWORD</span><div className="relative"><Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 pr-10 !py-3" placeholder="•••••••••••" type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /><button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9a9ebf]"><Eye size={15} /></button></div></div>
-                    <div className="flex items-center justify-between"><label className="inline-flex items-center gap-2 text-xs text-[#5b5f7e]"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="rounded border-[#d8dbea]" /> Remember me</label><Link to="/signup" className="text-xs font-semibold text-violet-600 hover:text-violet-700">Create account</Link></div>
-                    {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
-                    <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={17} className="animate-spin" /> : <>Sign in <ArrowRight size={16} /></>}</button>
-                  </form>
-                  <div className="mt-7 pt-5 border-t border-[#eef0f6] flex items-center justify-center gap-2 text-[11px] text-[#8b8fae]"><ShieldCheck size={13} className="text-emerald-500" /> Secure local authentication · PBKDF2-SHA256</div>
-                </>
+                <div className="py-6 text-center">
+                  <Loader2 size={30} className="mx-auto text-violet-600 animate-spin" />
+                  <h2 className="font-display text-xl font-extrabold text-[#17133c] mt-4">Opening POS…</h2>
+                  <p className="text-sm text-[#5b5f7e] mt-1">No password is required to start the cashier screen.</p>
+                </div>
               )}
             </div>
           </motion.div>
-          <p className="text-center text-[11px] text-[#8b8fae] mt-5">Your data stays on this device when working offline.</p>
         </div>
       </div>
     </div>
