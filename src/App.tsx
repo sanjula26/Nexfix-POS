@@ -5,6 +5,7 @@ import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
 import { SEED_HASH_ADMIN } from './lib/utils';
+import { idbSaveState } from './lib/db';
 import AppLayout from './components/AppLayout';
 import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
@@ -48,7 +49,10 @@ function SessionRecovery() {
     try {
       const DEFAULT_EMAIL = 'admin@nexfixsolution.com';
       const LEGACY_DEFAULT_EMAIL = 'admin@nexfix.lk';
-      const REPAIR_MARKER = 'nexfix_default_admin_v4';
+      // v5 fixes the previous recovery race by durably saving the repaired state
+      // before the page is reloaded. v4 could set its marker/session and reload
+      // before React's debounced persistence ran, leaving IDB with the bad hash.
+      const REPAIR_MARKER = 'nexfix_default_admin_v5';
       const repaired = localStorage.getItem(REPAIR_MARKER) === '1';
 
       if (!repaired) {
@@ -58,6 +62,7 @@ function SessionRecovery() {
           return email === DEFAULT_EMAIL || email === LEGACY_DEFAULT_EMAIL;
         });
         const userId = existing?.id || 'u-admin';
+
         if (existing) {
           existing.email = DEFAULT_EMAIL;
           existing.password = SEED_HASH_ADMIN;
@@ -75,11 +80,23 @@ function SessionRecovery() {
             createdAt: new Date().toISOString(),
           }, ...next.users];
         }
-        if (!importData(JSON.stringify(next))) return;
-        localStorage.setItem(REPAIR_MARKER, '1');
-        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
-        sessionStorage.removeItem('nexfix_session_v1');
-        window.location.reload();
+
+        void (async () => {
+          // Persist to the durable store first because POSProvider hydrates IDB
+          // before it considers localStorage. This preserves all other data and
+          // changes only the known default administrator account.
+          const saved = await idbSaveState(next);
+          if (!saved) return;
+          try {
+            localStorage.setItem('nexfix_pos_v2', JSON.stringify(next));
+            localStorage.setItem(REPAIR_MARKER, '1');
+            localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
+            sessionStorage.removeItem('nexfix_session_v1');
+          } catch {
+            // IDB is already repaired; browser-storage failures are non-fatal.
+          }
+          window.location.reload();
+        })();
         return;
       }
 
@@ -95,10 +112,19 @@ function SessionRecovery() {
           active: true,
           createdAt: new Date().toISOString(),
         }, ...next.users];
-        if (!importData(JSON.stringify(next))) return;
-        localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
-        sessionStorage.removeItem('nexfix_session_v1');
-        window.location.reload();
+
+        void (async () => {
+          const saved = await idbSaveState(next);
+          if (!saved) return;
+          try {
+            localStorage.setItem('nexfix_pos_v2', JSON.stringify(next));
+            localStorage.setItem('nexfix_session_v1', JSON.stringify({ userId, remember: true }));
+            sessionStorage.removeItem('nexfix_session_v1');
+          } catch {
+            // IDB is already repaired; browser-storage failures are non-fatal.
+          }
+          window.location.reload();
+        })();
         return;
       }
 
@@ -168,5 +194,5 @@ function Guard({ perm, adminOnly, children }: { perm?: string; adminOnly?: boole
 function RouteFallback() { return <div className="min-h-[40vh] grid place-items-center text-sm text-slate-500">Loading…</div>; }
 
 export default function App() {
-  return <POSProvider><SyncBootstrap /><SessionRecovery /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/audit-log" element={<Guard adminOnly><AuditLog /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
+  return <POSProvider><SyncBootstrap /><SessionRecovery /><CloudAuthLifecycle /><SessionSecurity /><CloudSyncStateBridge /><ShopSwitcher /><HashRouter><Suspense fallback={<RouteFallback />}><Routes><Route path="/login" element={<Login />} /><Route path="/signup" element={<Signup />} /><Route element={<Protected />}><Route path="/" element={<Guard perm="page:dashboard"><Dashboard /></Guard>} /><Route path="/mobile" element={<Guard perm="page:dashboard"><MobileDashboard /></Guard>} /><Route path="/pos" element={<Guard perm="page:pos"><POS /></Guard>} /><Route path="/inventory" element={<Guard perm="page:inventory"><Inventory /></Guard>} /><Route path="/units" element={<Guard perm="page:units"><Units /></Guard>} /><Route path="/repairs" element={<Guard perm="page:repairs"><Repairs /></Guard>} /><Route path="/quotations" element={<Guard perm="page:pos"><Quotations /></Guard>} /><Route path="/kits" element={<Guard perm="page:inventory"><Kits /></Guard>} /><Route path="/warranty-claims" element={<Guard perm="page:repairs"><WarrantyClaims /></Guard>} /><Route path="/customers" element={<Guard perm="page:customers"><Customers /></Guard>} /><Route path="/suppliers" element={<Guard perm="page:suppliers"><Suppliers /></Guard>} /><Route path="/supplier-payments" element={<Guard perm="page:suppliers"><SupplierPayments /></Guard>} /><Route path="/purchases" element={<Guard perm="page:purchases"><Purchases /></Guard>} /><Route path="/grn" element={<Guard perm="page:purchases"><GRN /></Guard>} /><Route path="/grn-report" element={<Guard perm="page:purchases"><GRNReport /></Guard>} /><Route path="/purchase-return" element={<Guard perm="page:purchases"><PurchaseReturn /></Guard>} /><Route path="/csv-import" element={<Guard adminOnly><CSVImport /></Guard>} /><Route path="/sales" element={<Guard perm="page:sales"><SalesHistory /></Guard>} /><Route path="/exchanges" element={<Guard perm="page:exchanges"><Exchanges /></Guard>} /><Route path="/expenses" element={<Guard perm="page:expenses"><Expenses /></Guard>} /><Route path="/reports" element={<Guard perm="page:reports"><Reports /></Guard>} /><Route path="/price-tags" element={<Guard perm="page:pricetags"><PriceTags /></Guard>} /><Route path="/users" element={<Guard adminOnly><Users /></Guard>} /><Route path="/cashier-balances" element={<Guard adminOnly><CashierBalances /></Guard>} /><Route path="/permissions" element={<Guard adminOnly><Permissions /></Guard>} /><Route path="/settings" element={<Guard adminOnly><Settings /></Guard>} /></Route><Route path="*" element={<Navigate to="/" replace />} /></Routes></Suspense></HashRouter></POSProvider>;
 }
