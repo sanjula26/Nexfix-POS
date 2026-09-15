@@ -144,16 +144,25 @@ function CloudAuthLifecycle() {
 
 function SessionSecurity() {
   const { user, signOut } = usePOS();
+  const previousUserId = useRef<string | null>(user?.id ?? null);
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      previousUserId.current = null;
+      return;
+    }
     const timeoutMs = 30 * 60 * 1000;
     const rememberMs = 30 * 24 * 60 * 60 * 1000;
     const startedKey = 'nexfix_session_started_v1';
+    const freshLogin = previousUserId.current === null;
+    previousUserId.current = user.id;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let startedAt = Date.now();
     try {
       const raw = localStorage.getItem(startedKey);
-      if (raw) {
+      if (freshLogin) {
+        startedAt = Date.now();
+        localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
+      } else if (raw) {
         try {
           const parsed = JSON.parse(raw) as { userId?: string; startedAt?: number };
           if (parsed.userId === user.id && Number.isFinite(parsed.startedAt) && parsed.startedAt! > 0) {
@@ -162,7 +171,6 @@ function SessionSecurity() {
             localStorage.setItem(startedKey, JSON.stringify({ userId: user.id, startedAt }));
           }
         } catch {
-          // Migrate the legacy numeric marker and bind the new marker to this user.
           const legacyStartedAt = Number(raw);
           if (Number.isFinite(legacyStartedAt) && legacyStartedAt > 0 && Date.now() - legacyStartedAt < rememberMs) {
             startedAt = legacyStartedAt;
