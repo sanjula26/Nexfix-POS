@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Globe, Sparkles, KeyRound, ShieldCheck, Zap, RefreshCw, Mail, Lock, Eye, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle, UserRound, Loader2 } from 'lucide-react';
@@ -17,8 +17,6 @@ const features = [
 export default function Login() {
   const { signIn, user, state, ready, exportData, importData } = usePOS();
   const navigate = useNavigate();
-  // Never expose first-run setup while IndexedDB is still loading. Otherwise an
-  // empty initial state can race the real persisted state and overwrite it.
   const firstRun = ready && state.users.length === 0;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,28 +31,29 @@ export default function Login() {
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [showSetupPin, setShowSetupPin] = useState(false);
 
-  useEffect(() => { if (user) navigate('/', { replace: true }); }, [user, navigate]);
-
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!ready) return;
-    if (!email.trim() || !password) { setError('Enter your email and password'); return; }
-    setLoading(true); setError('');
-    setTimeout(async () => {
-      const res = await signIn(email, password, remember);
+    if (!ready || loading) return;
+    const mail = email.trim();
+    if (!mail || !password) { setError('Enter your email and password'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const res = await signIn(mail, password, remember);
       if (!res.ok) {
         setLoading(false);
         setError(res.error || 'Sign in failed');
         return;
       }
-      const cloud = await ensureCloudSession(email, password, email.trim());
+      // Local POS authentication is authoritative. Enter the POS immediately;
+      // Supabase/cloud setup is deliberately fire-and-forget and can never
+      // block or cancel a successful local login.
+      void ensureCloudSession(mail, password, mail).catch(() => {});
+      navigate('/', { replace: true });
+    } catch {
       setLoading(false);
-      if (cloud.needsEmailConfirmation) setError('Signed in locally. Check your email to enable cloud sync on this account.');
-      // Do not navigate here. signIn updates React state asynchronously; the
-      // user effect above performs the redirect only after the authenticated
-      // user is actually visible to the router. This prevents a Protected-route
-      // redirect race that can send a valid login straight back to /login.
-    }, 650);
+      setError('Sign in failed. Please try again.');
+    }
   };
 
   const bootstrap = async (e: React.FormEvent) => {
@@ -140,7 +139,7 @@ export default function Login() {
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span><div className="relative"><Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 !py-3" placeholder="you@shop.lk" value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" /></div></div>
                     <div><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">PASSWORD</span><div className="relative"><Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-9 pr-10 !py-3" placeholder="•••••••••••" type={showPw ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /><button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#9a9ebf]"><Eye size={15} /></button></div></div>
                     <div className="flex items-center justify-between"><label className="flex items-center gap-2 cursor-pointer select-none"><span onClick={() => setRemember(r => !r)} className={`w-[18px] h-[18px] rounded-[5px] flex items-center justify-center border ${remember ? 'bg-indigo-600 border-indigo-600' : 'bg-white border-[#d4d7ea]'}`}>{remember && <CheckCircle2 size={12} className="text-white" />}</span><span className="text-[13px] text-[#5b5f7e] font-medium">Remember me for 30 days</span></label><RefreshCw size={13} className="text-[#c3c6de" /></div>
-                    {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
+                    {error && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</motion.div>}
                     <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={17} className="animate-spin" /> : <>Sign in &amp; stay logged in <ArrowRight size={16} /></>}</button>
                   </form>
                   <p className="text-center text-[13px] text-[#5b5f7e] mt-6">Don't have an account? <Link to="/signup" className="font-bold text-violet-600 hover:text-violet-700">Sign up</Link></p>
