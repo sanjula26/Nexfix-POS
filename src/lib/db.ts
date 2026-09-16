@@ -1,7 +1,7 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
 import { buildSeed } from './seed';
-import { SEED_HASH_ADMIN } from './utils';
+import { SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
@@ -41,41 +41,62 @@ function getDB(): Promise<IDBDatabase> {
  * users and application data are left untouched.
  */
 function repairDefaultAdmin(state: POSState): POSState {
-  const existing = (state.users || []).find(u => {
+  const users = [...(state.users || [])];
+  let changed = false;
+  const now = new Date().toISOString();
+
+  const adminIdx = users.findIndex(u => {
     const email = (u.email || '').trim().toLowerCase();
     return email === DEFAULT_ADMIN_EMAIL || email === LEGACY_DEFAULT_ADMIN_EMAIL;
   });
 
-  if (!existing) {
-    return {
-      ...state,
-      users: [{
-        id: 'u-admin',
-        name: 'Shop Administrator',
+  if (adminIdx < 0) {
+    users.unshift({
+      id: 'u-admin',
+      name: 'Shop Administrator',
+      email: DEFAULT_ADMIN_EMAIL,
+      password: SEED_HASH_ADMIN,
+      role: 'admin',
+      active: true,
+      createdAt: now,
+    });
+    changed = true;
+  } else {
+    const existing = users[adminIdx];
+    if (
+      existing.email !== DEFAULT_ADMIN_EMAIL
+      || existing.password !== SEED_HASH_ADMIN
+      || existing.role !== 'admin'
+      || !existing.active
+    ) {
+      users[adminIdx] = {
+        ...existing,
         email: DEFAULT_ADMIN_EMAIL,
         password: SEED_HASH_ADMIN,
         role: 'admin',
         active: true,
-        createdAt: new Date().toISOString(),
-      }, ...(state.users || [])],
-    };
+        name: existing.name || 'Shop Administrator',
+      };
+      changed = true;
+    }
   }
 
-  if (existing.email === DEFAULT_ADMIN_EMAIL && existing.password === SEED_HASH_ADMIN && existing.role === 'admin' && existing.active) {
-    return state;
-  }
-
-  return {
-    ...state,
-    users: state.users.map(u => u.id === existing.id ? {
-      ...u,
-      email: DEFAULT_ADMIN_EMAIL,
-      password: SEED_HASH_ADMIN,
-      role: 'admin' as const,
+  // Ensure at least one active cashier exists for role-switch / kiosk bootstrap
+  const hasCashier = users.some(u => u.role === 'cashier' && u.active);
+  if (!hasCashier) {
+    users.push({
+      id: 'u-nimal',
+      name: 'Cashier',
+      email: 'cashier@nexfixsolution.com',
+      password: SEED_HASH_CASHIER,
+      role: 'cashier',
       active: true,
-      name: u.name || 'Shop Administrator',
-    } : u),
-  };
+      createdAt: now,
+    });
+    changed = true;
+  }
+
+  return changed ? { ...state, users } : state;
 }
 
 export async function idbLoadState():Promise<POSState|null>{
