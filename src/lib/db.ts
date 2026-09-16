@@ -35,8 +35,10 @@ function getDB(): Promise<IDBDatabase> {
 }
 
 /** Repair only the documented recovery accounts. Existing business data and
- * all other user accounts are preserved. */
-function repairDefaultAccounts(state: POSState): POSState {
+ * all other user accounts are preserved. This is also used when IndexedDB
+ * cannot be opened (for example, a restricted/private preview environment).
+ */
+export function repairDefaultAccounts(state: POSState): POSState {
   const users = [...(state.users || [])];
   let changed = false;
   const now = new Date().toISOString();
@@ -56,8 +58,6 @@ function repairDefaultAccounts(state: POSState): POSState {
     }
   }
 
-  // Keep the normal cashier account available for the POS role-switch and
-  // repair only that documented recovery account if it already exists.
   const cashierIdx = users.findIndex(u => (u.email || '').trim().toLowerCase() === DEFAULT_CASHIER_EMAIL);
   if (cashierIdx < 0) {
     users.push({ id:'u-nimal', name:'Cashier', email:DEFAULT_CASHIER_EMAIL, password:SEED_HASH_CASHIER, role:'cashier', active:true, createdAt:now });
