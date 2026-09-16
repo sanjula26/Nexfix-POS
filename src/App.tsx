@@ -5,7 +5,6 @@ import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { signOutFromCloud } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
-import ShopSwitcher from './components/ShopSwitcher';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 
@@ -38,10 +37,7 @@ function CloudAuthLifecycle() {
   const { user } = usePOS();
   const hadLocalSession = useRef(Boolean(user));
   useEffect(() => {
-    if (user) {
-      hadLocalSession.current = true;
-      return;
-    }
+    if (user) { hadLocalSession.current = true; return; }
     if (!hadLocalSession.current) return;
     hadLocalSession.current = false;
     void signOutFromCloud().catch(() => {});
@@ -53,28 +49,20 @@ function SessionSecurity() {
   const { user, signOut } = usePOS();
   const previousUserId = useRef<string | null>(user?.id || null);
   useEffect(() => {
-    if (!user) {
-      previousUserId.current = null;
-      return;
-    }
+    if (!user) { previousUserId.current = null; return; }
     const freshLogin = previousUserId.current === null;
     previousUserId.current = user.id;
     const SESSION_STARTED = 'nexfix_session_started_v1';
     const IDLE_LIMIT = 30 * 60 * 1000;
     const REMEMBER_LIMIT = 30 * 24 * 60 * 60 * 1000;
     let startedAt = Number(localStorage.getItem(SESSION_STARTED) || 0);
-    if (!startedAt || freshLogin) {
-      startedAt = Date.now();
-      localStorage.setItem(SESSION_STARTED, String(startedAt));
-    }
+    if (!startedAt || freshLogin) { startedAt = Date.now(); localStorage.setItem(SESSION_STARTED, String(startedAt)); }
     let idleTimer: number | undefined;
     let lastActivity = Date.now();
     const resetIdle = () => {
       lastActivity = Date.now();
       if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = window.setTimeout(() => {
-        if (Date.now() - lastActivity >= IDLE_LIMIT) signOut();
-      }, IDLE_LIMIT);
+      idleTimer = window.setTimeout(() => { if (Date.now() - lastActivity >= IDLE_LIMIT) signOut(); }, IDLE_LIMIT);
     };
     const events = ['pointerdown', 'keydown', 'touchstart', 'mousemove', 'scroll'];
     events.forEach(event => window.addEventListener(event, resetIdle));
@@ -96,6 +84,20 @@ function CloudSyncStateBridge() {
     scheduleCloudSync(state).catch(() => {});
     return () => cancelScheduledCloudSync();
   }, [state, user, connectivity]);
+  return null;
+}
+
+function KioskSessionBootstrap() {
+  const { user, ready, switchRole } = usePOS();
+  const location = useLocation();
+  const attempted = useRef(false);
+  useEffect(() => {
+    if (!ready || user || attempted.current) return;
+    if (location.pathname === '/login' || location.pathname === '/signup') return;
+    attempted.current = true;
+    const result = switchRole('cashier');
+    if (!result.ok) attempted.current = false;
+  }, [ready, user, location.pathname, switchRole]);
   return null;
 }
 
@@ -157,6 +159,7 @@ export default function App() {
         <CloudAuthLifecycle />
         <SessionSecurity />
         <CloudSyncStateBridge />
+        <KioskSessionBootstrap />
         <AppRoutes />
       </HashRouter>
     </POSProvider>
