@@ -46,19 +46,50 @@ const DEMO_SEED_ENABLED = import.meta.env.VITE_SEED_DEMO === 'true';
 const emptyState = (): POSState => {
   const adminPermissions: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
+  // Always ship a known recovery admin + cashier so fresh installs can sign in
+  // without waiting for IndexedDB repair. Passwords are the public defaults:
+  // admin@nexfixsolution.com / admin123
+  // cashier@nexfixsolution.com / cashier123
+  const now = new Date().toISOString();
+  const defaultUsers: AppUser[] = [
+    {
+      id: 'u-admin',
+      name: 'Shop Administrator',
+      email: 'admin@nexfixsolution.com',
+      password: SEED_HASH_ADMIN,
+      role: 'admin',
+      active: true,
+      createdAt: now,
+    },
+    {
+      id: 'u-nimal',
+      name: 'Cashier',
+      email: 'cashier@nexfixsolution.com',
+      password: SEED_HASH_CASHIER,
+      role: 'cashier',
+      active: true,
+      createdAt: now,
+    },
+  ];
+  const cashierPerms: Record<string, boolean> = {
+    'page:pos': true,
+    'page:customers': true,
+    'page:sales': true,
+    'act:discount': true,
+  };
   return {
     products: [], customers: [], suppliers: [], sales: [], purchases: [], expenses: [], exchanges: [],
-    users: [], audit: [], held: [], sessions: [],
+    users: defaultUsers, audit: [], held: [], sessions: [],
     settings: {
-      shopName: '', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
-      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
+      shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000,
       adminPinHash: hashPin('admin123'), whatsappReceipts: false,
       categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
       invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
       invoiceTerms: 'Warranty and return conditions are subject to the shop policy.\nKeep this invoice for warranty and future reference.',
       invoiceFooter: 'Thank you for your purchase!', invoiceShowTax: true, taxRegistrationNo: '', invoicePlaceOfSupply: '',
     },
-    permissions: { admin: adminPermissions, cashier: {} },
+    permissions: { admin: adminPermissions, cashier: cashierPerms },
     counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
     units: [], repairs: [], kitItems: [], quotations: [], warrantyClaims: [],
   };
