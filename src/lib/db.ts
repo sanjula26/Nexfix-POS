@@ -11,6 +11,8 @@ const STORE_META = 'meta';
 const DEFAULT_ADMIN_EMAIL = 'admin@nexfixsolution.com';
 const DEFAULT_CASHIER_EMAIL = 'cashier@nexfixsolution.com';
 const LEGACY_DEFAULT_ADMIN_EMAIL = 'admin@nexfix.lk';
+const LOCAL_STORE_KEY = 'nexfix_pos_v2';
+const LEGACY_LOCAL_STORE_KEY = 'nexfix_pos_v1';
 
 export type QueueOp =
   | { id: string; ts: string; type: 'state_write'; note?: string }
@@ -35,9 +37,7 @@ function getDB(): Promise<IDBDatabase> {
 }
 
 /** Repair only the documented recovery accounts. Existing business data and
- * all other user accounts are preserved. This is also used when IndexedDB
- * cannot be opened (for example, a restricted/private preview environment).
- */
+ * all other user accounts are preserved. */
 export function repairDefaultAccounts(state: POSState): POSState {
   const users = [...(state.users || [])];
   let changed = false;
@@ -73,6 +73,17 @@ export function repairDefaultAccounts(state: POSState): POSState {
   return changed ? { ...state, users } : state;
 }
 
+function loadLocalFallback(): POSState {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORE_KEY) || localStorage.getItem(LEGACY_LOCAL_STORE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as POSState;
+      if (parsed && Array.isArray(parsed.products) && Array.isArray(parsed.users)) return repairDefaultAccounts(parsed);
+    }
+  } catch { /* restricted or malformed localStorage */ }
+  return repairDefaultAccounts(buildSeed());
+}
+
 export async function idbLoadState():Promise<POSState|null>{
   try {
     const db=await getDB();
@@ -81,7 +92,12 @@ export async function idbLoadState():Promise<POSState|null>{
     const repaired=repairDefaultAccounts(source);
     if (!row?.value || repaired !== row.value) await idbSaveState(repaired);
     return repaired;
-  } catch { return null; }
+  } catch {
+    // Some private/preview environments expose indexedDB but reject opening it.
+    // Return the repaired local snapshot instead of handing the provider a null
+    // state that can lose the documented login accounts.
+    return loadLocalFallback();
+  }
 }
 export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()}));return true;}catch{return false;}}
 export async function idbSaveRestoreCheckpoint(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Restore checkpoint failed'));tx.onabort=()=>reject(tx.error||new Error('Restore checkpoint aborted'));});return true;}catch{return false;}}
