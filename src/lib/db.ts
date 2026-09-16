@@ -1,5 +1,6 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
+import { buildSeed } from './seed';
 import { SEED_HASH_ADMIN } from './utils';
 
 const DB_NAME = 'nexfix_pos_db';
@@ -33,10 +34,10 @@ function getDB(): Promise<IDBDatabase> {
 }
 
 /**
- * The default admin account is an intentional recovery credential.  Never copy
+ * The default admin account is an intentional recovery credential. Never copy
  * its password from localStorage into the durable store: localStorage may be an
  * older/stale cache and doing so can undo a successful recovery on the next
- * startup.  Only this explicitly named default account is repaired; all other
+ * startup. Only this explicitly named default account is repaired; all other
  * users and application data are left untouched.
  */
 function repairDefaultAdmin(state: POSState): POSState {
@@ -44,7 +45,21 @@ function repairDefaultAdmin(state: POSState): POSState {
     const email = (u.email || '').trim().toLowerCase();
     return email === DEFAULT_ADMIN_EMAIL || email === LEGACY_DEFAULT_ADMIN_EMAIL;
   });
-  if (!existing) return state;
+
+  if (!existing) {
+    return {
+      ...state,
+      users: [{
+        id: 'u-admin',
+        name: 'Shop Administrator',
+        email: DEFAULT_ADMIN_EMAIL,
+        password: SEED_HASH_ADMIN,
+        role: 'admin',
+        active: true,
+        createdAt: new Date().toISOString(),
+      }, ...(state.users || [])],
+    };
+  }
 
   if (existing.email === DEFAULT_ADMIN_EMAIL && existing.password === SEED_HASH_ADMIN && existing.role === 'admin' && existing.active) {
     return state;
@@ -63,8 +78,17 @@ function repairDefaultAdmin(state: POSState): POSState {
   };
 }
 
-export async function idbLoadState():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));if(!row?.value)return null;const repaired=repairDefaultAdmin(row.value);if(repaired!==row.value)await idbSaveState(repaired);return repaired;}catch{ return null; }}
-export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()}));return true;}catch{ return false; }}
+export async function idbLoadState():Promise<POSState|null>{
+  try {
+    const db=await getDB();
+    const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
+    const source = row?.value ?? buildSeed();
+    const repaired = repairDefaultAdmin(source);
+    if (!row?.value || repaired !== row.value) await idbSaveState(repaired);
+    return repaired;
+  } catch { return null; }
+}
+export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();await idbReq(db.transaction(STORE_STATE,'readwrite').objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()}));return true;}catch{return false;}}
 export async function idbSaveRestoreCheckpoint(state:POSState):Promise<boolean>{
   try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||new Error('Restore checkpoint failed'));tx.onabort=()=>reject(tx.error||new Error('Restore checkpoint aborted'));});return true;}catch{return false;}
 }
