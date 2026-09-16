@@ -38,6 +38,20 @@ const Kits = lazy(() => import('./pages/Kits'));
 
 function SyncBootstrap() { useEffect(() => startSyncManager(), []); return null; }
 
+function KioskSessionBootstrap() {
+  const { user, ready, switchRole } = usePOS();
+  const attempted = useRef(false);
+  useEffect(() => {
+    if (!ready || user || attempted.current) return;
+    const hash = window.location.hash.split('?')[0];
+    if (hash === '#/login' || hash === '#/signup') return;
+    attempted.current = true;
+    const result = switchRole('cashier');
+    if (!result.ok) attempted.current = false;
+  }, [ready, user, switchRole]);
+  return null;
+}
+
 function CloudAuthLifecycle() {
   const { user } = usePOS();
   const hadLocalSession = useRef(Boolean(user));
@@ -107,7 +121,7 @@ function RouteFallback() {
 function Protected() {
   const { user, ready } = usePOS(); const location = useLocation();
   if (!ready) return <RouteFallback />;
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!user) return <RouteFallback />;
   return <AppLayout />;
 }
 
@@ -157,6 +171,7 @@ export default function App() {
     <POSProvider>
       <HashRouter>
         <SyncBootstrap />
+        <KioskSessionBootstrap />
         <CloudAuthLifecycle />
         <SessionSecurity />
         <CloudSyncStateBridge />
