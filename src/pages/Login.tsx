@@ -14,8 +14,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Only navigate once the session user is actually in context.
+  // Navigating before setSession flushes caused: login → /pos → redirect /login.
   useEffect(() => {
-    if (user) navigate('/pos', { replace: true });
+    if (user) {
+      setLoading(false);
+      navigate('/pos', { replace: true });
+    }
   }, [user, navigate]);
 
   const submit = async (e?: React.FormEvent) => {
@@ -35,9 +40,16 @@ export default function Login() {
         setLoading(false);
         return;
       }
+      // Best-effort cloud session; never block local POS entry
       void ensureCloudSession(mail, password, mail).catch(() => {});
-      navigate('/pos', { replace: true });
-      setLoading(false);
+      // Do NOT navigate here — wait for `user` via useEffect above
+      // Keep loading true until user appears (useEffect clears it)
+      window.setTimeout(() => {
+        setLoading(prev => {
+          if (prev) setError('Sign in succeeded but session did not start. Clear site data and retry.');
+          return false;
+        });
+      }, 4000);
     } catch {
       setError('Sign in failed. Please try again.');
       setLoading(false);
