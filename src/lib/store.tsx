@@ -348,12 +348,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       try {
         const fromIdb = await idbLoadState();
         if (cancelled) return;
-        if (fromIdb && fromIdb.products && fromIdb.users) {
+        if (fromIdb) {
+          // idbLoadState always repairs the default admin recovery account
           setState(migrate(fromIdb));
         } else {
-          // First run with IDB — seed from localStorage or buildSeed
+          // IDB unavailable / failed — fall back to localStorage or seed (which now includes defaults)
           const local = loadStateFromLocalStorage() || buildSeed();
-          setState(local);
+          setState(migrate(local));
           await idbSaveState(local);
         }
         const meta = await idbGetMeta();
@@ -469,7 +470,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
-    const u = state.users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
+    // Always read the latest users from the ref so we never race with the
+    // IndexedDB boot / default-admin repair that may land just before login.
+    const users = stateRef.current.users || [];
+    const u = users.find(x => x.email.toLowerCase() === email.trim().toLowerCase());
     if (!u) return { ok: false, error: 'No account found for this email' };
 
     // Verify both current PBKDF2 hashes and legacy SHA-256 hashes. Plaintext
@@ -483,8 +487,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sess = { userId: u.id, remember };
     setSession(sess);
     try {
-      if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      else sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+      if (remember) {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        sessionStorage.removeItem(SESSION_KEY);
+      } else {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        localStorage.removeItem(SESSION_KEY);
+      }
+      // Reset session-started marker so idle timer treats this as a fresh login
+      localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
 
     // Successful login upgrades both legacy SHA-256 and plaintext passwords
@@ -503,7 +514,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }, ...s.audit].slice(0, 500),
     }));
     return { ok: true };
-  }, [state.users]);
+  }, []);
 
   const signOut = useCallback(() => {
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
