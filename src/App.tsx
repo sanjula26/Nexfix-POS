@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
@@ -87,22 +87,6 @@ function CloudSyncStateBridge() {
   return null;
 }
 
-function KioskSessionBootstrap() {
-  // Optional kiosk convenience: if someone navigates to a protected route with
-  // no session, try a one-shot cashier restore. Never fight the login page and
-  // never retry in a loop (that caused the old "Opening POS" spinner).
-  const { user, ready, switchRole } = usePOS();
-  const location = useLocation();
-  const attempted = useRef(false);
-  useEffect(() => {
-    if (!ready || user || attempted.current) return;
-    if (location.pathname === '/login' || location.pathname === '/signup') return;
-    attempted.current = true;
-    switchRole('cashier');
-  }, [ready, user, location.pathname, switchRole]);
-  return null;
-}
-
 function RouteFallback() {
   return <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] font-semibold">Loading…</div>;
 }
@@ -161,7 +145,6 @@ export default function App() {
         <CloudAuthLifecycle />
         <SessionSecurity />
         <CloudSyncStateBridge />
-        <KioskSessionBootstrap />
         <AppRoutes />
       </HashRouter>
     </POSProvider>
