@@ -88,6 +88,9 @@ function CloudSyncStateBridge() {
 }
 
 function KioskSessionBootstrap() {
+  // Optional kiosk convenience: if someone navigates to a protected route with
+  // no session, try a one-shot cashier restore. Never fight the login page and
+  // never retry in a loop (that caused the old "Opening POS" spinner).
   const { user, ready, switchRole } = usePOS();
   const location = useLocation();
   const attempted = useRef(false);
@@ -95,8 +98,7 @@ function KioskSessionBootstrap() {
     if (!ready || user || attempted.current) return;
     if (location.pathname === '/login' || location.pathname === '/signup') return;
     attempted.current = true;
-    const result = switchRole('cashier');
-    if (!result.ok) attempted.current = false;
+    switchRole('cashier');
   }, [ready, user, location.pathname, switchRole]);
   return null;
 }
