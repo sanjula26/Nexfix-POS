@@ -1,30 +1,62 @@
-import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Loader2, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { usePOS } from '../lib/store';
+import { ensureCloudSession } from '../lib/cloudAuth';
 
 export default function Login() {
-  const { user, ready, switchRole } = usePOS();
+  const { signIn, user, ready } = usePOS();
   const navigate = useNavigate();
-  const started = useRef(false);
-
-  useEffect(() => {
-    if (!ready || user || started.current) return;
-    started.current = true;
-    const result = switchRole('cashier');
-    if (!result.ok) started.current = false;
-  }, [ready, user, switchRole]);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (user) navigate('/pos', { replace: true });
   }, [user, navigate]);
 
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ready || loading) return;
+    const mail = email.trim().toLowerCase();
+    if (!mail || !password) { setError('Enter your email and password'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await signIn(mail, password, remember);
+      if (!result.ok) {
+        setError(result.error || 'Incorrect email or password');
+        setLoading(false);
+        return;
+      }
+      void ensureCloudSession(mail, password, mail).catch(() => {});
+    } catch {
+      setError('Sign in failed. Please try again.');
+      setLoading(false);
+    }
+  };
+
+  if (!ready) return <div className="min-h-screen grid place-items-center bg-[#f5f6fb]"><Loader2 size={30} className="text-violet-600 animate-spin" /></div>;
+
   return (
-    <div className="min-h-screen grid place-items-center bg-[#f5f6fb]">
-      <div className="bg-white rounded-3xl shadow-xl border border-[#eceef6] px-8 py-7 text-center">
-        <Loader2 size={30} className="mx-auto text-violet-600 animate-spin" />
-        <p className="mt-4 text-sm font-bold text-[#17133c]">Opening POS…</p>
-        <p className="mt-1 text-xs text-[#7b7f9f]">Starting the cashier session.</p>
+    <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#eceef6] overflow-hidden">
+        <div className="h-1.5 bg-gradient-to-r from-violet-600 via-indigo-500 to-sky-400" />
+        <div className="p-7 sm:p-9">
+          <h1 className="text-3xl font-extrabold text-[#17133c]">NEXFIX SOLUTION</h1>
+          <p className="text-sm text-[#5b5f7e] mt-2">Sign in to your POS account</p>
+          <form onSubmit={submit} className="mt-7 space-y-4">
+            <label className="block"><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span><div className="relative"><Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input required type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-10 !py-3 w-full" placeholder="you@shop.lk" /></div></label>
+            <label className="block"><span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">PASSWORD</span><div className="relative"><Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" /><input required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-10 pr-11 !py-3 w-full" placeholder="Password" /><button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]">{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></label>
+            <label className="flex items-center gap-2 text-xs text-[#5b5f7e]"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember me</label>
+            {error && <div className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</div>}
+            <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={18} className="animate-spin" /> : <>Sign in <ArrowRight size={17} /></>}</button>
+          </form>
+          <div className="mt-6 text-center text-xs text-[#7b7f9f]">Need a new installation? <Link to="/signup" className="font-bold text-violet-600">Create account</Link></div>
+        </div>
       </div>
     </div>
   );
