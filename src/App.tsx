@@ -81,7 +81,7 @@ function CloudSyncStateBridge() {
   const { state, user, connectivity } = usePOS();
   useEffect(() => {
     if (!user || connectivity !== 'online') return;
-    scheduleCloudSync(state).catch(() => {});
+    scheduleCloudSync();
     return () => cancelScheduledCloudSync();
   }, [state, user, connectivity]);
   return null;
