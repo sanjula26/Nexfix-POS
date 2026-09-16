@@ -33,34 +33,45 @@ const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 /** True only for the current salted PBKDF2 storage format. */
 export const isCurrentPasswordHash = (value: string): boolean => isPasswordHash(value);
 
-/** Verify passwords using Web Crypto where available, with legacy SHA-256 support. */
+/**
+ * Verify passwords using Web Crypto where available. If the browser's
+ * WebCrypto implementation rejects or mismatches the derivation, fall back to
+ * the project's deterministic pure-JS verifier. This is important for private
+ * browsing / embedded preview environments where crypto.subtle can behave
+ * differently even though the stored PBKDF2 format is valid.
+ */
 export const verifyPasswordAsync = async (plain: string, storedHash: string): Promise<boolean> => {
   if (isLegacyPasswordHash(storedHash)) return verifyLegacyPassword(plain, storedHash);
   if (!isCurrentPasswordHash(storedHash)) return false;
 
   try {
-    if (typeof crypto === 'undefined' || !crypto.subtle) return verifyPassword(plain, storedHash);
-    const [saltText, hashText] = storedHash.split(':');
-    const salt = base64ToBytes(saltText);
-    const expected = base64ToBytes(hashText);
-    if (salt.length !== PBKDF2_SALT_BYTES || expected.length !== PBKDF2_KEY_BYTES) return false;
-
-    const key = await crypto.subtle.importKey(
-      'raw',
-      toArrayBuffer(new TextEncoder().encode(plain)),
-      { name: 'PBKDF2' },
-      false,
-      ['deriveBits'],
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-      key,
-      PBKDF2_KEY_BYTES * 8,
-    );
-    return constantTimeEqual(expected, new Uint8Array(bits));
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const [saltText, hashText] = storedHash.split(':');
+      const salt = base64ToBytes(saltText);
+      const expected = base64ToBytes(hashText);
+      if (salt.length === PBKDF2_SALT_BYTES && expected.length === PBKDF2_KEY_BYTES) {
+        const key = await crypto.subtle.importKey(
+          'raw',
+          toArrayBuffer(new TextEncoder().encode(plain)),
+          { name: 'PBKDF2' },
+          false,
+          ['deriveBits'],
+        );
+        const bits = await crypto.subtle.deriveBits(
+          { name: 'PBKDF2', salt: toArrayBuffer(salt), iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+          key,
+          PBKDF2_KEY_BYTES * 8,
+        );
+        if (constantTimeEqual(expected, new Uint8Array(bits))) return true;
+      }
+    }
   } catch {
-    return false;
+    // Fall through to the deterministic verifier below.
   }
+
+  // Deterministic fallback uses the exact same PBKDF2 parameters and stored
+  // format, so it does not weaken authentication or add a bypass.
+  return verifyPassword(plain, storedHash);
 };
 
 /** Create a fresh random-salt PBKDF2-SHA-256 password hash. */
