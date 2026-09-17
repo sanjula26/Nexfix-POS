@@ -1,4 +1,3 @@
-
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   POSState, Product, Customer, Supplier, Sale, Purchase, Expense, Exchange,
@@ -358,20 +357,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           setState(migrate(local));
           await idbSaveState(local);
         }
-        // If a stored session references a missing/inactive user, drop it so login is not stuck
-        try {
-          const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-          if (raw) {
-            const sess = JSON.parse(raw) as Session;
-            const live = stateRef.current.users || [];
-            const stillValid = live.some(x => x.id === sess.userId && x.active);
-            if (!stillValid) {
-              localStorage.removeItem(SESSION_KEY);
-              sessionStorage.removeItem(SESSION_KEY);
-              setSession(null);
-            }
-          }
-        } catch { /* ignore */ }
+        // NOTE: Do NOT clear session here.
+        // Clearing session against stateRef races with concurrent signIn and
+        // was deleting a freshly written session (login → bounce back to /login).
+
         const meta = await idbGetMeta();
         const queued = await idbListQueue();
         if (!cancelled) {
@@ -379,7 +368,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           setPendingQueueCount(queued.length);
         }
       } catch { /* keep localStorage state */ }
-      if (!cancelled) setReady(true);
+      // Re-hydrate session from storage AFTER users are loaded so login is not lost
+        try {
+          const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
+          if (raw) {
+            const sess = JSON.parse(raw) as Session;
+            // Prefer the just-loaded state (stateRef updates on next render; use functional check later via setSession)
+            setSession(sess);
+          }
+        } catch { /* ignore */ }
+        if (!cancelled) setReady(true);
       // Register service worker for offline shell
       registerServiceWorker().catch(() => {});
     })();
