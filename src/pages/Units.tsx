@@ -46,25 +46,26 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
 function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product:any;productId:string;setProductId:(v:string)=>void;products:any[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>{ok:boolean;added:number;errors:string[]}}){
  const submit=()=>{
    if(!product){onResult({msg:'Select a tracked product.',errors:[]});return;}
-   const lines=text.split(/\r?\n/); const units:InventoryUnit[]=[];
+   const lines=text.split(/\r?\n/); const units:InventoryUnit[]=[]; const parseErrors:string[]=[];
    for(let i=0;i<lines.length;i++){
      const raw=lines[i].trim(); if(!raw) continue;
      const parts=raw.split(',').map(x=>x.trim());
      let imei='',serial='';
      if(product.trackImei&&product.trackSerial){
-       if(parts.length!==2||!parts[0]||!parts[1]){onResult({msg:'',errors:['Line '+(i+1)+': expected IMEI,SERIAL']});continue;}
+       if(parts.length!==2||!parts[0]||!parts[1]){parseErrors.push('Line '+(i+1)+': expected IMEI,SERIAL');continue;}
        imei=parts[0]; serial=parts[1];
      } else if(product.trackImei){
-       if(parts.length!==1||!parts[0]){onResult({msg:'',errors:['Line '+(i+1)+': expected one IMEI']});continue;}
+       if(parts.length!==1||!parts[0]){parseErrors.push('Line '+(i+1)+': expected one IMEI');continue;}
        imei=parts[0];
      } else {
-       if(parts.length!==1||!parts[0]){onResult({msg:'',errors:['Line '+(i+1)+': expected one serial']});continue;}
+       if(parts.length!==1||!parts[0]){parseErrors.push('Line '+(i+1)+': expected one serial');continue;}
        serial=parts[0];
      }
      units.push({id:uid(),productId,imei:imei||undefined,serial:serial||undefined,status:'in_stock',createdAt:new Date().toISOString()});
    }
    const result=saveUnitsBulk(units);
-   onResult({msg:result.added+' unit(s) added'+(result.errors.length?' · '+result.errors.length+' error(s)':'') ,errors:result.errors});
+   const errors=[...parseErrors,...result.errors];
+   onResult({msg:result.added+' unit(s) added'+(errors.length?' · '+errors.length+' error(s)':''),errors});
    if(result.added>0) setText('');
  };
  return <div className="space-y-4">
