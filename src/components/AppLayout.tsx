@@ -18,7 +18,7 @@ interface NavDef {
 }
 
 const NAV: NavDef[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutGrid, perm: 'page:dashboard', group: 'Operations' },
+  { to: '/dashboard', label: 'Dashboard', icon: LayoutGrid, perm: 'page:dashboard', group: 'Operations' },
   { to: '/pos', label: 'POS / Sales', icon: ShoppingCart, perm: 'page:pos', group: 'Operations' },
   { to: '/inventory', label: 'Inventory', icon: Package, perm: 'page:inventory', group: 'Operations' },
   { to: '/kits', label: 'Kits / BOM', icon: Package, perm: 'page:inventory', group: 'Operations' },
