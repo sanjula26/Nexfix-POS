@@ -109,7 +109,7 @@ function Protected() {
   const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.mustChangePassword && location.pathname !== '/change-password') return <Navigate to="/change-password" replace />;
+  if (user.mustChangePassword && location.pathname !== '/change-password' && sessionStorage.getItem('nexfix_role_switch') !== '1') return <Navigate to="/change-password" replace />;
   return <AppLayout />;
 }
 
