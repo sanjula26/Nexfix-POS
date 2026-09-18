@@ -19,7 +19,7 @@ export default function Login() {
   useEffect(() => {
     if (!user) return;
     setLoading(false);
-    navigate('/pos', { replace: true });
+    navigate(user.role === 'admin' || user.role === 'manager' ? '/dashboard' : '/pos', { replace: true });
   }, [user, navigate]);
 
   const submit = async (e?: React.FormEvent) => {
