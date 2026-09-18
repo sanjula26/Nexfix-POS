@@ -644,7 +644,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); sessionStorage.removeItem('nexfix_role_switch'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
   const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
