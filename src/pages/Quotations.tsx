@@ -20,6 +20,7 @@ export default function Quotations() {
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState('');
   const [preview, setPreview] = useState<{ quote: Quotation; html: string } | null>(null);
+  const [previewReady, setPreviewReady] = useState(false);
   const previewFrame = useRef<HTMLIFrameElement | null>(null);
 
   const quotes = state.quotations || [];
@@ -163,6 +164,7 @@ export default function Quotations() {
     const terms = (s.invoiceTerms || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
     const rowsHtml = quote.items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.name)}</td><td class="num">${it.qty}</td><td class="num">${currency} ${fmtRs(it.price)}</td><td class="num">${currency} ${fmtRs(Math.max(0, it.price * it.qty - (it.discount || 0)))}</td></tr>`).join('');
     const html = `<!doctype html><html><head><title>${esc(quote.quoteNo)} - ${esc(title)}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:12px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:18px}.brand h1{margin:0;font-size:25px}.brand p{margin:5px 0 0;color:#555}.meta{text-align:right}.meta h2{margin:0 0 7px;font-size:21px}.customer{margin:14px 0 20px;display:flex;justify-content:space-between}.box{border:1px solid #ddd;border-radius:6px;padding:10px;min-width:45%}table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left}th,td{padding:8px;border-bottom:1px solid #ddd}.num{text-align:right}.totals{margin-left:auto;width:300px;margin-top:18px}.totals div{display:flex;justify-content:space-between;padding:4px 0}.grand{font-size:16px;font-weight:700;border-top:2px solid #111;margin-top:5px;padding-top:8px}.terms{margin-top:24px}.terms li{margin:4px 0}.foot{margin-top:35px;padding-top:12px;border-top:1px solid #ddd;text-align:center;color:#666;white-space:pre-line}@media print{button{display:none}}</style></head><body><div class="head"><div class="brand"><h1>${esc(s.shopName || 'Nexfix POS')}</h1><p>${esc(subtitle)}</p><p>${esc(s.address || '')}<br>${esc(s.phone || '')}${s.email ? ` · ${esc(s.email)}` : ''}</p></div><div class="meta"><h2>${esc(title)}</h2><div><b>No:</b> ${esc(quote.quoteNo)}</div><div><b>Date:</b> ${esc(fmtDate(quote.createdAt))}</div>${quote.validUntil ? `<div><b>Valid until:</b> ${esc(fmtDate(quote.validUntil))}</div>` : ''}</div></div><div class="customer"><div class="box"><b>Quotation For</b><br>${esc(quote.customerName)}${quote.customerPhone ? `<br>${esc(quote.customerPhone)}` : ''}</div><div class="box"><b>Status</b><br>${esc(quote.status.toUpperCase())}</div></div><table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rowsHtml}</tbody></table><div class="totals"><div><span>Subtotal</span><b>${currency} ${fmtRs(quote.subtotal)}</b></div>${quote.discount ? `<div><span>Discount</span><b>- ${currency} ${fmtRs(quote.discount)}</b></div>` : ''}${s.invoiceShowTax !== false ? `<div><span>${esc(s.invoiceTaxLabel || 'Tax')}</span><b>${currency} ${fmtRs(quote.tax)}</b></div>` : ''}<div class="grand"><span>Total</span><span>${currency} ${fmtRs(quote.total)}</span></div></div>${quote.notes ? `<div class="terms"><b>Notes</b><p style="white-space:pre-line">${esc(quote.notes)}</p></div>` : ''}${terms.length ? `<div class="terms"><b>Terms & Conditions</b><ul>${terms.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}<div class="foot">${esc(s.invoiceFooter || s.receiptFooter || 'Thank you!')}</div></body></html>`;
+    setPreviewReady(false);
     setPreview({ quote, html });
   };
 
@@ -184,13 +186,14 @@ export default function Quotations() {
         <div className="flex items-center justify-between border-t border-line pt-3"><div className="text-sm text-sub">Subtotal <b className="text-ink">{fmtRs(editing.subtotal)}</b> · Total <b className="text-ink">{fmtRs(editing.total)}</b></div><div className="flex gap-2"><button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button><button type="button" className="btn btn-primary" onClick={save}>Save Quotation</button></div></div>
       </div>}
     </Modal>
-    <Modal open={!!preview} onClose={() => setPreview(null)} title={preview ? "Quotation " + preview.quote.quoteNo : "Print preview"} sub="Preview the A4 quotation before printing or saving as PDF" wide>
+    <Modal open={!!preview} onClose={() => { setPreview(null); setPreviewReady(false); }} title={preview ? "Quotation " + preview.quote.quoteNo : "Print preview"} sub="Preview the A4 quotation before printing or saving as PDF" wide>
       {preview && <div className="space-y-3">
         <div className="flex justify-end gap-2">
-          <button type="button" className="btn btn-primary" onClick={() => previewFrame.current?.contentWindow?.print()}><Printer size={15} /> Print / Save PDF</button>
-          <button type="button" className="btn btn-soft" onClick={() => setPreview(null)}><X size={15} /> Close</button>
+          <button type="button" className="btn btn-primary" onClick={() => previewFrame.current?.contentWindow?.print()} disabled={!previewReady}><Printer size={15} /> Print</button>
+          <button type="button" className="btn btn-soft" onClick={() => previewFrame.current?.contentWindow?.print()} disabled={!previewReady}><Printer size={15} /> Download PDF</button>
+          <button type="button" className="btn btn-soft" onClick={() => { setPreview(null); setPreviewReady(false); }}><X size={15} /> Close</button>
         </div>
-        <div className="rounded-xl border border-line bg-slate-100 p-2"><iframe ref={previewFrame} title="Quotation print preview" srcDoc={preview.html} className="w-full h-[70vh] rounded-lg bg-white border border-line" /></div>
+        <div className="rounded-xl border border-line bg-slate-100 p-2"><iframe ref={previewFrame} title="Quotation print preview" srcDoc={preview.html} onLoad={() => setPreviewReady(true)} className="w-full h-[70vh] rounded-lg bg-white border border-line" /></div>
         <p className="text-xs text-faint text-center">Use the browser print dialog and choose “Save as PDF” to download a PDF copy.</p>
       </div>}
     </Modal>
