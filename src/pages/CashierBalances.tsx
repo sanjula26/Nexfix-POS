@@ -73,6 +73,12 @@ export default function CashierBalances() {
     return { mine, session, cash, credit, other, opening, expected, cashRefunds };
   };
 
+  const settleRow = settling ? rowFor(settling) : null;
+  const countedAmount = Number(counted);
+  const liveVariance = settleRow && Number.isFinite(countedAmount)
+    ? Math.round((countedAmount - settleRow.expected) * 100) / 100
+    : null;
+
   const settle = () => {
     if (!settling) return;
     const amount = Number(counted);
@@ -285,6 +291,12 @@ export default function CashierBalances() {
               autoFocus
             />
           </Field>
+          {settleRow && (
+            <div className="grid grid-cols-2 gap-2 rounded-xl bg-raised p-3 text-sm">
+              <div><div className="text-[10px] uppercase tracking-wide text-faint">Expected cash</div><div className="font-bold num text-ink mt-0.5">{fmtRs(settleRow.expected)}</div></div>
+              <div><div className="text-[10px] uppercase tracking-wide text-faint">Variance</div><div className={`font-bold num mt-0.5 ${liveVariance == null || liveVariance === 0 ? 'text-emerald-600' : liveVariance > 0 ? 'text-sky-600' : 'text-rose-500'}`}>{liveVariance == null ? '—' : fmtRs(liveVariance)}</div></div>
+            </div>
+          )}
           <Field label="Note (optional)">
             <input className="input" value={note} onChange={e => setNote(e.target.value)} />
           </Field>
