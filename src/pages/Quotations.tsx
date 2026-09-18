@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Plus, Trash2, ShoppingCart, Printer, Eye, Copy, X } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
@@ -13,6 +13,24 @@ function esc(value: string) {
   return value.replace(/[&<>\"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch] || ch));
 }
 
+function ProductCombobox({ value, products, onSelect, onFreeText }: {
+  value: string; products: any[]; onSelect: (product: any) => void; onFreeText: () => void;
+}) {
+  const [open, setOpen] = useState(false); const [term, setTerm] = useState(value); const [active, setActive] = useState(0);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => setTerm(value), [value]);
+  useEffect(() => { const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); }; document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close); }, []);
+  const matches = useMemo(() => { const needle = term.trim().toLowerCase(); return products.filter(p => !needle || [p.name, p.sku, p.barcode].some(v => String(v || '').toLowerCase().includes(needle))).slice(0, 50); }, [products, term]);
+  const choose = (product: any | null) => { setOpen(false); if (product) { setTerm(product.name); onSelect(product); } else { setTerm(''); onFreeText(); } };
+  return <div ref={ref} className="relative">
+    <input className="input" value={term} placeholder="Type name, SKU or barcode…" onFocus={() => { setOpen(true); setActive(0); }} onChange={e => { setTerm(e.target.value); setOpen(true); setActive(0); onFreeText(); }} onKeyDown={e => { if (!open) return; if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, matches.length)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); } else if (e.key === 'Enter') { e.preventDefault(); choose(active < matches.length ? matches[active] : null); } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }} aria-autocomplete="list" aria-expanded={open} />
+    {open && <div className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl">
+      <button type="button" className="w-full px-3 py-2 text-left text-sm font-medium hover:bg-raised" onClick={() => choose(null)}>Free-text item</button>
+      {matches.map((p, i) => <button type="button" key={p.id} className={'w-full px-3 py-2 text-left text-sm flex items-center justify-between gap-3 ' + (i === active ? 'bg-raised' : 'hover:bg-raised')} onMouseEnter={() => setActive(i)} onClick={() => choose(p)}><span className="min-w-0 truncate"><b>{p.name}</b>{p.sku || p.barcode ? <span className="ml-2 text-xs text-faint">{[p.sku, p.barcode].filter(Boolean).join(' · ')}</span> : null}</span><span className="shrink-0 font-semibold">{fmtRs(Number(p.price) || 0)}</span></button>)}
+      {matches.length === 0 && <div className="px-3 py-3 text-sm text-faint">No matching products. Use Free-text item.</div>}
+    </div>}
+  </div>;
+}
 export default function Quotations() {
   const { user, logAudit, state, importData } = usePOS();
   const [q, setQ] = useState('');
@@ -164,9 +182,9 @@ export default function Quotations() {
     const money = (n: number) => fmtRs(n);
     const rowsHtml = quote.items.map((it, i) => {
       const lineTotal = Math.max(0, it.price * it.qty - (it.discount || 0));
-      return `<tr><td>${i + 1}</td><td>${esc(it.name)}</td><td class="num">${it.qty}</td><td class="num">${money(it.price)}</td><td class="num">${money(it.discount || 0)}</td><td class="num">${money(lineTotal)}</td></tr>`;
+      return `<tr><td>${i + 1}</td><td>${esc(it.name)}</td><td class="num">${it.qty}</td><td class="num">${money(it.price)}</td><td class="num">${money(lineTotal)}</td></tr>`;
     }).join('');
-    const html = `<!doctype html><html><head><title>${esc(quote.quoteNo)} - ${esc(title)}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:12px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:18px}.brand h1{margin:0;font-size:25px}.brand p{margin:5px 0 0;color:#555}.meta{text-align:right}.meta h2{margin:0 0 7px;font-size:21px}.customer{margin:14px 0 20px;display:flex;gap:12px}.box{border:1px solid #ddd;border-radius:6px;padding:10px;flex:1}.status{display:inline-block;margin-top:6px;padding:4px 8px;border:1px solid #ddd;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase}table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left}th,td{padding:8px;border-bottom:1px solid #ddd}.num{text-align:right}.totals{margin-left:auto;width:300px;margin-top:18px}.totals div{display:flex;justify-content:space-between;padding:4px 0}.grand{font-size:16px;font-weight:700;border-top:2px solid #111;margin-top:5px;padding-top:8px}.terms{margin-top:24px}.terms li{margin:4px 0}.foot{margin-top:35px;padding-top:12px;border-top:1px solid #ddd;text-align:center;color:#666;white-space:pre-line}@media print{button{display:none}}</style></head><body><div class="head"><div class="brand"><h1>${esc(s.shopName || 'Nexfix POS')}</h1><p>${esc(subtitle)}</p><p>${esc(s.address || '')}<br>${esc(s.phone || '')}${s.email ? ` · ${esc(s.email)}` : ''}</p></div><div class="meta"><h2>${esc(title)}</h2><div><b>No:</b> ${esc(quote.quoteNo)}</div><div><b>Date:</b> ${esc(fmtDate(quote.createdAt))}</div>${quote.validUntil ? `<div><b>Valid until:</b> ${esc(fmtDate(quote.validUntil))}</div>` : ''}</div></div><div class="customer"><div class="box"><b>Quotation For</b><br>${esc(quote.customerName)}${quote.customerPhone ? `<br>${esc(quote.customerPhone)}` : ''}</div><div class="box"><b>Status</b><br><span class="status">${esc(quote.status)}</span></div></div><table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Line discount</th><th class="num">Line total</th></tr></thead><tbody>${rowsHtml}</tbody></table><div class="totals"><div><span>Subtotal</span><b>${money(quote.subtotal)}</b></div>${quote.discount ? `<div><span>Discount</span><b>- ${money(quote.discount)}</b></div>` : ''}${s.invoiceShowTax !== false ? `<div><span>${esc(s.invoiceTaxLabel || 'Tax')}</span><b>${money(quote.tax)}</b></div>` : ''}<div class="grand"><span>Total</span><span>${money(quote.total)}</span></div></div>${quote.notes ? `<div class="terms"><b>Notes / Terms for customer</b><p style="white-space:pre-line">${esc(quote.notes)}</p></div>` : ''}${terms.length ? `<div class="terms"><b>Terms & Conditions</b><ul>${terms.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}<div class="foot">${esc(s.invoiceFooter || s.receiptFooter || 'Thank you!')}</div></body></html>`;
+    const html = `<!doctype html><html><head><title>${esc(quote.quoteNo)} - ${esc(title)}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:12px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:16px;margin-bottom:18px}.brand h1{margin:0;font-size:25px}.brand p{margin:5px 0 0;color:#555}.meta{text-align:right}.meta h2{margin:0 0 7px;font-size:21px}.customer{margin:14px 0 20px;display:flex;gap:12px}.box{border:1px solid #ddd;border-radius:6px;padding:10px;flex:1}.status{display:inline-block;margin-top:6px;padding:4px 8px;border:1px solid #ddd;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase}table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left}th,td{padding:8px;border-bottom:1px solid #ddd}.num{text-align:right}.totals{margin-left:auto;width:300px;margin-top:18px}.totals div{display:flex;justify-content:space-between;padding:4px 0}.grand{font-size:16px;font-weight:700;border-top:2px solid #111;margin-top:5px;padding-top:8px}.terms{margin-top:24px}.terms li{margin:4px 0}.foot{margin-top:35px;padding-top:12px;border-top:1px solid #ddd;text-align:center;color:#666;white-space:pre-line}@media print{button{display:none}}</style></head><body><div class="head"><div class="brand"><h1>${esc(s.shopName || 'Nexfix POS')}</h1><p>${esc(subtitle)}</p><p>${esc(s.address || '')}<br>${esc(s.phone || '')}${s.email ? ` · ${esc(s.email)}` : ''}</p></div><div class="meta"><h2>${esc(title)}</h2><div><b>No:</b> ${esc(quote.quoteNo)}</div><div><b>Date:</b> ${esc(fmtDate(quote.createdAt))}</div>${quote.validUntil ? `<div><b>Valid until:</b> ${esc(fmtDate(quote.validUntil))}</div>` : ''}</div></div><div class="customer"><div class="box"><b>Quotation For</b><br>${esc(quote.customerName)}${quote.customerPhone ? `<br>${esc(quote.customerPhone)}` : ''}</div><div class="box"><b>Status</b><br><span class="status">${esc(quote.status)}</span></div></div><table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rowsHtml}</tbody></table><div class="totals"><div><span>Subtotal</span><b>${money(quote.subtotal)}</b></div>${quote.discount ? `<div><span>Discount</span><b>- ${money(quote.discount)}</b></div>` : ''}${s.invoiceShowTax !== false ? `<div><span>${esc(s.invoiceTaxLabel || 'Tax')}</span><b>${money(quote.tax)}</b></div>` : ''}<div class="grand"><span>Total</span><span>${money(quote.total)}</span></div></div>${quote.notes ? `<div class="terms"><b>Notes / Terms for customer</b><p style="white-space:pre-line">${esc(quote.notes)}</p></div>` : ''}${terms.length ? `<div class="terms"><b>Terms & Conditions</b><ul>${terms.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}<div class="foot">${esc(s.invoiceFooter || s.receiptFooter || 'Thank you!')}</div></body></html>`;
     setPreviewReady(false);
     setPreview({ quote, html });
   };
@@ -204,7 +222,7 @@ export default function Quotations() {
             {editing.items.map((it, idx) => {
               const lineTotal = Math.max(0, it.price * it.qty - (it.discount || 0));
               return <div key={idx} className="grid grid-cols-1 gap-2 p-4 lg:grid-cols-[minmax(190px,1fr)_72px_120px_120px_130px_42px] lg:items-end">
-                <Field label="Item / Description"><div className="flex gap-2"><select className="input min-w-0 flex-1" value={it.productId || ''} onChange={e => { const product = state.products.find(p => p.id === e.target.value); updateItem(idx, product ? { productId: product.id, name: product.name, price: product.price } : { productId: undefined }); }}><option value="">Free-text item</option>{state.products.filter(p => p.active).map(p => <option key={p.id} value={p.id}>{p.name} · {fmtRs(p.price)}</option>)}</select></div><input className="input mt-2" value={it.name} onChange={e => updateItem(idx, { name: e.target.value, productId: undefined })} placeholder="Item name or service" /></Field>
+                <Field label="Item / Description"><ProductCombobox value={it.name} products={state.products.filter(p => p.active)} onFreeText={() => updateItem(idx, { productId: undefined })} onSelect={p => updateItem(idx, { productId: p.id, name: p.name, price: Number(p.price) || 0, qty: 1 })} /></Field>
                 <Field label="Qty"><input type="number" min="0" className="input num" value={it.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 0 })} /></Field>
                 <Field label="Unit price"><input type="number" min="0" step="0.01" className="input num" value={it.price} onChange={e => updateItem(idx, { price: Number(e.target.value) || 0 })} /></Field>
                 <Field label="Line discount"><input type="number" min="0" step="0.01" className="input num" value={it.discount || ''} onChange={e => updateItem(idx, { discount: Number(e.target.value) || 0 })} /></Field>
@@ -216,9 +234,9 @@ export default function Quotations() {
           </div>
         </section>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_330px]">
-          <Field label="Notes / Terms for customer"><textarea className="input min-h-[150px] resize-y" value={editing.notes || ''} onChange={e => setEditing({ ...editing, notes: e.target.value })} placeholder="Payment terms, warranty notes, delivery details, or other information for the customer." /></Field>
-          <section className="rounded-2xl border border-line bg-raised/20 p-4 sm:p-5">
+        <div className="space-y-6">
+          <Field label="Notes / Terms for customer"><textarea className="input min-h-[150px] w-full resize-y" value={editing.notes || ''} onChange={e => setEditing({ ...editing, notes: e.target.value })} placeholder="Payment terms, warranty notes, delivery details, or other information for the customer." /></Field>
+          <div className="flex justify-end"><section className="w-full lg:w-[330px] rounded-2xl border border-line bg-raised/20 p-4 sm:p-5">
             <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-sub mb-4">Totals</p>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between gap-4"><span className="text-sub">Subtotal</span><span className="font-medium text-ink">{fmtRs(editing.subtotal)}</span></div>
@@ -230,7 +248,7 @@ export default function Quotations() {
               <Field label="Overall discount"><input type="number" min="0" step="0.01" className="input num" value={editing.discount || ''} onChange={e => { const discount = Number(e.target.value) || 0; const { subtotal, total } = recalc(editing.items, discount, editing.tax); setEditing({ ...editing, discount, subtotal, total }); }} /></Field>
               <Field label="Tax"><input type="number" min="0" step="0.01" className="input num" value={editing.tax || ''} onChange={e => { const tax = Number(e.target.value) || 0; const { subtotal, total } = recalc(editing.items, editing.discount, tax); setEditing({ ...editing, tax, subtotal, total }); }} /></Field>
             </div>
-          </section>
+          </section></div>
         </div>
 
         {msg && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{msg}</div>}
