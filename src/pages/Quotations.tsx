@@ -25,6 +25,7 @@ export default function Quotations() {
   const quotes = state.quotations || [];
   const rows = useMemo(() => {
     const query = q.trim().toLowerCase();
+    const now = Date.now();
     return quotes
       .map(quote => {
         // POS records the originating quote number in the completed sale note.
@@ -35,9 +36,11 @@ export default function Quotations() {
           && typeof s.note === 'string'
           && s.note.trim() === `From quote ${quote.quoteNo}`,
         );
-        return convertedSale
-          ? { ...quote, status: 'converted' as const, convertedSaleId: convertedSale.id }
-          : quote;
+        if (convertedSale) return { ...quote, status: 'converted' as const, convertedSaleId: convertedSale.id };
+        if (quote.validUntil && new Date(quote.validUntil).getTime() < now && (quote.status === 'draft' || quote.status === 'sent')) {
+          return { ...quote, status: 'expired' as const };
+        }
+        return quote;
       })
       .filter(x => !query || x.quoteNo.toLowerCase().includes(query) || x.customerName.toLowerCase().includes(query) || (x.customerPhone || '').includes(query));
   }, [quotes, state.sales, q]);
