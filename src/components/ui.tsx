@@ -1,13 +1,13 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, X, Inbox } from 'lucide-react';
 
 /* ---------- Modal ---------- */
 export function Modal({
-  open, onClose, title, sub, children, wide, xl, locked,
+  open, onClose, title, sub, children, footer, wide, xl, locked,
 }: {
   open: boolean; onClose: () => void; title: string; sub?: string;
-  children: React.ReactNode; wide?: boolean; xl?: boolean;
+  children: React.ReactNode; footer?: React.ReactNode; wide?: boolean; xl?: boolean;
   /** locked: backdrop does not dismiss (header close stays available) */
   locked?: boolean;
 }) {
@@ -15,7 +15,7 @@ export function Modal({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6"
+          className="fixed inset-0 z-[60] flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         >
           <div
@@ -27,7 +27,7 @@ export function Modal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 18, scale: 0.985 }}
             transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-            className={`relative card w-full ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] flex flex-col overflow-hidden rounded-[1.25rem]`}
+            className={`relative card my-auto w-full ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[min(90vh,900px)] flex flex-col overflow-hidden rounded-[1.25rem]`}
           >
             <div className="sticky top-0 z-10 flex items-start justify-between gap-4 px-6 pt-5 pb-4 bg-surface border-b border-line">
               <div>
@@ -38,12 +38,21 @@ export function Modal({
                 <X size={17} />
               </button>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-6">{children}</div>
+            <ModalBody open={open}>{children}</ModalBody>
+            {footer && <div className="shrink-0 border-t border-line bg-surface p-4">{footer}</div>}
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
   );
+}
+
+function ModalBody({ open, children }: { open: boolean; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (open) ref.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [open]);
+  return <div ref={ref} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6">{children}</div>;
 }
 
 /* ---------- Field ---------- */
