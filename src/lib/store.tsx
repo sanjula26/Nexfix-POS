@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   POSState, Product, Customer, Supplier, Sale, Purchase, Expense, Exchange,
-  AppUser, AuditEntry, HeldSale, Settings, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
+  AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
