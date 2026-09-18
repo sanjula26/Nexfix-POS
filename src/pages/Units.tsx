@@ -12,9 +12,9 @@ export default function Units() {
   const { state, saveUnit, saveUnitsBulk, deleteUnit, saveProduct, can } = usePOS();
   const [q,setQ]=useState(''); const [status,setStatus]=useState<string>('all');
   const [editing,setEditing]=useState<InventoryUnit|null>(null); const [isNew,setIsNew]=useState(false);
-  const [bulkOpen,setBulkOpen]=useState(false); const [bulkProductId,setBulkProductId]=useState(trackedProducts[0]?.id||''); const [bulkText,setBulkText]=useState(''); const [bulkMsg,setBulkMsg]=useState(''); const [bulkErrors,setBulkErrors]=useState<string[]>([]);
   const units=state.units||[]; const products=state.products;
   const trackedProducts=useMemo(()=>products.filter(p=>p.trackImei||p.trackSerial),[products]);
+  const [bulkOpen,setBulkOpen]=useState(false); const [bulkProductId,setBulkProductId]=useState(''); const [bulkText,setBulkText]=useState(''); const [bulkMsg,setBulkMsg]=useState(''); const [bulkErrors,setBulkErrors]=useState<string[]>([]);
   const openBulk=()=>{setBulkProductId(trackedProducts[0]?.id||'');setBulkText('');setBulkMsg('');setBulkErrors([]);setBulkOpen(true)};
   const rows=useMemo(()=>{ const query=q.trim().toLowerCase(); return units.filter(u=>{ if(status!=='all'&&u.status!==status)return false; if(!query)return true; const p=products.find(x=>x.id===u.productId); return `${p?.name||''} ${u.imei||''} ${u.serial||''}`.toLowerCase().includes(query); }); },[units,products,q,status]);
   return <div className="space-y-6">
