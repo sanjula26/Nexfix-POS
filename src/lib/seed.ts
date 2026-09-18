@@ -80,6 +80,7 @@ const emptyState = (): POSState => {
       password: SEED_HASH_ADMIN,
       role: 'admin',
       active: true,
+      mustChangePassword: true,
       createdAt: now,
     },
     {
@@ -89,6 +90,7 @@ const emptyState = (): POSState => {
       password: SEED_HASH_CASHIER,
       role: 'cashier',
       active: true,
+      mustChangePassword: true,
       createdAt: now,
     },
   ];
