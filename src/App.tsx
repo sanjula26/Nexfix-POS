@@ -122,7 +122,7 @@ function AppRoutes() {
         <Route element={<Protected />}>
           <Route path="/change-password" element={<ChangePassword />} />
         </Route>
-        <Route path="/" element={<Navigate to="/pos" replace />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/mobile-dashboard" element={<MobileDashboard />} />
@@ -152,7 +152,7 @@ function AppRoutes() {
           <Route path="/permissions" element={<Permissions />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
-        <Route path="*" element={<Navigate to="/pos" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>
   );
