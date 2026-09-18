@@ -336,6 +336,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
+  const loginAtRef = useRef(0);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -586,6 +588,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     const sess = { userId: u!.id, remember };
+    loginAtRef.current = Date.now();
     setSession(sess);
     try {
       if (remember) {
@@ -602,6 +605,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(() => {
+    // Ignore spurious signOut calls in the first 8s after login (boot/effect race)
+    if (loginAtRef.current && Date.now() - loginAtRef.current < 8000) {
+      return;
+    }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
