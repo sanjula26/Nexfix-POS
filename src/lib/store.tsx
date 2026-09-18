@@ -1633,6 +1633,36 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Unit', `${exists ? 'Updated' : 'Added'} unit ${u.imei || u.serial || u.id}`);
   }, [state.units, pushAudit]);
 
+  const saveUnitsBulk = useCallback((newUnits: InventoryUnit[]): { ok: boolean; added: number; errors: string[] } => {
+    if (!user || !can('act:manageStock')) return { ok: false, added: 0, errors: ['You do not have permission to manage inventory units.'] };
+    const errors: string[] = [];
+    const current = state.units || [];
+    const imeis = new Set(current.map(u => (u.imei || '').trim().toLowerCase()).filter(Boolean));
+    const serials = new Set(current.map(u => (u.serial || '').trim().toLowerCase()).filter(Boolean));
+    const accepted: InventoryUnit[] = [];
+    for (let i = 0; i < newUnits.length; i++) {
+      const u = newUnits[i], line = i + 1;
+      const imei = (u.imei || '').trim(), serial = (u.serial || '').trim();
+      if (!imei && !serial) { errors.push('Line ' + line + ': IMEI or serial is required'); continue; }
+      const ik = imei.toLowerCase(), sk = serial.toLowerCase();
+      if (imei && imeis.has(ik)) { errors.push('Line ' + line + ': duplicate IMEI'); continue; }
+      if (serial && serials.has(sk)) { errors.push('Line ' + line + ': duplicate serial'); continue; }
+      if (imei) imeis.add(ik);
+      if (serial) serials.add(sk);
+      accepted.push(u);
+    }
+    if (!accepted.length) return { ok: false, added: 0, errors };
+    const counts = new Map<string, number>();
+    for (const u of accepted) counts.set(u.productId, (counts.get(u.productId) || 0) + 1);
+    setState(s => ({
+      ...s,
+      units: [...accepted, ...(s.units || [])],
+      products: s.products.map(p => counts.has(p.id) ? { ...p, stock: p.stock + counts.get(p.id)! } : p),
+    }));
+    pushAudit('CREATE', 'Unit', 'Bulk added ' + accepted.length + ' IMEI/serial units');
+    return { ok: true, added: accepted.length, errors };
+  }, [user, can, state.units, pushAudit]);
+
   const deleteUnit = useCallback((id: string) => {
     const u = (state.units || []).find(x => x.id === id);
     setState(s => ({ ...s, units: (s.units || []).filter(x => x.id !== id) }));
@@ -1812,7 +1842,7 @@ const deletePurchase = useCallback((id: string) => {
     exportData, importData, resetData,
     connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
-    saveUnit, deleteUnit, findUnitByCode,
+    saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
     saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
