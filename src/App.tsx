@@ -33,6 +33,9 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Units = lazy(() => import('./pages/Units'));
 const Repairs = lazy(() => import('./pages/Repairs'));
 const Quotations = lazy(() => import('./pages/Quotations'));
+const WarrantyClaims = lazy(() => import('./pages/WarrantyClaims'));
+const Kits = lazy(() => import('./pages/Kits'));
+const AuditLog = lazy(() => import('./pages/AuditLog'));
 
 function CloudAuthLifecycle() {
   const { user } = usePOS();
@@ -93,6 +96,14 @@ function RouteFallback() {
   return <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] font-semibold">Loading…</div>;
 }
 
+function PermissionProtected({ permission, adminOnly, children }: { permission?: string; adminOnly?: boolean; children: React.ReactNode }) {
+  const { user, can } = usePOS();
+  if (!user) return <Navigate to="/login" replace />;
+  if (adminOnly && user.role !== 'admin') return <Navigate to="/dashboard" replace />;
+  if (permission && !can(permission)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 function Protected() {
   const { user, ready } = usePOS();
   const location = useLocation();
@@ -133,6 +144,9 @@ function AppRoutes() {
           <Route path="/reports" element={<Reports />} />
           <Route path="/price-tags" element={<PriceTags />} />
           <Route path="/quotations" element={<Quotations />} />
+          <Route path="/warranty-claims" element={<PermissionProtected permission="page:repairs"><WarrantyClaims /></PermissionProtected>} />
+          <Route path="/kits" element={<PermissionProtected permission="page:inventory"><Kits /></PermissionProtected>} />
+          <Route path="/audit-log" element={<PermissionProtected adminOnly><AuditLog /></PermissionProtected>} />
           <Route path="/users" element={<Users />} />
           <Route path="/cashier-balances" element={<CashierBalances />} />
           <Route path="/permissions" element={<Permissions />} />
