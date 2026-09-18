@@ -67,7 +67,8 @@ function SessionSecurity() {
     const events = ['pointerdown', 'keydown', 'touchstart', 'mousemove', 'scroll'];
     events.forEach(event => window.addEventListener(event, resetIdle));
     resetIdle();
-    const rememberTimer = window.setTimeout(() => signOut(), Math.max(1000, REMEMBER_LIMIT - Math.max(0, Date.now() - startedAt)));
+    // Never auto-signOut sooner than 5 minutes (avoids race right after login)
+    const rememberTimer = window.setTimeout(() => signOut(), Math.max(5 * 60 * 1000, REMEMBER_LIMIT - Math.max(0, Date.now() - startedAt)));
     return () => {
       if (idleTimer) clearTimeout(idleTimer);
       window.clearTimeout(rememberTimer);
