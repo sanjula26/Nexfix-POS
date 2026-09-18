@@ -69,7 +69,7 @@ interface StoreCtx {
   changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
-  switchRole: (role: Role, pin?: string) => { ok: boolean; error?: string };
+  switchRole: (role: Role, pin?: string) => Promise<{ ok: boolean; error?: string }>;
   changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
   /** verify the admin password without switching role (used for price overrides etc.) */
   verifyAdminPin: (pin: string, reason?: string) => boolean;
@@ -128,6 +128,7 @@ interface StoreCtx {
   pendingQueueCount: number;
   // Phase 3 — units & repairs
   saveUnit: (u: InventoryUnit) => void;
+  saveUnitsBulk: (units: InventoryUnit[]) => { ok: boolean; added: number; errors: string[] };
   deleteUnit: (id: string) => void;
   findUnitByCode: (code: string) => InventoryUnit | undefined;
   saveRepair: (r: RepairJob) => void;
@@ -646,7 +647,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
-  const switchRole = useCallback((role: Role, pin?: string): { ok: boolean; error?: string } => {
+  const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
     // Prefer restoring the previous user when switching back to cashier
     let target = state.users.find(u => u.role === role && u.active);
     if (role === 'cashier' && user?.role === 'admin') {
@@ -660,25 +661,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!target) return { ok: false, error: `No active ${role} account exists` };
 
-    // cashier → admin requires the admin switch password
+    // cashier → admin accepts either the dedicated unlock PIN or the real admin
+    // account's current login password. Both are verified against hashes.
     if (role === 'admin' && user?.role === 'cashier') {
-      if (!verifyPassword(pin || '', state.settings.adminPinHash)) {
-        setState(s => ({
-          ...s,
-          audit: [{
-            id: uid(), time: new Date().toISOString(),
-            user: user?.email || 'unknown', action: 'DENIED', entity: 'Auth',
-            details: `Failed ADMIN unlock attempt by ${user?.name || 'unknown'}`,
-          }, ...s.audit].slice(0, 500),
-        }));
-        return { ok: false, error: 'Incorrect admin password' };
+      const pinOk = verifyPassword(pin || '', state.settings.adminPinHash);
+      const adminUser = state.users.find(u => u.role === 'admin' && u.active);
+      const passwordOk = adminUser && isHashed(adminUser.password)
+        ? await verifyPasswordAsync(pin || '', adminUser.password)
+        : !!adminUser && verifyPassword(pin || '', adminUser.password || '');
+      if (!pinOk && !passwordOk) {
+        setState(s => ({ ...s, audit: [{
+          id: uid(), time: new Date().toISOString(), user: user?.email || 'unknown',
+          action: 'DENIED', entity: 'Auth',
+          details: `Failed ADMIN unlock attempt by ${user?.name || 'unknown'}`,
+        }, ...s.audit].slice(0, 500) }));
+        return { ok: false, error: 'Incorrect admin unlock PIN or admin login password' };
       }
-      // Remember current cashier so we can restore them later
       try { sessionStorage.setItem('nexfix_prev_user', user.id); } catch { /* ignore */ }
     }
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
+    try { sessionStorage.setItem('nexfix_role_switch', '1'); } catch { /* ignore */ }
     setSession(sess);
     try {
       if (sess.remember) { localStorage.setItem(SESSION_KEY, JSON.stringify(sess)); sessionStorage.removeItem(SESSION_KEY); }
