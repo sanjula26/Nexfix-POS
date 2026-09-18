@@ -29,7 +29,7 @@ export default function Permissions() {
                   <span className="inline-flex items-center gap-1.5"><UserRound size={13} className="text-emerald-500" /> CASHIER</span>
                 </th>
                 <th className="th !text-center w-40">
-                  <span className="inline-flex items-center gap-1.5"><BriefcaseBusiness size={13} className="text-sky-500" /> MANAGER</span>
+                  <span className="inline-flex items-center gap-1.5"><Briefcase size={13} className="text-sky-500" /> MANAGER</span>
                 </th>
                 <th className="th !text-center w-40">
                   <span className="inline-flex items-center gap-1.5"><Wrench size={13} className="text-amber-500" /> TECHNICIAN</span>
