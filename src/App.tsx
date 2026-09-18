@@ -99,8 +99,8 @@ function RouteFallback() {
 function PermissionProtected({ permission, adminOnly, children }: { permission?: string; adminOnly?: boolean; children: ReactNode }) {
   const { user, can } = usePOS();
   if (!user) return <Navigate to="/login" replace />;
-  if (adminOnly && user.role !== 'admin') return <Navigate to="/dashboard" replace />;
-  if (permission && !can(permission)) return <Navigate to="/dashboard" replace />;
+  if (adminOnly && user.role !== 'admin') return <Navigate to={can('page:dashboard') ? '/dashboard' : '/pos'} replace />;
+  if (permission && !can(permission)) return <Navigate to={can('page:dashboard') ? '/dashboard' : '/pos'} replace />;
   return <>{children}</>;
 }
 
