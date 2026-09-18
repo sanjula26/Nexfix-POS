@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
@@ -7,6 +7,7 @@ import { signOutFromCloud } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import ChangePassword from './pages/ChangePassword';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MobileDashboard = lazy(() => import('./pages/MobileDashboard'));
@@ -94,8 +95,10 @@ function RouteFallback() {
 
 function Protected() {
   const { user, ready } = usePOS();
+  const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) return <Navigate to="/login" replace />;
+  if (user.mustChangePassword && location.pathname !== '/change-password') return <Navigate to="/change-password" replace />;
   return <AppLayout />;
 }
 
@@ -105,6 +108,9 @@ function AppRoutes() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route element={<Protected />}>
+          <Route path="/change-password" element={<ChangePassword />} />
+        </Route>
         <Route path="/" element={<Navigate to="/pos" replace />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<Dashboard />} />

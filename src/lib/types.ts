@@ -2,7 +2,7 @@ import type { InventoryTransaction } from './inventoryLedger';
 import type { SupplierPayment } from './supplierPayments';
 
 export type Role = 'admin' | 'cashier' | 'technician' | 'manager';
-export interface AppUser { id:string; name:string; email:string; password:string; role:Role; active:boolean; createdAt:string; commissionPct?:number; }
+export interface AppUser { id:string; name:string; email:string; password:string; role:Role; active:boolean; createdAt:string; commissionPct?:number; mustChangePassword?:boolean; }
 export interface ProductAttributes { resolution?:string; lens?:string; poe?:boolean; nightVision?:string; weatherproof?:string; power?:string; channels?:number; storage?:string; [key:string]:string|number|boolean|undefined; }
 export interface Product { id:string; name:string; sku:string; barcode:string; category:string; brand:string; cost:number; price:number; stock:number; reorderLevel:number; trackImei:boolean; trackSerial?:boolean; trackExpiry?:boolean; warrantyMonths?:number; isKit?:boolean; isService?:boolean; attributes?:ProductAttributes; supplierId?:string; active:boolean; createdAt:string; }
 export interface KitItem { id:string; kitProductId:string; componentProductId:string; qty:number; }

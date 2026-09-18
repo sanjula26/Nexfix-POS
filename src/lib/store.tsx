@@ -66,6 +66,7 @@ interface StoreCtx {
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
   signIn: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; error?: string }>;
+  changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
   switchRole: (role: Role, pin?: string) => { ok: boolean; error?: string };
@@ -223,10 +224,16 @@ function applyInventoryLedger(
 
 function migrate(s: POSState): POSState {
   // Upgrade plaintext passwords → SHA-256 hashes (one-time migration)
-  const users = (s.users || []).map(u => ({
-    ...u,
-    password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
-  }));
+  const users = (s.users || []).map(u => {
+    const email = (u.email || '').toLowerCase();
+    const defaultPassword = email === 'admin@nexfixsolution.com' ? 'admin123' : email === 'cashier@nexfixsolution.com' ? 'cashier123' : '';
+    const isDefaultRecovery = !!defaultPassword && (u.password === (email === 'admin@nexfixsolution.com' ? SEED_HASH_ADMIN : SEED_HASH_CASHIER) || verifyPassword(defaultPassword, u.password || ''));
+    return {
+      ...u,
+      password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
+      mustChangePassword: u.mustChangePassword ?? isDefaultRecovery,
+    };
+  });
   // Upgrade weak FNV admin PIN hash if it still looks like the old format (8 hex + . + base36)
   let adminPinHash = s.settings?.adminPinHash || hashPin('admin123');
   if (adminPinHash.includes('.') || adminPinHash.length < 32) {
@@ -512,7 +519,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const def = DEFAULT_ACCOUNTS[mail];
 
     // Path A: known default email + matching default password → force-ensure user & login
-    if (def && password === def.plain) {
+    if (def && password === def.plain && (!u || u.mustChangePassword === true || u.password === def.hash || verifyPassword(def.plain, u.password || ''))) {
       if (!u) {
         u = {
           id: def.id,
@@ -522,6 +529,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           role: def.role,
           active: true,
           createdAt: new Date().toISOString(),
+          mustChangePassword: true,
         };
         users = [...users.filter(x => (x.email || '').toLowerCase() !== mail && x.id !== def.id), u];
       } else {
@@ -603,6 +611,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     return { ok: true };
   }, []);
+
+  const changePassword = useCallback(async (nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!user) return { ok: false, error: 'You must be signed in' };
+    const next = nextPassword.trim();
+    if (next.length < 8) return { ok: false, error: 'New password must be at least 8 characters' };
+    if (next === 'admin123' || next === 'cashier123') return { ok: false, error: 'Choose a password different from the default recovery password' };
+    const hashed = await hashPasswordAsync(next);
+    setState(s => ({
+      ...s,
+      users: s.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u),
+    }));
+    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
+    return { ok: true };
+  }, [user, pushAudit]);
 
   const signOut = useCallback(() => {
     // Ignore spurious signOut calls in the first 8s after login (boot/effect race)
@@ -1765,7 +1788,7 @@ const deletePurchase = useCallback((id: string) => {
   const value: StoreCtx = {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
-    signIn, signOut, switchRole, changeAdminPin, verifyAdminPin,
+    signIn, changePassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
     saveProduct, deleteProduct, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
     completeSale, completeSaleCloud, refundSale, holdSale, resumeHold, deleteHold,
