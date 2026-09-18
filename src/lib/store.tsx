@@ -1640,6 +1640,7 @@ const deletePurchase = useCallback((id: string) => {
     const imeis = new Set(current.map(u => (u.imei || '').trim().toLowerCase()).filter(Boolean));
     const serials = new Set(current.map(u => (u.serial || '').trim().toLowerCase()).filter(Boolean));
     const accepted: InventoryUnit[] = [];
+    const replacements: InventoryUnit[] = [];
     for (let i = 0; i < newUnits.length; i++) {
       const u = newUnits[i], line = i + 1;
       const imei = (u.imei || '').trim(), serial = (u.serial || '').trim();
@@ -1649,18 +1650,28 @@ const deletePurchase = useCallback((id: string) => {
       if (serial && serials.has(sk)) { errors.push('Line ' + line + ': duplicate serial'); continue; }
       if (imei) imeis.add(ik);
       if (serial) serials.add(sk);
-      accepted.push(u);
+      const placeholder = current.find(x =>
+        x.productId === u.productId && x.status === 'in_stock' && !!x.purchaseId &&
+        ((u.imei && !x.imei) || (u.serial && !x.serial))
+      );
+      if (placeholder) {
+        replacements.push({ ...u, id: placeholder.id, purchaseId: placeholder.purchaseId, createdAt: placeholder.createdAt, cost: placeholder.cost, expiryDate: placeholder.expiryDate });
+      } else {
+        accepted.push(u);
+      }
     }
-    if (!accepted.length) return { ok: false, added: 0, errors };
+    if (!accepted.length && !replacements.length) return { ok: false, added: 0, errors };
     const counts = new Map<string, number>();
     for (const u of accepted) counts.set(u.productId, (counts.get(u.productId) || 0) + 1);
+    const replacementMap = new Map(replacements.map(u => [u.id, u]));
     setState(s => ({
       ...s,
-      units: [...accepted, ...(s.units || [])],
+      units: [...accepted, ...(s.units || []).map(u => replacementMap.get(u.id) || u)],
       products: s.products.map(p => counts.has(p.id) ? { ...p, stock: p.stock + counts.get(p.id)! } : p),
     }));
-    pushAudit('CREATE', 'Unit', 'Bulk added ' + accepted.length + ' IMEI/serial units');
-    return { ok: true, added: accepted.length, errors };
+    const added = accepted.length + replacements.length;
+    pushAudit('CREATE', 'Unit', 'Bulk added ' + added + ' IMEI/serial units');
+    return { ok: true, added, errors };
   }, [user, can, state.units, pushAudit]);
 
   const deleteUnit = useCallback((id: string) => {
