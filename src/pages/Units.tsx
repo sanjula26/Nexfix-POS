@@ -43,6 +43,8 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
    setError(''); onSave(unit); onClose();
  };
  return <div className="space-y-4"><Field label="Product"><select className="input" value={productId} onChange={e=>{setProductId(e.target.value);setError('')}} disabled={!isNew}>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><div className="grid grid-cols-1 gap-4 md:grid-cols-2"><Field label="IMEI"><input className="input" value={imei} onChange={e=>{setImei(e.target.value);setError('')}}/></Field><Field label="Serial"><input className="input" value={serial} onChange={e=>{setSerial(e.target.value);setError('')}}/></Field></div><Field label="Status"><select className="input" value={status} onChange={e=>setStatus(e.target.value as UnitStatus)} disabled={isNew||!!value}><option value="in_stock">In stock</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).filter(s=>s!=='in_stock').map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select>{isNew?<div className="mt-1 text-xs text-slate-500">New units use an existing received stock unit when one is waiting for its IMEI/serial; otherwise stock increases by 1.</div>:<div className="mt-1 text-xs text-slate-500">Unit status is changed automatically by sales, returns, repairs and stock workflows.</div>}</Field><Field label="Note"><textarea className="input min-h-24" value={note} onChange={e=>setNote(e.target.value)}/></Field>{error&&<p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}<div className="flex justify-end gap-2"><button className="btn-secondary" onClick={onClose}>Cancel</button><button className="btn-primary" onClick={submit}>Save</button></div></div>;
+}
+
 function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product:any;productId:string;setProductId:(v:string)=>void;products:any[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>{ok:boolean;added:number;errors:string[]}}){
  const submit=()=>{
    if(!product){onResult({msg:'Select a tracked product.',errors:[]});return;}
@@ -75,6 +77,4 @@ function BulkUnitEditor({product,productId,setProductId,products,text,setText,ms
    {errors.length>0&&<div className="max-h-40 overflow-auto rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><div className="font-bold mb-1">Errors</div>{errors.map((e,i)=><div key={i}>{e}</div>)}</div>}
    <div className="flex justify-end gap-2"><button className="btn-secondary" onClick={onClose}>Close</button><button className="btn-primary" onClick={submit} disabled={!product||!text.trim()}>Add units</button></div>
  </div>;
-}
-
 }
