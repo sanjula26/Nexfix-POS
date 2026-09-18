@@ -4,7 +4,7 @@ import {
   AppUser, AuditEntry, HeldSale, Settings, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
 } from './types';
-import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS } from './seed';
+import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, pointsForRs, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
@@ -239,8 +239,17 @@ function migrate(s: POSState): POSState {
   if (adminPinHash.includes('.') || adminPinHash.length < 32) {
     adminPinHash = hashPin('admin123');
   }
+  const defaultAdminPermissions: Record<string, boolean> = Object.fromEntries(PERMISSION_KEYS.map(k => [k.key, true]));
+  const permissions: Permissions = {
+    admin: { ...defaultAdminPermissions, ...(s.permissions?.admin || {}) },
+    cashier: { ...DEFAULT_ROLE_PERMISSIONS.cashier, ...(s.permissions?.cashier || {}) },
+    manager: { ...DEFAULT_ROLE_PERMISSIONS.manager, ...(s.permissions?.manager || {}) },
+    technician: { ...DEFAULT_ROLE_PERMISSIONS.technician, ...(s.permissions?.technician || {}) },
+  };
+
   return {
     ...s,
+    permissions,
     users,
     units: s.units || [],
     repairs: s.repairs || [],
@@ -486,7 +495,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     (key: string) => {
       if (!user) return false;
       if (user.role === 'admin') return true;
-      return !!state.permissions.cashier[key];
+      return !!state.permissions[user.role]?.[key];
     },
     [user, state.permissions],
   );

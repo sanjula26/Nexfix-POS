@@ -28,6 +28,27 @@ export const PERMISSION_KEYS: { key: string; label: string; group: string }[] = 
   { key: 'act:export', label: 'Export data', group: 'Actions' },
 ];
 
+export const DEFAULT_ROLE_PERMISSIONS: Record<'cashier' | 'manager' | 'technician', Record<string, boolean>> = {
+  cashier: {
+    'page:dashboard': true, 'page:pos': true, 'page:inventory': false, 'page:units': true, 'page:repairs': true,
+    'page:customers': true, 'page:suppliers': false, 'page:purchases': false, 'page:sales': true, 'page:exchanges': true,
+    'page:expenses': false, 'page:reports': false, 'page:pricetags': true, 'act:discount': true, 'act:creditSale': false,
+    'act:refund': false, 'act:viewCost': false, 'act:manageStock': false, 'act:deleteRecords': false, 'act:export': false,
+  },
+  manager: {
+    'page:dashboard': true, 'page:pos': true, 'page:inventory': true, 'page:units': true, 'page:repairs': true,
+    'page:customers': true, 'page:suppliers': true, 'page:purchases': true, 'page:sales': true, 'page:exchanges': true,
+    'page:expenses': true, 'page:reports': true, 'page:pricetags': true, 'act:discount': true, 'act:creditSale': true,
+    'act:refund': true, 'act:viewCost': true, 'act:manageStock': true, 'act:deleteRecords': false, 'act:export': true,
+  },
+  technician: {
+    'page:dashboard': true, 'page:pos': false, 'page:inventory': true, 'page:units': true, 'page:repairs': true,
+    'page:customers': true, 'page:suppliers': false, 'page:purchases': false, 'page:sales': false, 'page:exchanges': false,
+    'page:expenses': false, 'page:reports': false, 'page:pricetags': false, 'act:discount': false, 'act:creditSale': false,
+    'act:refund': false, 'act:viewCost': false, 'act:manageStock': false, 'act:deleteRecords': false, 'act:export': false,
+  },
+};
+
 export const DEFAULT_CATEGORIES = [
   'Smartphones', 'Laptops', 'Tablets', 'Desktop', 'Accessories', 'Audio',
   'Power & Batteries', 'Storage', 'Networking', 'Parts',
@@ -89,7 +110,7 @@ const emptyState = (): POSState => {
       invoiceTerms: 'Warranty and return conditions are subject to the shop policy.\nKeep this invoice for warranty and future reference.',
       invoiceFooter: 'Thank you for your purchase!', invoiceShowTax: true, taxRegistrationNo: '', invoicePlaceOfSupply: '',
     },
-    permissions: { admin: adminPermissions, cashier: cashierPerms },
+    permissions: { admin: adminPermissions, cashier: { ...DEFAULT_ROLE_PERMISSIONS.cashier }, manager: { ...DEFAULT_ROLE_PERMISSIONS.manager }, technician: { ...DEFAULT_ROLE_PERMISSIONS.technician } },
     counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
     units: [], repairs: [], kitItems: [], quotations: [], warrantyClaims: [],
   };
@@ -266,13 +287,8 @@ export function buildSeed(): POSState {
 
   const adminAll: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(k => (adminAll[k.key] = true));
-  const cashierPerms: Record<string, boolean> = {
-    'page:dashboard': true, 'page:pos': true, 'page:inventory': false, 'page:units': true, 'page:repairs': true,
-    'page:customers': true, 'page:suppliers': false, 'page:purchases': false, 'page:sales': true, 'page:exchanges': true,
-    'page:expenses': false, 'page:reports': false, 'page:pricetags': true, 'act:discount': true, 'act:creditSale': false,
-    'act:refund': false, 'act:viewCost': false, 'act:manageStock': false, 'act:deleteRecords': false, 'act:export': false,
-  };
-  const permissions: Permissions = { admin: adminAll, cashier: cashierPerms };
+  const cashierPerms: Record<string, boolean> = { ...DEFAULT_ROLE_PERMISSIONS.cashier };
+  const permissions: Permissions = { admin: adminAll, cashier: cashierPerms, manager: { ...DEFAULT_ROLE_PERMISSIONS.manager }, technician: { ...DEFAULT_ROLE_PERMISSIONS.technician } };
 
   const sessions: DaySession[] = [{ id: uid(), cashierId: 'u-nimal', cashierName: 'Nimal Perera', date: dkey(daysAgo(0)), opening: 10000, closed: false }];
 

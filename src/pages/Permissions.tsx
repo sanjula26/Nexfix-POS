@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { ShieldCheck, UserRound } from 'lucide-react';
+import { ShieldCheck, UserRound, BriefcaseBusiness, Wrench } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { PERMISSION_KEYS } from '../lib/seed';
 import { Toggle, Badge, PageHeading } from '../components/ui';
@@ -18,7 +18,7 @@ export default function Permissions() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[620px]">
+          <table className="w-full min-w-[900px]">
             <thead>
               <tr>
                 <th className="th">Capability</th>
@@ -28,13 +28,19 @@ export default function Permissions() {
                 <th className="th !text-center w-40">
                   <span className="inline-flex items-center gap-1.5"><UserRound size={13} className="text-emerald-500" /> CASHIER</span>
                 </th>
+                <th className="th !text-center w-40">
+                  <span className="inline-flex items-center gap-1.5"><BriefcaseBusiness size={13} className="text-sky-500" /> MANAGER</span>
+                </th>
+                <th className="th !text-center w-40">
+                  <span className="inline-flex items-center gap-1.5"><Wrench size={13} className="text-amber-500" /> TECHNICIAN</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {groups.map(g => (
                 <Fragment key={g}>
                   <tr>
-                    <td colSpan={3} className="td !py-2.5 bg-raised/50">
+                    <td colSpan={5} className="td !py-2.5 bg-raised/50">
                       <span className="text-[11px] font-extrabold tracking-[0.14em] uppercase text-faint">{g}</span>
                     </td>
                   </tr>
@@ -52,6 +58,16 @@ export default function Permissions() {
                             checked={!!state.permissions.cashier[k.key]}
                             onChange={v => setPermission('cashier', k.key, v)}
                           />
+                        </div>
+                      </td>
+                      <td className="td text-center">
+                        <div className="flex justify-center">
+                          <Toggle checked={!!state.permissions.manager?.[k.key]} onChange={v => setPermission('manager', k.key, v)} />
+                        </div>
+                      </td>
+                      <td className="td text-center">
+                        <div className="flex justify-center">
+                          <Toggle checked={!!state.permissions.technician?.[k.key]} onChange={v => setPermission('technician', k.key, v)} />
                         </div>
                       </td>
                     </tr>
