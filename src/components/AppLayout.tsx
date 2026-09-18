@@ -262,11 +262,11 @@ function AdminUnlockModal() {
     if (lockUntil && lockSecsLeft === 0) { setLockUntil(null); setError(''); }
   }, [lockSecsLeft, lockUntil]);
 
-  const tryUnlock = () => {
+  const tryUnlock = async () => {
     if (!pin || busy || lockSecsLeft > 0) return;
     setBusy(true); setError('');
     setTimeout(() => {
-      const res = switchRole('admin', pin);
+      const res = await switchRole('admin', pin);
       setBusy(false);
       if (res.ok) { setAdminPrompt(false); return; }
       armIdle();
@@ -313,7 +313,7 @@ function AdminUnlockModal() {
         <div className="space-y-3.5">
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-sub">Admin password</span>
+              <span className="text-[11px] font-bold tracking-wider uppercase text-sub">Admin unlock PIN or admin login password</span>
               <span className="flex items-center gap-1" title={`${MAX_ATTEMPTS} attempts before a ${LOCKOUT_SECS}s lockout`}>
                 {[0, 1, 2].map(i => (
                   <span key={i} className={`w-2 h-2 rounded-full transition-colors ${i < attempts ? 'bg-rose-500' : 'bg-line'}`} />
@@ -359,7 +359,7 @@ function AdminUnlockModal() {
             <button className="btn btn-soft" onClick={() => close()}>Cancel</button>
           </div>
           <p className="text-[10.5px] text-faint text-center">
-            Prompt auto-cancels after {IDLE_SECS}s of inactivity · Demo default: <b className="text-sub font-mono">admin123</b> · Change under Settings → Security
+            This is NOT the cashier password. Default PIN is <b className="text-sub font-mono">admin123</b> until changed in Settings.
           </p>
         </div>
       </motion.div>
