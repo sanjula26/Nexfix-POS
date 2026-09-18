@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import { ShieldCheck, UserRound, BriefcaseBusiness, Wrench } from 'lucide-react';
+import { ShieldCheck, UserRound, Briefcase, Wrench } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { PERMISSION_KEYS } from '../lib/seed';
 import { Toggle, Badge, PageHeading } from '../components/ui';

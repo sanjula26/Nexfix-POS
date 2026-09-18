@@ -1591,7 +1591,7 @@ const deletePurchase = useCallback((id: string) => {
       const safeUsers = parsed.users.filter(
         (u): u is AppUser =>
           !!u && typeof u.id === 'string' && typeof u.email === 'string' &&
-          (u.role === 'admin' || u.role === 'cashier') && typeof u.password === 'string',
+          (u.role === 'admin' || u.role === 'cashier' || u.role === 'manager' || u.role === 'technician') && typeof u.password === 'string',
       );
       if (safeUsers.length === 0) return false;
       // Strip wrapper _meta if present from our backup format
