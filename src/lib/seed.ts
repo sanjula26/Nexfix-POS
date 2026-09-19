@@ -118,6 +118,7 @@ const emptyState = (): POSState => {
 
 const sell = (p: number) => Math.round(p * 100) / 100;
 
+export const buildSeed = (): POSState => {
   const rng = mulberry32(20260813);
   const now = new Date();
   const iso = (d: Date) => d.toISOString();
