@@ -395,9 +395,12 @@ export default function Reports() {
           />
           <div className="hidden md:flex flex-col items-center justify-center px-2">
             <span className="w-9 h-9 rounded-xl bg-raised border border-line flex items-center justify-center text-faint"><GitCompareArrows size={16} /></span>
-            <Badge tone={delta(A.revenue, B.revenue) >= 0 ? 'emerald' : 'rose'} className="num mt-2">
-              {delta(A.revenue, B.revenue) >= 0 ? '+' : ''}{delta(A.revenue, B.revenue)}%
-            </Badge>
+            {(() => {
+              const d = delta(A.revenue, B.revenue);
+              return <Badge tone={d === null ? 'slate' : d >= 0 ? 'emerald' : 'rose'} className="num mt-2">
+                {d === null ? 'N/A' : `${d >= 0 ? '+' : ''}${d}%`}
+              </Badge>;
+            })()}
           </div>
           <PeriodCard
             dot="bg-sky-500" name={compareMode === 'previous' ? 'Previous period' : 'Custom period'} range={compareText}
