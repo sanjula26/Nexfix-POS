@@ -919,14 +919,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const items: SaleItem[] = [];
     const soldUnitIds: string[] = [];
     const requestedQtyByProduct = new Map<string, number>();
+    const requiredComponentQty = new Map<string, number>();
     for (const l of input.lines) {
       const p = s.products.find(x => x.id === l.productId);
       if (!p) return null;
+      if (!Number.isFinite(l.qty) || l.qty <= 0) return null;
       // Aggregate duplicate cart lines before validating stock so the same product
       // cannot consume more stock than is actually available.
       const requestedQty = (requestedQtyByProduct.get(l.productId) || 0) + l.qty;
-      if (!Number.isFinite(l.qty) || l.qty <= 0 || requestedQty > p.stock) return null;
+      const kitLines = p.isKit ? (s.kitItems || []).filter(k => k.kitProductId === p.id && Number.isFinite(k.qty) && k.qty > 0) : [];
+      // A kit is stocked through its BOM components. A kit without a BOM keeps
+      // the legacy product-stock behaviour so existing catalog data remains safe.
+      if (!kitLines.length && requestedQty > p.stock) return null;
       requestedQtyByProduct.set(l.productId, requestedQty);
+      if (kitLines.length) {
+        for (const kitLine of kitLines) {
+          requiredComponentQty.set(
+            kitLine.componentProductId,
+            (requiredComponentQty.get(kitLine.componentProductId) || 0) + kitLine.qty * l.qty,
+          );
+        }
+      }
       // IMEI/serial tracked products MUST supply matching in-stock unit ids
       if (p.trackImei || p.trackSerial) {
         if (!l.unitIds || l.unitIds.length !== l.qty) return null;
@@ -951,6 +964,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         serials: matchedUnits.map(u => u.serial).filter(Boolean) as string[],
       });
     }
+    // Validate component availability after aggregating all kit lines and
+    // direct component sales in the same cart.
+    for (const [componentId, kitQty] of requiredComponentQty) {
+      const component = s.products.find(x => x.id === componentId);
+      if (!component) return null;
+      const directQty = requestedQtyByProduct.get(componentId) || 0;
+      const kitDirectOverlap = s.products.find(x => x.id === componentId)?.isKit ? 0 : directQty;
+      if (kitQty + kitDirectOverlap > component.stock) return null;
+    }
+
     const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
     const lineDiscount = items.reduce((sum, it) => sum + (it.discount || 0), 0);
     const subtotal = grossTotal - lineDiscount;
@@ -1011,10 +1034,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       profit, status: 'completed',
     };
 
-    // Deduct the aggregate quantity for each product, including duplicate cart lines.
+    // Deduct direct product stock plus BOM component stock. Kit products with
+    // components are not decremented themselves; their components are consumed.
     const updatedProducts = s.products.map(p => {
-      const qty = requestedQtyByProduct.get(p.id);
-      return qty !== undefined ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
+      const directQty = requestedQtyByProduct.get(p.id) || 0;
+      const kitComponentQty = requiredComponentQty.get(p.id) || 0;
+      const hasKitBom = !!p.isKit && (s.kitItems || []).some(k => k.kitProductId === p.id && Number.isFinite(k.qty) && k.qty > 0);
+      const qty = (hasKitBom ? 0 : directQty) + kitComponentQty;
+      return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
 
     setStateWithInventoryLedger('SALE', prev => ({
