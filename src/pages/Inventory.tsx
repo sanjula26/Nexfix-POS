@@ -185,7 +185,16 @@ export default function Inventory() {
 
       {can('act:viewCost') && <div className="mt-4 text-xs text-faint">Retail value of all stock: <b className="text-sub num">{fmtRs(retail)}</b> · Potential margin <b className="text-emerald-500 num">{fmtRs(retail - value)}</b></div>}
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide
+        footer={
+          <div className="flex gap-2 justify-end">
+            <button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
+            <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && tracked && editing.stock !== inStockUnits) || (editing && currentTracked && !tracked && inStockUnits > 0)}>
+              {isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}
+            </button>
+          </div>
+        }
+      >
         {editing && (() => {
           const tracked = !!(editing.trackImei || editing.trackSerial);
           const current = isNew ? null : state.products.find(p => p.id === editing.id);
@@ -216,7 +225,7 @@ export default function Inventory() {
             </div>
             {currentTracked && !tracked && inStockUnits > 0 && <p className="text-xs font-medium text-rose-600">Tracking cannot be disabled while in-stock units remain. Reconcile those units first.</p>}
             <Field label="Warranty (months)" hint="Printed on receipt for this product"><input className="input num" value={editing.warrantyMonths || ''} onChange={e => setEditing({ ...editing, warrantyMonths: Math.round(num(e.target.value)) || undefined })} placeholder="e.g. 12" /></Field>
-            <div className="flex gap-2.5 pt-1"><button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || (tracked && editing.stock !== inStockUnits) || (currentTracked && !tracked && inStockUnits > 0)}>{isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}</button><button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button></div>
+            
           </div>;
         })()}
       </Modal>
