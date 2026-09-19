@@ -5,29 +5,9 @@ import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../co
 import { fmtRs, uid } from '../lib/utils';
 import type { KitItem, Product } from '../lib/types';
 
-function loadKits(): KitItem[] {
-  try {
-    const raw = localStorage.getItem('nexfix_pos_v2');
-    if (!raw) return [];
-    return (JSON.parse(raw).kitItems as KitItem[]) || [];
-  } catch {
-    return [];
-  }
-}
-
-function persistKits(list: KitItem[]) {
-  try {
-    const raw = localStorage.getItem('nexfix_pos_v2');
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    data.kitItems = list;
-    localStorage.setItem('nexfix_pos_v2', JSON.stringify(data));
-  } catch { /* ignore */ }
-}
-
 export default function Kits() {
-  const { state, saveProduct, logAudit } = usePOS();
-  const [kits, setKits] = useState<KitItem[]>(() => loadKits());
+  const { state, saveProduct, saveKitItems, logAudit } = usePOS();
+  const kits = state.kitItems || [];
   const [q, setQ] = useState('');
   const [kitProductId, setKitProductId] = useState('');
   const [open, setOpen] = useState(false);
@@ -56,8 +36,7 @@ export default function Kits() {
     const next = exists
       ? kits.map(k => (k.id === exists.id ? { ...k, qty: compQty } : k))
       : [{ id: uid(), kitProductId, componentProductId: compId, qty: compQty }, ...kits];
-    setKits(next);
-    persistKits(next);
+    saveKitItems(next);
     logAudit('UPDATE', 'Kit', 'BOM line for kit ' + kitProductId);
     setCompId('');
     setCompQty(1);
@@ -65,8 +44,7 @@ export default function Kits() {
 
   const removeLine = (id: string) => {
     const next = kits.filter(k => k.id !== id);
-    setKits(next);
-    persistKits(next);
+    saveKitItems(next);
   };
 
   return (

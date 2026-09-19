@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  POSState, Product, Customer, Supplier, Sale, Purchase, Expense, Exchange,
+  POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
 } from './types';
@@ -76,6 +76,7 @@ interface StoreCtx {
   // products
   saveProduct: (p: Product) => void;
   deleteProduct: (id: string) => void;
+  saveKitItems: (items: KitItem[]) => void;
   adjustStock: (id: string, delta: number, reason: string) => void;
   // customers / suppliers
   saveCustomer: (c: Customer) => void;
@@ -369,7 +370,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (fromIdb) {
           // idbLoadState always repairs the default admin recovery account
-          setState(migrate(fromIdb));
+          let hydrated = migrate(fromIdb);
+          const local = loadStateFromLocalStorage();
+          if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
+            hydrated = { ...hydrated, kitItems: local.kitItems };
+            await idbSaveState(hydrated);
+          }
+          setState(hydrated);
         } else {
           // IDB unavailable / failed — fall back to localStorage or seed (which now includes defaults)
           const local = loadStateFromLocalStorage() || buildSeed();
@@ -708,6 +715,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state.settings.adminPinHash, pushAudit]);
 
   /* ---------------- products ---------------- */
+  const saveKitItems = useCallback((items: KitItem[]) => {
+    setState(s => ({ ...s, kitItems: items }));
+  }, []);
+
   const saveProduct = useCallback((p: Product) => {
     if (!user || !can('act:manageStock')) {
       pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
