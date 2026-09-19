@@ -189,7 +189,7 @@ export default function Inventory() {
         footer={
           <div className="flex gap-2 justify-end">
             <button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
-            <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && tracked && editing.stock !== inStockUnits) || (editing && currentTracked && !tracked && inStockUnits > 0)}>
+            <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && (editing.trackImei || editing.trackSerial) && editing.stock !== (isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length)) || (editing && !isNew && (state.products.find(p => p.id === editing.id)?.trackImei || state.products.find(p => p.id === editing.id)?.trackSerial) && !(editing.trackImei || editing.trackSerial) && state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length > 0)}>
               {isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}
             </button>
           </div>
