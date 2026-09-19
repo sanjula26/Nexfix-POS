@@ -51,7 +51,7 @@ export function Modal({
   );
 }
 
-/* ---------- Field ----------
+/* ---------- Field ---------- */
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <label className="block">
