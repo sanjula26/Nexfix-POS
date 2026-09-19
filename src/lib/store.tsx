@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
-  AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession,
+  AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
@@ -89,6 +89,9 @@ interface StoreCtx {
   completeSale: (input: NewSaleInput) => Sale | null;
   completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
   refundSale: (saleId: string) => void;
+  requestBillReverse: (saleId: string, reason: string) => boolean;
+  approveBillReverse: (requestId: string) => boolean;
+  rejectBillReverse: (requestId: string, note?: string) => boolean;
   // held
   holdSale: (h: Omit<HeldSale, 'id' | 'heldAt'>) => void;
   resumeHold: (id: string) => HeldSale | undefined;
@@ -149,7 +152,7 @@ const Ctx = createContext<StoreCtx | null>(null);
 function applyInventoryLedger(
   prev: POSState,
   next: POSState,
-  operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'PURCHASE_REVERSAL',
+  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL',
   by?: string,
 ): POSState {
   const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
@@ -163,6 +166,16 @@ function applyInventoryLedger(
     const ids = new Set(prev.sales.map(x => x.id));
     for (const sale of next.sales) if (!ids.has(sale.id)) for (const item of sale.items) if (item.qty > 0) {
       add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+    }
+  }
+
+  if (operation === 'SALE_REVERSAL') {
+    for (const sale of next.sales) {
+      const old = prev.sales.find(x => x.id === sale.id);
+      if (!old || old.status === 'reversed' || sale.status !== 'reversed') continue;
+      for (const item of sale.items) if (item.qty > 0) {
+        add({ id: 'inv:sale-reversal:' + sale.id + ':' + item.productId, type: 'SALE_REVERSAL', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds, reason: 'Admin-approved bill reversal' });
+      }
     }
   }
 
@@ -270,6 +283,7 @@ function migrate(s: POSState): POSState {
     warrantyClaims: s.warrantyClaims || [],
     purchaseReturns: s.purchaseReturns || [],
     supplierPayments: s.supplierPayments || [],
+    reverseRequests: s.reverseRequests || [],
     settings: {
       ...s.settings,
       adminPinHash,
@@ -467,7 +481,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [session, state.users],
   );
   const viewingAs: Role = user?.role || 'admin';
-  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL', updater: (prev: POSState) => POSState) => {
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL', updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
 
@@ -1231,6 +1245,53 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${sale.items.flatMap(it => it.unitIds || []).length ? ` · tracked unit(s) returned` : ''}`);
   }, [state.sales, state.exchanges, state.units, pushAudit]);
 
+  /* ---------------- admin-approved bill reversal ---------------- */
+  const requestBillReverse = useCallback((saleId: string, reason: string): boolean => {
+    if (!user) return false;
+    const sale = state.sales.find(x => x.id === saleId);
+    const note = reason.trim();
+    if (!sale || sale.status !== 'completed' || !note) return false;
+    if (state.reverseRequests?.some(r => r.saleId === saleId && r.status === 'pending')) return false;
+    const req: ReverseRequest = { id: uid(), saleId, billNo: sale.billNo, reason: note, requestedBy: user.name, requestedAt: new Date().toISOString(), status: 'pending' };
+    setState(s => ({ ...s, reverseRequests: [req, ...(s.reverseRequests || [])] }));
+    pushAudit('REVERSE-REQUEST', 'Sale', `Reverse requested for ${sale.billNo} · ${note}`);
+    return true;
+  }, [state.sales, state.reverseRequests, user, pushAudit]);
+
+  const approveBillReverse = useCallback((requestId: string): boolean => {
+    if (user?.role !== 'admin') return false;
+    const req = (state.reverseRequests || []).find(r => r.id === requestId);
+    const sale = req ? state.sales.find(x => x.id === req.saleId) : undefined;
+    if (!req || req.status !== 'pending' || !sale || sale.status !== 'completed') return false;
+    setStateWithInventoryLedger('SALE_REVERSAL', s => {
+      const currentReq = (s.reverseRequests || []).find(r => r.id === requestId);
+      const currentSale = currentReq ? s.sales.find(x => x.id === currentReq.saleId) : undefined;
+      if (!currentReq || currentReq.status !== 'pending' || !currentSale || currentSale.status !== 'completed') return s;
+      const qtyByProduct = new Map<string, number>();
+      currentSale.items.forEach(it => qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) || 0) + it.qty));
+      const unitIds = new Set(currentSale.items.flatMap(it => it.unitIds || []));
+      const balanceDue = currentSale.amountPaid < currentSale.total ? Math.max(0, currentSale.total - currentSale.amountPaid) : 0;
+      return {
+        ...s,
+        sales: s.sales.map(x => x.id === currentSale.id ? { ...x, status: 'reversed' as const } : x),
+        products: s.products.map(p => { const qty = qtyByProduct.get(p.id); return qty ? { ...p, stock: p.stock + qty } : p; }),
+        customers: s.customers.map(c => c.id === currentSale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - balanceDue), loyaltyPoints: Math.max(0, c.loyaltyPoints - (currentSale.pointsEarned || 0) + (currentSale.pointsRedeemed || 0)) } : c),
+        units: (s.units || []).map(u => unitIds.has(u.id) && u.saleId === currentSale.id ? { ...u, status: 'in_stock' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u),
+        reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'approved' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString() } : r),
+      };
+    });
+    pushAudit('REVERSE-APPROVED', 'Sale', `Bill ${sale.billNo} reversed and stock restored · requested by ${req.requestedBy}`);
+    return true;
+  }, [state.reverseRequests, state.sales, user, pushAudit]);
+
+  const rejectBillReverse = useCallback((requestId: string, note?: string): boolean => {
+    if (user?.role !== 'admin') return false;
+    const req = (state.reverseRequests || []).find(r => r.id === requestId);
+    if (!req || req.status !== 'pending') return false;
+    setState(s => ({ ...s, reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'rejected' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString(), reviewNote: note?.trim() || undefined } : r) }));
+    pushAudit('REVERSE-REJECTED', 'Sale', `Reverse request for ${req.billNo} rejected · ${note?.trim() || 'No note'}`);
+    return true;
+  }, [state.reverseRequests, user, pushAudit]);
   /* ---------------- held sales ---------------- */
   const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {
     setState(s => ({ ...s, held: [...s.held, { ...h, id: uid(), heldAt: new Date().toISOString() }] }));
@@ -1854,9 +1915,9 @@ const deletePurchase = useCallback((id: string) => {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
     signIn, changePassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
-    saveProduct, deleteProduct, adjustStock,
+    saveProduct, deleteProduct, saveKitItems, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
-    completeSale, completeSaleCloud, refundSale, holdSale, resumeHold, deleteHold,
+    completeSale, completeSaleCloud, refundSale, requestBillReverse, approveBillReverse, rejectBillReverse, holdSale, resumeHold, deleteHold,
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,

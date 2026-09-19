@@ -51,7 +51,7 @@ const fmtMoneyInput = (raw: string): string => {
 interface Toast { id: string; msg: string; tone: 'rose' | 'amber' }
 
 export default function POS() {
-  const { state, user, can, completeSaleCloud, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode } = usePOS();
+  const { state, user, can, completeSaleCloud, holdSale, resumeHold, deleteHold, saveCustomer, adminPrompt, verifyAdminPin, findUnitByCode, requestBillReverse } = usePOS();
   const navigate = useNavigate();
 
   /* catalog */
@@ -109,6 +109,9 @@ export default function POS() {
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
+  const [reverseOpen, setReverseOpen] = useState(false);
+  const [reverseSale, setReverseSale] = useState<Sale | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
   const [error, setError] = useState('');
   const searchBoxRef = useRef<HTMLDivElement>(null);
   const discRef = useRef<HTMLInputElement>(null);
@@ -156,7 +159,7 @@ export default function POS() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const products = state.products.filter(p => p.active);
+  const products = useMemo(() => state.products.filter(p => p.active), [state.products]);
   const activeStaff = state.users.filter(u => u.active);
   const categories = ['all', ...Array.from(new Set(products.map(p => p.category)))];
 
@@ -531,6 +534,8 @@ export default function POS() {
   const session = state.sessions.find(s => s.cashierId === user?.id && s.date === dkey(new Date()));
   const expected = (session?.opening ?? state.settings.openingFloat) + (user?.role === 'cashier' ? myCash : cashOf(todaySales));
 
+  const lastCompletedSale = doneSale || state.sales.find(s => s.status === 'completed') || null;
+
   const payState: 'idle' | 'short' | 'exact' | 'change' | 'due' =
     total <= 0 ? 'idle'
       : hasCredit && shortage > 0.009 ? 'due'
@@ -568,6 +573,9 @@ export default function POS() {
             <button className={`btn !py-2 !px-3 !text-xs ${state.held.length ? 'bg-amber-400/90 text-amber-950 hover:bg-amber-300' : 'bg-white/15 text-white hover:bg-white/25'}`} onClick={() => setHeldOpen(true)}>
               <History size={14} /> Held <span className="num bg-black/15 rounded-full px-1.5">{state.held.length}</span>
             </button>
+            <button className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs" onClick={() => { setReverseSale(null); setReverseReason(''); setReverseOpen(true); }} title="Request admin approval to reverse a bill">
+              <ShieldCheck size={14} /> <span className="hidden sm:inline">REVERSE</span>
+            </button>
             <button className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs" onClick={() => setDrawerOpen(true)}>
               <Landmark size={14} /> <span className="hidden sm:inline">Drawer</span>
             </button>
@@ -593,10 +601,10 @@ export default function POS() {
             <button
               className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs disabled:opacity-40"
               onClick={() => {
-                if (doneSale) setDoneSale(doneSale);
+                if (lastCompletedSale) setDoneSale(lastCompletedSale);
                 else toast('No completed sale is available to reprint', 'rose');
               }}
-              disabled={!doneSale}
+              disabled={!lastCompletedSale}
               title="Reprint last completed sale"
             >
               <Printer size={14} /> REPRINT
@@ -1315,6 +1323,38 @@ export default function POS() {
         </AnimatePresence>
       </div>
 
+      {/* admin-approved bill reverse request */}
+      <Modal open={reverseOpen} onClose={() => setReverseOpen(false)} title="Request bill reversal" sub="A cashier can request; only an admin can approve. The original sale stays in history.">
+        <div className="space-y-4">
+          <Field label="Recent completed bill">
+            <select className="input" value={reverseSale?.id || ''} onChange={e => setReverseSale(state.sales.find(x => x.id === e.target.value) || null)}>
+              <option value="">Select a recent bill...</option>
+              {[...state.sales].filter(x => x.status === 'completed').sort((a,b) => +new Date(b.date) - +new Date(a.date)).slice(0, 20).map(sale => (
+                <option key={sale.id} value={sale.id}>{sale.billNo} · {sale.customerName} · {fmtRs(sale.total)}</option>
+              ))}
+            </select>
+          </Field>
+          {reverseSale && (
+            <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 p-3 text-sm">
+              <div className="font-bold text-ink">{reverseSale.billNo} · {fmtRs(reverseSale.total)}</div>
+              <div className="text-xs text-sub mt-1">{reverseSale.items.map(i => i.name + ' ×' + i.qty).join(' · ')}</div>
+            </div>
+          )}
+          <Field label="Reason">
+            <textarea className="input min-h-[82px] resize-none" value={reverseReason} onChange={e => setReverseReason(e.target.value)} placeholder="Enter the reason for reversing this bill..." maxLength={240} />
+          </Field>
+          <div className="rounded-xl bg-raised border border-line px-3 py-2.5 text-[11px] text-sub">Admin approval will restore stock and mark the bill as <b className="text-ink">REVERSED</b>. No sale history is deleted.</div>
+          <div className="flex gap-2.5">
+            <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={() => {
+              if (!reverseSale) return;
+              const ok = requestBillReverse(reverseSale.id, reverseReason);
+              if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
+              else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
+            }}><ShieldCheck size={15} /> Request approval</button>
+            <button className="btn btn-soft flex-1" onClick={() => setReverseOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      </Modal>
       {/* drawer modal */}
       <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
         <div className="space-y-3">

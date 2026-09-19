@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  ReceiptText, Eye, RotateCcw, Printer, TrendingUp, Banknote, CalendarDays,
+  ReceiptText, Eye, RotateCcw, Printer, TrendingUp, Banknote, CalendarDays, ShieldCheck, CheckCircle2, X,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, EmptyState, PageHeading, Avatar } from '../components/ui';
@@ -11,7 +11,7 @@ import type { Sale } from '../lib/types';
 type RangeKey = 'today' | 'week' | 'month' | 'all';
 
 export default function SalesHistory() {
-  const { state, refundSale, can, user } = usePOS();
+  const { state, refundSale, can, user, approveBillReverse, rejectBillReverse } = usePOS();
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
   const [view, setView] = useState<Sale | null>(null);
@@ -30,15 +30,16 @@ export default function SalesHistory() {
       );
   }, [state.sales, search, range]);
 
-  const revenue = rows.filter(s => s.status !== 'refunded').reduce((a, s) => a + s.total, 0);
+  const revenue = rows.filter(s => s.status !== 'refunded' && s.status !== 'reversed').reduce((a, s) => a + s.total, 0);
   const refunded = rows.filter(s => s.status === 'refunded').length;
+  const reversed = rows.filter(s => s.status === 'reversed').length;
 
   return (
     <div>
       <PageHeading
         chip="Transactions" chipTone="violet"
         title="Sales History"
-        sub={`${fmtNum(rows.length)} bills · ${fmtRs(revenue)} revenue${refunded ? ` · ${refunded} refunded` : ''}`}
+        sub={`${fmtNum(rows.length)} bills · ${fmtRs(revenue)} revenue${refunded ? ` · ${refunded} refunded` : ''}${reversed ? ` · ${reversed} reversed` : ''}`}
         actions={
           <div className="flex gap-1.5 bg-raised border border-line rounded-xl p-1">
             {(['today', 'week', 'month', 'all'] as RangeKey[]).map(r => (
@@ -56,6 +57,32 @@ export default function SalesHistory() {
         }
       />
 
+      {user?.role === 'admin' && (state.reverseRequests || []).some(r => r.status === 'pending') && (
+        <div className="card mb-4 overflow-hidden border-amber-500/30">
+          <div className="px-4 py-3 border-b border-line bg-amber-500/[0.06] flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="w-8 h-8 rounded-lg bg-amber-500/15 text-amber-600 flex items-center justify-center"><ShieldCheck size={15} /></span>
+              <div><div className="text-sm font-extrabold text-ink">Reverse approvals</div><div className="text-[10.5px] text-faint">Admin approval is required before stock or sale status changes.</div></div>
+            </div>
+            <Badge tone="amber">{(state.reverseRequests || []).filter(r => r.status === 'pending').length} pending</Badge>
+          </div>
+          <div className="divide-y divide-line">
+            {(state.reverseRequests || []).filter(r => r.status === 'pending').slice(0, 10).map(req => {
+              const sale = state.sales.find(x => x.id === req.saleId);
+              if (!sale) return null;
+              return (
+                <div key={req.id} className="p-4 flex flex-col lg:flex-row lg:items-center gap-3">
+                  <div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-bold text-violet-500">{req.billNo}</span><span className="text-xs text-sub">{sale.customerName}</span><span className="num text-xs font-bold text-ink">{fmtRs(sale.total)}</span></div><div className="text-[11px] text-faint mt-1">Requested by {req.requestedBy} · {req.reason}</div></div>
+                  <div className="flex gap-2 shrink-0">
+                    <button className="btn btn-outline-emerald !py-2 !px-3" onClick={() => approveBillReverse(req.id)}><CheckCircle2 size={14} /> Approve</button>
+                    <button className="btn btn-danger-soft !py-2 !px-3" onClick={() => { const note = window.prompt('Optional rejection note:', ''); rejectBillReverse(req.id, note || undefined); }}><X size={14} /> Reject</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div className="card overflow-hidden">
         <div className="p-4 border-b border-line">
           <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="max-w-md" />
@@ -84,7 +111,7 @@ export default function SalesHistory() {
                     <td className="td num text-sub">{s.items.reduce((a, i) => a + i.qty, 0)}</td>
                     <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{salePaymentLabel(s)}</Badge></td>
                     <td className="td">
-                      <Badge tone={s.status === 'completed' ? 'emerald' : s.status === 'refunded' ? 'rose' : 'amber'}>
+                      <Badge tone={s.status === 'completed' ? 'emerald' : s.status === 'refunded' ? 'rose' : s.status === 'reversed' ? 'rose' : 'amber'}>
                         {s.status.toUpperCase()}
                       </Badge>
                     </td>

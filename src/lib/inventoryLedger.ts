@@ -1,6 +1,7 @@
 export type InventoryTransactionType =
   | 'PURCHASE_RECEIVE'
   | 'SALE'
+  | 'SALE_REVERSAL'
   | 'REFUND'
   | 'EXCHANGE_RETURN'
   | 'STOCK_ADJUSTMENT'
@@ -34,7 +35,7 @@ export function isValidInventoryTransaction(value: unknown): value is InventoryT
   return (
     typeof tx.id === 'string' && tx.id.length > 0 &&
     typeof tx.type === 'string' &&
-    ['PURCHASE_RECEIVE', 'SALE', 'REFUND', 'EXCHANGE_RETURN', 'STOCK_ADJUSTMENT', 'PURCHASE_REVERSAL'].includes(tx.type) &&
+    ['PURCHASE_RECEIVE', 'SALE', 'SALE_REVERSAL', 'REFUND', 'EXCHANGE_RETURN', 'STOCK_ADJUSTMENT', 'PURCHASE_REVERSAL'].includes(tx.type) &&
     typeof tx.productId === 'string' && tx.productId.length > 0 &&
     typeof tx.quantity === 'number' && Number.isFinite(tx.quantity) && tx.quantity !== 0 &&
     typeof tx.occurredAt === 'string' && !Number.isNaN(Date.parse(tx.occurredAt)) &&
