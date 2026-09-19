@@ -128,7 +128,7 @@ export default function Expenses() {
         </div>
       </div>
 
-      <Modal open={creating} onClose={() => setCreating(false)} title="Add expense" sub="Recorded against your login" footer={<div className="flex gap-2.5"><button className="btn btn-primary flex-1" onClick={submit} disabled={!form.amount}><Plus size={15} /> Add expense</button><button className="btn btn-soft" onClick={() => setCreating(false)}>Cancel</button></div>}>
+      <Modal open={creating} onClose={() => setCreating(false)} title="Add expense" sub="Recorded against your login">
         <div className="space-y-4">
           <Field label="Category">
             <select className="input" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
@@ -141,7 +141,12 @@ export default function Expenses() {
           <Field label="Amount (Rs.)">
             <input className="input num" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, '') })} placeholder="0.00" inputMode="decimal" />
           </Field>
-          
+          <div className="flex gap-2.5 pt-1">
+            <button className="btn btn-primary flex-1" onClick={submit} disabled={!form.amount}>
+              <Plus size={15} /> Add expense
+            </button>
+            <button className="btn btn-soft" onClick={() => setCreating(false)}>Cancel</button>
+          </div>
         </div>
       </Modal>
 

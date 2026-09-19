@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, X, Inbox } from 'lucide-react';
 
 /* ---------- Modal ---------- */
@@ -10,9 +11,16 @@ export function Modal({
   /** locked: backdrop does not dismiss (header close stays available) */
   locked?: boolean;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previous; };
+  }, [open]);
+
   if (!open) return null;
 
-  return (
+  const dialog = (
     <div className="fixed inset-0 z-[60]">
       <div
         className="absolute inset-0 bg-black/50"
@@ -50,6 +58,8 @@ export function Modal({
       </div>
     </div>
   );
+
+  return createPortal(dialog, document.body);
 }
 
 /* ---------- Field ---------- */

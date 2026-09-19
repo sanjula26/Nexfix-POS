@@ -56,7 +56,7 @@ h1,h2,h3,.font-display { font-family:var(--font-display); }
   .kpi-label { font-size:.68rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; opacity:.72; }
 }
 .page-enter { animation:pageIn .28s cubic-bezier(.22,.8,.36,1) both; }
-@keyframes pageIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes pageIn { from { opacity:0; } to { opacity:1; } }
 .blink { animation:blink 1.6s ease-in-out infinite; }
 @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 .barcode { display:flex; align-items:stretch; height:34px; }

@@ -131,7 +131,7 @@ export default function Repairs() {
         </div>}
       </div>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'New repair job' : editing?.jobNo || 'Job'} sub={editing ? `${editing.deviceBrand} ${editing.deviceModel}` : ''} footer={<div className="flex gap-2.5"><button className="btn btn-primary flex-1" onClick={save}>{isNew ? 'Create job card' : 'Save changes'}</button><button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button></div>}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'New repair job' : editing?.jobNo || 'Job'} sub={editing ? `${editing.deviceBrand} ${editing.deviceModel}` : ''}>
         {editing && <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <div className="grid grid-cols-2 gap-3"><Field label="Customer name"><input className="input" value={editing.customerName} onChange={e => setEditing({ ...editing, customerName: e.target.value })} list="cust-list" /><datalist id="cust-list">{state.customers.map(c => <option key={c.id} value={c.name} />)}</datalist></Field>
             <Field label="Phone"><input className="input" value={editing.customerPhone || ''} onChange={e => setEditing({ ...editing, customerPhone: e.target.value })} /></Field></div>
@@ -153,7 +153,7 @@ export default function Repairs() {
           </div>
           <div className="flex items-center justify-between text-sm font-bold text-ink px-1"><span>Estimated total</span><span className="num">{fmtRs(totalFor(editing))}</span></div>
           {!isNew && <Field label="Status"><select className="input" value={editing.status} onChange={e => setEditing({ ...editing, status: e.target.value as RepairStatus })}>{[...PIPELINE, 'cancelled' as RepairStatus].map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select></Field>}
-          
+          <div className="flex gap-2.5 pt-1"><button className="btn btn-primary flex-1" onClick={save}>{isNew ? 'Create job card' : 'Save changes'}</button><button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button></div>
         </div>}
       </Modal>
     </div>

@@ -198,7 +198,7 @@ export default function Quotations() {
   <button type="button" className="btn btn-soft !py-1.5 !px-3 text-xs ml-2" onClick={() => { const copy = { ...r, id: uid(), quoteNo: "QT-TEMP", status: "draft" as const, createdAt: new Date().toISOString(), convertedSaleId: undefined, items: r.items.map(it => ({ ...it })) }; setEditing(copy); setIsNew(true); setMsg(""); }}><Copy size={14} /> Duplicate</button>
   {r.status !== 'converted' && r.status !== 'rejected' && <button type="button" className="btn btn-soft !py-1.5 !px-3 text-xs ml-2" onClick={() => convertToSale(r)}><ShoppingCart size={14} /> To Sale</button>}
 </td></tr>)}</tbody></table></div>}
-    <Modal open={!!editing} onClose={() => { setEditing(null); setMsg(''); }} title={isNew ? 'New Quotation' : editing?.quoteNo || 'Edit Quotation'} sub="Create a clear customer-ready quotation" xl footer={<div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button><button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.customerName.trim() || !editing?.items.some(it => it.name.trim() && it.qty > 0)}><FileText size={15} /> Save Quotation</button></div>}>
+    <Modal open={!!editing} onClose={() => { setEditing(null); setMsg(''); }} title={isNew ? 'New Quotation' : editing?.quoteNo || 'Edit Quotation'} sub="Create a clear customer-ready quotation" xl>
       {editing && <div className="space-y-6">
         <section className="rounded-2xl border border-line bg-raised/20 p-4 sm:p-5">
           <div className="mb-4"><p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-sub">Customer</p><p className="text-xs text-faint mt-1">Enter the customer details and quotation validity.</p></div>
@@ -252,7 +252,10 @@ export default function Quotations() {
         </div>
 
         {msg && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{msg}</div>}
-        
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-line pt-4">
+          <button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)}><FileText size={15} /> Save Quotation</button>
+        </div>
       </div>}
     </Modal>
     <Modal open={!!preview} onClose={() => { setPreview(null); setPreviewReady(false); }} title={preview ? "Quotation " + preview.quote.quoteNo : "Print preview"} sub="Preview the A4 quotation before printing or saving as PDF" wide>
