@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { usePOS } from '../lib/store';
 import { Badge, Avatar, EmptyState } from '../components/ui';
-import DatePicker, { toISO } from '../components/DatePicker';
+import DatePicker from '../components/DatePicker';
 import { fmtRs, fmtNum, dkey, downloadFile, periodRange, inRange, PeriodKey } from '../lib/utils';
 
 const PRIMARY: { key: PeriodKey; label: string }[] = [
@@ -28,7 +28,7 @@ const MORE: { key: PeriodKey; label: string }[] = [
 const PAY_ICON: Record<string, React.ElementType> = { cash: Bank, card: CreditCard, bank: Landmark, mobile: Smartphone, credit: HandCoins };
 const PIE_COLORS = ['#10b981', '#38bdf8', '#8b5cf6', '#f59e0b', '#f43f5e'];
 
-type CompareMode = 'none' | 'previous' | 'custom';
+type CompareMode = 'none' | 'previous' | 'custom' | 'lastmonth' | 'lastyear';
 
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
@@ -38,17 +38,37 @@ export default function Reports() {
   const [custom, setCustom] = useState({ from: dkey(new Date(Date.now() - 6 * 86400000)), to: dkey(new Date()) });
   const [compareMode, setCompareMode] = useState<CompareMode>('previous');
   const [compareFrom, setCompareFrom] = useState('');
+  const [compareTo, setCompareTo] = useState('');
+  const [chartMetric, setChartMetric] = useState<'revenue' | 'profit'>('revenue');
 
   const [from, to] = useMemo(() => periodRange(period, custom), [period, custom]);
   const spanMs = to.getTime() - from.getTime();
 
+  const shiftRange = (start: Date, end: Date, months = 0, years = 0): [Date, Date] => {
+    const shift = (d: Date) => {
+      const day = d.getDate();
+      const target = new Date(d.getFullYear() + years, d.getMonth() + months, 1);
+      const last = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+      target.setDate(Math.min(day, last));
+      return target;
+    };
+    const s = shift(start);
+    const e = shift(end);
+    return [new Date(s.getFullYear(), s.getMonth(), s.getDate()), endOfDay(e)];
+  };
   const compareRange = useMemo((): [Date, Date] | null => {
-    if (compareMode === 'none') return null;
-    if (compareMode === 'previous') return [new Date(from.getTime() - spanMs - 1), new Date(from.getTime() - 1)];
-    if (!compareFrom) return null;
+    if (period === 'all' || compareMode === 'none') return null;
+    if (compareMode === 'previous') {
+      const durationMs = to.getTime() - from.getTime() + 1;
+      return [new Date(from.getTime() - durationMs), new Date(from.getTime() - 1)];
+    }
+    if (compareMode === 'lastmonth') return shiftRange(from, to, -1);
+    if (compareMode === 'lastyear') return shiftRange(from, to, 0, -1);
+    if (!compareFrom || !compareTo) return null;
     const cf = new Date(compareFrom + 'T00:00:00');
-    return [cf, endOfDay(new Date(cf.getTime() + spanMs - 1000 * 60))];
-  }, [compareMode, compareFrom, from, spanMs]);
+    const ct = new Date(compareTo + 'T23:59:59.999');
+    return cf <= ct ? [cf, ct] : [ct, cf];
+  }, [compareMode, compareFrom, compareTo, from, to, period]);
 
   const quickLabel = (k: PeriodKey) => [...PRIMARY, ...MORE].find(q => q.key === k)?.label || k;
 
@@ -61,7 +81,8 @@ export default function Reports() {
     () => (compareRange ? state.sales.filter(s => s.status !== 'refunded' && inRange(s.date, compareRange)) : []),
     [state.sales, compareRange],
   );
-  const expenses = state.expenses.filter(e => inRange(e.date, [from, to]));
+  const expensesA = state.expenses.filter(e => inRange(e.date, [from, to]));
+  const expensesB = compareRange ? state.expenses.filter(e => inRange(e.date, compareRange)) : [];
 
   const kpi = (rows: typeof salesA) => ({
     revenue: rows.reduce((a, s) => a + s.total, 0),
@@ -70,34 +91,43 @@ export default function Reports() {
   });
   const A = kpi(salesA);
   const B = kpi(salesB);
-  const exp = expenses.reduce((a, e) => a + e.amount, 0);
-  const netA = A.profit - exp;
-
+  const expA = expensesA.reduce((a, e) => a + e.amount, 0);
+  const expB = expensesB.reduce((a, e) => a + e.amount, 0);
+  const netA = A.profit - expA;
+  const netB = B.profit - expB;
   const comparing = compareRange !== null;
-  const delta = (a: number, b: number) => (b === 0 ? (a > 0 ? 100 : 0) : Math.round(((a - b) / b) * 100));
+  const delta = (a: number, b: number) => (b === 0 ? (a === 0 ? 0 : null) : Math.round(((a - b) / Math.abs(b)) * 100));
+  const diff = (a: number, b: number) => a - b;
+  const durationDays = (r: [Date, Date]) => Math.max(1, Math.round((r[1].getTime() - r[0].getTime() + 1) / 86400000));
+  const durationA = durationDays([from, to]);
+  const durationB = compareRange ? durationDays(compareRange) : 0;
 
   /* daily series — compare column aligned by day offset */
   const daily = useMemo(() => {
     const days = Math.max(1, Math.min(62, Math.ceil(spanMs / 86400000)));
-    const out: { d: string; revenue: number; profit: number; compare: number | null }[] = [];
+    const out: { d: string; revenue: number; profit: number; compareRevenue: number | null; compareProfit: number | null }[] = [];
     for (let i = 0; i < days; i++) {
       const day = new Date(from.getTime() + i * 86400000);
       if (day.getTime() > Date.now() + 43200000) break;
       const key = dkey(day);
       const rows = salesA.filter(s => dkey(s.date) === key);
-      let cmp: number | null = null;
+      let cmpRevenue: number | null = null;
+      let cmpProfit: number | null = null;
       if (compareRange) {
         const cday = new Date(compareRange[0].getTime() + i * 86400000);
         if (cday <= compareRange[1]) {
           const ckey = dkey(cday);
-          cmp = salesB.filter(s => dkey(s.date) === ckey).reduce((a, s) => a + s.total, 0);
+          const compareRows = salesB.filter(s => dkey(s.date) === ckey);
+          cmpRevenue = compareRows.reduce((a, s) => a + s.total, 0);
+          cmpProfit = compareRows.reduce((a, s) => a + s.profit, 0);
         }
       }
       out.push({
         d: day.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
         revenue: rows.reduce((a, s) => a + s.total, 0),
         profit: rows.reduce((a, s) => a + s.profit, 0),
-        compare: cmp,
+        compareRevenue: cmpRevenue,
+        compareProfit: cmpProfit,
       });
     }
     return out;
@@ -171,11 +201,16 @@ export default function Reports() {
     { label: 'Revenue', a: A.revenue, b: B.revenue, icon: Banknote, tint: 'from-emerald-400 to-teal-500' },
     { label: 'Gross Profit', a: A.profit, b: B.profit, icon: TrendingUp, tint: 'from-violet-500 to-purple-600' },
     { label: 'Bills', a: A.bills, b: B.bills, icon: ReceiptText, tint: 'from-sky-400 to-blue-600', plain: true },
-    { label: 'Net (after expenses)', a: netA, b: null as number | null, icon: Wallet, tint: 'from-amber-400 to-orange-500' },
+    { label: 'Expenses', a: expA, b: expB, icon: CreditCard, tint: 'from-rose-400 to-pink-500' },
+    { label: 'Net', a: netA, b: netB, icon: Wallet, tint: 'from-amber-400 to-orange-500' },
+    { label: 'Average bill', a: A.bills ? A.revenue / A.bills : 0, b: B.bills ? B.revenue / B.bills : 0, icon: ReceiptText, tint: 'from-cyan-400 to-sky-500' },
   ];
 
   const rangeText = `${dkey(from)} → ${dkey(to)}`;
   const compareText = compareRange ? `${dkey(compareRange[0])} → ${dkey(compareRange[1])}` : '';
+  const compareLabel = compareMode === 'previous' ? 'Previous period' : compareMode === 'lastmonth' ? 'Same period last month' : compareMode === 'lastyear' ? 'Same period last year' : 'Custom range';
+  const customRangeError = period === 'custom' && custom.from > custom.to;
+  const customCompareError = compareMode === 'custom' && compareFrom && compareTo && compareFrom > compareTo;
 
   return (
     <div>
@@ -191,7 +226,7 @@ export default function Reports() {
       </div>
 
       {/* ============ machine performance ============ */}
-      <div className="card p-5 mb-6">
+      {machineRows.length > 0 && <div className="card p-5 mb-6">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h2 className="text-base font-extrabold text-ink">Machine Performance</h2>
@@ -214,7 +249,7 @@ export default function Reports() {
             ))}</tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
       {/* ============ date filter + compare panel ============ */}
       <div className="card p-5 mb-6">
@@ -260,6 +295,7 @@ export default function Reports() {
               <span className="block text-[10px] font-bold tracking-wider uppercase text-sub mb-1.5">To</span>
               <DatePicker value={custom.to} onChange={v => v && setCustom(c => ({ ...c, to: v }))} />
             </div>
+            {customRangeError && <p className="w-full text-[11px] text-rose-600">From date is after To date; the displayed range is normalized.</p>}
           </div>
         )}
 
@@ -268,54 +304,41 @@ export default function Reports() {
           <span className="block text-[10px] font-extrabold tracking-[0.14em] text-faint uppercase mb-2.5 flex items-center gap-1.5">
             <GitCompareArrows size={12} /> Compare With
           </span>
-          <div className="flex flex-wrap items-center gap-2">
-            {([
-              { k: 'none', label: 'No comparison' },
-              { k: 'previous', label: 'Previous period' },
-              { k: 'custom', label: 'Custom date…' },
-            ] as { k: CompareMode; label: string }[]).map(o => (
-              <button
-                key={o.k}
-                onClick={() => setCompareMode(o.k)}
-                className={`px-3.5 py-1.5 rounded-xl text-[12px] font-semibold transition-all border ${
-                  compareMode === o.k ? 'bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-500/25' : 'bg-raised text-sub border-line hover:text-ink'
-                }`}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-
-          {compareMode === 'custom' && (
-            <div className="flex flex-wrap items-end gap-3 mt-3.5">
-              <div className="w-56 max-w-full">
-                <span className="block text-[10px] font-bold tracking-wider uppercase text-sub mb-1.5">Compare from</span>
-                <DatePicker value={compareFrom} onChange={setCompareFrom} label="mm/dd/yyyy" />
+          {period === 'all' ? (
+            <p className="text-[11.5px] text-faint">Comparison is disabled for All Time because it has no fixed duration.</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                {([
+                  { k: 'none', label: 'Off' },
+                  { k: 'previous', label: 'Previous period' },
+                  { k: 'lastmonth', label: 'Same period last month' },
+                  { k: 'lastyear', label: 'Same period last year' },
+                  { k: 'custom', label: 'Custom range' },
+                ] as { k: CompareMode; label: string }[]).map(o => (
+                  <button key={o.k} onClick={() => setCompareMode(o.k)}
+                    className={`px-3.5 py-1.5 rounded-xl text-[12px] font-semibold transition-all border ${compareMode === o.k ? 'bg-sky-500 text-white border-sky-500 shadow-md shadow-sky-500/25' : 'bg-raised text-sub border-line hover:text-ink'}`}>
+                    {o.label}
+                  </button>
+                ))}
               </div>
-              {compareFrom ? (
-                <Badge tone="blue" className="num !text-[11px] mb-2">
-                  Selected start: {compareFrom} · {compareText}
-                </Badge>
-              ) : (
-                <span className="text-[11.5px] text-faint mb-2.5">Pick a start date — the same length as your selected period is compared</span>
+              {compareMode === 'custom' && (
+                <div className="flex flex-wrap items-end gap-3 mt-3.5">
+                  <div><span className="block text-[10px] font-bold tracking-wider uppercase text-sub mb-1.5">Compare from</span><DatePicker value={compareFrom} onChange={setCompareFrom} label="mm/dd/yyyy" /></div>
+                  <ArrowRight size={15} className="text-faint mb-3" />
+                  <div><span className="block text-[10px] font-bold tracking-wider uppercase text-sub mb-1.5">Compare to</span><DatePicker value={compareTo} onChange={setCompareTo} label="mm/dd/yyyy" /></div>
+                  {customCompareError && <p className="w-full text-[11px] text-rose-600">Compare From is after Compare To; the range is normalized.</p>}
+                </div>
               )}
-            </div>
+            </>
           )}
 
           {/* showing strip */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mt-4 text-[12px] text-sub">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-violet-500" />
-              Showing: <b className="text-amber-600 dark:text-amber-400">{quickLabel(period)}</b>
-              <span className="num text-faint">({rangeText})</span>
-            </span>
-            {compareRange && (
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-sky-500" />
-                Compared to: <b className="text-sky-600 dark:text-sky-400">{compareMode === 'previous' ? 'Previous period' : 'Custom period'}</b>
-                <span className="num text-faint">({compareText})</span>
-              </span>
-            )}
+          <div className="sticky top-0 z-20 -mx-5 px-5 py-3 mt-4 border-y border-line bg-surface/95 backdrop-blur text-[12px]">
+            <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+              <span><b className="text-violet-600">A:</b> {quickLabel(period)} · <span className="num">{rangeText}</span> · {durationA} day{durationA === 1 ? '' : 's'}</span>
+              {compareRange && <span><b className="text-sky-600">B:</b> {compareLabel} · <span className="num">{compareText}</span> · {durationB} day{durationB === 1 ? '' : 's'}</span>}
+            </div>
           </div>
         </div>
       </div>
@@ -332,9 +355,10 @@ export default function Reports() {
       ) : null}
 
       {/* KPI cards with comparison deltas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-5">
         {cards.map(c => {
           const d = comparing && c.b !== null ? delta(c.a, c.b) : null;
+          const absoluteDiff = comparing && c.b !== null ? diff(c.a, c.b) : null;
           return (
             <div key={c.label} className="card p-5">
               <div className="flex items-start justify-between">
@@ -346,13 +370,14 @@ export default function Reports() {
               <div className="num text-[22px] font-extrabold text-ink mt-2">
                 {c.plain ? fmtNum(c.a) : fmtRs(c.a)}
               </div>
-              {d !== null && (
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <Badge tone={d > 0 ? 'emerald' : d < 0 ? 'rose' : 'slate'} className="num !text-[10px]">
-                    {d > 0 ? <ArrowUpRight size={10} /> : d < 0 ? <ArrowDownRight size={10} /> : <Minus size={10} />}
-                    {d > 0 ? '+' : ''}{d}%
-                  </Badge>
-                  <span className="text-[10.5px] text-faint num">vs {c.plain ? fmtNum(c.b!) : fmtRs(c.b!, false)}</span>
+              {comparing && c.b !== null && (
+                <div className="mt-1.5">
+                  <div className="text-[9px] uppercase tracking-wider text-faint font-bold">Period B</div>
+                  <div className="num text-[18px] font-extrabold text-sky-600">{c.plain ? fmtNum(c.b) : fmtRs(c.b)}</div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    <Badge tone={d === null ? 'slate' : d > 0 ? 'emerald' : d < 0 ? 'rose' : 'slate'} className="num !text-[10px]">{d === null ? 'N/A' : <>{d > 0 ? <ArrowUpRight size={10} /> : d < 0 ? <ArrowDownRight size={10} /> : <Minus size={10} />}{d > 0 ? '+' : ''}{d}%</>}</Badge>
+                    <span className="text-[10.5px] text-faint num">Δ {c.plain ? fmtNum(absoluteDiff!) : fmtRs(absoluteDiff!, false)}</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -386,14 +411,14 @@ export default function Reports() {
         {/* revenue trend */}
         <div className="card p-5 xl:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-            <h3 className="font-bold text-ink">Revenue &amp; Profit Trend</h3>
+            <h3 className="font-bold text-ink">Daily Comparison</h3>
             <div className="flex items-center gap-3 text-[10.5px] font-semibold text-sub">
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-violet-500" /> Revenue</span>
               <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" /> Profit</span>
-              {comparing && <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400" /> Compare revenue</span>}
+              {comparing && <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-sky-400" /> Compare dashed</span>}
             </div>
           </div>
-          <p className="text-xs text-faint mb-4">Daily performance across selected period</p>
+          <div className="flex gap-2 mb-2"><button onClick={() => setChartMetric('revenue')} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${chartMetric === 'revenue' ? 'bg-violet-600 text-white border-violet-600' : 'bg-raised text-sub border-line'}`}>Revenue</button><button onClick={() => setChartMetric('profit')} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${chartMetric === 'profit' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-raised text-sub border-line'}`}>Profit</button></div><p className="text-xs text-faint mb-4">Daily performance across selected period</p>
           {salesA.length === 0 ? (
             <p className="text-sm text-faint text-center py-20">No data available for the selected period</p>
           ) : (
@@ -416,10 +441,9 @@ export default function Reports() {
                     tickFormatter={v => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
                   <Tooltip contentStyle={tipStyle} formatter={fmtTip} />
                   {comparing && (
-                    <Area type="monotone" dataKey="compare" stroke="#38bdf8" strokeWidth={2} strokeDasharray="6 4" fill="transparent" name="Compare revenue" />
+                    <Area type="monotone" dataKey={chartMetric === 'revenue' ? 'compareRevenue' : 'compareProfit'} stroke="#38bdf8" strokeWidth={2} strokeDasharray="6 4" fill="transparent" name={`B ${chartMetric === 'revenue' ? 'Revenue' : 'Profit'}`} />
                   )}
-                  <Area type="monotone" dataKey="revenue" stroke="#8b5cf6" strokeWidth={2.4} fill="url(#rev)" name="Revenue" />
-                  <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2.2} fill="url(#pro)" name="Profit" />
+                  <Area type="monotone" dataKey={chartMetric} stroke={chartMetric === 'revenue' ? '#8b5cf6' : '#10b981'} strokeWidth={2.4} fill={chartMetric === 'revenue' ? 'url(#rev)' : 'url(#pro)'} name={`A ${chartMetric === 'revenue' ? 'Revenue' : 'Profit'}`} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -463,6 +487,15 @@ export default function Reports() {
           )}
         </div>
       </div>
+
+      {comparing && (
+        <div className="card p-5 mb-5 overflow-x-auto">
+          <h3 className="font-bold text-ink mb-3">Period Comparison</h3>
+          <table className="w-full min-w-[680px] text-sm"><thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line"><th className="py-2">Metric</th><th className="py-2">Period A</th><th className="py-2">Period B</th><th className="py-2">Diff</th><th className="py-2">%</th></tr></thead>
+            <tbody>{[['Revenue',A.revenue,B.revenue],['Profit',A.profit,B.profit],['Bills',A.bills,B.bills],['Expenses',expA,expB],['Net',netA,netB],['Avg bill',A.bills?A.revenue/A.bills:0,B.bills?B.revenue/B.bills:0]].map(([label,a,b]) => <tr key={label as string} className="border-b border-line last:border-0"><td className="py-2.5 font-semibold">{label as string}</td><td className="py-2.5 num">{label === 'Bills' ? fmtNum(a as number) : fmtRs(a as number,false)}</td><td className="py-2.5 num">{label === 'Bills' ? fmtNum(b as number) : fmtRs(b as number,false)}</td><td className="py-2.5 num">{fmtRs(diff(a as number,b as number),false)}</td><td className="py-2.5 num">{delta(a as number,b as number) === null ? 'N/A' : delta(a as number,b as number)+'%'}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         {/* top products */}
