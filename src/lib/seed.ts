@@ -62,8 +62,6 @@ export const DEFAULT_BRANDS = [
   'Baseus', 'Hikvision', 'Dahua', 'CP Plus', 'Imou', 'Generic', 'Other',
 ];
 
-const DEMO_SEED_ENABLED = import.meta.env.VITE_SEED_DEMO === 'true';
-
 const emptyState = (): POSState => {
   const adminPermissions: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
@@ -120,9 +118,6 @@ const emptyState = (): POSState => {
 
 const sell = (p: number) => Math.round(p * 100) / 100;
 
-export function buildSeed(): POSState {
-  if (!DEMO_SEED_ENABLED) return emptyState();
-
   const rng = mulberry32(20260813);
   const now = new Date();
   const iso = (d: Date) => d.toISOString();
@@ -173,6 +168,19 @@ export function buildSeed(): POSState {
     P('p-g3010', 'Canon PIXMA G3010 Printer', 'NFX-PR-G3010', 'Printers', 'Canon', 68500, 84900, 2, 2, true, 's-tdl'),
     P('p-cable1m', 'Type-C Cable 1m (Braided)', 'NFX-AC-CC1M', 'Accessories', 'Baseus', 650, 1450, 3, 10, false, 's-pcb'),
     P('p-tglass', 'Tempered Glass (Universal)', 'NFX-AC-TGLS', 'Accessories', 'Generic', 350, 1200, 40, 15, false, 's-pcb'),
+    P('p-hdmi2m', 'HDMI Cable 2m', 'NFX-AC-HDMI2', 'Accessories', 'Generic', 120, 250, 40, 10, false, 's-pcb'),
+    P('p-vga', 'VGA Cable', 'NFX-AC-VGA', 'Accessories', 'Generic', 45, 75, 25, 8, false, 's-pcb'),
+    P('p-usbc', 'USB-C Cable 1m', 'NFX-AC-USBC', 'Accessories', 'Baseus', 500, 1250, 30, 10, false, 's-pcb'),
+    P('p-mouse', 'Wireless Mouse', 'NFX-AC-MOUSE', 'Accessories', 'Logitech', 1800, 3250, 12, 5, false, 's-tdl'),
+    P('p-keyboard', 'USB Keyboard', 'NFX-AC-KBD', 'Accessories', 'Logitech', 2200, 3950, 10, 4, false, 's-tdl'),
+    P('p-pendrive32', '32GB Pendrive', 'NFX-ST-PD32', 'Storage', 'SanDisk', 1800, 2950, 20, 6, false, 's-tdl'),
+    P('p-cctv', 'CCTV Bullet Camera 2MP', 'NFX-CCTV-B2M', 'CCTV Cameras', 'Hikvision', 8500, 12500, 2, 3, false, 's-tdl'),
+    P('p-phonecase', 'Phone Case - Generic', 'NFX-AC-CASE', 'Accessories', 'Generic', 450, 1200, 30, 8, false, 's-pcb'),
+    P('p-earphones', 'Basic Wired Earphones', 'NFX-AU-EAR', 'Audio', 'Generic', 650, 1450, 20, 6, false, 's-gha'),
+    {
+      ...P('p-kit', 'Phone Starter Kit', 'NFX-KIT-START', 'Accessories', 'Nexfix', 2050, 3490, 10, 3, false, 's-pcb'),
+      isKit: true,
+    },
   ];
 
   const customers: Customer[] = [
@@ -263,6 +271,12 @@ export function buildSeed(): POSState {
   ];
   expSeed.forEach(([category, note, amount], i) => expenses.push({ id: uid(), date: iso(daysAgo(28 - i * 3, 14)), category, note, amount, by: 'Shop Administrator' }));
 
+  const kitItems = [
+    { id: 'kit-phone-starter-cable', kitProductId: 'p-kit', componentProductId: 'p-usbc', qty: 1 },
+    { id: 'kit-phone-starter-glass', kitProductId: 'p-kit', componentProductId: 'p-tglass', qty: 1 },
+    { id: 'kit-phone-starter-case', kitProductId: 'p-kit', componentProductId: 'p-phonecase', qty: 1 },
+  ];
+
   const exchanges: Exchange[] = [{
     id: uid(), exNo: 'EX-0001', date: iso(daysAgo(6)), billNo: sales[5]?.billNo || 'NFX-20260101-1006',
     customerName: 'Walk-in customer', reason: 'Charger port loose contact',
@@ -335,6 +349,7 @@ export function buildSeed(): POSState {
   return {
     products: enrichedProducts, customers, suppliers, sales, purchases, expenses, exchanges,
     users, audit, held: [], sessions, settings, permissions,
+    kitItems, quotations: [], warrantyClaims: [],
     counters: { bill: billSeq, po: 3, ex: 1, job: 3, quote: 0, claim: 0 }, units, repairs,
   };
 }
