@@ -19,10 +19,10 @@ export function Modal({
         onClick={locked ? undefined : onClose}
       />
 
-      <div className="absolute inset-0 flex items-start justify-center overflow-y-auto p-4">
+      <div className="absolute inset-0 flex items-start sm:items-center justify-center overflow-y-auto p-4">
         <div
           className={`relative z-10 flex w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-xl ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'}`}
-          style={{ height: 'min(90vh, 860px)' }}
+          style={{ maxHeight: 'min(90vh, 860px)' }}
           role="dialog"
           aria-modal="true"
         >
