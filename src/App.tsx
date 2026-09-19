@@ -22,6 +22,7 @@ const Purchases = lazy(() => import('./pages/Purchases'));
 const PurchaseReturn = lazy(() => import('./pages/PurchaseReturn'));
 const CSVImport = lazy(() => import('./pages/CSVImport'));
 const SalesHistory = lazy(() => import('./pages/SalesHistory'));
+const MobileTodaySales = lazy(() => import('./pages/MobileTodaySales'));
 const Exchanges = lazy(() => import('./pages/Exchanges'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -104,6 +105,16 @@ function PermissionProtected({ permission, adminOnly, children }: { permission?:
   return <>{children}</>;
 }
 
+function MobileSalesProtected() {
+  const { user, ready, can } = usePOS();
+  const location = useLocation();
+  if (!ready) return <RouteFallback />;
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+  if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
+  if (!can('page:sales')) return <Navigate to="/dashboard" replace />;
+  return <MobileTodaySales />;
+}
+
 function Protected() {
   const { user, ready } = usePOS();
   const location = useLocation();
@@ -123,6 +134,7 @@ function AppRoutes() {
           <Route path="/change-password" element={<ChangePassword />} />
         </Route>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/today" element={<MobileSalesProtected />} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/mobile-dashboard" element={<MobileDashboard />} />
