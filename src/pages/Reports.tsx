@@ -226,30 +226,39 @@ export default function Reports() {
       </div>
 
       {/* ============ machine performance ============ */}
-      {machineRows.length > 0 && <div className="card p-5 mb-6">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-base font-extrabold text-ink">Machine Performance</h2>
-            <p className="text-xs text-sub mt-1">Sales, income and gross profit by POS terminal</p>
+      <div className={machineRows.length > 0 ? 'card p-5 mb-6' : 'card px-5 py-3 mb-6'}>
+        {machineRows.length === 0 ? (
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="font-semibold text-ink">Machine Performance</span>
+            <span className="text-xs text-faint">No machine sales in this period.</span>
           </div>
-          <Badge tone="blue">{machineRows.length} machine{machineRows.length === 1 ? '' : 's'}</Badge>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[620px] text-sm">
-            <thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line">
-              <th className="py-2 pr-3">Machine</th><th className="py-2 pr-3">Bills</th><th className="py-2 pr-3">Sales / Income</th><th className="py-2">Gross Profit</th>
-            </tr></thead>
-            <tbody>{machineRows.map(row => (
-              <tr key={row.id} className="border-b border-line last:border-0">
-                <td className="py-3 pr-3"><div className="font-bold text-ink">{row.name}</div><div className="text-[10px] text-faint num">{row.id}</div></td>
-                <td className="py-3 pr-3 num">{fmtNum(row.bills)}</td>
-                <td className="py-3 pr-3 num font-semibold">{fmtRs(row.revenue)}</td>
-                <td className="py-3 num font-semibold text-emerald-600">{fmtRs(row.profit)}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      </div>}
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h2 className="text-base font-extrabold text-ink">Machine Performance</h2>
+                <p className="text-xs text-sub mt-1">Sales, income and gross profit by POS terminal</p>
+              </div>
+              <Badge tone="blue">{machineRows.length} machine{machineRows.length === 1 ? '' : 's'}</Badge>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[620px] text-sm">
+                <thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line">
+                  <th className="py-2 pr-3">Machine</th><th className="py-2 pr-3">Bills</th><th className="py-2 pr-3">Sales / Income</th><th className="py-2">Gross Profit</th>
+                </tr></thead>
+                <tbody>{machineRows.map(row => (
+                  <tr key={row.id} className="border-b border-line last:border-0">
+                    <td className="py-3 pr-3"><div className="font-bold text-ink">{row.name}</div><div className="text-[10px] text-faint num">{row.id}</div></td>
+                    <td className="py-3 pr-3 num">{fmtNum(row.bills)}</td>
+                    <td className="py-3 pr-3 num font-semibold">{fmtRs(row.revenue)}</td>
+                    <td className="py-3 num font-semibold text-emerald-600">{fmtRs(row.profit)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
 
       {/* ============ date filter + compare panel ============ */}
       <div className="card p-5 mb-6">
