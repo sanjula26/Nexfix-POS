@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, Pencil, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle,
+  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
@@ -180,6 +180,13 @@ export default function POS() {
       )
       .slice(0, 6);
   }, [products, search]);
+
+  const itemUnitSuggestion = useMemo(() => {
+    const code = search.trim();
+    if (!code) return undefined;
+    const unit = findUnitByCode?.(code);
+    return unit && unit.status === 'in_stock' ? unit : undefined;
+  }, [findUnitByCode, search]);
 
   /* frequently sold -> quick add */
   const favorites = useMemo(() => {
@@ -552,11 +559,10 @@ export default function POS() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs"
-              onClick={() => navigate('/exchanges')}
-              title="Start a return / exchange"
-            >
+            <button className="btn !py-2 !px-3 bg-white text-violet-700 hover:bg-violet-50 !text-xs font-extrabold shadow-sm" onClick={hold} disabled={lines.length === 0} title="Hold sale (F5)">
+              <PauseCircle size={14} /> HOLD <span className="hidden sm:inline">F5</span>
+            </button>
+            <button className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs" onClick={() => navigate('/exchanges')} title="Start a return / exchange">
               <ArrowLeftRight size={14} /> <span className="hidden sm:inline">Return</span>
             </button>
             <button className={`btn !py-2 !px-3 !text-xs ${state.held.length ? 'bg-amber-400/90 text-amber-950 hover:bg-amber-300' : 'bg-white/15 text-white hover:bg-white/25'}`} onClick={() => setHeldOpen(true)}>
@@ -565,19 +571,48 @@ export default function POS() {
             <button className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs" onClick={() => setDrawerOpen(true)}>
               <Landmark size={14} /> <span className="hidden sm:inline">Drawer</span>
             </button>
-            {lines.length > 0 && (
-              <button className="icon-btn !w-8 !h-8 !text-white/80 hover:!bg-white/15 hover:!text-white" onClick={reset} title="Clear cart (F8 / Esc)">
-                <Trash2 size={15} />
-              </button>
-            )}
+            <button
+              className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs disabled:opacity-40"
+              onClick={() => {
+                if (lines.length === 0) {
+                  setCustomerId('');
+                  setCustQuery('');
+                  focusSearch();
+                  return;
+                }
+                if (window.confirm('Clear the current bill and return to Walk-in customer?')) {
+                  reset();
+                  setTimeout(focusSearch, 80);
+                }
+              }}
+              disabled={lines.length === 0 && !customerId}
+              title="Clear bill (F8)"
+            >
+              <Trash2 size={14} /> CLEAR <span className="hidden sm:inline">F8</span>
+            </button>
+            <button
+              className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs disabled:opacity-40"
+              onClick={() => {
+                if (doneSale) setDoneSale(doneSale);
+                else toast('No completed sale is available to reprint', 'rose');
+              }}
+              disabled={!doneSale}
+              title="Reprint last completed sale"
+            >
+              <Printer size={14} /> REPRINT
+            </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] items-start">
           {/* ---- LEFT: customer + cart ---- */}
           <div className="min-w-0">
-            {/* A. customer */}
-            <div className="px-5 sm:px-6 pt-4 pb-4 border-b border-line">
+            {/* A. customer — compact, separate from item search */}
+            <div className="px-5 sm:px-6 pt-3 pb-3 border-b border-line bg-raised/20">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <span className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-faint flex items-center gap-1.5"><UserRound size={11} /> Customer</span>
+                {!customer && <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Walk-in customer</span>}
+              </div>
               {customer ? (
                 <div className="rounded-xl bg-violet-500/[0.07] border border-violet-500/20 p-3">
                   <div className="flex items-center gap-3">
@@ -759,6 +794,22 @@ export default function POS() {
                       initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                       className="absolute left-0 right-0 top-full mt-1.5 z-40 card !rounded-xl overflow-hidden shadow-2xl"
                     >
+                      {itemUnitSuggestion && (() => {
+                        const p = products.find(x => x.id === itemUnitSuggestion.productId);
+                        if (!p) return null;
+                        return (
+                          <button className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left bg-amber-500/[0.06] hover:bg-amber-500/[0.1] border-b border-line"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => { addUnitToCart(itemUnitSuggestion.productId, itemUnitSuggestion.id); setSearch(''); setTimeout(focusSearch, 0); }}>
+                            <span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0"><Smartphone size={14} /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[12px] font-bold text-ink truncate">{p.name} · IMEI / Serial</span>
+                              <span className="block text-[10px] text-faint num">{itemUnitSuggestion.imei || itemUnitSuggestion.serial} · Unit available</span>
+                            </span>
+                            <span className="text-[10px] font-extrabold text-amber-600">ADD UNIT</span>
+                          </button>
+                        );
+                      })()}
                       {itemSuggestions.map(p => {
                         const Icon = CAT_ICON[p.category] || Package;
                         const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
