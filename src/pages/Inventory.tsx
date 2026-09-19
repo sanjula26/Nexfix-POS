@@ -74,6 +74,12 @@ export default function Inventory() {
       return;
     }
 
+    const duplicateBarcode = editing.barcode.trim();
+    if (duplicateBarcode && state.products.some(x => x.id !== editing.id && x.barcode.trim() === duplicateBarcode)) {
+      alert(`Barcode ${duplicateBarcode} is already assigned to another product. Please use a unique barcode.`);
+      return;
+    }
+
     saveProduct(editing);
     setEditing(null);
   };
