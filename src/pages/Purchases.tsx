@@ -111,7 +111,7 @@ export default function Purchases() {
       </div>
 
       {/* new PO modal */}
-      <Modal open={creating} onClose={() => setCreating(false)} title="New purchase order" sub="Stock is added when the PO is marked received" wide>
+      <Modal open={creating} onClose={() => setCreating(false)} title="New purchase order" sub="Stock is added when the PO is marked received" wide footer={<div className="flex gap-2.5"><button className="btn btn-primary flex-1" onClick={submit} disabled={!supplierId || !rows.some(r => r.productId && r.qty > 0) || hasDuplicateProducts}><Plus size={15} /> Create purchase order</button><button className="btn btn-soft" onClick={() => setCreating(false)}>Cancel</button></div>}>
         <div className="space-y-4">
           <Field label="Supplier">
             <select className="input" value={supplierId} onChange={e => setSupplierId(e.target.value)}>
@@ -156,12 +156,7 @@ export default function Purchases() {
             <span className="num text-lg font-extrabold text-violet-500">{fmtRs(poTotal)}</span>
           </div>
 
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={submit} disabled={!supplierId || !rows.some(r => r.productId && r.qty > 0) || hasDuplicateProducts}>
-              <Plus size={15} /> Create purchase order
-            </button>
-            <button className="btn btn-soft" onClick={() => setCreating(false)}>Cancel</button>
-          </div>
+          
         </div>
       </Modal>
 

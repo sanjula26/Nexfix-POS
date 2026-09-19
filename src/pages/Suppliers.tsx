@@ -112,7 +112,7 @@ export default function Suppliers() {
         )}
       </div>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add supplier' : 'Edit supplier'} sub={editing?.name}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add supplier' : 'Edit supplier'} sub={editing?.name} footer={<div className="flex gap-2.5"><button className="btn btn-primary flex-1" onClick={save} disabled={!editing?.name.trim() || !editing?.phone.trim() || emailInvalid}><Plus size={15} /> {isNew ? 'Add supplier' : 'Save changes'}</button><button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button></div>}>
         {editing && (
           <div className="space-y-4">
             <Field label="Company name">
@@ -133,12 +133,7 @@ export default function Suppliers() {
             <Field label="Address">
               <input className="input" value={editing.address || ''} onChange={e => setEditing({ ...editing, address: e.target.value })} placeholder="City, District" />
             </Field>
-            <div className="flex gap-2.5 pt-1">
-              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || !editing.phone.trim() || emailInvalid}>
-                <Plus size={15} /> {isNew ? 'Add supplier' : 'Save changes'}
-              </button>
-              <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
-            </div>
+            
           </div>
         )}
       </Modal>

@@ -149,7 +149,7 @@ export default function Customers() {
       </div>
 
       {/* add / edit */}
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add customer' : 'Edit customer'} sub={isNew ? 'Register a walk-in regular' : editing?.name}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add customer' : 'Edit customer'} sub={isNew ? 'Register a walk-in regular' : editing?.name} footer={<div className="flex gap-2.5"><button className="btn btn-primary flex-1" onClick={save} disabled={!editing?.name.trim() || !editing?.phone.trim()}><UserPlus size={15} /> {isNew ? 'Add customer' : 'Save changes'}</button><button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button></div>}>
         {editing && (
           <div className="space-y-4">
             <Field label="Full name">
@@ -183,12 +183,7 @@ export default function Customers() {
                 placeholder="0" inputMode="numeric"
               />
             </Field>
-            <div className="flex gap-2.5 pt-1">
-              <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || !editing.phone.trim()}>
-                <UserPlus size={15} /> {isNew ? 'Add customer' : 'Save changes'}
-              </button>
-              <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
-            </div>
+            
           </div>
         )}
       </Modal>

@@ -36,7 +36,8 @@ export function Modal({
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="overflow-y-auto px-5 py-4"
+            style={{ maxHeight: 'calc(min(90vh, 860px) - 9rem)' }}>
             {children}
           </div>
 

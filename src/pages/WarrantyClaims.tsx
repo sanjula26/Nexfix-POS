@@ -66,7 +66,7 @@ export default function WarrantyClaims() {
           <td className="px-4 py-3 font-semibold">{r.claimNo}</td><td className="px-4 py-3">{r.productName}</td><td className="px-4 py-3 font-mono text-xs">{r.imeiOrSerial || '—'}</td><td className="px-4 py-3">{r.customerName || '—'}</td><td className="px-4 py-3"><Badge tone={STATUS_TONE[r.status]}>{r.status}</Badge></td><td className="px-4 py-3 text-sub">{fmtDate(r.createdAt)}</td>
         </tr>)}</tbody></table></div>
       )}
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'New Warranty Claim' : editing?.claimNo || 'Claim'}>
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'New Warranty Claim' : editing?.claimNo || 'Claim'} footer={<div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button><button type="button" className="btn btn-primary" onClick={save}>Save</button></div>}>
         {editing && <div className="space-y-3">
           <Field label="Product name"><input className="input" value={editing.productName} onChange={e => setEditing({ ...editing, productName: e.target.value })} /></Field>
           <Field label="IMEI / Serial"><input className="input" value={editing.imeiOrSerial || ''} onChange={e => setEditing({ ...editing, imeiOrSerial: e.target.value })} /></Field>
@@ -74,7 +74,7 @@ export default function WarrantyClaims() {
           <Field label="Issue description"><textarea className="input min-h-[80px]" value={editing.issueDescription} onChange={e => setEditing({ ...editing, issueDescription: e.target.value })} /></Field>
           {!isNew && <Field label="Status"><select className="input" value={editing.status} onChange={e => setEditing({ ...editing, status: e.target.value as ClaimStatus })}>{(Object.keys(STATUS_TONE) as ClaimStatus[]).map(s => <option key={s} value={s}>{s}</option>)}</select></Field>}
           <Field label="Resolution notes"><textarea className="input min-h-[60px]" value={editing.resolutionNotes || ''} onChange={e => setEditing({ ...editing, resolutionNotes: e.target.value })} /></Field>
-          <div className="flex justify-end gap-2 pt-2"><button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button><button type="button" className="btn btn-primary" onClick={save}>Save</button></div>
+          
         </div>}
       </Modal>
     </div>
