@@ -167,6 +167,20 @@ export default function POS() {
     return matchQ && matchC;
   });
 
+  /* cashier-facing type-ahead: keep the primary search compact and scanner friendly */
+  const itemSuggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return products
+      .filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.toLowerCase().includes(q) ||
+        p.brand.toLowerCase().includes(q),
+      )
+      .slice(0, 6);
+  }, [products, search]);
+
   /* frequently sold -> quick add */
   const favorites = useMemo(() => {
     const qty = new Map<string, number>();
@@ -268,7 +282,7 @@ export default function POS() {
     if (used.has(unitId)) { toast('That unit is already in the cart', 'rose'); return; }
     const cur = lines.find(l => l.productId === productId);
     if (cur) {
-      if (cur.qty + 1 > p.stock) { toast(`Only ${p.stock} in stock â€” ${p.name}`, 'rose'); return; }
+      if (cur.qty + 1 > p.stock) { toast(`Only ${p.stock} in stock — ${p.name}`, 'rose'); return; }
       setLines(ls => ls.map(l => l.productId === productId
         ? { ...l, qty: l.qty + 1, unitIds: [...(l.unitIds || []), unitId] }
         : l));
@@ -277,25 +291,27 @@ export default function POS() {
     }
     setUnitPickProductId(null);
     setUnitPickSearch('');
+    toast(`Added · ${p.name}`, 'amber');
   };
 
   const add = (id: string) => {
     const p = products.find(x => x.id === id);
     if (!p) return;
     const cur = lines.find(l => l.productId === id)?.qty || 0;
-    if (p.stock === 0) { toast(`OUT OF STOCK â€” ${p.name}`, 'rose'); return; }
-    if (cur + 1 > p.stock) { toast(`Only ${p.stock} in stock â€” ${p.name}`, 'rose'); return; }
+    if (p.stock === 0) { toast(`OUT OF STOCK — ${p.name}`, 'rose'); return; }
+    if (cur + 1 > p.stock) { toast(`Only ${p.stock} in stock — ${p.name}`, 'rose'); return; }
     // Tracked products require picking a specific IMEI/serial unit
     if (p.trackImei || p.trackSerial) {
       setUnitPickProductId(id);
       setUnitPickSearch('');
       return;
     }
-    if (p.stock <= p.reorderLevel) toast(`LOW STOCK Â· only ${p.stock - cur} left â€” ${p.name}`, 'rose');
+    if (p.stock <= p.reorderLevel) toast(`LOW STOCK · only ${p.stock - cur} left — ${p.name}`, 'rose');
     setLines(ls => {
       const ex = ls.find(l => l.productId === id);
       return ex ? ls.map(l => (l.productId === id ? { ...l, qty: l.qty + 1 } : l)) : [...ls, { productId: id, qty: 1, discount: 0 }];
     });
+    toast(`Added · ${p.name}`, 'amber');
   };
   const setQty = (id: string, qty: number) => {
     const p = products.find(x => x.id === id);
@@ -381,11 +397,11 @@ export default function POS() {
     });
     if (sale) {
       setDoneSale(sale);
-      /* WhatsApp receipt â€” only when the customer opted in (or shop-wide auto is on) */
+      /* WhatsApp receipt — only when the customer opted in (or shop-wide auto is on) */
       if (customer?.phone && (waReceipt || state.settings.whatsappReceipts)) {
         try {
           window.open(waLink(customer.phone, buildWhatsAppText(sale, state.settings)), '_blank', 'noopener');
-        } catch { /* popup blocked â€” the button in the receipt modal still works */ }
+        } catch { /* popup blocked — the button in the receipt modal still works */ }
       }
       reset();
       setTimeout(focusSearch, 150);
@@ -396,12 +412,12 @@ export default function POS() {
   const hold = () => {
     if (lines.length === 0) return;
     holdSale({
-      label: `Held Â· ${itemCount} item(s)`,
+      label: `Held · ${itemCount} item(s)`,
       lines: lines.map(l => ({ productId: l.productId, qty: l.qty })),
       customerId: customerId || undefined,
       discount: discCart, taxPct: parseFloat(taxPct) || 0,
     });
-    toast('Sale parked â€” resume it from Held', 'amber');
+    toast('Sale parked — resume it from Held', 'amber');
     reset();
   };
   const resume = (id: string) => {
@@ -456,7 +472,7 @@ export default function POS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, total, paid, legs, payment, customerId, splitOn, discount, taxPct, shipping, points, redeemOn, adminPrompt, note, salesmanId]);
 
-  /* barcode scan â†’ enter adds instantly */
+  /* barcode scan → enter adds instantly */
   useEffect(() => {
     const el = searchBoxRef.current?.querySelector('input');
     if (!el) return;
@@ -482,7 +498,7 @@ export default function POS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, products, filtered]);
 
-  /* hardware scanner (keyboard wedge) â€” works even when search is not focused */
+  /* hardware scanner (keyboard wedge) — works even when search is not focused */
   useBarcodeScanner((code) => {
     if (adminPrompt) return;
     const byBarcode = products.find(p => p.barcode === code || p.sku.toLowerCase() === code.toLowerCase());
@@ -532,7 +548,7 @@ export default function POS() {
             </span>
             <div>
               <div className="font-display font-extrabold text-[16px] tracking-wide">BILLING</div>
-              <div className="text-[11px] text-violet-200 num">{itemCount} items Â· {detailed.length} lines</div>
+              <div className="text-[11px] text-violet-200 num">{itemCount} items · {detailed.length} lines</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -557,7 +573,7 @@ export default function POS() {
           </div>
         </div>
 
-        <div className="grid lg:grid-cols-[1.05fr_1fr]">
+        <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] items-start">
           {/* ---- LEFT: customer + cart ---- */}
           <div className="min-w-0">
             {/* A. customer */}
@@ -623,7 +639,7 @@ export default function POS() {
                           <span className="w-8 h-8 rounded-full bg-raised flex items-center justify-center text-sub"><UserRound size={15} /></span>
                           <span>
                             <span className="block text-[13px] font-bold text-ink">Walk-in customer</span>
-                            <span className="block text-[10.5px] text-faint">No profile Â· quick sale</span>
+                            <span className="block text-[10.5px] text-faint">No profile · quick sale</span>
                           </span>
                           <span className="ml-auto"><CheckCircle2 size={15} className="text-emerald-500" /></span>
                         </button>
@@ -638,7 +654,7 @@ export default function POS() {
                                 {c.name.charAt(0).toUpperCase()}
                               </span>
                               <span className="min-w-0 flex-1">
-                                <span className="block text-[13px] font-semibold text-ink truncate">{c.name}{c.nic ? <span className="text-faint font-normal"> Â· {c.nic}</span> : ''}</span>
+                                <span className="block text-[13px] font-semibold text-ink truncate">{c.name}{c.nic ? <span className="text-faint font-normal"> · {c.nic}</span> : ''}</span>
                                 <span className="block text-[10.5px] text-faint num">{c.phone}</span>
                               </span>
                               {c.creditBalance > 0 && (
@@ -649,9 +665,9 @@ export default function POS() {
                           ))}
                           {custResults.length === 0 && (
                             <div className="px-4 py-4 text-center">
-                              <p className="text-xs text-faint">No match for â€œ{custQuery}â€</p>
+                              <p className="text-xs text-faint">No match for “{custQuery}”</p>
                               <button className="btn btn-soft !text-xs mt-2.5" onClick={() => { setNewCust(nc => ({ ...nc, name: custQuery })); setAddCustOpen(true); setCustOpen(false); }}>
-                                <UserPlus size={13} /> Add â€œ{custQuery}â€ as customer
+                                <UserPlus size={13} /> Add “{custQuery}” as customer
                               </button>
                             </div>
                           )}
@@ -706,7 +722,7 @@ export default function POS() {
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
                     <textarea
                       className="input mt-2.5 !text-[12.5px] min-h-[56px] resize-none"
-                      placeholder="e.g. Gift packing Â· Deliver tomorrow after 4 PM"
+                      placeholder="e.g. Gift packing · Deliver tomorrow after 4 PM"
                       value={note}
                       onChange={e => setNote(e.target.value)}
                       maxLength={160}
@@ -716,7 +732,60 @@ export default function POS() {
               </AnimatePresence>
             </div>
 
-            {/* B. cart items */}
+            {/* B. HERO ITEM SEARCH — primary cashier entry point */}
+            <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-line bg-gradient-to-b from-violet-500/[0.035] to-transparent">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-violet-500">Add item</div>
+                  <div className="text-[12px] font-semibold text-sub">Fast barcode / SKU / product / IMEI search</div>
+                </div>
+                <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-raised border border-line px-2 py-1 text-[9.5px] font-bold text-faint">
+                  <Keyboard size={10} /> F3
+                </span>
+              </div>
+              <div ref={searchBoxRef} className="relative">
+                <div className="relative">
+                  <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-violet-500 pointer-events-none" />
+                  <SearchInput
+                    value={search}
+                    onChange={setSearch}
+                    placeholder="Scan barcode, SKU, name or IMEI…"
+                    className="w-full !pl-11 !pr-4 !py-3.5 !text-[15px] !rounded-xl !border-violet-300/70 dark:!border-violet-500/30 !bg-surface shadow-[0_8px_28px_-16px_rgba(124,58,237,.5)]"
+                  />
+                </div>
+                <AnimatePresence>
+                  {itemSuggestions.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                      className="absolute left-0 right-0 top-full mt-1.5 z-40 card !rounded-xl overflow-hidden shadow-2xl"
+                    >
+                      {itemSuggestions.map(p => {
+                        const Icon = CAT_ICON[p.category] || Package;
+                        const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
+                        return (
+                          <button
+                            key={p.id}
+                            className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left hover:bg-raised/70 border-b border-line last:border-b-0"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => { add(p.id); setSearch(''); setTimeout(focusSearch, 0); }}
+                          >
+                            <span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0"><Icon size={14} /></span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[12px] font-bold text-ink truncate">{p.name}</span>
+                              <span className="block text-[10px] text-faint num">{p.sku} · {p.barcode || 'No barcode'} · {p.stock} in stock</span>
+                            </span>
+                            {inCart > 0 && <span className="num text-[10px] font-bold text-violet-500">×{inCart}</span>}
+                            <span className="num text-[12px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
+                          </button>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            {/* C. cart items */}
             <div className="min-h-[190px] max-h-[400px] overflow-y-auto">
               {detailed.length === 0 ? (
                 <div className="flex flex-col items-center py-12 text-center px-6">
@@ -762,7 +831,7 @@ export default function POS() {
           </div>
 
           {/* ---- RIGHT: calculation & payment ---- */}
-          <div className="min-w-0 p-5 sm:p-6 space-y-2 border-t lg:border-t-0 lg:border-l border-line bg-raised/30">
+          <div className="min-w-0 p-5 sm:p-6 space-y-2 border-t lg:border-t-0 lg:border-l border-line bg-raised/30 lg:sticky lg:top-4 lg:self-start">
             <Row label={`Subtotal (${itemCount} items)`} value={fmtRs(baseAfterLines)} />
 
             {/* discount with Rs / % toggle */}
@@ -789,7 +858,7 @@ export default function POS() {
                   onChange={e => setDiscount(e.target.value.replace(/[^\d.]/g, ''))}
                   placeholder="0" inputMode="decimal" disabled={!can('act:discount')}
                 />
-                <span className="w-24 text-right num text-[12.5px] font-semibold text-rose-500">{discCart > 0 ? `- ${fmtRs(discCart, false)}` : 'â€”'}</span>
+                <span className="w-24 text-right num text-[12.5px] font-semibold text-rose-500">{discCart > 0 ? `- ${fmtRs(discCart, false)}` : '—'}</span>
               </div>
             </div>
 
@@ -805,7 +874,7 @@ export default function POS() {
                   />
                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
                 </div>
-                <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{tax > 0 ? fmtRs(tax, false) : 'â€”'}</span>
+                <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{tax > 0 ? fmtRs(tax, false) : '—'}</span>
               </div>
             </div>
 
@@ -822,7 +891,7 @@ export default function POS() {
                     value={shipping} onChange={e => setShipping(e.target.value.replace(/[^\d.]/g, ''))}
                     placeholder="0" inputMode="decimal"
                   />
-                  <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{shipAmt > 0 ? fmtRs(shipAmt, false) : 'â€”'}</span>
+                  <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{shipAmt > 0 ? fmtRs(shipAmt, false) : '—'}</span>
                 </div>
               </div>
             ) : (
@@ -840,7 +909,7 @@ export default function POS() {
                       {redeemOn && <CheckCircle2 size={11} strokeWidth={3} />}
                     </span>
                     <span className="text-[12px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                      <Coins size={12} /> Redeem points Â· {customer.loyaltyPoints} available
+                      <Coins size={12} /> Redeem points · {customer.loyaltyPoints} available
                     </span>
                   </button>
                   {redeemOn && (
@@ -857,7 +926,7 @@ export default function POS() {
                 </div>
                 {redeemOn && redeemedPts > 0 && (
                   <div className="text-right text-[11px] font-bold text-amber-600 dark:text-amber-400 num mt-1">
-                    âˆ’ {fmtRs(pointsVal)} ({redeemedPts} pts Ã— Rs. {POINT_VALUE})
+                    − {fmtRs(pointsVal)} ({redeemedPts} pts × Rs. {POINT_VALUE})
                   </div>
                 )}
               </div>
@@ -867,7 +936,7 @@ export default function POS() {
             <div className="!mt-3.5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-4 flex items-end justify-between shadow-lg shadow-violet-600/30">
               <div className="text-white">
                 <div className="text-[10px] font-extrabold tracking-[0.16em] text-violet-200 uppercase">Grand Total</div>
-                {pointsVal > 0 && <div className="text-[10px] text-amber-300 num font-semibold mt-0.5">points applied: âˆ’{fmtRs(pointsVal)}</div>}
+                {pointsVal > 0 && <div className="text-[10px] text-amber-300 num font-semibold mt-0.5">points applied: −{fmtRs(pointsVal)}</div>}
                 <div className="text-[10px] text-violet-200 mt-0.5">incl. tax &amp; charges</div>
               </div>
               <div className="num text-[32px] leading-none font-extrabold text-white drop-shadow-sm">{fmtRs(total)}</div>
@@ -1046,7 +1115,7 @@ export default function POS() {
                     <span className={`block text-[12px] font-bold ${waReceipt ? 'text-emerald-600 dark:text-emerald-400' : 'text-ink'}`}>
                       Send receipt on WhatsApp
                     </span>
-                    <span className="block text-[10px] text-faint num">to {customer.phone} â€” only when the customer asks</span>
+                    <span className="block text-[10px] text-faint num">to {customer.phone} — only when the customer asks</span>
                   </span>
                   <span className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${waReceipt ? 'bg-emerald-500' : 'bg-line'}`}>
                     <span className={`absolute top-[2.5px] w-4 h-4 rounded-full bg-white shadow transition-all ${waReceipt ? 'left-[18px]' : 'left-[2px]'}`} />
@@ -1068,20 +1137,19 @@ export default function POS() {
                 disabled={lines.length === 0}
                 title="Complete sale (F6)"
               >
-                <Zap size={17} /> Complete Sale Â· {fmtRs(total)}
+                <Zap size={17} /> Complete Sale · {fmtRs(total)}
               </button>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ============ BELOW: favorites + catalog ============ */}
+      {/* ============ BELOW: quick add + secondary catalog ============ */}
       <section className="card mx-auto w-full max-w-[1060px] mt-5 p-4 sm:p-5">
-        {/* quick add favorites */}
         {favorites.length > 0 && (
           <div className="mb-4">
             <span className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[0.14em] text-faint uppercase mb-2">
-              <Star size={11} className="text-amber-500" /> Quick add â€” frequently sold
+              <Star size={11} className="text-amber-500" /> Quick add · frequently sold
             </span>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {favorites.map(({ p }) => {
@@ -1089,12 +1157,8 @@ export default function POS() {
                 const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
                 const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
                 return (
-                  <button
-                    key={p.id}
-                    onClick={() => add(p.id)}
-                    disabled={inCart >= p.stock}
-                    className="flex items-center gap-2 rounded-xl border border-line bg-surface pl-1.5 pr-3 py-1.5 hover:border-violet-400 hover:shadow-md transition-all shrink-0 disabled:opacity-50"
-                  >
+                  <button key={p.id} onClick={() => add(p.id)} disabled={inCart >= p.stock}
+                    className="flex items-center gap-2 rounded-xl border border-line bg-surface pl-1.5 pr-3 py-1.5 hover:border-violet-400 hover:shadow-md transition-all shrink-0 disabled:opacity-50">
                     <span className={`w-7 h-7 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center`}><Icon size={13} /></span>
                     <span className="text-left">
                       <span className="block text-[11px] font-bold text-ink leading-tight max-w-[130px] truncate">{p.name}</span>
@@ -1108,87 +1172,64 @@ export default function POS() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2.5 mr-auto">
-            <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-violet-600/25">
-              <Grid3X3 size={16} />
+        <details className="group">
+          <summary className="list-none cursor-pointer flex items-center justify-between gap-3 rounded-xl border border-line bg-raised/45 px-3.5 py-3 hover:border-violet-300 transition-colors">
+            <span className="flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-violet-600/25">
+                <Grid3X3 size={16} />
+              </span>
+              <span>
+                <span className="block font-display font-extrabold text-ink text-[14px]">Product Catalog</span>
+                <span className="block text-[10.5px] text-faint num">{filtered.length} of {products.length} items · optional browse mode</span>
+              </span>
             </span>
-            <div>
-              <h2 className="font-display font-extrabold text-ink text-[15px] leading-tight">Product Catalog</h2>
-              <p className="text-[11px] text-faint num">{filtered.length} of {products.length} items</p>
+            <ChevronDown size={17} className="text-faint transition-transform group-open:rotate-180" />
+          </summary>
+
+          <div className="pt-3">
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {categories.map(c => (
+                <button key={c} onClick={() => setCat(c)}
+                  className={`px-3 py-1.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap transition-all border ${cat === c ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-600/30' : 'bg-raised text-sub border-line hover:text-ink'}`}>
+                  {c === 'all' ? 'All' : c}
+                </button>
+              ))}
             </div>
-          </div>
-          <div ref={searchBoxRef} className="w-full sticky top-0 z-20 pb-2 bg-surface/95 backdrop-blur-sm">
-            <SearchInput value={search} onChange={setSearch} placeholder="Scan barcode, SKU, name or IMEI… (F3)" className="w-full" />
-          </div>
-        </div>
 
-        <div className="flex gap-1.5 mt-3.5 overflow-x-auto pb-1">
-          {categories.map(c => (
-            <button
-              key={c}
-              onClick={() => setCat(c)}
-              className={`px-3 py-1.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap transition-all border ${
-                cat === c ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-600/30' : 'bg-raised text-sub border-line hover:text-ink'
-              }`}
-            >
-              {c === 'all' ? 'All' : c}
-            </button>
-          ))}
-        </div>
-
-        {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <span className="w-14 h-14 rounded-2xl bg-raised flex items-center justify-center text-faint mb-3"><Boxes size={24} /></span>
-            <p className="font-semibold text-ink text-sm">No products found</p>
-            <p className="text-xs text-faint mt-1">Try a different search or category</p>
+            {filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <span className="w-14 h-14 rounded-2xl bg-raised flex items-center justify-center text-faint mb-3"><Boxes size={24} /></span>
+                <p className="font-semibold text-ink text-sm">No products found</p>
+                <p className="text-xs text-faint mt-1">Use the main item search above or choose another category</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 mt-3">
+                {filtered.map(p => {
+                  const Icon = CAT_ICON[p.category] || Package;
+                  const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
+                  const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
+                  const out = p.stock === 0;
+                  const low = !out && p.stock <= p.reorderLevel;
+                  return (
+                    <motion.button key={p.id} layout whileTap={{ scale: 0.97 }} disabled={out || inCart >= p.stock} onClick={() => add(p.id)}
+                      className={`relative text-left rounded-xl border p-3 transition-all group ${out ? 'bg-rose-500/[0.04] border-rose-300/60 opacity-70 cursor-not-allowed' : low ? 'bg-surface border-rose-300/80 dark:border-rose-500/40 hover:border-rose-400 hover:shadow-md cursor-pointer' : 'bg-surface border-line hover:border-violet-400 hover:shadow-lg hover:shadow-violet-500/10 cursor-pointer'}`}>
+                      <div className="flex items-start justify-between gap-1.5">
+                        <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center shadow-sm shrink-0`}><Icon size={14} strokeWidth={2.1} /></span>
+                        <Badge tone={out || low ? 'rose' : 'emerald'} className={`num !text-[9.5px] !px-1.5 !py-0.5 ${low ? 'blink' : ''}`}>{out ? 'OUT' : low ? `${p.stock} LOW` : p.stock}</Badge>
+                      </div>
+                      <div className={`mt-2.5 text-[12px] font-bold leading-snug line-clamp-2 min-h-[30px] ${out ? 'text-sub line-through' : 'text-ink'}`}>{p.name}</div>
+                      <div className="text-[10px] text-faint mt-0.5 num">{p.sku}</div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="num text-[13.5px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
+                        {inCart > 0 && <span className="min-w-5 px-1 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center num">{inCart}</span>}
+                      </div>
+                    </motion.button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 mt-3.5">
-            {filtered.map(p => {
-              const Icon = CAT_ICON[p.category] || Package;
-              const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
-              const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
-              const out = p.stock === 0;
-              const low = !out && p.stock <= p.reorderLevel;
-              return (
-                <motion.button
-                  key={p.id}
-                  layout
-                  whileTap={{ scale: 0.97 }}
-                  disabled={out || inCart >= p.stock}
-                  onClick={() => add(p.id)}
-                  className={`relative text-left rounded-xl border p-3 transition-all group ${
-                    out
-                      ? 'bg-rose-500/[0.04] border-rose-300/60 opacity-70 cursor-not-allowed'
-                      : low
-                        ? 'bg-surface border-rose-300/80 dark:border-rose-500/40 hover:border-rose-400 hover:shadow-md cursor-pointer'
-                        : 'bg-surface border-line hover:border-violet-400 hover:shadow-lg hover:shadow-violet-500/10 cursor-pointer'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-1.5">
-                    <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center shadow-sm shrink-0`}>
-                      <Icon size={14} strokeWidth={2.1} />
-                    </span>
-                    <Badge tone={out || low ? 'rose' : 'emerald'} className={`num !text-[9.5px] !px-1.5 !py-0.5 ${low ? 'blink' : ''}`}>
-                      {out ? 'OUT' : low ? `${p.stock} LOW` : p.stock}
-                    </Badge>
-                  </div>
-                  <div className={`mt-2.5 text-[12px] font-bold leading-snug line-clamp-2 min-h-[30px] ${out ? 'text-sub line-through' : 'text-ink'}`}>
-                    {p.name}
-                  </div>
-                  <div className="text-[10px] text-faint mt-0.5 num">{p.sku}</div>
-                  <div className="flex items-center justify-between mt-1.5">
-                    <span className="num text-[13.5px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
-                    {inCart > 0 && (
-                      <span className="min-w-5 px-1 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center num">{inCart}</span>
-                    )}
-                  </div>
-                </motion.button>
-              );
-            })}
-          </div>
-        )}
+        </details>
       </section>
 
       {/* mobile sticky checkout bar */}
@@ -1224,7 +1265,7 @@ export default function POS() {
       </div>
 
       {/* drawer modal */}
-      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today Â· ${user?.name}`}>
+      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
         <div className="space-y-3">
           {[
             ['Opening float', state.settings.openingFloat, 'text-ink'],
@@ -1254,19 +1295,19 @@ export default function POS() {
                 <span className="w-9 h-9 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0"><PauseCircle size={16} /></span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-ink truncate">{h.label}</div>
-                  <div className="text-[11px] text-faint">{timeAgo(h.heldAt)} Â· {h.lines.length} lines{h.customerId ? ` Â· ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}</div>
+                  <div className="text-[11px] text-faint">{timeAgo(h.heldAt)} · {h.lines.length} lines{h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}</div>
                 </div>
                 <button className="btn btn-soft !py-1.5 !px-3 !text-xs text-emerald-500" onClick={() => resume(h.id)}><Zap size={13} /> Resume</button>
                 <button className="btn btn-danger-soft !py-1.5 !px-3 !text-xs" onClick={() => deleteHold(h.id)}><Trash2 size={13} /></button>
               </motion.div>
             ))}
           </AnimatePresence>
-          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales â€” press F5 to park the current bill</p>}
+          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales — press F5 to park the current bill</p>}
         </div>
       </Modal>
 
       {/* quick add customer */}
-      <Modal open={addCustOpen} onClose={() => setAddCustOpen(false)} title="Add New Customer" sub="Saved to your customer book â€” selected instantly">
+      <Modal open={addCustOpen} onClose={() => setAddCustOpen(false)} title="Add New Customer" sub="Saved to your customer book — selected instantly">
         <div className="space-y-4">
           <Field label="Full name">
             <input className="input" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} placeholder="Customer name" autoFocus />
@@ -1290,7 +1331,7 @@ export default function POS() {
       </Modal>
 
       {/* admin gate: price override */}
-      <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval â€” price override" sub="Selling price changes need the admin password" locked>
+      <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
         <div className="space-y-3.5">
           <div className="flex items-center gap-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-3.5 py-3">
             <LockKeyhole size={16} className="text-amber-500 shrink-0" />
@@ -1363,7 +1404,7 @@ export default function POS() {
                       <div className="font-semibold text-ink text-[13px] num">{u.imei || u.serial || u.id}</div>
                       <div className="text-[11px] text-faint">
                         {u.imei && u.serial ? `Serial: ${u.serial}` : ''}
-                        {u.expiryDate ? ` Â· Exp ${u.expiryDate.slice(0, 10)}` : ''}
+                        {u.expiryDate ? ` · Exp ${u.expiryDate.slice(0, 10)}` : ''}
                       </div>
                     </button>
                   ))}
@@ -1477,7 +1518,7 @@ function CartLine({
                 {canEditPrice ? <Pencil size={9} /> : <Lock size={9} className="text-amber-500" />}
               </button>
             )}
-            {atMax && <span className="text-rose-500 font-extrabold">Â· Only {line.product.stock} in stock!</span>}
+            {atMax && <span className="text-rose-500 font-extrabold">· Only {line.product.stock} in stock!</span>}
           </div>
         </div>
 
@@ -1548,7 +1589,7 @@ function CartLine({
               {line.discount > 0 && (
                 <button className="text-[10px] font-bold text-rose-500" onClick={() => onDisc(0)}>Clear</button>
               )}
-              <span className="ml-auto text-[10.5px] num font-semibold text-violet-500">âˆ’ {fmtRs(line.discount || 0, false)}</span>
+              <span className="ml-auto text-[10.5px] num font-semibold text-violet-500">− {fmtRs(line.discount || 0, false)}</span>
             </div>
           </motion.div>
         )}
