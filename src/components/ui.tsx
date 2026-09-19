@@ -1,5 +1,4 @@
-import React, { useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React from 'react';
 import { Search, X, Inbox } from 'lucide-react';
 
 /* ---------- Modal ---------- */
@@ -11,51 +10,48 @@ export function Modal({
   /** locked: backdrop does not dismiss (header close stays available) */
   locked?: boolean;
 }) {
+  if (!open) return null;
+
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto p-3 sm:p-6"
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    <div className="fixed inset-0 z-[60]">
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={locked ? undefined : onClose}
+      />
+
+      <div className="absolute inset-0 flex items-start justify-center overflow-y-auto p-4">
+        <div
+          className={`relative z-10 flex w-full flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-xl ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'}`}
+          style={{ height: 'min(90vh, 860px)' }}
+          role="dialog"
+          aria-modal="true"
         >
-          <div
-            className={`absolute inset-0 ${locked ? 'bg-[#0d0a24]/75 backdrop-blur-[6px]' : 'bg-[#0d0a24]/55 backdrop-blur-[3px]'}`}
-            onClick={locked ? undefined : onClose}
-          />
-          <motion.div
-            initial={{ opacity: 0, y: 26, scale: 0.985 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 18, scale: 0.985 }}
-            transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-            className={`relative card flex flex-col w-full my-3 ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'} overflow-hidden rounded-[1.25rem]`} style={{ maxHeight: 'min(92vh, 880px)' }}
-          >
-            <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 bg-surface border-b border-line">
-              <div>
-                <h3 className="text-lg font-bold text-ink">{title}</h3>
-                {sub && <p className="text-xs text-sub mt-0.5">{sub}</p>}
-              </div>
-              <button className="icon-btn" onClick={onClose} aria-label="Close">
-                <X size={17} />
-              </button>
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <h3 className="text-lg font-bold text-ink">{title}</h3>
+              {sub ? <p className="mt-0.5 text-xs text-sub">{sub}</p> : null}
             </div>
-            <ModalBody open={open}>{children}</ModalBody>
-            {footer && <div className="shrink-0 border-t border-line bg-surface p-4">{footer}</div>}
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+              <X size={17} />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+            {children}
+          </div>
+
+          {footer ? (
+            <div className="shrink-0 border-t border-line bg-surface px-5 py-3">
+              {footer}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function ModalBody({ open, children }: { open: boolean; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (open) ref.current?.scrollTo({ top: 0, behavior: 'auto' });
-  }, [open]);
-  return <div ref={ref} className="overflow-y-auto overscroll-contain p-6" style={{ maxHeight: 'calc(min(92vh, 880px) - 140px)' }}>{children}</div>;
-}
-
-/* ---------- Field ---------- */
+/* ---------- Field ----------
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <label className="block">
