@@ -81,6 +81,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, viewingAs, can, switchRole, signOut, state, setAdminPrompt } = usePOS();
   const navigate = useNavigate();
   const lowStock = state.products.filter(p => p.active && p.stock <= p.reorderLevel).length;
+  const pendingReverseCount = (state.reverseRequests || []).filter(r => r.status === 'pending').length;
 
   const visible = NAV.filter(n => {
     if (n.adminOnly) return user?.role === 'admin';
@@ -140,6 +141,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       <span className="flex-1 truncate">{item.label}</span>
                       {item.to === '/inventory' && lowStock > 0 && (
                         <span className="text-[10px] font-bold bg-amber-400/15 text-amber-400 rounded-full px-1.5 py-0.5 num">{lowStock}</span>
+                      )}
+                      {item.to === '/sales' && pendingReverseCount > 0 && (
+                        <span className="text-[10px] font-extrabold bg-amber-400 text-[#17123c] rounded-full min-w-5 h-5 px-1.5 flex items-center justify-center num shadow-sm" title="Pending bill reverse approvals">
+                          {pendingReverseCount > 99 ? '99+' : pendingReverseCount}
+                        </span>
                       )}
                       {isActive && <span className="w-1.5 h-1.5 rounded-full bg-violet-300 shrink-0" />}
                     </>
@@ -381,6 +387,10 @@ export default function AppLayout() {
     () => state.products.filter(p => p.active && p.stock <= p.reorderLevel),
     [state.products],
   );
+  const pendingReverseCount = useMemo(
+    () => (state.reverseRequests || []).filter(r => r.status === 'pending').length,
+    [state.reverseRequests],
+  );
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
@@ -423,6 +433,20 @@ export default function AppLayout() {
           <button onClick={() => navigate('/inventory?low=1')} className={`badge !py-1.5 !px-3 transition-all hover:brightness-110 cursor-pointer ${lowStock.length > 0 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-raised text-faint border border-line'}`} title={lowStock.length ? 'View low stock items' : 'All products well stocked'}>
             <Bell size={12} /><span className="num">{lowStock.length > 0 ? `${fmtNum(lowStock.length)} low-stock` : 'stock OK'}</span>
           </button>
+          {user.role === 'admin' && pendingReverseCount > 0 && (
+            <button
+              type="button"
+              onClick={() => navigate('/sales')}
+              className="relative inline-flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-[11px] font-extrabold text-amber-700 dark:text-amber-300 hover:bg-amber-500/15 transition-colors"
+              title="Review pending bill reverse approvals"
+            >
+              <ShieldCheck size={13} />
+              <span>Reverse approvals</span>
+              <span className="min-w-5 h-5 px-1.5 rounded-full bg-amber-500 text-white flex items-center justify-center num shadow-sm">
+                {pendingReverseCount > 99 ? '99+' : pendingReverseCount}
+              </span>
+            </button>
+          )}
           <button type="button" className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors" title="Command palette (Ctrl+K)" onClick={() => window.dispatchEvent(new Event('nexfix:open-palette'))}>
             <Search size={13} /><span className="hidden md:inline">Search</span><kbd className="text-[9px] font-mono opacity-70 border border-line rounded px-1">⌘K</kbd>
           </button>
