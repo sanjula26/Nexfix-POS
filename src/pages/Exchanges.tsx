@@ -69,7 +69,9 @@ export default function Exchanges() {
         Boolean(bill.items[itemIdx].unitIds?.length) && qty !== bill.items[itemIdx].qty,
       );
       if (trackedPartial) {
-        throw new Error('IMEI/Serial tracked items must be returned in the full sold quantity. Per-unit return selection is required for a partial tracked return.');
+        setError('IMEI/Serial tracked items must be returned in the full sold quantity. Per-unit return selection is required for a partial tracked return.');
+        setProcessing(false);
+        return;
       }
       const returnLines = selectedItems.map(({ itemIdx, qty }) => ({
         product_id: bill.items[itemIdx].productId,
