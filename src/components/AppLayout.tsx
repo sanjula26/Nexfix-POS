@@ -38,7 +38,7 @@ const NAV: NavDef[] = [
   { to: '/expenses', label: 'Expenses', icon: Wallet, perm: 'page:expenses', group: 'Operations' },
   { to: '/reports', label: 'Reports', icon: BarChart3, perm: 'page:reports', group: 'Operations' },
   { to: '/price-tags', label: 'Price Tags', icon: Tags, perm: 'page:pricetags', group: 'Operations' },
-  { to: '/signup', label: 'Customer Signup', icon: UserPlus, group: 'Operations' },
+  { to: '/signup', label: 'Customer Signup', icon: UserPlus, group: 'Operations', adminOnly: true },
   { to: '/users', label: 'Users', icon: UserCog, group: 'Administration', adminOnly: true },
   { to: '/cashier-balances', label: 'Day Cash & Drawer', icon: Landmark, group: 'Administration', adminOnly: true },
   { to: '/permissions', label: 'Permissions', icon: KeyRound, group: 'Administration', adminOnly: true },
