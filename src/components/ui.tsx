@@ -27,9 +27,9 @@ export function Modal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 18, scale: 0.985 }}
             transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-            className={`relative card my-auto w-full ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[min(90vh,900px)] flex flex-col overflow-hidden rounded-[1.25rem]`}
+            className={`relative card my-4 sm:my-auto w-full ${xl ? 'max-w-4xl' : wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[min(92vh,880px)] flex flex-col overflow-hidden rounded-[1.25rem]`}
           >
-            <div className="sticky top-0 z-10 flex items-start justify-between gap-4 px-6 pt-5 pb-4 bg-surface border-b border-line">
+            <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 bg-surface border-b border-line">
               <div>
                 <h3 className="text-lg font-bold text-ink">{title}</h3>
                 {sub && <p className="text-xs text-sub mt-0.5">{sub}</p>}
