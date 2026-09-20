@@ -1324,7 +1324,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             ...c, name: String(customer.name ?? c.name), phone: String(customer.phone ?? c.phone ?? ''),
             email: customer.email ? String(customer.email) : c.email, nic: customer.nic ? String(customer.nic) : c.nic,
             address: customer.address ? String(customer.address) : c.address,
-            creditBalance: n(customer.credit_balance, c.creditBalance), loyaltyPoints: n(customer.loyalty_points, c.loyaltyPoints),
+            creditLimit: n(customer.credit_limit, c.creditLimit ?? 0), creditBalance: n(customer.credit_balance, c.creditBalance),
+            loyaltyPoints: n(customer.loyalty_points, c.loyaltyPoints),
           } : c)
         : prev.customers;
       const tradeInUnit = tradeInUnitId && tradeIn ? {
