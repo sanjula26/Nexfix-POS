@@ -90,7 +90,12 @@ export default function SalesHistory() {
       )}
       <div className="card overflow-hidden">
         <div className="p-4 border-b border-line">
-          <div className="flex flex-wrap gap-2 items-center">\n            <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="flex-1 min-w-[240px] max-w-md" />\n            <select className="input w-36" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} aria-label="Filter by payment">\n              <option value="all">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank</option><option value="mobile">Mobile</option><option value="credit">Credit</option>\n            </select>\n            <select className="input w-44" value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} aria-label="Filter by cashier">\n              <option value="all">All cashiers</option>{cashiers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}\n            </select>\n          </div>
+          <div className="flex flex-wrap gap-2 items-center">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="flex-1 min-w-[240px] max-w-md" />\n            <select className="input w-36" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} aria-label="Filter by payment">
+              <option value="all">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank</option><option value="mobile">Mobile</option><option value="credit">Credit</option>
+            </select>\n            <select className="input w-44" value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} aria-label="Filter by cashier">
+              <option value="all">All cashiers</option>{cashiers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}\n            </select>
+          </div>
         </div>
         {rows.length === 0 ? (
           <EmptyState icon={<ReceiptText size={26} />} title="No sales found" sub="Completed bills will appear here" />
@@ -197,7 +202,7 @@ export default function SalesHistory() {
               )}
               {view.tax > 0 && <div className="flex justify-between text-sub"><span>Tax</span><span className="num">{fmtRs(view.tax)}</span></div>}
               {(view.shipping || 0) > 0 && <div className="flex justify-between text-sub"><span>Delivery / other</span><span className="num">{fmtRs(view.shipping || 0)}</span></div>}
-              {(view.pointsRedeemed || 0) > 0 && <div className="flex justify-between text-amber-600 dark:text-amber-400"><span>Loyalty points ({view.pointsRedeemed} pts)</span><span className="num">- {fmtRs((view.pointsRedeemed || 0) * 20)}</span></div>}
+              {(view.pointsRedeemed || 0) > 0 && <div className="flex justify-between text-amber-600 dark:text-amber-400"><span>Loyalty points ({view.pointsRedeemed} pts)</span><span className="num">- {fmtRs((view.pointsRedeemed || 0) * Math.max(0, Number(state.settings.loyaltyPointValue ?? 20)))}</span></div>}
               {can('act:viewCost') && (
                 <div className="flex justify-between text-emerald-500"><span className="flex items-center gap-1.5"><TrendingUp size={13} /> Profit</span><span className="num">{fmtRs(view.profit)}</span></div>
               )}
