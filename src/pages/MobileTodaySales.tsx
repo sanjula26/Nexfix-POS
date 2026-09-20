@@ -65,10 +65,10 @@ export default function MobileTodaySales() {
     };
     void alignShop();
     return () => { cancelled = true; };
-  }, [requestedShopId]);
+  }, [requestedShopId, requestedMachineId]);
 
   useEffect(() => {
-    if (requestedShopId || !requestedMachineId || activeShopId || !supabaseConfigured || !supabase) return;
+    if (requestedShopId || !requestedMachineId || !supabaseConfigured || !supabase) return;
     let cancelled = false;
     const resolveMachineShop = async () => {
       const { data, error } = await supabase
@@ -198,7 +198,7 @@ export default function MobileTodaySales() {
     <main className="min-h-screen bg-[#f5f6fb] text-[#17133c]">
       <div className="mx-auto w-full max-w-xl px-4 py-4 sm:px-6">
         <header className="sticky top-0 z-10 -mx-4 mb-4 flex items-center justify-between border-b border-slate-200 bg-[#f5f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-          <button type="button" onClick={() => navigate('/dashboard')} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-slate-700">
+          <button type="button" onClick={() => navigate('/pos')} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-slate-700">
             <ArrowLeft size={18} /> Back
           </button>
           <div className="text-center">
