@@ -15,7 +15,7 @@ export default function Expenses() {
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ category: 'Rent', note: '', amount: '' });
+  const [form, setForm] = useState({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '' });
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const rows = useMemo(() => {
@@ -78,7 +78,7 @@ export default function Expenses() {
                     <tr key={e.id} className="hover:bg-raised/40 transition-colors">
                       <td className="td text-[13px] text-sub whitespace-nowrap">{fmtDateTime(e.date)}</td>
                       <td className="td"><Badge tone={CAT_TONE[e.category] || 'slate'}>{e.category.toUpperCase()}</Badge></td>
-                      <td className="td text-[13px] font-medium">{e.note}</td>
+                      <td className="td text-[13px] font-medium">{e.note}{(e.periodStart || e.periodEnd) && <div className="text-[10px] text-faint mt-0.5">Period: {e.periodStart || "—"} → {e.periodEnd || "—"}</div>}</td>
                       <td className="td text-[13px] text-sub">{e.by}</td>
                       <td className="td num font-bold text-right text-rose-500">{fmtRs(e.amount)}</td>
                       <td className="td text-right">
@@ -138,7 +138,7 @@ export default function Expenses() {
           <Field label="Note">
             <input className="input" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="e.g. Shop rent - monthly" />
           </Field>
-          <Field label="Amount (Rs.)">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">\n            <Field label="Period start (optional)">\n              <input type="date" className="input" value={form.periodStart} onChange={e => setForm({ ...form, periodStart: e.target.value })} />\n            </Field>\n            <Field label="Period end (optional)">\n              <input type="date" className="input" value={form.periodEnd} min={form.periodStart || undefined} onChange={e => setForm({ ...form, periodEnd: e.target.value })} />\n            </Field>\n          </div>\n          <Field label="Amount (Rs.)">
             <input className="input num" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, '') })} placeholder="0.00" inputMode="decimal" />
           </Field>
           <div className="flex gap-2.5 pt-1">
