@@ -8,7 +8,7 @@ import ReceiptModal from '../components/ReceiptModal';
 import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
-type RangeKey = 'today' | 'week' | 'month' | 'all';
+type RangeKey = 'today' | 'custom' | 'week' | 'month' | 'all';
 
 export default function SalesHistory() {
   const { state, refundSale, can, user, approveBillReverse, rejectBillReverse } = usePOS();
@@ -16,6 +16,8 @@ export default function SalesHistory() {
   const [range, setRange] = useState<RangeKey>('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [cashierFilter, setCashierFilter] = useState('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [view, setView] = useState<Sale | null>(null);
   const [refunding, setRefunding] = useState<Sale | null>(null);
   const [printSale, setPrintSale] = useState<Sale | null>(null);
@@ -24,7 +26,9 @@ export default function SalesHistory() {
   const cashiers = useMemo(() => [...new Map(state.sales.map(s => [s.cashierId, s.cashierName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [state.sales]);
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const [a, b] = periodRange(range === 'all' ? 'all' : range);
+    const [a, b] = range === 'custom'
+      ? [customFrom ? new Date(customFrom + 'T00:00:00') : new Date(0), customTo ? new Date(customTo + 'T23:59:59.999') : new Date()]
+      : periodRange(range === 'all' ? 'all' : range);
     return [...state.sales]
       .sort((x, y) => +new Date(y.date) - +new Date(x.date))
       .filter(s => {
@@ -33,7 +37,7 @@ export default function SalesHistory() {
           (cashierFilter === 'all' || s.cashierId === cashierFilter) &&
           (!q || s.billNo.toLowerCase().includes(q) || s.customerName.toLowerCase().includes(q) || s.cashierName.toLowerCase().includes(q));
       });
-  }, [state.sales, search, range, paymentFilter, cashierFilter]);
+  }, [state.sales, search, range, paymentFilter, cashierFilter, customFrom, customTo]);
 
   const revenue = rows.filter(s => s.status !== 'refunded' && s.status !== 'reversed').reduce((a, s) => a + s.total, 0);
   const refunded = rows.filter(s => s.status === 'refunded').length;
@@ -46,7 +50,7 @@ export default function SalesHistory() {
         title="Sales History"
         sub={`${fmtNum(rows.length)} bills · ${fmtRs(revenue)} revenue${refunded ? ` · ${refunded} refunded` : ''}${reversed ? ` · ${reversed} reversed` : ''}`}
         actions={
-          <div className="flex gap-1.5 bg-raised border border-line rounded-xl p-1">
+          <div className="flex flex-wrap gap-1.5 bg-raised border border-line rounded-xl p-1">
             {(['today', 'week', 'month', 'all'] as RangeKey[]).map(r => (
               <button
                 key={r}
@@ -55,12 +59,21 @@ export default function SalesHistory() {
                   range === r ? 'bg-violet-600 text-white shadow-md shadow-violet-600/30' : 'text-sub hover:text-ink'
                 }`}
               >
-                {{ today: 'Today', week: 'This Week', month: 'This Month', all: 'All Time' }[r]}
+                {{ today: 'Today', custom: 'Custom', week: 'This Week', month: 'This Month', all: 'All Time' }[r]}
               </button>
             ))}
           </div>
         }
       />
+
+      {range === 'custom' && (
+        <div className="card mb-4 p-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-sub">Custom date</span>
+          <input type="date" className="input w-40" value={customFrom} onChange={e => setCustomFrom(e.target.value)} aria-label="Sales from date" />
+          <span className="text-xs text-faint">to</span>
+          <input type="date" className="input w-40" value={customTo} min={customFrom || undefined} onChange={e => setCustomTo(e.target.value)} aria-label="Sales to date" />
+        </div>
+      )}
 
       {user?.role === 'admin' && (state.reverseRequests || []).some(r => r.status === 'pending') && (
         <div className="card mb-4 overflow-hidden border-amber-500/30">
