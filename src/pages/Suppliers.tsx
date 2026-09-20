@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Phone, Mail, Truck, Package } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Modal, Field, EmptyState, PageHeading, Badge } from '../components/ui';
-import { uid, fmtNum } from '../lib/utils';
+import { uid, fmtNum, fmtRs } from '../lib/utils';
+import { getSupplierOutstanding } from '../lib/supplierPayments';
 import type { Supplier } from '../lib/types';
 
 export default function Suppliers() {
@@ -71,7 +72,7 @@ export default function Suppliers() {
               <thead>
                 <tr>
                   <th className="th">Supplier</th><th className="th">Contact</th><th className="th">Address</th>
-                  <th className="th">Products</th><th className="th !text-right">Actions</th>
+                  <th className="th">Products</th><th className="th">Balance</th><th className="th !text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
