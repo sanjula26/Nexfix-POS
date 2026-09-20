@@ -123,6 +123,8 @@ interface StoreCtx {
   exportData: () => string;
   importData: (json: string) => boolean;
   resetData: () => void;
+  /** Reload the current POS data without destroying the authenticated session or route. */
+  refreshPOS: () => Promise<void>;
   /** Phase 2: connectivity + backup */
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
@@ -1823,6 +1825,18 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit('RESET', 'Settings', 'Restored demo seed dataset');
   }, [pushAudit, user]);
 
+  const refreshPOS = useCallback(async () => {
+    try {
+      const fromIdb = idbAvailable() ? await idbLoadState() : null;
+      const refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
+      setState(refreshed);
+      // Deliberately do not touch session/sessionStorage/localStorage auth keys.
+    } catch {
+      const fallback = loadStateFromLocalStorage();
+      if (fallback) setState(fallback);
+    }
+  }, []);
+
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit) => {
     if (!user || !can('page:units')) {
@@ -2114,7 +2128,7 @@ const deletePurchase = useCallback((id: string) => {
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, logAudit, clearAudit,
-    exportData, importData, resetData,
+    exportData, importData, resetData, refreshPOS,
     connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
