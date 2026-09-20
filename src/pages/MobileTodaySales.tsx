@@ -42,13 +42,18 @@ export default function MobileTodaySales() {
         if (!cancelled) { setShopError('Cloud connection is required to resolve this machine link.'); setShopReady(false); }
         return;
       }
-      const { data: authData } = await supabase.auth.getUser();
+      const client = supabase;
+      if (!client) {
+        if (!cancelled) { setShopError('Cloud connection is required to resolve this shop.'); setShopReady(false); }
+        return;
+      }
+      const { data: authData } = await client.auth.getUser();
       const uid = authData.user?.id;
       if (!uid) {
         if (!cancelled) { setShopError('Login session was not found.'); setShopReady(false); }
         return;
       }
-      const { data: membership, error } = await supabase
+      const { data: membership, error } = await client
         .from('shop_memberships')
         .select('shop_id')
         .eq('user_id', uid)
@@ -70,8 +75,10 @@ export default function MobileTodaySales() {
   useEffect(() => {
     if (requestedShopId || !requestedMachineId || !supabaseConfigured || !supabase) return;
     let cancelled = false;
+    const client = supabase;
+    if (!client) return;
     const resolveMachineShop = async () => {
-      const { data, error } = await supabase
+      const { data, error } = await client
         .from('pos_devices')
         .select('shop_id')
         .eq('device_id', requestedMachineId)
@@ -88,7 +95,7 @@ export default function MobileTodaySales() {
     };
     void resolveMachineShop();
     return () => { cancelled = true; };
-  }, [requestedShopId, requestedMachineId, activeShopId]);
+  }, [requestedShopId, requestedMachineId]);
 
   const shopId = activeShopId;
   const machine = getMachineIdentity();
