@@ -92,6 +92,13 @@ export default function MobileTodaySales() {
       // A machine id is not an authorization grant. Verify the logged-in user
       // is an active member of the shop before accepting the machine link.
       const resolvedShopId = String(data.shop_id);
+      const { data: authData } = await client.auth.getUser();
+      const uid = authData.user?.id;
+      if (!uid) {
+        setShopError('Login session was not found.');
+        setShopReady(false);
+        return;
+      }
       const { data: membership, error: membershipError } = await client
         .from('shop_memberships')
         .select('shop_id')
