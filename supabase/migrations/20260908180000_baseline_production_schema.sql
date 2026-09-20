@@ -73,7 +73,7 @@ create index if not exists idx_units_status on public.inventory_units(status);
 create table if not exists public.customers (
   id uuid primary key default uuid_generate_v4(), shop_id uuid not null references public.shops(id) on delete cascade,
   name text not null, phone text, email text, nic text, address text,
-  credit_balance numeric(12,2) default 0, loyalty_points int default 0, notes text,
+  credit_balance numeric(12,2) default 0, credit_limit numeric(12,2) not null default 0, loyalty_points int default 0, notes text,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
 create index if not exists idx_customers_phone on public.customers(phone);
