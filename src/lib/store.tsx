@@ -1072,11 +1072,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const lineDiscount = items.reduce((sum, it) => sum + (it.discount || 0), 0);
     const subtotal = grossTotal - lineDiscount;
     const discount = Math.min(input.discount || 0, subtotal);
-    const tax = Math.round(((subtotal - discount) * (input.taxPct || 0)) / 100 * 100) / 100;
     const shipping = Math.max(0, input.shipping || 0);
-    // Trade-in credit is applied against the merchandise subtotal after manual discount,
-    // matching the cloud atomic-sale contract and preventing local/cloud total drift.
+    // Trade-in is sent to cloud as an additional discount, so calculate tax on the
+    // same post-trade-in taxable base locally to prevent local/cloud total drift.
     const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
+    const taxableSubtotal = Math.max(0, subtotal - discount - tradeInValue);
+    const tax = Math.round((taxableSubtotal * (input.taxPct || 0)) / 100 * 100) / 100;
     const cust = input.customerId ? s.customers.find(c => c.id === input.customerId) : undefined;
     const pointsRedeemed = Math.min(
       Math.max(0, Math.floor(input.pointsRedeemed || 0)),
