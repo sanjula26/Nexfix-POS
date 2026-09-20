@@ -1,16 +1,13 @@
 -- Prevent duplicate product lines from bypassing aggregate stock validation,
 -- and prevent the same tracked IMEI/serial from being sold twice in one atomic sale.
 do $$
-declare d text;
+declare d text; loop_pos int; loop_text text := 'for v_line in select value from jsonb_array_elements(p_lines) loop'; block text;
 begin
   select pg_get_functiondef(p.oid) into d
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='private' and p.proname='complete_sale_atomic' limit 1;
   if d is null then raise exception 'private.complete_sale_atomic not found'; end if;
-  if position('Duplicate product quantities in sale request exceed available stock' in d)=0 then
-    d:=replace(d,
-      'for v_line in select value from jsonb_array_elements(p_lines) loop',
-      $ins$
+  block := $ins$
 if exists (
   select 1 from (
     select (value->>'product_id')::uuid as product_id, sum((value->>'qty')::numeric) as requested_qty
@@ -30,8 +27,11 @@ if exists (
 ) then
   raise exception 'An IMEI/serial unit cannot be sold more than once in the same sale';
 end if;
-for v_line in select value from jsonb_array_elements(p_lines) loop
-$ins$);
+$ins$;
+  if position('Duplicate product quantities in sale request exceed available stock' in d)=0 then
+    loop_pos:=position(loop_text in d);
+    if loop_pos=0 then raise exception 'Sale validation loop not found'; end if;
+    d:=left(d,loop_pos-1)||block||loop_text||substring(d from loop_pos+length(loop_text));
   end if;
   if position('An IMEI/serial unit cannot be sold more than once in the same sale' in d)=0 then raise exception 'Sale validation insertion failed'; end if;
   execute d;
