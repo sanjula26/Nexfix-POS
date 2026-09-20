@@ -34,28 +34,21 @@ export default function TodaySalesLinks() {
   useEffect(() => { void load(); }, [load]);
 
   const source = remoteState || state;
-  const machines = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; sales: number }>();
-    map.set(currentMachine.id, { id: currentMachine.id, name: currentMachine.name, sales: 0 });
-    for (const sale of source.sales) {
-      if (!sale.machineId) continue;
-      const existing = map.get(sale.machineId);
-      if (existing) existing.sales += 1;
-      else map.set(sale.machineId, { id: sale.machineId, name: sale.machineName || sale.machineId, sales: 1 });
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [source.sales, currentMachine.id, currentMachine.name]);
+  const currentMachineSales = useMemo(
+    () => source.sales.filter(s => s.machineId === currentMachine.id).length,
+    [source.sales, currentMachine.id],
+  );
 
   const base = typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '';
-  const linkFor = (machineId: string) => shopId
-    ? `${base}#/today?shop=${encodeURIComponent(shopId)}&machine=${encodeURIComponent(machineId)}`
+  const phoneLink = shopId
+    ? base + '#/today?shop=' + encodeURIComponent(shopId) + '&machine=' + encodeURIComponent(currentMachine.id)
     : '';
 
-  const copy = async (link: string, name: string) => {
+  const copy = async (link: string) => {
     if (!link) return;
     try {
       await navigator.clipboard.writeText(link);
-      setMessage(`${name} link copied.`);
+      setMessage('Current POS machine link copied.');
       window.setTimeout(() => setMessage(''), 1800);
     } catch { setMessage('Link copy කරන්න බැරි විය.'); }
   };
@@ -93,29 +86,21 @@ export default function TodaySalesLinks() {
           <p className="mt-2 text-xs leading-relaxed text-slate-600">මෙම machine එකේ POS එකෙන්ම මේ page එක open කළාම ඒ machine එකේ unique ID එක automatically link එකට යනවා.</p>
         </section>
 
-        <div className="space-y-3">
-          {machines.map(machine => {
-            const link = linkFor(machine.id);
-            return (
-              <section key={machine.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Smartphone size={19} /></div>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-black">{machine.name}</div>
-                    <div className="mt-1 break-all text-[11px] text-slate-500">{machine.id} · {machine.sales} recorded sale{machine.sales === 1 ? '' : 's'}</div>
-                    <div className="mt-3 break-all rounded-xl bg-slate-50 p-3 text-[11px] font-semibold text-slate-700">{link || 'Cloud shop ID not configured'}</div>
-                    <div className="mt-3 flex gap-2">
-                      <button type="button" onClick={() => void copy(link, machine.name)} disabled={!link} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-bold text-white disabled:opacity-50"><Copy size={15} /> Copy link</button>
-                      {link && <a href={link.replace(window.location.origin + window.location.pathname, '')} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700"><ExternalLink size={15} /> Open</a>}
-                    </div>
-                  </div>
-                </div>
-              </section>
-            );
-          })}
-        </div>
-
-        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">Admin-only link manager. Each link contains both the shop ID and the POS machine ID, so sales from different terminals remain separated.</p>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Smartphone size={19} /></div>
+            <div className="min-w-0 flex-1">
+              <div className="font-black">{currentMachine.name}</div>
+              <div className="mt-1 break-all text-[11px] text-slate-500">{currentMachine.id} · {currentMachineSales} recorded sale{currentMachineSales === 1 ? '' : 's'}</div>
+              <div className="mt-3 break-all rounded-xl bg-slate-50 p-3 text-[11px] font-semibold text-slate-700">{phoneLink || 'Cloud shop ID not configured'}</div>
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={() => void copy(phoneLink)} disabled={!phoneLink} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-bold text-white disabled:opacity-50"><Copy size={15} /> Copy my machine link</button>
+                {phoneLink && <a href={phoneLink.replace(window.location.origin + window.location.pathname, '')} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700"><ExternalLink size={15} /> Open</a>}
+              </div>
+            </div>
+          </div>
+        </section>
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">This shop account can access only this shop, and this page exposes only the current POS machine's stable link. Owner-level cross-shop link management is kept outside the shop UI.</p>
       </div>
     </main>
   );
