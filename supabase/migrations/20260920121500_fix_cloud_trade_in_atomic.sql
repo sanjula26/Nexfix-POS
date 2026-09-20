@@ -168,16 +168,16 @@ begin
     foreach v_id in array v_unit_ids loop update public.inventory_units set status='returned',sale_id=null,sale_bill_no=null,sold_at=null where id=v_id and shop_id=p_shop_id; end loop;
   end loop;
   if v_full_return then
+    update public.products p
+       set stock=greatest(0,p.stock-1),updated_at=now()
+     where p.shop_id=p_shop_id
+       and p.id in (
+         select iu.product_id from public.inventory_units iu
+         where iu.shop_id=p_shop_id and iu.sale_id=v_sale.id and iu.status='in_stock' and iu.note='Trade-in'
+       );
     update public.inventory_units
        set status='returned',sale_id=null,sale_bill_no=null,sold_at=null
      where shop_id=p_shop_id and sale_id=v_sale.id and status='in_stock' and note='Trade-in';
-    update public.products p
-       set stock=greatest(0,p.stock-1),updated_at=now()
-     where p.shop_id=p_shop_id and p.id in (
-       select iu.product_id from public.inventory_units iu
-       where iu.shop_id=p_shop_id and iu.sale_id is null and iu.status='returned' and iu.note='Trade-in'
-         and iu.created_at >= now()-interval '1 minute'
-     );
   end if;
   if v_sale.customer_id is not null then
     v_credit_due:=greatest(0,coalesce(v_sale.total,0)-coalesce(v_sale.amount_paid,0));
