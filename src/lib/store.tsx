@@ -2036,15 +2036,17 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Repair', 'Blocked repair status update without repairs access');
       return;
     }
+    const allowed: RepairStatus[] = ['received', 'diagnosed', 'waiting_parts', 'in_repair', 'ready', 'delivered', 'cancelled'];
+    if (!allowed.includes(status)) return;
+    const now = new Date().toISOString();
     setState(s => ({
       ...s,
       repairs: (s.repairs || []).map(j => {
         if (j.id !== id) return j;
         const next = { ...j, ...patch, status };
-        if (status === 'ready' || status === 'delivered') {
-          if (!next.completedAt) next.completedAt = new Date().toISOString();
-        }
-        if (status === 'delivered') next.deliveredAt = new Date().toISOString();
+        if ((status === 'ready' || status === 'delivered') && !next.completedAt) next.completedAt = now;
+        if (status === 'delivered' && !next.deliveredAt) next.deliveredAt = now;
+        if (status !== 'delivered') next.deliveredAt = undefined;
         return next;
       }),
     }));
