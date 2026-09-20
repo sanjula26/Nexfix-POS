@@ -28,7 +28,8 @@ export default function TodaySalesLinks() {
       }
       setShopId(resolvedShopId);
       const snapshot = await downloadStateSnapshot();
-      if (snapshot) setRemoteState(snapshot.state);
+      if (!snapshot) throw new Error('Cloud snapshot unavailable');
+      setRemoteState(snapshot.state);
       setMessage('');
     } catch {
       setMessage('Cloud sync unavailable. The machine link is still available.');
@@ -39,10 +40,11 @@ export default function TodaySalesLinks() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const source = remoteState || state;
+  const cloudDataUnavailable = Boolean(shopId) && !remoteState;
+  const source = shopId ? remoteState : state;
   const currentMachineSales = useMemo(
-    () => source.sales.filter(s => s.machineId === currentMachine.id).length,
-    [source.sales, currentMachine.id],
+    () => source?.sales.filter(s => s.machineId === currentMachine.id).length ?? 0,
+    [source?.sales, currentMachine.id],
   );
 
   const base = typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '';
@@ -98,7 +100,9 @@ export default function TodaySalesLinks() {
             <div className="mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Smartphone size={19} /></div>
             <div className="min-w-0 flex-1">
               <div className="font-black">{currentMachine.name}</div>
-              <div className="mt-1 break-all text-[11px] text-slate-500">{currentMachine.id} · {currentMachineSales} recorded sale{currentMachineSales === 1 ? '' : 's'}</div>
+              <div className="mt-1 break-all text-[11px] text-slate-500">
+                {currentMachine.id} · {cloudDataUnavailable ? 'Cloud sales unavailable' : `${currentMachineSales} recorded sale${currentMachineSales === 1 ? '' : 's'}`}
+              </div>
               <div className="mt-3 break-all rounded-xl bg-slate-50 p-3 text-[11px] font-semibold text-slate-700">{phoneLink || 'Link will be available'}</div>
               <div className="mt-3 flex gap-2">
                 <button type="button" onClick={() => void copy(phoneLink)} disabled={!phoneLink} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-xs font-bold text-white disabled:opacity-50"><Copy size={15} /> Copy Machine Link</button>
