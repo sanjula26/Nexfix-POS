@@ -1,5 +1,6 @@
 import type { POSState } from './types';
 import { supabase, supabaseConfigured } from './supabase';
+import { getMachineIdentity } from './machine';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -13,6 +14,8 @@ function storage(): Storage | null {
 }
 
 function deviceId(): string {
+  const machineId = getMachineIdentity().id;
+  if (machineId) return machineId;
   const s = storage();
   try {
     const existing = s?.getItem(DEVICE_KEY)?.trim();
