@@ -339,7 +339,19 @@ async function persistState(state: POSState): Promise<void> {
     // cloud transaction commit and the debounced local state write.
     if (saved) {
       try {
-        const pendingKey = 'nexfix_pending_cloud_sale_v2';
+        const tradeIn = input.tradeIn;
+    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
+    const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
+    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn?.addToInventory) {
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
+      if (duplicate) return null;
+    }
+    const pendingKey = 'nexfix_pending_cloud_sale_v2';
         const raw = localStorage.getItem(pendingKey);
         if (raw) {
           const pending = JSON.parse(raw) as { saleId?: string };
@@ -1172,7 +1184,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
       lines: input.lines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
-      customerId: input.customerId || null, discount: input.discount || 0, taxPct: input.taxPct || 0,
+      customerId: input.customerId || null, discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct || 0,
       shipping: input.shipping || 0, pointsRedeemed: input.pointsRedeemed || 0,
       payment: input.payment, amountPaid: input.amountPaid,
       payments: (input.payments || []).map(p => ({ method: p.method, amount: p.amount })),
@@ -1194,13 +1206,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       : [{ method: input.payment, amount: input.amountPaid }];
     const cloud = await completeSaleAtomic({
       shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
-      discount: input.discount, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
+      discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: input.salesmanId || user.id,
       lines: input.lines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
     });
     if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) return null;
     const committed = cloud.committed;
+    if (tradeIn?.addToInventory) {
+      const cloudProducts = state.products.map(p => {
+        const remote = cloud.committed!.products.find(x => String(x.id) === p.id);
+        const base = remote ? { ...p, stock: Number(remote.stock ?? p.stock) } : p;
+        return base.id === tradeIn.productId ? { ...base, stock: base.stock + 1 } : base;
+      });
+      const cloudUnits = [
+        ...(state.units || []),
+        { id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: new Date().toISOString() },
+      ];
+      void syncNormalizedCatalog({ ...state, products: cloudProducts, units: cloudUnits }, shop.shopId);
+    }
 
     const row = committed.sale;
     const n = (v: unknown, fallback = 0) => { const x = Number(v); return Number.isFinite(x) ? x : fallback; };
@@ -1230,7 +1254,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payment: paymentRows.length > 1 ? paymentRows[0].method : (paymentRows[0]?.method || input.payment),
       payments: paymentRows.length > 1 ? paymentRows : undefined,
       pointsRedeemed: n(row.points_redeemed) || undefined, pointsEarned: n(row.points_earned) || undefined,
-      note: row.note ? String(row.note) : undefined, amountPaid: n(row.amount_paid), change: n(row.change_amount),
+      note: row.note ? String(row.note) : undefined,
+      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined } : undefined, amountPaid: n(row.amount_paid), change: n(row.change_amount),
       profit: n(row.profit), status: 'completed',
     };
 
@@ -1265,7 +1290,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             creditBalance: n(customer.credit_balance, c.creditBalance), loyaltyPoints: n(customer.loyalty_points, c.loyaltyPoints),
           } : c)
         : prev.customers;
-      const updatedUnits = (prev.units || []).map(u => {
+      const tradeInUnit = tradeIn?.addToInventory ? {
+        id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+        status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
+      } : undefined;
+      const updatedUnits = [
+        ...(tradeInUnit ? [tradeInUnit] : []),
+        ...(prev.units || []).map(u => {
         const remote = unitRows.get(u.id);
         if (!remote) return u;
         return {
@@ -1276,7 +1307,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           cost: remote.cost == null ? u.cost : n(remote.cost), warrantyExpiresAt: remote.warranty_expires_at ? String(remote.warranty_expires_at) : u.warrantyExpiresAt,
           note: remote.note ? String(remote.note) : u.note,
         };
-      });
+      }),
+      ];
+      if (tradeInUnit) {
+        productUpdates.set(tradeInUnit.productId, { ...productUpdates.get(tradeInUnit.productId)!, stock: (productUpdates.get(tradeInUnit.productId)?.stock || 0) + 1 });
+      }
       return {
         ...prev, products: prev.products.map(p => productUpdates.get(p.id) || p), customers: updatedCustomers, units: updatedUnits,
         sales: [sale, ...prev.sales], counters: { ...prev.counters, bill: Math.max(prev.counters.bill, maxSaleSeq, Number.isFinite(billSeq) ? billSeq : 0) + 1 },
