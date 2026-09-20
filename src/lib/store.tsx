@@ -17,7 +17,7 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog } from './cloudSync';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1246,16 +1246,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) return null;
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
-      const cloudProducts = state.products.map(p => {
-        const remote = cloud.committed!.products.find(x => String(x.id) === p.id);
-        const base = remote ? { ...p, stock: Number(remote.stock ?? p.stock) } : p;
-        return base.id === tradeIn.productId ? { ...base, stock: base.stock + 1 } : base;
+      const tradeInCloud = await registerTradeInAtomic({
+        shopId: shop.shopId,
+        saleId,
+        unitId: tradeInUnitId!,
+        productId: tradeIn.productId,
+        value: tradeInValue,
+        imei: tradeIn.imei?.trim() || undefined,
+        serial: tradeIn.serial?.trim() || undefined,
       });
-      const cloudUnits = [
-        ...(state.units || []),
-        { id: tradeInUnitId!, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: new Date().toISOString() },
-      ];
-      void syncNormalizedCatalog({ ...state, products: cloudProducts, units: cloudUnits }, shop.shopId);
+      if (!tradeInCloud.ok) return null;
     }
 
     const row = committed.sale;
