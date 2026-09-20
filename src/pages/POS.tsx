@@ -12,7 +12,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
-import { fmtRs, dkey, timeAgo, uid, POINT_VALUE, salePayments, waLink } from '../lib/utils';
+import { fmtRs, dkey, timeAgo, uid, salePayments, waLink } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
 
@@ -223,7 +223,8 @@ export default function POS() {
   const maxRedeem = customer?.loyaltyPoints || 0;
   const redeemedPts = redeemOn ? Math.min(Math.max(0, Math.floor(parseFloat(points) || 0)), maxRedeem) : 0;
   const preTotal = taxable + tax + shipAmt;
-  const pointsVal = Math.min(redeemedPts * POINT_VALUE, preTotal);
+  const loyaltyPointValue = Math.max(0, Number(state.settings.loyaltyPointValue ?? 20));
+  const pointsVal = Math.min(redeemedPts * loyaltyPointValue, preTotal);
   const total = Math.max(0, Math.round((preTotal - pointsVal) * 100) / 100);
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
@@ -999,7 +1000,7 @@ export default function POS() {
                 </div>
                 {redeemOn && redeemedPts > 0 && (
                   <div className="text-right text-[11px] font-bold text-amber-600 dark:text-amber-400 num mt-1">
-                    − {fmtRs(pointsVal)} ({redeemedPts} pts × Rs. {POINT_VALUE})
+                    − {fmtRs(pointsVal)} ({redeemedPts} pts × Rs. {loyaltyPointValue})
                   </div>
                 )}
               </div>
