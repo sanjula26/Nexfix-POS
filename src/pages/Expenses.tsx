@@ -41,7 +41,7 @@ export default function Expenses() {
     if (amount <= 0) return;
     addExpense({ category: form.category, note: form.note.trim() || form.category, amount });
     setCreating(false);
-    setForm({ category: 'Rent', note: '', amount: '' });
+    setForm({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '' });
   };
 
   return (
