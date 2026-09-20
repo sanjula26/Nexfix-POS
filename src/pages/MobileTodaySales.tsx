@@ -6,12 +6,15 @@ import { fmtRs, fmtDateTime, dkey, salePaymentLabel } from '../lib/utils';
 import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cloudSync';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import type { POSState } from '../lib/types';
+import { getMachineIdentity } from '../lib/machine';
 
 export default function MobileTodaySales() {
   const { state, signOut, verifyAdminPin } = usePOS();
   const navigate = useNavigate();
   const location = useLocation();
-  const requestedShopId = new URLSearchParams(location.search).get('shop')?.trim() || '';
+  const query = new URLSearchParams(location.search);
+  const requestedShopId = query.get('shop')?.trim() || '';
+  const requestedMachineId = query.get('machine')?.trim() || '';
   const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId());
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
@@ -61,8 +64,10 @@ export default function MobileTodaySales() {
   }, [requestedShopId]);
 
   const shopId = getCloudShopId();
+  const machine = getMachineIdentity();
+  const machineId = requestedMachineId || machine.id;
   const phoneLink = shopId && typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}`
+    ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}&machine=${encodeURIComponent(machineId)}`
     : '';
 
   const submitPin = () => {
@@ -112,7 +117,7 @@ export default function MobileTodaySales() {
   const usingCloud = !!remoteState;
   const sales = useMemo(
     () => sourceState.sales
-      .filter(s => dkey(new Date(s.date)) === selectedDate)
+      .filter(s => dkey(new Date(s.date)) === selectedDate && (!requestedMachineId || s.machineId === machineId))
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
     [sourceState.sales, selectedDate],
   );
@@ -169,12 +174,12 @@ export default function MobileTodaySales() {
         </header>
 
         <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-violet-700">Phone link — මෙම shop එක</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-violet-700">Phone link — {machine.name}</div>
           <div className="mt-1 break-all text-xs font-semibold text-slate-700">{phoneLink || 'Shop ID not configured'}</div>
           <button type="button" onClick={() => void copyPhoneLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
             {copied ? 'Link copied' : 'Copy phone link'}
           </button>
-          <div className="mt-2 text-[11px] leading-relaxed text-slate-500">Link එකේ shop ID එකෙන් කඩය හඳුනාගන්නවා. Login වුණු user ට එම shop එකේ active membership තිබිය යුතුයි.</div>
+          <div className="mt-2 text-[11px] leading-relaxed text-slate-500">මෙම link එකේ shop + machine ID දෙකම තිබෙන නිසා වෙනත් POS machine එකක sales mix වෙන්නේ නැහැ.</div>
         </section>
 
         <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
