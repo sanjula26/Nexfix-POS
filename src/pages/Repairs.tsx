@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import {
-  Wrench, Plus, Trash2, ChevronRight, Phone, Laptop, Monitor,
+  Wrench, Plus, Trash2, ChevronRight, Phone, Laptop, Monitor, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
-import { fmtDate, fmtRs, uid } from '../lib/utils';
+import { fmtDate, fmtRs, uid, waLink } from '../lib/utils';
 import type { RepairJob, RepairStatus, RepairPart } from '../lib/types';
 
 const PIPELINE: RepairStatus[] = ['received', 'diagnosed', 'waiting_parts', 'in_repair', 'ready', 'delivered'];
@@ -119,13 +119,13 @@ export default function Repairs() {
             <div className="flex items-start gap-3 flex-1 min-w-0"><div className="w-10 h-10 rounded-xl bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0">{j.deviceType === 'Laptop' ? <Laptop size={18} /> : j.deviceType === 'Desktop' ? <Monitor size={18} /> : <Phone size={18} />}</div>
               <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-bold text-ink">{j.jobNo}</span><Badge tone={(TONE[j.status] as any) || 'slate'}>{STATUS_LABEL[j.status]}</Badge></div>
                 <div className="text-[13px] text-ink mt-0.5 truncate">{j.deviceBrand} {j.deviceModel}<span className="text-faint"> · {j.customerName}</span></div><div className="text-[12px] text-faint mt-0.5 truncate">{j.fault}</div>
-                <div className="text-[11px] text-faint mt-1">Received {fmtDate(j.receivedAt)}{j.promisedAt ? ` · promised ${fmtDate(j.promisedAt)}` : ''}{j.imei ? ` · IMEI ${j.imei}` : ''}{j.serial ? ` · S/N ${j.serial}` : ''}</div>
+                <div className="text-[11px] text-faint mt-1">Received {fmtDate(j.receivedAt)}{j.promisedAt ? ` · promised ${fmtDate(j.promisedAt)}` : ''}{j.imei ? ` · IMEI ${j.imei}` : ''}{j.serial ? ` · S/N ${j.serial}` : ''}</div>{j.status === 'ready' && j.notifyReadyNote && <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 truncate">Ready note: {j.notifyReadyNote}</div>}
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0"><div className="text-right mr-1"><div className="font-bold text-ink num text-[14px]">{fmtRs(totalFor(j), false)}</div><div className="text-[10px] text-faint">parts + labor</div></div>
               {j.status !== 'delivered' && j.status !== 'cancelled' && <select className="input !py-1.5 !text-[12px] w-36" value={j.status} onChange={e => updateRepairStatus(j.id, e.target.value as RepairStatus)}>{PIPELINE.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}<option value="cancelled">Cancelled</option></select>}
               <button className="icon-btn !w-8 !h-8" onClick={() => { setEditing({ ...j }); setIsNew(false); setPartProductId(''); setPartQty(1); }}><ChevronRight size={16} /></button>
-              {can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!text-rose-500" onClick={() => deleteRepair(j.id)}><Trash2 size={14} /></button>}
+              {j.status === 'ready' && j.customerPhone && <button type="button" className="icon-btn !w-8 !h-8 hover:!text-emerald-500" title="Send ready notification" onClick={() => { const msg = j.notifyReadyNote?.trim() || `Hello ${j.customerName}, your ${j.deviceBrand} ${j.deviceModel} repair (${j.jobNo}) is ready for collection.`; window.open(waLink(j.customerPhone!, msg), '_blank', 'noopener'); }}><MessageCircle size={14} /></button>}{can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!text-rose-500" onClick={() => deleteRepair(j.id)}><Trash2 size={14} /></button>}
             </div>
           </div>)}
         </div>}
@@ -144,7 +144,7 @@ export default function Repairs() {
           <div className="grid grid-cols-3 gap-2"><Field label="Labor (Rs)"><input className="input num" type="number" min="0" step="0.01" value={editing.laborCost} onChange={e => setEditing({ ...editing, laborCost: Number(e.target.value) || 0 })} /></Field>
             <Field label="Advance paid"><input className="input num" type="number" min="0" step="0.01" value={editing.advancePaid || 0} onChange={e => setEditing({ ...editing, advancePaid: Number(e.target.value) || 0 })} /></Field>
             <Field label="Warranty days"><input className="input num" type="number" min="0" step="1" value={editing.warrantyDays || 0} onChange={e => setEditing({ ...editing, warrantyDays: Number(e.target.value) || 0 })} /></Field></div>
-          <Field label="Promised date"><input className="input" type="date" value={editing.promisedAt?.slice(0, 10) || ''} onChange={e => setEditing({ ...editing, promisedAt: e.target.value || undefined })} /></Field>
+          <Field label="Promised date"><input className="input" type="date" value={editing.promisedAt?.slice(0, 10) || ''} onChange={e => setEditing({ ...editing, promisedAt: e.target.value || undefined })} /></Field>\n          <Field label="Ready notification note" hint="Optional message used by the WhatsApp notify button when the job is ready"><textarea className="input min-h-[64px] resize-y" value={editing.notifyReadyNote || ''} onChange={e => setEditing({ ...editing, notifyReadyNote: e.target.value })} placeholder="Your repair is ready for collection. Thank you." /></Field>
 
           <div className="rounded-xl border border-line p-3"><div className="text-[12px] font-bold text-ink mb-2">Parts used</div>
             {editing.parts.length === 0 && <div className="text-[12px] text-faint py-1">No inventory parts attached.</div>}
