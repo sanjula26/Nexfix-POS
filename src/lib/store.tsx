@@ -1125,7 +1125,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pointsEarned: pointsEarned || undefined,
       amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
       profit,
-      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined } : undefined,
+      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, unitId: tradeInUnitId } : undefined,
       status: 'completed',
     };
 
@@ -1138,8 +1138,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const qty = (hasKitBom ? 0 : directQty) + kitComponentQty;
       return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
-    const tradeInUnit = tradeIn?.addToInventory ? {
-      id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
+    const tradeInUnit = tradeInUnitId ? {
+      id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
       status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
     } : undefined;
     const productsAfterTradeIn = tradeInUnit
@@ -1268,7 +1269,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments: paymentRows.length > 1 ? paymentRows : undefined,
       pointsRedeemed: n(row.points_redeemed) || undefined, pointsEarned: n(row.points_earned) || undefined,
       note: row.note ? String(row.note) : undefined,
-      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined } : undefined, amountPaid: n(row.amount_paid), change: n(row.change_amount),
+      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, unitId: tradeInUnitId } : undefined, amountPaid: n(row.amount_paid), change: n(row.change_amount),
       profit: n(row.profit), status: 'completed',
     };
 
@@ -1303,8 +1304,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             creditBalance: n(customer.credit_balance, c.creditBalance), loyaltyPoints: n(customer.loyalty_points, c.loyaltyPoints),
           } : c)
         : prev.customers;
-      const tradeInUnit = tradeIn?.addToInventory ? {
-        id: tradeInUnitId!, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+      const tradeInUnit = tradeInUnitId ? {
+        id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
         status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
       } : undefined;
       const updatedUnits = [
