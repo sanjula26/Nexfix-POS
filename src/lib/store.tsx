@@ -171,6 +171,9 @@ function applyInventoryLedger(
     for (const sale of next.sales) if (!ids.has(sale.id)) for (const item of sale.items) if (item.qty > 0) {
       add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
     }
+    for (const sale of next.sales) if (!ids.has(sale.id) && sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.value > 0) {
+      add({ id: 'inv:trade-in:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: 1, referenceId: sale.id, referenceNo: sale.billNo, unitIds: undefined, reason: `Trade-in value Rs. ${sale.tradeIn.value}` });
+    }
   }
 
   if (operation === 'SALE_REVERSAL') {
@@ -836,7 +839,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const current = s.products.find(x => x.id === id);
       if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
       const updatedProducts = s.products.map(x => x.id === id ? { ...x, stock: x.stock + amount } : x);
-      syncToGoogleDrive('Products', updatedProducts);
+      syncToGoogleDrive('Products', productsAfterTradeIn);
       return { ...s, products: updatedProducts };
     });
     pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
