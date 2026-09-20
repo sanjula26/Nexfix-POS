@@ -5,23 +5,23 @@ import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../component
 import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
 import type { Purchase, PurchaseReturn } from '../lib/types';
 
-interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }
+interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }\n\nfunction escapeHtml(value: unknown): string {\n  return String(value ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#39;');\n}
 
 function printDebitNote(dn: PurchaseReturn, shopName: string) {
   const w = window.open('', '_blank', 'width=800,height=600');
   if (!w) return;
   const rows = dn.items.filter(i => i.qty > 0).map(i =>
-    `<tr><td>${i.name}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">Rs.${i.cost.toLocaleString('en-US',{minimumFractionDigits:2})}</td><td style="text-align:right">Rs.${(i.qty*i.cost).toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`
+    `<tr><td>${escapeHtml(i.name)}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">Rs.${i.cost.toLocaleString('en-US',{minimumFractionDigits:2})}</td><td style="text-align:right">Rs.${(i.qty*i.cost).toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`
   ).join('');
   w.document.write(`<!DOCTYPE html><html><head><title>Debit Note ${dn.dnNo}</title>
   <style>body{font-family:Arial,sans-serif;font-size:13px;margin:24px}h2{margin:0 0 4px}p{margin:2px 0;color:#555}
   table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:6px 10px;font-size:12px}
   th{background:#f5f5f5;font-weight:600}.total{font-weight:700}@media print{button{display:none}}</style></head><body>
-  <h2>${shopName}</h2>
-  <p><strong>DEBIT NOTE</strong> &nbsp;|&nbsp; <strong>${dn.dnNo}</strong></p>
+  <h2>${escapeHtml(shopName)}</h2>
+  <p><strong>DEBIT NOTE</strong> &nbsp;|&nbsp; <strong>${escapeHtml(dn.dnNo)}</strong></p>
   <p>Date: ${fmtDate(dn.date)}</p>
-  <p>Supplier: ${dn.supplierName}</p>
-  <p>Reason: ${dn.reason}</p>
+  <p>Supplier: ${escapeHtml(dn.supplierName)}</p>
+  <p>Reason: ${escapeHtml(dn.reason)}</p>
   <table><thead><tr><th>Item</th><th>Return Qty</th><th>Unit Cost</th><th>Total</th></tr></thead>
   <tbody>${rows}</tbody>
   <tfoot><tr><td colspan="3" style="text-align:right;font-weight:700">Total Debit</td>
