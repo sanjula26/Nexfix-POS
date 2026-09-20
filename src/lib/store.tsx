@@ -1249,6 +1249,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, completeSale]);
 
   const refundSale = useCallback((saleId: string) => {
+    if (!user || !can('act:refund')) {
+      pushAudit('DENIED', 'Sale', 'Blocked refund without refund permission');
+      return;
+    }
     const sale = state.sales.find(x => x.id === saleId);
     if (!sale || sale.status !== 'completed') return;
 
@@ -1308,11 +1312,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
     });
     pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${sale.items.flatMap(it => it.unitIds || []).length ? ` · tracked unit(s) returned` : ''}`);
-  }, [state.sales, state.exchanges, state.units, pushAudit]);
+  }, [state.sales, state.exchanges, state.units, pushAudit, user, can]);
 
   /* ---------------- admin-approved bill reversal ---------------- */
   const requestBillReverse = useCallback((saleId: string, reason: string): boolean => {
-    if (!user) return false;
+    if (!user || !can('page:sales')) {
+      pushAudit('DENIED', 'Sale', 'Blocked bill-reversal request without sales-history access');
+      return false;
+    }
     const sale = state.sales.find(x => x.id === saleId);
     const note = reason.trim();
     if (!sale || sale.status !== 'completed' || !note) return false;
@@ -1321,7 +1328,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, reverseRequests: [req, ...(s.reverseRequests || [])] }));
     pushAudit('REVERSE-REQUEST', 'Sale', `Reverse requested for ${sale.billNo} · ${note}`);
     return true;
-  }, [state.sales, state.reverseRequests, user, pushAudit]);
+  }, [state.sales, state.reverseRequests, user, pushAudit, can]);
 
   const approveBillReverse = useCallback((requestId: string): boolean => {
     if (user?.role !== 'admin') return false;
@@ -1574,7 +1581,10 @@ const deletePurchase = useCallback((id: string) => {
   /* ---------------- exchanges ---------------- */
   const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => {
     const sale = state.sales.find(x => x.id === saleId);
-    if (!user || !sale || sale.status !== 'completed' || returns.length === 0) return;
+    if (!user || !can('page:exchanges') || !sale || sale.status !== 'completed' || returns.length === 0) {
+      if (user && !can('page:exchanges')) pushAudit('DENIED', 'Exchange', 'Blocked exchange without exchanges access');
+      return;
+    }
     if (mode === 'refund' && !can('act:refund')) return;
     const ageMs = Date.now() - new Date(sale.date).getTime();
     if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > state.settings.exchangeDays * 86400000) return;
