@@ -6,7 +6,7 @@ import {
   ArrowLeftRight, Wallet, BarChart3, Tags, UserPlus, ShieldCheck, UserCog,
   Landmark, KeyRound, ScrollText, Settings, LogOut, Globe, Sparkles, Eye,
   EyeOff, Wifi, Activity, Bell, Sun, Moon, Menu, X, Lock, LockKeyhole,
-  Loader2, AlertCircle, ShieldAlert, Wrench, Cpu, Search, FileText,
+  Loader2, AlertCircle, ShieldAlert, Wrench, Cpu, Search, FileText, RefreshCw,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { fmtNum } from '../lib/utils';
@@ -447,6 +447,9 @@ export default function AppLayout() {
               </span>
             </button>
           )}
+          <button type="button" className="icon-btn border !border-line bg-raised" onClick={() => navigate(0)} aria-label="Refresh POS" title="Deep refresh POS">
+            <RefreshCw size={16} />
+          </button>
           <button type="button" className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors" title="Command palette (Ctrl+K)" onClick={() => window.dispatchEvent(new Event('nexfix:open-palette'))}>
             <Search size={13} /><span className="hidden md:inline">Search</span><kbd className="text-[9px] font-mono opacity-70 border border-line rounded px-1">⌘K</kbd>
           </button>
