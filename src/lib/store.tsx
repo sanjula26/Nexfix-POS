@@ -1085,9 +1085,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     );
     const loyaltyPointValue = Math.max(0, Number(s.settings.loyaltyPointValue ?? POINT_VALUE));
     const pointsValue = pointsRedeemed * loyaltyPointValue;
-    const preTotal = subtotal - discount + tax + shipping;
+    const preTotal = taxableSubtotal + tax + shipping;
     const appliedPointsValue = Math.min(pointsValue, Math.max(0, preTotal));
-    const total = Math.max(0, Math.round((preTotal - appliedPointsValue - tradeInValue) * 100) / 100);
+    const total = Math.max(0, Math.round((preTotal - appliedPointsValue) * 100) / 100);
     // Gross margin − discounts − loyalty value actually applied (+ shipping is revenue).
     const profit = Math.round((
       items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
