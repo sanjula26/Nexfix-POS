@@ -2038,20 +2038,40 @@ const deletePurchase = useCallback((id: string) => {
     }
     const allowed: RepairStatus[] = ['received', 'diagnosed', 'waiting_parts', 'in_repair', 'ready', 'delivered', 'cancelled'];
     if (!allowed.includes(status)) return;
+    const current = (state.repairs || []).find(j => j.id === id);
+    if (!current) return;
+    const next = { ...current, ...patch, status };
     const now = new Date().toISOString();
-    setState(s => ({
-      ...s,
-      repairs: (s.repairs || []).map(j => {
-        if (j.id !== id) return j;
-        const next = { ...j, ...patch, status };
-        if ((status === 'ready' || status === 'delivered') && !next.completedAt) next.completedAt = now;
-        if (status === 'delivered' && !next.deliveredAt) next.deliveredAt = now;
-        if (status !== 'delivered') next.deliveredAt = undefined;
-        return next;
-      }),
-    }));
-    pushAudit('STATUS', 'Repair', `Job status → ${status}`);
-  }, [pushAudit,user,can]);
+    const shouldDeductParts = status === 'delivered' && current.status !== 'delivered' && !current.partsDeductedAt;
+    const required = new Map<string, number>();
+    if (shouldDeductParts) {
+      for (const part of next.parts || []) {
+        if (!part.productId || !Number.isFinite(part.qty) || part.qty <= 0) continue;
+        required.set(part.productId, (required.get(part.productId) || 0) + part.qty);
+      }
+      for (const [productId, qty] of required) {
+        const product = state.products.find(p => p.id === productId);
+        if (!product || product.stock < qty) {
+          pushAudit('DENIED', 'Repair', 'Cannot deliver ' + current.jobNo + ': insufficient stock for repair part ' + (product?.name || productId));
+          return;
+        }
+      }
+    }
+    next.partsDeductedAt = shouldDeductParts ? now : current.partsDeductedAt;
+    if ((status === 'ready' || status === 'delivered') && !next.completedAt) next.completedAt = now;
+    if (status === 'delivered' && !next.deliveredAt) next.deliveredAt = now;
+    if (status !== 'delivered') next.deliveredAt = undefined;
+    setState(s => {
+      const products = shouldDeductParts
+        ? s.products.map(p => {
+            const qty = required.get(p.id) || 0;
+            return qty ? { ...p, stock: p.stock - qty } : p;
+          })
+        : s.products;
+      return { ...s, products, repairs: (s.repairs || []).map(j => j.id === id ? next : j) };
+    });
+    pushAudit('STATUS', 'Repair', 'Job status → ' + status + (shouldDeductParts ? ' · repair parts deducted' : ''));
+  }, [pushAudit,user,can,state.repairs,state.products]);
 
   const deleteRepair = useCallback((id: string) => {
     if(!user || !can('page:repairs') || !can('act:deleteRecords')) {
