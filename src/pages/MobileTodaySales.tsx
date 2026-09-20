@@ -15,6 +15,7 @@ export default function MobileTodaySales() {
   const query = new URLSearchParams(location.search);
   const requestedShopId = query.get('shop')?.trim() || '';
   const requestedMachineId = query.get('machine')?.trim() || '';
+  const [activeShopId, setActiveShopId] = useState(getCloudShopId());
   const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId());
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
@@ -58,13 +59,14 @@ export default function MobileTodaySales() {
         return;
       }
       setCloudShopId(requestedShopId);
-      window.location.reload();
+      setActiveShopId(requestedShopId);
+      setShopReady(true);
     };
     void alignShop();
     return () => { cancelled = true; };
   }, [requestedShopId]);
 
-  const shopId = getCloudShopId();
+  const shopId = activeShopId;
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
   const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
