@@ -109,7 +109,7 @@ function MobileSalesProtected() {
   const { user, ready, can } = usePOS();
   const location = useLocation();
   if (!ready) return <RouteFallback />;
-  if (!user) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname)}`} replace />;
+  if (!user) { const next = `${location.pathname}${location.search}`; return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />; }
   if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
   if (!can('page:sales')) return <Navigate to="/dashboard" replace />;
   return <MobileTodaySales />;
