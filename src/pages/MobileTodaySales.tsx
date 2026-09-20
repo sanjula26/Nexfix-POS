@@ -16,7 +16,7 @@ export default function MobileTodaySales() {
   const requestedShopId = query.get('shop')?.trim() || '';
   const requestedMachineId = query.get('machine')?.trim() || '';
   const [activeShopId, setActiveShopId] = useState(getCloudShopId());
-  const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId() || !!getCloudShopId());
+  const [shopReady, setShopReady] = useState(!requestedMachineId && (!requestedShopId || requestedShopId === getCloudShopId()));
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -33,6 +33,7 @@ export default function MobileTodaySales() {
   useEffect(() => {
     let cancelled = false;
     const alignShop = async () => {
+      if (requestedMachineId && !requestedShopId) return;
       if (!requestedShopId || requestedShopId === getCloudShopId()) {
         if (!cancelled) setShopReady(true);
         return;
