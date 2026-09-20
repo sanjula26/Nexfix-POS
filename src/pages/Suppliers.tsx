@@ -98,6 +98,11 @@ export default function Suppliers() {
                       <Badge tone="slate" className="num"><Package size={10} /> {fmtNum(productCount(s.id))} items</Badge>
                     </td>
                     <td className="td">
+                      <span className={"num font-bold " + (getSupplierOutstanding(s.id, state.purchases, state.supplierPayments || [], state.purchaseReturns || []) > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400")}>
+                        {fmtRs(getSupplierOutstanding(s.id, state.purchases, state.supplierPayments || [], state.purchaseReturns || []))}
+                      </span>
+                    </td>
+                    <td className="td">
                       <div className="flex items-center justify-end gap-1">
                         <button className="icon-btn !w-8 !h-8" onClick={() => { setEditing({ ...s }); setIsNew(false); }}><Pencil size={14} /></button>
                         {can('act:deleteRecords') && (
