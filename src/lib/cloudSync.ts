@@ -203,6 +203,24 @@ export async function completeSaleAtomic(input: {
   };
 }
 
+export async function registerTradeInAtomic(input: {
+  shopId: string; saleId: string; unitId: string; productId: string; value: number; imei?: string; serial?: string;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; unitId?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase.rpc('register_trade_in_atomic', {
+    p_shop_id: input.shopId, p_sale_id: input.saleId, p_unit_id: input.unitId, p_product_id: input.productId,
+    p_value: input.value, p_imei: input.imei || null, p_serial: input.serial || null,
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: 'Cloud trade-in was not committed' };
+  return { ok: true, alreadyCommitted: row.already_committed === true, unitId: String(row.unit_id || input.unitId) };
+}
+
 export async function resolveSaleReturnLines(input: {
   shopId: string;
   saleId: string;
