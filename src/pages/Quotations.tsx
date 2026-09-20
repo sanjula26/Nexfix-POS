@@ -14,16 +14,16 @@ function esc(value: string) {
 }
 
 function ProductCombobox({ value, products, onSelect, onFreeText }: {
-  value: string; products: any[]; onSelect: (product: any) => void; onFreeText: () => void;
+  value: string; products: any[]; onSelect: (product: any) => void; onFreeText: (text: string) => void;
 }) {
   const [open, setOpen] = useState(false); const [term, setTerm] = useState(value); const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => setTerm(value), [value]);
   useEffect(() => { const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); }; document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close); }, []);
   const matches = useMemo(() => { const needle = term.trim().toLowerCase(); return products.filter(p => !needle || [p.name, p.sku, p.barcode].some(v => String(v || '').toLowerCase().includes(needle))).slice(0, 50); }, [products, term]);
-  const choose = (product: any | null) => { setOpen(false); if (product) { setTerm(product.name); onSelect(product); } else { setTerm(''); onFreeText(); } };
+  const choose = (product: any | null) => { setOpen(false); if (product) { setTerm(product.name); onSelect(product); } else { onFreeText(term); } };
   return <div ref={ref} className="relative">
-    <input className="input" value={term} placeholder="Type to search products…" onFocus={() => { setOpen(true); setActive(0); }} onChange={e => { setTerm(e.target.value); setOpen(true); setActive(0); onFreeText(); }} onKeyDown={e => { if (!open) return; if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, matches.length)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); } else if (e.key === 'Enter') { e.preventDefault(); choose(active < matches.length ? matches[active] : null); } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }} aria-autocomplete="list" aria-expanded={open} />
+    <input className="input" value={term} placeholder="Type to search products…" onFocus={() => { setOpen(true); setActive(0); }} onChange={e => { const text = e.target.value; setTerm(text); setOpen(true); setActive(0); onFreeText(text); }} onKeyDown={e => { if (!open) return; if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, matches.length)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); } else if (e.key === 'Enter') { e.preventDefault(); choose(active < matches.length ? matches[active] : null); } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }} aria-autocomplete="list" aria-expanded={open} />
     {open && <div className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl">
       <button type="button" className="w-full px-3 py-2 text-left text-sm font-medium hover:bg-raised" onClick={() => choose(null)}>Free-text item</button>
       {matches.map((p, i) => <button type="button" key={p.id} className={'w-full px-3 py-2 text-left text-sm flex items-center justify-between gap-3 ' + (i === active ? 'bg-raised' : 'hover:bg-raised')} onMouseEnter={() => setActive(i)} onClick={() => choose(p)}><span className="min-w-0 truncate"><b>{p.name}</b>{p.sku || p.barcode ? <span className="ml-2 text-xs text-faint">{[p.sku, p.barcode].filter(Boolean).join(' · ')}</span> : null}</span><span className="shrink-0 font-semibold">{fmtRs(Number(p.price) || 0)}</span></button>)}
@@ -214,7 +214,7 @@ export default function Quotations() {
             {editing.items.map((it, idx) => {
               const lineTotal = Math.max(0, it.price * it.qty - (it.discount || 0));
               return <div key={idx} className="grid grid-cols-1 gap-2 p-4 lg:grid-cols-[minmax(190px,1fr)_72px_120px_120px_130px_42px] lg:items-end">
-                <Field label="Item / Description"><ProductCombobox value={it.name} products={state.products.filter(p => p.active)} onFreeText={() => updateItem(idx, { productId: undefined })} onSelect={p => updateItem(idx, { productId: p.id, name: p.name, price: Number(p.price) || 0, qty: 1 })} /></Field>
+                <Field label="Item / Description"><ProductCombobox value={it.name} products={state.products.filter(p => p.active)} onFreeText={(text) => updateItem(idx, { productId: undefined, name: text })} onSelect={p => updateItem(idx, { productId: p.id, name: p.name, price: Number(p.price) || 0, qty: 1 })} /></Field>
                 <Field label="Qty"><input type="number" min="0" className="input num" value={it.qty} onChange={e => updateItem(idx, { qty: Number(e.target.value) || 0 })} /></Field>
                 <Field label="Unit price"><input type="number" min="0" step="0.01" className="input num" value={it.price} onChange={e => updateItem(idx, { price: Number(e.target.value) || 0 })} /></Field>
                 <Field label="Line discount"><input type="number" min="0" step="0.01" className="input num" value={it.discount || ''} onChange={e => updateItem(idx, { discount: Number(e.target.value) || 0 })} /></Field>
@@ -244,7 +244,7 @@ export default function Quotations() {
         </div>
 
         {msg && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{msg}</div>}
-        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-line pt-4">
+        {(!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)) && <p className="text-xs text-faint sm:mr-auto">Enter customer name and item descriptions</p>}\n        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-line pt-4">
           <button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={save} disabled={!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)}><FileText size={15} /> Save Quotation</button>
         </div>
