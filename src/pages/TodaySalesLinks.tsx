@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, RefreshCw, Smartphone, ExternalLink } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
 import { usePOS } from '../lib/store';
 import { downloadStateSnapshot, ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { getMachineIdentity } from '../lib/machine';
@@ -8,7 +7,6 @@ import type { POSState } from '../lib/types';
 
 export default function TodaySalesLinks() {
   const { state, user } = usePOS();
-  const location = useLocation();
   const currentMachine = getMachineIdentity();
   const isAdmin = user?.role === 'admin';
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
@@ -106,7 +104,7 @@ export default function TodaySalesLinks() {
             </div>
           </div>
         </section>
-        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">මෙම shop එකේ මෙම POS machine එකේ link එක පමණක් මෙහි පෙන්වයි. වෙනත් machine හෝ වෙනත් shop links shop UI එකෙන් නොපෙන්වයි.</p>
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">Only this POS machine link is shown here. Other machine or shop links are not exposed in the shop UI.</p>
       </div>
     </main>
   );
