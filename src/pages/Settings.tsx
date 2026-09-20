@@ -30,7 +30,7 @@ export default function Settings() {
     return {
       shopName: rest.shopName || '', tagline: rest.tagline || '', address: rest.address || '', phone: rest.phone || '', email: rest.email || '',
       receiptFooter: rest.receiptFooter || '', taxDefault: rest.taxDefault ?? 0, lowStockDefault: rest.lowStockDefault ?? 5,
-      exchangeDays: rest.exchangeDays ?? 7, openingFloat: rest.openingFloat ?? 0, whatsappReceipts: rest.whatsappReceipts !== false,
+      exchangeDays: rest.exchangeDays ?? 7, openingFloat: rest.openingFloat ?? 0, loyaltyPointsPerRs: rest.loyaltyPointsPerRs ?? 0.001, loyaltyPointValue: rest.loyaltyPointValue ?? 20, whatsappReceipts: rest.whatsappReceipts !== false,
       categories: rest.categories, brands: rest.brands, repairWarrantyDays: rest.repairWarrantyDays,
       invoiceTitle: rest.invoiceTitle || 'INVOICE', invoiceSubtitle: rest.invoiceSubtitle || rest.tagline || 'COMPUTER & PHONE SHOP',
       invoiceCurrency: rest.invoiceCurrency || 'Rs.', invoiceTaxLabel: rest.invoiceTaxLabel || 'Tax',
@@ -56,7 +56,7 @@ export default function Settings() {
       ...f, shopName: s.shopName || f.shopName, tagline: s.tagline || f.tagline, address: s.address || f.address,
       phone: s.phone || f.phone, email: s.email || f.email, receiptFooter: s.receiptFooter || f.receiptFooter,
       taxDefault: s.taxDefault ?? f.taxDefault, lowStockDefault: s.lowStockDefault ?? f.lowStockDefault,
-      exchangeDays: s.exchangeDays ?? f.exchangeDays, openingFloat: s.openingFloat ?? f.openingFloat,
+      exchangeDays: s.exchangeDays ?? f.exchangeDays, openingFloat: s.openingFloat ?? f.openingFloat, loyaltyPointsPerRs: s.loyaltyPointsPerRs ?? f.loyaltyPointsPerRs, loyaltyPointValue: s.loyaltyPointValue ?? f.loyaltyPointValue,
       whatsappReceipts: s.whatsappReceipts !== false, invoiceTitle: s.invoiceTitle || f.invoiceTitle,
       invoiceSubtitle: s.invoiceSubtitle || f.invoiceSubtitle, invoiceCurrency: s.invoiceCurrency || f.invoiceCurrency,
       invoiceTaxLabel: s.invoiceTaxLabel || f.invoiceTaxLabel, invoiceTerms: s.invoiceTerms ?? f.invoiceTerms,
@@ -73,14 +73,18 @@ export default function Settings() {
     const lowStockDefault = Number(form.lowStockDefault);
     const exchangeDays = Number(form.exchangeDays);
     const openingFloat = Number(form.openingFloat);
+    const loyaltyPointsPerRs = Number(form.loyaltyPointsPerRs);
+    const loyaltyPointValue = Number(form.loyaltyPointValue);
     if (!Number.isFinite(taxDefault) || taxDefault < 0 || taxDefault > 100) return setBackupMsg('Default tax must be between 0% and 100%');
     if (!Number.isFinite(lowStockDefault) || !Number.isInteger(lowStockDefault) || lowStockDefault < 0) return setBackupMsg('Low-stock default must be a whole number of 0 or more');
     if (!Number.isFinite(exchangeDays) || !Number.isInteger(exchangeDays) || exchangeDays < 0) return setBackupMsg('Exchange window must be a whole number of 0 or more days');
     if (!Number.isFinite(openingFloat) || openingFloat < 0) return setBackupMsg('Opening float cannot be negative');
+    if (!Number.isFinite(loyaltyPointsPerRs) || loyaltyPointsPerRs < 0 || loyaltyPointsPerRs > 10) return setBackupMsg('Loyalty points per Rs must be between 0 and 10');
+    if (!Number.isFinite(loyaltyPointValue) || loyaltyPointValue < 0) return setBackupMsg('Loyalty point value cannot be negative');
     setBackupMsg('');
-    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat }); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue }); setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
-  const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat') => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
 
   const submitPin = () => {
@@ -197,6 +201,8 @@ export default function Settings() {
               <Field label="Low-stock default"><input type="number" min="0" step="1" className="input num" value={form.lowStockDefault || ''} onChange={num('lowStockDefault')} /></Field>
               <Field label="Exchange window (days)" hint="Bills older than this can't be exchanged"><input type="number" min="0" step="1" className="input num" value={form.exchangeDays || ''} onChange={num('exchangeDays')} /></Field>
               <Field label="Opening float (Rs.)" hint="Per cashier, per day"><input type="number" min="0" step="0.01" className="input num" value={form.openingFloat || ''} onChange={num('openingFloat')} /></Field>
+              <Field label="Loyalty points per Rs. 1" hint="Example: 0.001 = 1 point per Rs. 1,000"><input type="number" min="0" max="10" step="0.001" className="input num" value={form.loyaltyPointsPerRs || ''} onChange={num('loyaltyPointsPerRs')} /></Field>
+              <Field label="Value of 1 loyalty point (Rs.)" hint="Used when redeeming points at POS"><input type="number" min="0" step="0.01" className="input num" value={form.loyaltyPointValue || ''} onChange={num('loyaltyPointValue')} /></Field>
             </div>
             <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} /></label>
           </div>
