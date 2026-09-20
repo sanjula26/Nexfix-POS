@@ -43,7 +43,7 @@ function printDebitNote(dn: PurchaseReturn, shopName: string) {
 }
 
 export default function PurchaseReturn() {
-  const { state, createPurchaseReturn } = usePOS();
+  const { state, user, can, createPurchaseReturn } = usePOS();
   const [search, setSearch] = useState('');
   const [selectedGRN, setSelectedGRN] = useState<Purchase | null>(null);
   const [lines, setLines] = useState<ReturnLine[]>([]);
@@ -97,8 +97,14 @@ export default function PurchaseReturn() {
   };
 
   const exportCSV = () => {
+    if (!user || !can('act:export')) return;
+    const csvCell = (value: unknown) => {
+      const text = String(value ?? '');
+      const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const rows = processedGRNs.flatMap(p => p.items.map(i =>
-      [p.poNo, dkey(p.date), p.supplierName, i.name, i.qty, i.cost, i.qty * i.cost].join(',')
+      [p.poNo, dkey(p.date), p.supplierName, i.name, i.qty, i.cost, i.qty * i.cost].map(csvCell).join(',')
     ));
     downloadFile(`GRN-Return-Export.csv`, ['GRN,Date,Supplier,Item,Qty,Cost,Total', ...rows].join(String.fromCharCode(10)), 'text/csv');
   };
@@ -107,7 +113,7 @@ export default function PurchaseReturn() {
     <div>
       <PageHeading chip="Procurement" chipTone="rose" title="Purchase Return / Debit Note"
         sub="Return items to supplier and deduct stock"
-        actions={<button className="btn btn-soft !py-1.5 !px-3 !text-xs" onClick={exportCSV}><Download size={13}/> Export</button>}
+        actions={can('act:export') ? <button className="btn btn-soft !py-1.5 !px-3 !text-xs" onClick={exportCSV}><Download size={13}/> Export</button> : undefined}
       />
 
       {done && (
