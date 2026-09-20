@@ -4,26 +4,37 @@ import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, periodRange, inRange } from '../lib/utils';
 
-const CATS = ['Rent', 'Utilities', 'Salary', 'Transport', 'Supplies', 'Marketing', 'Maintenance', 'Other'];
+const CATS = ['Rent', 'Electricity', 'Water', 'Internet', 'Salary', 'Transport', 'Packing', 'Marketing', 'Bank charges', 'Other'];
+const PAYMENT_METHODS = ['cash', 'bank', 'card'] as const;
 const CAT_TONE: Record<string, 'violet' | 'emerald' | 'amber' | 'rose' | 'blue' | 'slate'> = {
-  Rent: 'violet', Utilities: 'blue', Salary: 'emerald', Transport: 'amber',
-  Supplies: 'slate', Marketing: 'rose', Maintenance: 'blue', Other: 'slate',
+  Rent: 'violet', Electricity: 'blue', Water: 'blue', Internet: 'blue', Salary: 'emerald', Transport: 'amber',
+  Packing: 'slate', Marketing: 'rose', 'Bank charges': 'amber', Other: 'slate',
 };
 
 export default function Expenses() {
   const { state, addExpense, deleteExpense, can } = usePOS();
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
+  const [paymentMethod, setPaymentMethod] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '' });
+  const [form, setForm] = useState({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '', paymentMethod: 'cash' as typeof PAYMENT_METHODS[number] });
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return [...state.expenses]
       .sort((a, b) => +new Date(b.date) - +new Date(a.date))
-      .filter(e => (!q || e.note.toLowerCase().includes(q) || e.category.toLowerCase().includes(q)) && (cat === 'all' || e.category === cat));
-  }, [state.expenses, search, cat]);
+      .filter(e => {
+        const day = e.date.slice(0, 10);
+        return (!q || e.note.toLowerCase().includes(q) || e.category.toLowerCase().includes(q))
+          && (cat === 'all' || e.category === cat)
+          && (paymentMethod === 'all' || e.paymentMethod === paymentMethod)
+          && (!dateFrom || day >= dateFrom)
+          && (!dateTo || day <= dateTo);
+      });
+  }, [state.expenses, search, cat, paymentMethod, dateFrom, dateTo]);
 
   const monthTotal = state.expenses.filter(e => inRange(e.date, periodRange('month'))).reduce((a, e) => a + e.amount, 0);
   const todayTotal = state.expenses.filter(e => inRange(e.date, periodRange('today'))).reduce((a, e) => a + e.amount, 0);
@@ -39,9 +50,9 @@ export default function Expenses() {
   const submit = () => {
     const amount = Number(form.amount.replace(/[^\d.]/g, '')) || 0;
     if (amount <= 0) return;
-    addExpense({ category: form.category, note: form.note.trim() || form.category, amount });
+    addExpense({ category: form.category, note: form.note.trim() || form.category, amount, periodStart: form.periodStart || undefined, periodEnd: form.periodEnd || undefined, paymentMethod: form.paymentMethod });
     setCreating(false);
-    setForm({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '' });
+    setForm({ category: 'Rent', note: '', amount: '', periodStart: '', periodEnd: '', paymentMethod: 'cash' });
   };
 
   return (
@@ -61,6 +72,12 @@ export default function Expenses() {
               <option value="all">All categories</option>
               {CATS.map(c => <option key={c}>{c}</option>)}
             </select>
+            <select className="input w-36" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+              <option value="all">All payments</option>
+              <option value="cash">Cash</option><option value="bank">Bank</option><option value="card">Card</option>
+            </select>
+            <input type="date" className="input w-36" value={dateFrom} onChange={e => setDateFrom(e.target.value)} aria-label="From date" />
+            <input type="date" className="input w-36" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} aria-label="To date" />
           </div>
           {rows.length === 0 ? (
             <EmptyState icon={<Wallet size={26} />} title="No expenses recorded" sub="Track shop spending to see true profit" />
@@ -70,7 +87,7 @@ export default function Expenses() {
                 <thead>
                   <tr>
                     <th className="th">Date</th><th className="th">Category</th><th className="th">Note</th>
-                    <th className="th">By</th><th className="th !text-right">Amount</th><th className="th !text-right"></th>
+                    <th className="th">By</th><th className="th">Payment</th><th className="th !text-right">Amount</th><th className="th !text-right"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -80,6 +97,7 @@ export default function Expenses() {
                       <td className="td"><Badge tone={CAT_TONE[e.category] || 'slate'}>{e.category.toUpperCase()}</Badge></td>
                       <td className="td text-[13px] font-medium">{e.note}{(e.periodStart || e.periodEnd) && <div className="text-[10px] text-faint mt-0.5">Period: {e.periodStart || "—"} → {e.periodEnd || "—"}</div>}</td>
                       <td className="td text-[13px] text-sub">{e.by}</td>
+                      <td className="td text-[12px] text-sub capitalize">{e.paymentMethod || 'cash'}</td>
                       <td className="td num font-bold text-right text-rose-500">{fmtRs(e.amount)}</td>
                       <td className="td text-right">
                         {can('act:deleteRecords') && (
@@ -93,7 +111,7 @@ export default function Expenses() {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td className="td font-bold text-sub" colSpan={4}>Total (filtered)</td>
+                    <td className="td font-bold text-sub" colSpan={5}>Total (filtered)</td>
                     <td className="td num font-extrabold text-right text-rose-500">{fmtRs(shownTotal)}</td>
                     <td className="td"></td>
                   </tr>
@@ -146,6 +164,11 @@ export default function Expenses() {
               <input type="date" className="input" value={form.periodEnd} min={form.periodStart || undefined} onChange={e => setForm({ ...form, periodEnd: e.target.value })} />
             </Field>
           </div>
+          <Field label="Payment method">
+            <select className="input" value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value as typeof PAYMENT_METHODS[number] })}>
+              <option value="cash">Cash</option><option value="bank">Bank</option><option value="card">Card</option>
+            </select>
+          </Field>
           <Field label="Amount (Rs.)">
             <input className="input num" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, '') })} placeholder="0.00" inputMode="decimal" />
           </Field>
