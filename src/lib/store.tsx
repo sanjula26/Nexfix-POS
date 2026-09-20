@@ -296,6 +296,7 @@ function migrate(s: POSState): POSState {
       repairWarrantyDays: s.settings?.repairWarrantyDays ?? 30,
       loyaltyPointsPerRs: Number.isFinite(s.settings?.loyaltyPointsPerRs) ? Math.max(0, s.settings!.loyaltyPointsPerRs!) : 0.001,
       loyaltyPointValue: Number.isFinite(s.settings?.loyaltyPointValue) ? Math.max(0, s.settings!.loyaltyPointValue!) : 20,
+      promotions: Array.isArray(s.settings?.promotions) ? s.settings.promotions : [],
     },
     customers: (s.customers || []).map(c => ({ ...c, loyaltyPoints: c.loyaltyPoints ?? 0 })),
   };
