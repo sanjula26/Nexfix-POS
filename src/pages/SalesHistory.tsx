@@ -14,21 +14,26 @@ export default function SalesHistory() {
   const { state, refundSale, can, user, approveBillReverse, rejectBillReverse } = usePOS();
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
+  const [paymentFilter, setPaymentFilter] = useState('all');
+  const [cashierFilter, setCashierFilter] = useState('all');
   const [view, setView] = useState<Sale | null>(null);
   const [refunding, setRefunding] = useState<Sale | null>(null);
   const [printSale, setPrintSale] = useState<Sale | null>(null);
   const [limit, setLimit] = useState(50);
 
+  const cashiers = useMemo(() => [...new Map(state.sales.map(s => [s.cashierId, s.cashierName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [state.sales]);
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const [a, b] = periodRange(range === 'all' ? 'all' : range);
     return [...state.sales]
       .sort((x, y) => +new Date(y.date) - +new Date(x.date))
-      .filter(s =>
-        inRange(s.date, [a, b]) &&
-        (!q || s.billNo.toLowerCase().includes(q) || s.customerName.toLowerCase().includes(q) || s.cashierName.toLowerCase().includes(q)),
-      );
-  }, [state.sales, search, range]);
+      .filter(s => {
+        const paymentMatches = paymentFilter === 'all' || salePayments(s).some(l => l.method === paymentFilter);
+        return inRange(s.date, [a, b]) && paymentMatches &&
+          (cashierFilter === 'all' || s.cashierId === cashierFilter) &&
+          (!q || s.billNo.toLowerCase().includes(q) || s.customerName.toLowerCase().includes(q) || s.cashierName.toLowerCase().includes(q));
+      });
+  }, [state.sales, search, range, paymentFilter, cashierFilter]);
 
   const revenue = rows.filter(s => s.status !== 'refunded' && s.status !== 'reversed').reduce((a, s) => a + s.total, 0);
   const refunded = rows.filter(s => s.status === 'refunded').length;
@@ -85,7 +90,7 @@ export default function SalesHistory() {
       )}
       <div className="card overflow-hidden">
         <div className="p-4 border-b border-line">
-          <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="max-w-md" />
+          <div className="flex flex-wrap gap-2 items-center">\n            <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="flex-1 min-w-[240px] max-w-md" />\n            <select className="input w-36" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} aria-label="Filter by payment">\n              <option value="all">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank</option><option value="mobile">Mobile</option><option value="credit">Credit</option>\n            </select>\n            <select className="input w-44" value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} aria-label="Filter by cashier">\n              <option value="all">All cashiers</option>{cashiers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}\n            </select>\n          </div>
         </div>
         {rows.length === 0 ? (
           <EmptyState icon={<ReceiptText size={26} />} title="No sales found" sub="Completed bills will appear here" />
