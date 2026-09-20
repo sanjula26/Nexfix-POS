@@ -103,7 +103,7 @@ const emptyState = (): POSState => {
     users: defaultUsers, audit: [], held: [], sessions: [],
     settings: {
       shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
-      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000,
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20,
       adminPinHash: hashPin('admin123'), whatsappReceipts: false,
       categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
       invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
