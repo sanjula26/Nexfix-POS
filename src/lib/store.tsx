@@ -294,6 +294,8 @@ function migrate(s: POSState): POSState {
       categories: s.settings?.categories?.length ? s.settings.categories : [...DEFAULT_CATEGORIES],
       brands: s.settings?.brands?.length ? s.settings.brands : [...DEFAULT_BRANDS],
       repairWarrantyDays: s.settings?.repairWarrantyDays ?? 30,
+      loyaltyPointsPerRs: Number.isFinite(s.settings?.loyaltyPointsPerRs) ? Math.max(0, s.settings!.loyaltyPointsPerRs!) : 0.001,
+      loyaltyPointValue: Number.isFinite(s.settings?.loyaltyPointValue) ? Math.max(0, s.settings!.loyaltyPointValue!) : 20,
     },
     customers: (s.customers || []).map(c => ({ ...c, loyaltyPoints: c.loyaltyPoints ?? 0 })),
   };
@@ -1032,7 +1034,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       Math.max(0, Math.floor(input.pointsRedeemed || 0)),
       cust?.loyaltyPoints || 0,
     );
-    const pointsValue = pointsRedeemed * POINT_VALUE;
+    const loyaltyPointValue = Math.max(0, Number(s.settings.loyaltyPointValue ?? POINT_VALUE));
+    const pointsValue = pointsRedeemed * loyaltyPointValue;
     const preTotal = subtotal - discount + tax + shipping;
     const total = Math.max(0, Math.round((preTotal - Math.min(pointsValue, preTotal)) * 100) / 100);
     // Gross margin − discounts − loyalty points redeemed (+ shipping is revenue)
@@ -1040,7 +1043,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
       - lineDiscount - discount - pointsValue + shipping
     ) * 100) / 100;
-    const pointsEarned = cust ? pointsForRs(total) : 0;
+    const loyaltyPointsPerRs = Math.max(0, Number(s.settings.loyaltyPointsPerRs ?? 0.001));
+    const pointsEarned = cust ? Math.floor(Math.max(0, total) * loyaltyPointsPerRs) : 0;
     const maxSaleSeq = s.sales.reduce((m, x) => {
       const n = parseInt(x.billNo.split('-').pop() || '0', 10);
       return Number.isFinite(n) ? Math.max(m, n) : m;
