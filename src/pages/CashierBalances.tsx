@@ -69,8 +69,11 @@ export default function CashierBalances() {
       const cashPart = salePayments(s).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
       return a + (cashPart > 0 ? cashPart : s.total);
     }, 0);
-    const expected = Math.round((opening + cash - cashRefunds) * 100) / 100;
-    return { mine, session, cash, credit, other, opening, expected, cashRefunds };
+    const cashExpenses = state.expenses
+      .filter(e => dkey(e.date) === today && (e.paymentMethod || 'cash') === 'cash' && e.by === (state.users.find(u => u.id === id)?.name || ''))
+      .reduce((a, e) => a + e.amount, 0);
+    const expected = Math.round((opening + cash - cashRefunds - cashExpenses) * 100) / 100;
+    return { mine, session, cash, credit, other, opening, expected, cashRefunds, cashExpenses };
   };
 
   const settleRow = settling ? rowFor(settling) : null;
@@ -85,6 +88,8 @@ export default function CashierBalances() {
     if (!Number.isFinite(amount) || amount < 0) return;
     const session = state.sessions.find(x => x.cashierId === settling && x.date === today);
     if (!session || session.closed) return;
+    const variance = Math.round((amount - rowFor(settling).expected) * 100) / 100;
+    if (variance !== 0 && !note.trim()) return;
     closeSession(settling, Math.round(amount * 100) / 100, note.trim());
     setSettling(null);
     setCounted('');
@@ -113,7 +118,10 @@ export default function CashierBalances() {
   }, 0);
   const openingTotal = state.sessions.filter(s => s.date === today).reduce((a, s) => a + s.opening, 0)
     || state.settings.openingFloat;
-  const shopExpected = Math.round((openingTotal + cashSales - cashRefundsShop - todayExpenses) * 100) / 100;
+  const cashExpensesShop = state.expenses
+    .filter(e => dkey(e.date) === today && (e.paymentMethod || 'cash') === 'cash')
+    .reduce((a, e) => a + e.amount, 0);
+  const shopExpected = Math.round((openingTotal + cashSales - cashRefundsShop - cashExpensesShop) * 100) / 100;
 
   const cards = [
     { label: 'Opening float', value: fmtRs(openingTotal), icon: Wallet, tone: 'violet' },
@@ -242,6 +250,7 @@ export default function CashierBalances() {
                         {variance != null ? fmtRs(variance) : '—'}
                       </b>
                     </span>
+                    <span>Cash expenses: <b className="text-ink num">{fmtRs(r.cashExpenses)}</b></span>
                     {r.session.note && <span>Note: {r.session.note}</span>}
                   </div>
                 )}
@@ -297,14 +306,14 @@ export default function CashierBalances() {
               <div><div className="text-[10px] uppercase tracking-wide text-faint">Variance</div><div className={`font-bold num mt-0.5 ${liveVariance == null || liveVariance === 0 ? 'text-emerald-600' : liveVariance > 0 ? 'text-sky-600' : 'text-rose-500'}`}>{liveVariance == null ? '—' : fmtRs(liveVariance)}</div></div>
             </div>
           )}
-          <Field label="Note (optional)">
-            <input className="input" value={note} onChange={e => setNote(e.target.value)} />
+          <Field label={liveVariance !== null && liveVariance !== 0 ? 'Variance note (required)' : 'Note (optional)'}>
+            <input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder={liveVariance !== null && liveVariance !== 0 ? 'Explain the cash variance' : 'Optional note'} />
           </Field>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn btn-soft" onClick={() => setSettling(null)}>
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={settle} disabled={!Number.isFinite(Number(counted)) || Number(counted) < 0}>
+            <button type="button" className="btn btn-primary" onClick={settle} disabled={!Number.isFinite(Number(counted)) || Number(counted) < 0 || (liveVariance !== null && liveVariance !== 0 && !note.trim())}>
               <Lock size={15} /> Close day
             </button>
           </div>
