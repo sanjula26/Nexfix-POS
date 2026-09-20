@@ -150,6 +150,7 @@ create table public.customers (
   nic text,
   address text,
   credit_balance numeric(12,2) default 0,
+  credit_limit numeric(12,2) not null default 0,
   loyalty_points int default 0,
   notes text,
   created_at timestamptz not null default now(),
