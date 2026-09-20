@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
@@ -14,6 +15,7 @@ import { queueWrite } from '../lib/offline';
 import { uid } from '../lib/utils';
 
 export default function Settings() {
+  const navigate = useNavigate();
   const {
     state, user, updateSettings, resetData, can, changeAdminPin,
     connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
@@ -170,6 +172,17 @@ export default function Settings() {
 
   return (
     <div>
+      {user?.role === 'admin' && (
+        <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-black text-violet-900">Phone Sales Links</div>
+              <p className="mt-1 text-xs leading-relaxed text-violet-700">සියලු POS machines වලට අදාළ phone sales links එකම තැනින් බලන්න, copy කරන්න සහ වෙන වෙනම හඳුනාගන්න.</p>
+            </div>
+            <button type="button" onClick={() => navigate('/today-links')} className="min-h-11 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white">Manage machine links</button>
+          </div>
+        </section>
+      )}
       <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.1`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
