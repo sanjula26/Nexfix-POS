@@ -841,7 +841,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const current = s.products.find(x => x.id === id);
       if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
       const updatedProducts = s.products.map(x => x.id === id ? { ...x, stock: x.stock + amount } : x);
-      syncToGoogleDrive('Products', productsAfterTradeIn);
+      syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
     pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
@@ -1116,7 +1116,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const qty = (hasKitBom ? 0 : directQty) + kitComponentQty;
       return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
-    const tradeInUnit = tradeInUnitId ? {
+    const tradeInUnit = tradeInUnitId && tradeIn ? {
       id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
       status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
     } : undefined;
