@@ -32,7 +32,7 @@ function ProductCombobox({ value, products, onSelect, onFreeText }: {
   </div>;
 }
 export default function Quotations() {
-  const { user, logAudit, state, importData } = usePOS();
+  const { user, logAudit, state, saveQuotations } = usePOS();
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<Quotation | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -65,15 +65,7 @@ export default function Quotations() {
   }, [quotes, state.sales, q]);
 
   const commit = (nextQuotes: Quotation[], nextCounter?: number) => {
-    const nextState = {
-      ...state,
-      quotations: nextQuotes,
-      counters: nextCounter === undefined ? state.counters : { ...state.counters, quote: nextCounter },
-    };
-    if (!importData(JSON.stringify(nextState))) {
-      setMsg('Could not save the quotation. Please try again.');
-      return false;
-    }
+    saveQuotations(nextQuotes, nextCounter);
     return true;
   };
 
