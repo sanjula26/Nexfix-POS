@@ -438,7 +438,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [user, state.permissions],
   );
   const viewingAs: Role = user?.role || 'admin';
-\n  // Debounced persist to IndexedDB + localStorage
+
+  // Debounced persist to IndexedDB + localStorage
   useEffect(() => {
     if (!ready) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
