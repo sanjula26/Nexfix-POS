@@ -100,8 +100,7 @@ export default function PurchaseReturn() {
     const rows = processedGRNs.flatMap(p => p.items.map(i =>
       [p.poNo, dkey(p.date), p.supplierName, i.name, i.qty, i.cost, i.qty * i.cost].join(',')
     ));
-    downloadFile(`GRN-Return-Export.csv`, ['GRN,Date,Supplier,Item,Qty,Cost,Total', ...rows].join('
-'), 'text/csv');
+    downloadFile(`GRN-Return-Export.csv`, ['GRN,Date,Supplier,Item,Qty,Cost,Total', ...rows].join(String.fromCharCode(10)), 'text/csv');
   };
 
   return (
