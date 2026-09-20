@@ -23,6 +23,7 @@ export default function MobileTodaySales() {
   const [pinVerified, setPinVerified] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dkey(new Date());
+  const [selectedDate, setSelectedDate] = useState(today);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,9 +112,9 @@ export default function MobileTodaySales() {
   const usingCloud = !!remoteState;
   const sales = useMemo(
     () => sourceState.sales
-      .filter(s => dkey(new Date(s.date)) === today)
+      .filter(s => dkey(new Date(s.date)) === selectedDate)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [sourceState.sales, today],
+    [sourceState.sales, selectedDate],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
@@ -160,7 +161,7 @@ export default function MobileTodaySales() {
           </button>
           <div className="text-center">
             <div className="text-sm font-extrabold">Today’s sales</div>
-            <div className="text-[11px] text-slate-500">{new Date().toLocaleDateString()}</div>
+            <div className="text-[11px] text-slate-500">{selectedDate === today ? 'Today' : new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</div>
           </div>
           <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-slate-700" aria-label="Log out">
             <LogOut size={17} /> <span className="hidden xs:inline">Logout</span>
@@ -177,7 +178,13 @@ export default function MobileTodaySales() {
         </section>
 
         <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="today-sales-date">Sales date</label>
+          <div className="mt-2 flex gap-2">
+            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-violet-500" />
+            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700">Today</button>}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">අද හෝ කලින් දිනක sales තෝරාගෙන බලන්න පුළුවන්. අනාගත දින තෝරාගත නොහැක.</p>
+          <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Data source</div>
               <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : 'Local data'}</div>
@@ -206,7 +213,7 @@ export default function MobileTodaySales() {
         </section>
 
         <section className="mt-5">
-          <div className="mb-3 flex items-center gap-2 text-base font-extrabold"><ReceiptText size={18} /> Today’s bills</div>
+          <div className="mb-3 flex items-center gap-2 text-base font-extrabold"><ReceiptText size={18} /> {selectedDate === today ? 'Today’s bills' : 'Sales for selected date'}</div>
           {sales.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No sales recorded today.</div>
           ) : (
