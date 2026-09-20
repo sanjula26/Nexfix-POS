@@ -38,13 +38,13 @@ export default function MobileTodaySales() {
         return;
       }
       if (!supabaseConfigured || !supabase) {
-        if (!cancelled) { setShopError('මෙම shop link එක භාවිතා කිරීමට hosted cloud login අවශ්‍යයි.'); setShopReady(false); }
+        if (!cancelled) { setShopError('Hosted cloud login is required to use this shop link.'); setShopReady(false); }
         return;
       }
       const { data: authData } = await supabase.auth.getUser();
       const uid = authData.user?.id;
       if (!uid) {
-        if (!cancelled) { setShopError('Login session එක හමු නොවීය.'); setShopReady(false); }
+        if (!cancelled) { setShopError('Login session was not found.'); setShopReady(false); }
         return;
       }
       const { data: membership, error } = await supabase
@@ -55,7 +55,7 @@ export default function MobileTodaySales() {
         .eq('active', true)
         .maybeSingle();
       if (error || !membership) {
-        if (!cancelled) { setShopError('මෙම shop එකට ඔබට අවසර නැත.'); setShopReady(false); }
+        if (!cancelled) { setShopError('You do not have access to this shop.'); setShopReady(false); }
         return;
       }
       setCloudShopId(requestedShopId);
@@ -76,8 +76,8 @@ export default function MobileTodaySales() {
 
   const submitPin = () => {
     const value = pin.trim();
-    if (!value) { setPinError('Admin PIN එක ඇතුළත් කරන්න.'); return; }
-    if (!verifyAdminPin(value, 'Today sales')) { setPinError('Admin PIN එක වැරදියි.'); return; }
+    if (!value) { setPinError('Enter the Admin PIN.'); return; }
+    if (!verifyAdminPin(value, 'Today sales')) { setPinError('Incorrect Admin PIN.'); return; }
     setPinError('');
     setPinVerified(true);
     setPin('');
@@ -91,13 +91,13 @@ export default function MobileTodaySales() {
       const snapshot = await downloadStateSnapshot();
       if (!snapshot) {
         setRemoteState(null);
-        setRemoteError('Cloud sales snapshot එක හමු නොවීය. PC එක online sync වී තිබේද බලන්න.');
+        setRemoteError('Cloud sales snapshot was not found. Check that the POS PC is online and synced.');
       } else {
         setRemoteState(snapshot.state);
       }
     } catch {
       setRemoteState(null);
-      setRemoteError('Cloud sales data ලබාගැනීමට නොහැකි විය.');
+      setRemoteError('Unable to load cloud sales data.');
     } finally {
       setRemoteLoading(false);
     }
@@ -159,7 +159,7 @@ export default function MobileTodaySales() {
       <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
         <div className="mx-auto mt-16 max-w-sm rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <h1 className="text-xl font-black">Today’s Sales</h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">Login එකෙන් පසු මෙම read-only sales view එක බලන්න Admin PIN එක අවශ්‍යයි.</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">Login එකෙන් පසු The Admin PIN is required to view this read-only sales page.</p>
           <label className="mt-5 block text-xs font-bold text-slate-600">Admin PIN</label>
           <input className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
           {pinError && <p className="mt-2 text-xs font-bold text-rose-600">{pinError}</p>}
@@ -192,7 +192,7 @@ export default function MobileTodaySales() {
           <button type="button" onClick={() => void copyMachineLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
             {machineLinkCopied ? 'Link copied' : 'Copy this POS machine link'}
           </button>
-          <div className="mt-2 text-[11px] leading-relaxed text-slate-500">මෙම link එකේ shop + machine ID දෙකම තිබෙන නිසා වෙනත් POS machine එකක sales mix වෙන්නේ නැහැ.</div>
+          <div className="mt-2 text-[11px] leading-relaxed text-slate-500">This link contains the shop and machine IDs, so sales from other POS machines are not mixed.</div>
         </section>
 
         <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -201,7 +201,7 @@ export default function MobileTodaySales() {
             <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-violet-500" />
             {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700">Today</button>}
           </div>
-          <p className="mt-2 text-[11px] text-slate-500">අද හෝ කලින් දිනක sales තෝරාගෙන බලන්න පුළුවන්. අනාගත දින තෝරාගත නොහැක.</p>
+          <p className="mt-2 text-[11px] text-slate-500">You can view sales for today or a previous date. Future dates are not allowed.</p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Data source</div>
