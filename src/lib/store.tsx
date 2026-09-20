@@ -1359,18 +1359,30 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.reverseRequests, user, pushAudit]);
   /* ---------------- held sales ---------------- */
   const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {
+    if (!user || !can('page:pos')) {
+      pushAudit('DENIED', 'HeldSale', 'Blocked hold-sale change without POS access');
+      return;
+    }
     setState(s => ({ ...s, held: [...s.held, { ...h, id: uid(), heldAt: new Date().toISOString() }] }));
-  }, []);
+  }, [pushAudit, user, can]);
 
   const resumeHold = useCallback((id: string) => {
+    if (!user || !can('page:pos')) {
+      pushAudit('DENIED', 'HeldSale', 'Blocked held-sale resume without POS access');
+      return undefined;
+    }
     const h = state.held.find(x => x.id === id);
     setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) }));
     return h;
-  }, [state.held]);
+  }, [state.held, pushAudit, user, can]);
 
   const deleteHold = useCallback((id: string) => {
+    if (!user || !can('page:pos')) {
+      pushAudit('DENIED', 'HeldSale', 'Blocked held-sale delete without POS access');
+      return;
+    }
     setState(s => ({ ...s, held: s.held.filter(x => x.id !== id) }));
-  }, []);
+  }, [pushAudit, user, can]);
 
   /* ---------------- purchases ---------------- */
   const savePurchase = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
@@ -1706,6 +1718,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const closeSession = useCallback((cashierId: string, counted: number, note: string) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close without admin access');
+      return;
+    }
     setState(s => ({
       ...s,
       sessions: s.sessions.map(x =>
@@ -1753,6 +1769,10 @@ const deletePurchase = useCallback((id: string) => {
   const exportData = useCallback(() => JSON.stringify(state, null, 2), [state]);
 
   const importData = useCallback((json: string) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Settings', 'Blocked backup import without admin access');
+      return false;
+    }
     try {
       const parsed = JSON.parse(json) as POSState;
       // Basic schema validation — reject malicious / incomplete payloads
@@ -1777,9 +1797,14 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit]);
 
   const resetData = useCallback(() => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset without admin access');
+      return;
+    }
     const seed = buildSeed();
     setState(seed);
-  }, []);
+    pushAudit('RESET', 'Settings', 'Restored demo seed dataset');
+  }, [pushAudit, user]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit) => {
@@ -1978,6 +2003,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user, can]);
 
   const openSession = useCallback((cashierId: string, opening: number) => {
+    if (!user || !can('page:pos')) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session open without POS access');
+      return;
+    }
     const u = state.users.find(x => x.id === cashierId);
     if (!u) return;
     const today = dkey(new Date());
@@ -2030,6 +2059,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [user, can, pushAudit]);
 
   const runManualBackup = useCallback(async () => {
+    if (!user || !can('act:export')) {
+      pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
+      return;
+    }
     await downloadBackup(state, 'manual');
     const meta = await idbGetMeta();
     setBackupMeta(meta);
@@ -2037,6 +2070,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [state, pushAudit]);
 
   const setAutoBackupHours = useCallback(async (hours: number) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
+      return;
+    }
     const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
     setBackupMeta(meta);
     pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${hours <= 0 ? 'OFF' : hours + 'h'}`);
