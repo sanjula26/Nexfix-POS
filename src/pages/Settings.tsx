@@ -177,7 +177,7 @@ export default function Settings() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-sm font-black text-violet-900">Phone Sales Links</div>
-              <p className="mt-1 text-xs leading-relaxed text-violet-700">සියලු POS machines වලට අදාළ phone sales links එකම තැනින් බලන්න, copy කරන්න සහ වෙන වෙනම හඳුනාගන්න.</p>
+              <p className="mt-1 text-xs leading-relaxed text-violet-700">මෙම POS machine එකට පමණක් අදාළ phone sales link එක බලන්න සහ copy කරන්න. වෙනත් machine links මෙහි නොපෙන්වයි.</p>
             </div>
             <button type="button" onClick={() => navigate('/today-links')} className="min-h-11 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white">Manage machine links</button>
           </div>
