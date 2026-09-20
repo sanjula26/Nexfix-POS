@@ -1112,6 +1112,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
+    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const sale: Sale = {
       id: input._saleId || uid(), billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
@@ -1138,7 +1139,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const qty = (hasKitBom ? 0 : directQty) + kitComponentQty;
       return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
-    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const tradeInUnit = tradeInUnitId ? {
       id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
       status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
