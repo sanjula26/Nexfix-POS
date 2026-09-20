@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { fmtRs, fmtDateTime, dkey, salePaymentLabel } from '../lib/utils';
 import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cloudSync';
 import { supabase, supabaseConfigured } from '../lib/supabase';
-import type { POSState } from '../lib/types';
+import type { POSState, Sale } from '../lib/types';
 import { getMachineIdentity } from '../lib/machine';
 
 export default function MobileTodaySales() {
