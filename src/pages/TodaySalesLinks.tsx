@@ -31,7 +31,7 @@ export default function TodaySalesLinks() {
       if (snapshot) setRemoteState(snapshot.state);
       setMessage('');
     } catch {
-      setMessage('Cloud sync unavailable. Showing this machine's local link.');
+      setMessage('Cloud sync unavailable. Showing this POS machine local link.');
     } finally {
       setLoading(false);
     }
