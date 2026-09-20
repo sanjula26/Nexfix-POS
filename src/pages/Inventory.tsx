@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Package, Plus, Pencil, Trash2, Boxes, Banknote, AlertTriangle, Layers,
-  Barcode, Tag, Minus, ScanBarcode,
+  Barcode, Tag, Minus, ScanBarcode, ClipboardCheck,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
@@ -35,6 +35,9 @@ export default function Inventory() {
   const [newCat, setNewCat] = useState('');
   const [renameFrom, setRenameFrom] = useState('');
   const [renameTo, setRenameTo] = useState('');
+  const [stockTakeOpen, setStockTakeOpen] = useState(false);
+  const [stockCounts, setStockCounts] = useState<Record<string, string>>({});
+  const [stockTakeReason, setStockTakeReason] = useState('Stock take adjustment');
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -99,6 +102,9 @@ export default function Inventory() {
         <div className="flex items-center gap-2.5">
           {can('act:manageStock') && (
             <>
+              <button type="button" className="btn btn-soft" onClick={() => { setStockCounts(Object.fromEntries(state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => [p.id, String(p.stock)]))); setStockTakeOpen(true); }}>
+                <ClipboardCheck size={15} /> Stock take
+              </button>
               <button type="button" className="btn btn-soft" onClick={() => setCatMgrOpen(true)}>
                 <Layers size={15} /> Categories
               </button>
@@ -151,7 +157,7 @@ export default function Inventory() {
               <thead><tr>
                 <th className="th">Product</th><th className="th">Category</th>
                 {can('act:viewCost') && <th className="th">Cost</th>}
-                <th className="th">Price</th><th className="th">Stock</th>
+                <th className="th">Price</th><th className="th">Stock</th><th className="th">Suggested reorder</th>
                 {can('act:viewCost') && <th className="th">Stock Value</th>}
                 {can('act:manageStock') && <th className="th !text-right">Actions</th>}
               </tr></thead>
@@ -174,7 +180,7 @@ export default function Inventory() {
                     <td className="td">
                       <div className="flex items-center gap-2"><span className={`num font-bold ${p.stock === 0 ? 'text-rose-500' : p.stock <= p.reorderLevel ? 'text-amber-500' : 'text-ink'}`}>{p.stock}</span>{p.stock <= p.reorderLevel && <Badge tone={p.stock === 0 ? 'rose' : 'amber'}>{p.stock === 0 ? 'OUT' : 'LOW'}</Badge>}</div>
                       <div className="w-24 h-1.5 rounded-full bg-raised mt-1.5 overflow-hidden"><div className={`h-full rounded-full ${p.stock === 0 ? 'bg-rose-500' : p.stock <= p.reorderLevel ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (p.stock / Math.max(p.reorderLevel * 3, 1)) * 100)}%` }} /></div>
-                    </td>
+                    </td><td className="td num font-semibold text-sub">{Math.max(0, p.reorderLevel * 2 - p.stock)}</td>
                     {can('act:viewCost') && <td className="td num text-sub">{fmtRs(p.stock * p.cost)}</td>}
                     {can('act:manageStock') && <td className="td"><div className="flex items-center justify-end gap-1">
                       <button className={`icon-btn !w-8 !h-8 ${tracked ? 'opacity-40 cursor-not-allowed' : ''}`} title={tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked} onClick={() => { setStockAdj(p); setAdjDelta(''); }}><Boxes size={14} /></button>
@@ -241,6 +247,16 @@ export default function Inventory() {
         <div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { if (deleting) deleteProduct(deleting.id); setDeleting(null); }}><Trash2 size={15} /> Delete</button><button className="btn btn-soft flex-1" onClick={() => setDeleting(null)}>Keep product</button></div>
       </Modal>
 
+      <Modal open={stockTakeOpen} onClose={() => setStockTakeOpen(false)} title="Stock take" sub="Compare physical count with system quantity and post adjustments">
+        <div className="space-y-4">
+          <div className="rounded-xl bg-raised border border-line px-4 py-3 text-sm text-sub">Tracked IMEI/serial stock is excluded here. Reconcile those through Units/GRN.</div>
+          <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-line divide-y divide-line">
+            {state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => { const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) ? counted - p.stock : 0; return <div key={p.id} className="p-3 flex items-center gap-3"><div className="min-w-0 flex-1"><div className="font-semibold text-ink truncate">{p.name}</div><div className="text-[11px] text-sub">System {p.stock} · Difference <span className={delta === 0 ? 'text-sub' : delta > 0 ? 'text-emerald-600' : 'text-rose-500'}>{delta > 0 ? '+' : ''}{delta}</span></div></div><input className="input num !w-28" type="number" min={0} value={stockCounts[p.id] ?? ''} onChange={e => setStockCounts(s => ({ ...s, [p.id]: e.target.value }))} /></div>; })}
+          </div>
+          <Field label="Reason"><input className="input" value={stockTakeReason} onChange={e => setStockTakeReason(e.target.value)} /></Field>
+          <div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setStockTakeOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => { let changed = 0; state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).forEach(p => { const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) ? Math.round(counted - p.stock) : 0; if (delta !== 0) { adjustStock(p.id, delta, stockTakeReason.trim() || 'Stock take adjustment'); changed++; } }); setStockTakeOpen(false); setStockCounts({}); if (changed === 0) window.alert('No stock differences to post.'); }}>Post adjustments</button></div>
+        </div>
+      </Modal>
       <Modal open={!!stockAdj} onClose={() => setStockAdj(null)} title="Adjust stock" sub={stockAdj?.name}>
         {stockAdj && <div className="space-y-4">
           <div className="flex items-center justify-between rounded-xl bg-raised border border-line px-4 py-3"><span className="text-sm text-sub">Current stock</span><span className="num text-xl font-extrabold text-ink">{stockAdj.stock}</span></div>
