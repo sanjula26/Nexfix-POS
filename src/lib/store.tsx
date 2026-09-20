@@ -461,7 +461,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   // Auto-backup scheduler
   useEffect(() => {
-    if (!ready) return;
+    // Automatic backups are an export operation: only an authenticated user
+    // with the export permission may start the scheduler. This also tears the
+    // scheduler down when an admin switches to a lower-privilege account.
+    if (!ready || !user || !can('act:export')) return;
     const stop = startAutoBackup(
       () => stateRef.current,
       async () => {
@@ -470,7 +473,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       },
     );
     return stop;
-  }, [ready, backupMeta.autoBackupHours]);
+  }, [ready, backupMeta.autoBackupHours, user?.id, user?.role, can]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
