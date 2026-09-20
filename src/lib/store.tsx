@@ -1887,7 +1887,7 @@ const deletePurchase = useCallback((id: string) => {
     for(const id of new Set([...oldBy.keys(),...newBy.keys()])){const d=(newBy.get(id)||0)-(oldBy.get(id)||0),p=state.products.find(x=>x.id===id);if(!p||p.stock-d<0)return;}
     setState(st=>{let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts,by:r.by||user.name};let counters=st.counters;if(!exists&&(!job.jobNo||job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1;job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`};counters={...st.counters,job:seq};}const products=st.products.map(p=>{const d=(newBy.get(p.id)||0)-(oldBy.get(p.id)||0);return d?{...p,stock:p.stock-d}:p;});return {...st,products,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};});
     pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
-  }, [state.repairs,state.products,pushAudit,user]);
+  }, [state.repairs,state.products,pushAudit,user,can]);
 
   const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
     if (!user || !can('page:repairs')) {
@@ -1907,7 +1907,7 @@ const deletePurchase = useCallback((id: string) => {
       }),
     }));
     pushAudit('STATUS', 'Repair', `Job status → ${status}`);
-  }, [pushAudit]);
+  }, [pushAudit,user,can]);
 
   const deleteRepair = useCallback((id: string) => {
     if(!user || !can('page:repairs') || !can('act:deleteRecords')) {
