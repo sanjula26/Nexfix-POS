@@ -762,7 +762,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       quotations,
       counters: quoteCounter === undefined ? s.counters : { ...s.counters, quote: quoteCounter },
     }));
-  }, []);
+  }, [user, can, pushAudit]);
 
   const saveProduct = useCallback((p: Product) => {
     if (!user || !can('act:manageStock')) {
@@ -1942,7 +1942,7 @@ const deletePurchase = useCallback((id: string) => {
       if (cats.some(c => c.toLowerCase() === n.toLowerCase())) return s;
       return { ...s, settings: { ...s.settings, categories: [...cats, n] } };
     });
-  }, []);
+  }, [user, can, pushAudit]);
 
   const removeCategory = useCallback((name: string) => {
     if (!user || !can('act:manageStock')) {
@@ -1953,7 +1953,7 @@ const deletePurchase = useCallback((id: string) => {
       ...s,
       settings: { ...s.settings, categories: (s.settings.categories || []).filter(c => c !== name) },
     }));
-  }, []);
+  }, [user, can, pushAudit]);
 
   const renameCategory = useCallback((oldName: string, newName: string) => {
     if (!user || !can('act:manageStock')) {
@@ -1975,7 +1975,7 @@ const deletePurchase = useCallback((id: string) => {
       };
     });
     pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
-  }, [pushAudit]);
+  }, [pushAudit, user, can]);
 
   const openSession = useCallback((cashierId: string, opening: number) => {
     const u = state.users.find(x => x.id === cashierId);
@@ -2016,7 +2016,7 @@ const deletePurchase = useCallback((id: string) => {
       if (brands.some(b => b.toLowerCase() === n.toLowerCase())) return s;
       return { ...s, settings: { ...s.settings, brands: [...brands, n] } };
     });
-  }, []);
+  }, [user, can, pushAudit]);
 
   const removeBrand = useCallback((name: string) => {
     if (!user || !can('act:manageStock')) {
@@ -2027,7 +2027,7 @@ const deletePurchase = useCallback((id: string) => {
       ...s,
       settings: { ...s.settings, brands: (s.settings.brands || []).filter(b => b !== name) },
     }));
-  }, []);
+  }, [user, can, pushAudit]);
 
   const runManualBackup = useCallback(async () => {
     await downloadBackup(state, 'manual');
