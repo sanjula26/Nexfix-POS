@@ -753,6 +753,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [can, pushAudit, state.products, user]);
 
   const saveQuotations = useCallback((quotations: import('./types').Quotation[], quoteCounter?: number) => {
+    if (!user || !can('page:pos')) {
+      pushAudit('DENIED', 'Quotation', 'Blocked quotation change without POS access');
+      return;
+    }
     setState(s => ({
       ...s,
       quotations,
@@ -1906,21 +1910,31 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit]);
 
   const deleteRepair = useCallback((id: string) => {
-    if(!can('act:deleteRecords')) return;
+    if(!user || !can('page:repairs') || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'Repair', 'Blocked repair delete without required permissions');
+      return;
+    }
     const repair=(state.repairs||[]).find(x=>x.id===id);if(!repair||!['cancelled','delivered'].includes(repair.status))return;
     setState(st=>{const used=new Map<string,number>();for(const pt of repair.parts||[])if(pt.productId)used.set(pt.productId,(used.get(pt.productId)||0)+pt.qty);const products=st.products.map(p=>{const q=used.get(p.id)||0;return q?{...p,stock:p.stock+q}:p;});return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};});
     pushAudit('DELETE','Repair',`Deleted ${repair.jobNo}`);
-  }, [state.repairs,pushAudit,can]);
+  }, [state.repairs,pushAudit,can,user]);
 
   const saveWarrantyClaim = useCallback((c: WarrantyClaim) => {
-    if(!user)return;const claims=state.warrantyClaims||[],exists=claims.some(x=>x.id===c.id),no=(c.claimNo||'').trim();const valid:ClaimStatus[]=['open','approved','rejected','replaced','repaired','closed'];
+    if(!user || !can('page:repairs')) {
+      pushAudit('DENIED', 'WarrantyClaim', 'Blocked warranty claim change without repairs access');
+      return;
+    }const claims=state.warrantyClaims||[],exists=claims.some(x=>x.id===c.id),no=(c.claimNo||'').trim();const valid:ClaimStatus[]=['open','approved','rejected','replaced','repaired','closed'];
     if(!c.productName.trim()||!c.issueDescription.trim()||!valid.includes(c.status))return;
     if(no&&claims.some(x=>x.id!==c.id&&x.claimNo.trim().toLowerCase()===no.toLowerCase()))return;
     setState(st=>{let claim:WarrantyClaim={...c,productName:c.productName.trim(),issueDescription:c.issueDescription.trim(),claimNo:no||c.claimNo,by:c.by||user.name};let counters=st.counters;if(!exists&&(!claim.claimNo||claim.claimNo==='CL-TEMP')){const seq=(st.counters.claim||0)+1;claim={...claim,claimNo:`CL-${String(seq).padStart(4,'0')}`};counters={...st.counters,claim:seq};}claim=claim.status==='closed'?{...claim,closedAt:claim.closedAt||new Date().toISOString()}:{...claim,closedAt:undefined};return {...st,counters,warrantyClaims:exists?(st.warrantyClaims||[]).map(x=>x.id===c.id?claim:x):[claim,...(st.warrantyClaims||[])]};});
     pushAudit(exists?'UPDATE':'CREATE','WarrantyClaim',`${exists?'Updated':'Created'} ${no||'claim'} · ${c.productName}`);
-  }, [state.warrantyClaims,pushAudit,user]);
+  }, [state.warrantyClaims,pushAudit,user,can]);
 
   const saveCategory = useCallback((name: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Category', 'Blocked category create without stock-management permission');
+      return;
+    }
     const n = name.trim();
     if (!n) return;
     setState(s => {
@@ -1931,6 +1945,10 @@ const deletePurchase = useCallback((id: string) => {
   }, []);
 
   const removeCategory = useCallback((name: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Category', 'Blocked category delete without stock-management permission');
+      return;
+    }
     setState(s => ({
       ...s,
       settings: { ...s.settings, categories: (s.settings.categories || []).filter(c => c !== name) },
@@ -1938,6 +1956,10 @@ const deletePurchase = useCallback((id: string) => {
   }, []);
 
   const renameCategory = useCallback((oldName: string, newName: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Category', 'Blocked category rename without stock-management permission');
+      return;
+    }
     const n = newName.trim();
     if (!n || !oldName || n === oldName) return;
     setState(s => {
@@ -1983,6 +2005,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.users, pushAudit]);
 
   const saveBrand = useCallback((name: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Brand', 'Blocked brand create without stock-management permission');
+      return;
+    }
     const n = name.trim();
     if (!n) return;
     setState(s => {
@@ -1993,6 +2019,10 @@ const deletePurchase = useCallback((id: string) => {
   }, []);
 
   const removeBrand = useCallback((name: string) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Brand', 'Blocked brand delete without stock-management permission');
+      return;
+    }
     setState(s => ({
       ...s,
       settings: { ...s.settings, brands: (s.settings.brands || []).filter(b => b !== name) },
