@@ -30,6 +30,7 @@ export async function queueWrite(note?:string):Promise<void>{
         customerId:sale.customerId,
         shipping:sale.shipping,
         discount:sale.discount,
+        tradeInValue:sale.tradeIn?.value || 0,
         taxPct:sale.subtotal>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount)) * 100 : 0,
         pointsRedeemed:sale.pointsRedeemed,
         note:sale.note,
@@ -63,7 +64,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     for(const op of ops){
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;tradeInValue?:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           if(state) {
@@ -75,7 +76,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
           const result=await completeSaleAtomic({
             shopId:shop.shopId,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
-            discount:parsed.input.discount,taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
+            discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:parsed.input.salesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
           if(!result.ok) break;
