@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, LogOut, ReceiptText, WalletCards, Banknote, CreditCard, Smartphone, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArrowLeft, LogOut, ReceiptText, WalletCards, Banknote, CreditCard, Smartphone, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePOS } from '../lib/store';
 import { fmtRs, fmtDateTime, dkey, salePaymentLabel } from '../lib/utils';
-import { getCloudShopId, setCloudShopId } from '../lib/cloudSync';
+import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cloudSync';
 import { supabase, supabaseConfigured } from '../lib/supabase';
+import type { POSState } from '../lib/types';
 
 export default function MobileTodaySales() {
   const { state, signOut } = usePOS();
@@ -13,6 +14,9 @@ export default function MobileTodaySales() {
   const requestedShopId = new URLSearchParams(location.search).get('shop')?.trim() || '';
   const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId());
   const [shopError, setShopError] = useState('');
+  const [remoteState, setRemoteState] = useState<POSState | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState('');
   const [copied, setCopied] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dkey(new Date());
@@ -34,7 +38,13 @@ export default function MobileTodaySales() {
         if (!cancelled) { setShopError('Login session එක හමු නොවීය.'); setShopReady(false); }
         return;
       }
-      const { data: membership, error } = await supabase.from('shop_memberships').select('shop_id').eq('user_id', uid).eq('shop_id', requestedShopId).eq('active', true).maybeSingle();
+      const { data: membership, error } = await supabase
+        .from('shop_memberships')
+        .select('shop_id')
+        .eq('user_id', uid)
+        .eq('shop_id', requestedShopId)
+        .eq('active', true)
+        .maybeSingle();
       if (error || !membership) {
         if (!cancelled) { setShopError('මෙම shop එකට ඔබට අවසර නැත.'); setShopReady(false); }
         return;
@@ -50,6 +60,32 @@ export default function MobileTodaySales() {
   const phoneLink = shopId && typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}`
     : '';
+
+  const loadCloudSales = async () => {
+    if (!supabaseConfigured || !supabase || !shopId) return;
+    setRemoteLoading(true);
+    setRemoteError('');
+    try {
+      const snapshot = await downloadStateSnapshot();
+      if (!snapshot) {
+        setRemoteState(null);
+        setRemoteError('Cloud sales snapshot එක හමු නොවීය. PC එක online sync වී තිබේද බලන්න.');
+      } else {
+        setRemoteState(snapshot.state);
+      }
+    } catch {
+      setRemoteState(null);
+      setRemoteError('Cloud sales data ලබාගැනීමට නොහැකි විය.');
+    } finally {
+      setRemoteLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!shopReady) return;
+    void loadCloudSales();
+  }, [shopReady, shopId]);
+
   const copyPhoneLink = async () => {
     if (!phoneLink) return;
     try {
@@ -59,11 +95,13 @@ export default function MobileTodaySales() {
     } catch { setCopied(false); }
   };
 
+  const sourceState = remoteState || state;
+  const usingCloud = !!remoteState;
   const sales = useMemo(
-    () => state.sales
+    () => sourceState.sales
       .filter(s => dkey(new Date(s.date)) === today)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [state.sales, today],
+    [sourceState.sales, today],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
@@ -108,6 +146,19 @@ export default function MobileTodaySales() {
             {copied ? 'Link copied' : 'Copy phone link'}
           </button>
           <div className="mt-2 text-[11px] leading-relaxed text-slate-500">Link එකේ shop ID එකෙන් කඩය හඳුනාගන්නවා. Login වුණු user ට එම shop එකේ active membership තිබිය යුතුයි.</div>
+        </section>
+
+        <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Data source</div>
+              <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : 'Local data'}</div>
+            </div>
+            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700 disabled:opacity-50">
+              <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          </div>
+          {remoteError && <p className="mt-2 text-xs leading-relaxed text-amber-700">{remoteError}</p>}
         </section>
 
         <section className="grid grid-cols-2 gap-3">
@@ -169,7 +220,7 @@ export default function MobileTodaySales() {
         </section>
 
         <p className="pb-6 pt-5 text-center text-[11px] leading-relaxed text-slate-500">
-          Read-only view. Billing and inventory remain on the PC POS. If this phone is not using the shop’s synced hosted app, its local data will not be the PC’s live data.
+          Read-only view. Billing and inventory remain on the PC POS. Cloud mode reads the shop’s authenticated cloud snapshot; local fallback data is not treated as the PC’s live data.
         </p>
       </div>
     </main>
