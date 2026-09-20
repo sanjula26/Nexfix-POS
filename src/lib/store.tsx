@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
-  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus,
+  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
@@ -47,6 +47,7 @@ interface NewSaleInput {
   amountPaid: number;
   payments?: PaymentLeg[];
   note?: string;
+  tradeIn?: TradeIn;
   /** staff member credited with the sale (defaults to current user) */
   salesmanId?: string;
   _saleId?: string;
@@ -797,7 +798,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
       if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
       const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
-      syncToGoogleDrive('Products', updatedProducts);
+      syncToGoogleDrive('Products', productsAfterTradeIn);
       return { ...s, products: updatedProducts };
     });
     if (duplicate) pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
@@ -967,6 +968,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!user || input.lines.length === 0) return null;
     const s = state;
     const items: SaleItem[] = [];
+    const tradeIn = input.tradeIn;
+    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    if (tradeIn && (!tradeIn.productId || !Number.isFinite(tradeIn.value) || tradeIn.value <= 0)) return null;
+    const tradeInProduct = tradeIn ? s.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
+    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn?.addToInventory) {
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      const duplicate = (s.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
+      if (duplicate) return null;
+    }
     const soldUnitIds: string[] = [];
     const requestedQtyByProduct = new Map<string, number>();
     const requiredComponentQty = new Map<string, number>();
@@ -1038,11 +1051,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const loyaltyPointValue = Math.max(0, Number(s.settings.loyaltyPointValue ?? POINT_VALUE));
     const pointsValue = pointsRedeemed * loyaltyPointValue;
     const preTotal = subtotal - discount + tax + shipping;
-    const total = Math.max(0, Math.round((preTotal - Math.min(pointsValue, preTotal)) * 100) / 100);
+    const total = Math.max(0, Math.round((preTotal - Math.min(pointsValue, preTotal) - tradeInValue) * 100) / 100);
     // Gross margin − discounts − loyalty points redeemed (+ shipping is revenue)
     const profit = Math.round((
       items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
-      - lineDiscount - discount - pointsValue + shipping
+      - lineDiscount - discount - pointsValue - tradeInValue + shipping
     ) * 100) / 100;
     const loyaltyPointsPerRs = Math.max(0, Number(s.settings.loyaltyPointsPerRs ?? 0.001));
     const pointsEarned = cust ? Math.floor(Math.max(0, total) * loyaltyPointsPerRs) : 0;
@@ -1083,7 +1096,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pointsRedeemed: pointsRedeemed || undefined,
       pointsEarned: pointsEarned || undefined,
       amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
-      profit, status: 'completed',
+      profit,
+      tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined } : undefined,
+      status: 'completed',
     };
 
     // Deduct direct product stock plus BOM component stock. Kit products with
@@ -1095,10 +1110,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const qty = (hasKitBom ? 0 : directQty) + kitComponentQty;
       return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
+    const tradeInUnit = tradeIn?.addToInventory ? {
+      id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+      status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
+    } : undefined;
+    const productsAfterTradeIn = tradeInUnit
+      ? updatedProducts.map(p => p.id === tradeInUnit.productId ? { ...p, stock: p.stock + 1 } : p)
+      : updatedProducts;
 
     setStateWithInventoryLedger('SALE', prev => ({
       ...prev,
-      products: updatedProducts,
+      products: productsAfterTradeIn,
       customers: prev.customers.map(c =>
         c.id === cust?.id
           ? {
@@ -1108,11 +1130,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             }
           : c,
       ),
-      units: (prev.units || []).map(u =>
-        soldUnitIds.includes(u.id)
+      units: [
+        ...(tradeInUnit ? [tradeInUnit] : []),
+        ...(prev.units || []).map(u => soldUnitIds.includes(u.id)
           ? { ...u, status: 'sold' as const, saleId: sale.id, saleBillNo: billNo, soldAt: sale.date }
           : u,
-      ),
+        ),
+      ],
       sales: [sale, ...prev.sales],
       counters: { ...prev.counters, bill: prev.counters.bill + 1 },
     }));
@@ -1123,7 +1147,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     pushAudit(
       'SALE', 'Sale',
-      `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`,
+      `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${tradeInValue ? ` · trade-in Rs. ${tradeInValue.toLocaleString()}` : ''}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`,
     );
     return sale;
   }, [user, state, pushAudit]);
