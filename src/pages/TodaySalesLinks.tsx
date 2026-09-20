@@ -76,8 +76,9 @@ export default function TodaySalesLinks() {
         <header className="mb-5 flex items-center justify-between gap-3">
           <button type="button" onClick={() => navigate('/pos')} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700"><ArrowLeft size={14} /> Back to POS</button>
           <div>
-            <div><h1 className="text-xl font-black">Phone Sales Link</h1>
-            <p className="mt-1 text-xs text-slate-500">This POS machine has its own permanent read-only phone sales link.</p></div>
+            <h1 className="text-xl font-black">Phone Sales Link</h1>
+            <p className="mt-1 text-xs text-slate-500">This POS machine has its own permanent read-only phone sales link.</p>
+          </div>
           <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold disabled:opacity-50">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
