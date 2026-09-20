@@ -7,9 +7,10 @@ import { getMachineIdentity } from '../lib/machine';
 import type { POSState } from '../lib/types';
 
 export default function TodaySalesLinks() {
-  const { state } = usePOS();
+  const { state, user } = usePOS();
   const location = useLocation();
   const currentMachine = getMachineIdentity();
+  const isAdmin = user?.role === 'admin';
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -58,6 +59,17 @@ export default function TodaySalesLinks() {
       window.setTimeout(() => setMessage(''), 1800);
     } catch { setMessage('Link copy කරන්න බැරි විය.'); }
   };
+
+  if (!isAdmin) {
+    return (
+      <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
+        <div className="mx-auto mt-16 max-w-sm rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-200">
+          <h1 className="text-lg font-black">Admin access required</h1>
+          <p className="mt-2 text-sm text-slate-500">Phone Sales Link එක manage කරන්න Admin පමණක් අවසර ඇත.</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f6fb] text-[#17133c]">
