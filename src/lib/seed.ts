@@ -103,7 +103,7 @@ const emptyState = (): POSState => {
     users: defaultUsers, audit: [], held: [], sessions: [],
     settings: {
       shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
-      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20,
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20, promotions: [],
       adminPinHash: hashPin('admin123'), whatsappReceipts: false,
       categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
       invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
@@ -323,20 +323,21 @@ export const buildSeed = (): POSState => {
     {
       id: 'rj-1', jobNo: 'JOB-0001', customerId: 'c-kasun', customerName: 'Kasun Rajapaksha', customerPhone: '+94 77 123 4567',
       deviceType: 'Phone', deviceBrand: 'Apple', deviceModel: 'iPhone 13', imei: '356938035640001', fault: 'Screen cracked after drop',
+      notifyReadyNote: undefined,
       diagnosis: 'LCD + digitizer replacement needed', parts: [{ name: 'iPhone 13 LCD assembly', qty: 1, cost: 28000, productId: 'p-ids3' }],
       laborCost: 3500, status: 'in_repair', receivedAt: iso(daysAgo(3, 11, 20)), promisedAt: iso(daysAgo(-2)).slice(0, 10),
       technicianId: 'u-sithum', technicianName: 'Sithum Eranga', warrantyDays: 30, advancePaid: 10000, by: 'Nimal Perera',
     },
     {
       id: 'rj-2', jobNo: 'JOB-0002', customerName: 'Walk-in Customer', customerPhone: '+94 71 555 0199', deviceType: 'Laptop', deviceBrand: 'HP',
-      deviceModel: 'Pavilion 15', serial: '5CD1234ABC', fault: 'No power / dead battery', diagnosis: 'Battery swollen — replace battery + clean ports',
+      deviceModel: 'Pavilion 15', serial: '5CD1234ABC', fault: 'No power / dead battery', diagnosis: 'Battery swollen — replace battery + clean ports', notifyReadyNote: undefined,
       parts: [{ name: 'HP Pavilion battery', qty: 1, cost: 12500 }], laborCost: 2500, status: 'ready', receivedAt: iso(daysAgo(7, 14, 0)),
       promisedAt: iso(daysAgo(1)).slice(0, 10), completedAt: iso(daysAgo(1, 16, 30)), technicianName: 'Sithum Eranga', warrantyDays: 30,
       advancePaid: 5000, by: 'Shop Administrator',
     },
     {
       id: 'rj-3', jobNo: 'JOB-0003', customerId: 'c-nimali', customerName: 'Nimali Fernando', customerPhone: '+94 71 234 5678', deviceType: 'Phone',
-      deviceBrand: 'Samsung', deviceModel: 'Galaxy A15', imei: '359299450099999', fault: 'Charging port loose', parts: [], laborCost: 1500, status: 'received',
+      deviceBrand: 'Samsung', deviceModel: 'Galaxy A15', imei: '359299450099999', fault: 'Charging port loose', notifyReadyNote: undefined, parts: [], laborCost: 1500, status: 'received',
       receivedAt: iso(daysAgo(0, 9, 45)), promisedAt: iso(daysAgo(-1)).slice(0, 10), warrantyDays: 14, by: 'Nimal Perera',
     },
   ];
