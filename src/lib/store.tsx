@@ -341,32 +341,7 @@ async function persistState(state: POSState): Promise<void> {
     // cloud transaction commit and the debounced local state write.
     if (saved) {
       try {
-        const tradeIn = input.tradeIn;
-    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
-    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
-    const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
-    if (tradeIn && !tradeInProduct) return null;
-    if (tradeIn?.addToInventory) {
-      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
-      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
-      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
-      const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
-      if (duplicate) return null;
-    }
-    const tradeIn = input.tradeIn;
-    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
-    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
-    const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
-    if (tradeIn && !tradeInProduct) return null;
-    if (tradeIn?.addToInventory) {
-      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
-      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
-      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
-      const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
-      if (duplicate) return null;
-    }
-    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
-    const pendingKey = 'nexfix_pending_cloud_sale_v2';
+        const pendingKey = 'nexfix_pending_cloud_sale_v2';
         const raw = localStorage.getItem(pendingKey);
         if (raw) {
           const pending = JSON.parse(raw) as { saleId?: string };
