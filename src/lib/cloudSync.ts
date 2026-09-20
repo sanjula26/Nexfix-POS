@@ -117,7 +117,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
 
   const customerRows = state.customers.map(c => ({
     id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
-    nic: c.nic || null, address: c.address || null, notes: null,
+    nic: c.nic || null, address: c.address || null, credit_limit: Math.max(0, Number(c.creditLimit ?? 0) || 0), notes: null,
     created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
   }));
   if (customerRows.length) {
@@ -129,6 +129,14 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     if (missing.length) {
       const { error } = await supabase.from('customers').insert(missing);
       if (error) return { ok: false, error: `Customers: ${error.message}` };
+    }
+    const existingRows = customerRows.filter(row => existingIds.has(row.id));
+    for (const row of existingRows) {
+      const { error } = await supabase.from('customers').update({
+        credit_limit: row.credit_limit,
+        updated_at: new Date().toISOString(),
+      }).eq('id', row.id).eq('shop_id', shopId);
+      if (error) return { ok: false, error: `Customer credit limit: ${error.message}` };
     }
   }
 
