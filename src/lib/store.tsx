@@ -1215,7 +1215,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
-      lines: input.lines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
+      lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
       customerId: input.customerId || null, discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct || 0,
       shipping: input.shipping || 0, pointsRedeemed: input.pointsRedeemed || 0,
       payment: input.payment, amountPaid: input.amountPaid,
