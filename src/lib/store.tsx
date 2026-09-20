@@ -1000,7 +1000,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const saleLines = applyCategoryPromotions(input.lines, s.products, s.settings);
     const items: SaleItem[] = [];
     const tradeIn = input.tradeIn;
-    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    const rawTradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
     if (tradeIn && (!tradeIn.productId || !Number.isFinite(tradeIn.value) || tradeIn.value <= 0)) return null;
     const tradeInProduct = tradeIn ? s.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
     if (tradeIn && !tradeInProduct) return null;
@@ -1074,6 +1074,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const discount = Math.min(input.discount || 0, subtotal);
     const tax = Math.round(((subtotal - discount) * (input.taxPct || 0)) / 100 * 100) / 100;
     const shipping = Math.max(0, input.shipping || 0);
+    // Trade-in credit is applied against the merchandise subtotal after manual discount,
+    // matching the cloud atomic-sale contract and preventing local/cloud total drift.
+    const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
     const cust = input.customerId ? s.customers.find(c => c.id === input.customerId) : undefined;
     const pointsRedeemed = Math.min(
       Math.max(0, Math.floor(input.pointsRedeemed || 0)),
