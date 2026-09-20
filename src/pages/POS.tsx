@@ -216,7 +216,20 @@ export default function POS() {
   const discCart = discMode === 'pct'
     ? Math.min(baseAfterLines, (baseAfterLines * (parseFloat(discount) || 0)) / 100)
     : Math.min(parseFloat(discount) || 0, baseAfterLines);
-  const taxable = baseAfterLines - discCart;
+  const activePromotions = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return (state.settings.promotions || []).filter(p => {
+      if (p.active === false || !p.category || !Number.isFinite(Number(p.discountPct)) || Number(p.discountPct) <= 0) return false;
+      if (p.startDate && today < p.startDate) return false;
+      if (p.endDate && today > p.endDate) return false;
+      return true;
+    });
+  }, [state.settings.promotions]);
+  const promoDiscount = Math.min(baseAfterLines - discCart, detailed.reduce((sum, l) => {
+    const pct = activePromotions.filter(p => p.category === l.product.category).reduce((best, p) => Math.max(best, Number(p.discountPct) || 0), 0);
+    return sum + (linePrice(l) * l.qty - (l.discount || 0)) * Math.min(100, pct) / 100;
+  }, 0));
+  const taxable = Math.max(0, baseAfterLines - discCart - promoDiscount);
   const tax = (taxable * (parseFloat(taxPct) || 0)) / 100;
   const shipAmt = shipOpen ? Math.max(0, parseFloat(shipping) || 0) : 0;
   const customer = state.customers.find(c => c.id === customerId);
@@ -401,7 +414,7 @@ export default function POS() {
         return base;
       }),
       customerId: customerId || undefined,
-      discount: discCart,
+      discount: discCart + promoDiscount,
       taxPct: parseFloat(taxPct) || 0,
       shipping: shipAmt,
       pointsRedeemed: redeemedPts,
