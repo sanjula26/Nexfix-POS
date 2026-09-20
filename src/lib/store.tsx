@@ -1389,6 +1389,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       const returnedUnitIds = currentSale.items.flatMap(it => it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === currentSale.id));
       const allReturned = currentRemaining.every(q => q === 0);
+      const tradeInReturn = allReturned && currentSale.tradeIn?.addToInventory && currentSale.tradeIn.productId && currentSale.tradeIn.unitId;
       const creditDue = currentSale.amountPaid < currentSale.total ? Math.max(0, currentSale.total - currentSale.amountPaid) : 0;
       const creditReduction = Math.min(creditDue, refundValue);
       const returnedRatio = currentSale.total > 0 ? Math.min(1, refundValue / currentSale.total) : 1;
@@ -1397,9 +1398,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return {
         ...s,
         sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed' } : x),
-        products: s.products.map(p => { const qty = qtyByProduct.get(p.id); return qty !== undefined ? { ...p, stock: p.stock + qty } : p; }),
+        products: s.products.map(p => {
+          const qty = qtyByProduct.get(p.id) || 0;
+          const tradeInQty = tradeInReturn && p.id === currentSale.tradeIn!.productId ? -1 : 0;
+          return qty || tradeInQty ? { ...p, stock: Math.max(0, p.stock + qty + tradeInQty) } : p;
+        }),
         customers: s.customers.map(c => c.id === currentSale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - creditReduction), loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsEarnedToReverse + pointsToRestore) } : c),
-        units: (s.units || []).map(u => returnedUnitIds.includes(u.id) ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u),
+        units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
+          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+          : (tradeInReturn && u.id === currentSale.tradeIn!.unitId ? { ...u, status: 'returned' as const } : u)),
       };
     });
     pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${sale.items.flatMap(it => it.unitIds || []).length ? ` · tracked unit(s) returned` : ''}`);
@@ -1434,12 +1441,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       currentSale.items.forEach(it => qtyByProduct.set(it.productId, (qtyByProduct.get(it.productId) || 0) + it.qty));
       const unitIds = new Set(currentSale.items.flatMap(it => it.unitIds || []));
       const balanceDue = currentSale.amountPaid < currentSale.total ? Math.max(0, currentSale.total - currentSale.amountPaid) : 0;
+      const tradeInReturn = currentSale.tradeIn?.addToInventory && currentSale.tradeIn.productId && currentSale.tradeIn.unitId;
       return {
         ...s,
         sales: s.sales.map(x => x.id === currentSale.id ? { ...x, status: 'reversed' as const } : x),
-        products: s.products.map(p => { const qty = qtyByProduct.get(p.id); return qty ? { ...p, stock: p.stock + qty } : p; }),
+        products: s.products.map(p => {
+          const qty = qtyByProduct.get(p.id) || 0;
+          const tradeInQty = tradeInReturn && p.id === currentSale.tradeIn!.productId ? -1 : 0;
+          return qty || tradeInQty ? { ...p, stock: Math.max(0, p.stock + qty + tradeInQty) } : p;
+        }),
         customers: s.customers.map(c => c.id === currentSale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - balanceDue), loyaltyPoints: Math.max(0, c.loyaltyPoints - (currentSale.pointsEarned || 0) + (currentSale.pointsRedeemed || 0)) } : c),
-        units: (s.units || []).map(u => unitIds.has(u.id) && u.saleId === currentSale.id ? { ...u, status: 'in_stock' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined } : u),
+        units: (s.units || []).map(u => unitIds.has(u.id) && u.saleId === currentSale.id
+          ? { ...u, status: 'in_stock' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+          : (tradeInReturn && u.id === currentSale.tradeIn!.unitId ? { ...u, status: 'returned' as const } : u)),
         reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'approved' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString() } : r),
       };
     });
