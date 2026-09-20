@@ -731,8 +731,26 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- products ---------------- */
   const saveKitItems = useCallback((items: KitItem[]) => {
+    if (!user || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Kit', 'Blocked kit/BOM change without stock-management permission');
+      return;
+    }
+    const valid = items.every(item =>
+      !!item.id &&
+      !!item.kitProductId &&
+      !!item.componentProductId &&
+      item.kitProductId !== item.componentProductId &&
+      Number.isFinite(item.qty) &&
+      item.qty > 0 &&
+      state.products.some(p => p.id === item.kitProductId) &&
+      state.products.some(p => p.id === item.componentProductId),
+    );
+    if (!valid) {
+      pushAudit('DENIED', 'Kit', 'Blocked invalid kit/BOM data');
+      return;
+    }
     setState(s => ({ ...s, kitItems: items }));
-  }, []);
+  }, [can, pushAudit, state.products, user]);
 
   const saveQuotations = useCallback((quotations: import('./types').Quotation[], quoteCounter?: number) => {
     setState(s => ({
