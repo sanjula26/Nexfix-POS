@@ -231,7 +231,11 @@ export default function POS() {
     const pct = activePromotions.filter(p => p.category.trim().toLowerCase() === l.product.category.trim().toLowerCase()).reduce((best, p) => Math.max(best, Number(p.discountPct) || 0), 0);
     return sum + (linePrice(l) * l.qty - (l.discount || 0)) * Math.min(100, pct) / 100;
   }, 0));
-  const taxable = Math.max(0, baseAfterLines - discCart - promoDiscount);
+  const rawTradeInValue = Math.max(0, parseFloat(tradeIn.value) || 0);
+  const tradeInValue = Math.min(rawTradeInValue, Math.max(0, baseAfterLines - discCart - promoDiscount));
+  // Cloud atomic sales send trade-in as part of the discount, so tax must use
+  // the same post-trade-in taxable base in the POS preview.
+  const taxable = Math.max(0, baseAfterLines - discCart - promoDiscount - tradeInValue);
   const tax = (taxable * (parseFloat(taxPct) || 0)) / 100;
   const shipAmt = shipOpen ? Math.max(0, parseFloat(shipping) || 0) : 0;
   const customer = state.customers.find(c => c.id === customerId);
@@ -240,8 +244,6 @@ export default function POS() {
   const preTotal = taxable + tax + shipAmt;
   const loyaltyPointValue = Math.max(0, Number(state.settings.loyaltyPointValue ?? 20));
   const pointsVal = Math.min(redeemedPts * loyaltyPointValue, preTotal);
-  const rawTradeInValue = Math.max(0, parseFloat(tradeIn.value) || 0);
-  const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
   const total = Math.max(0, Math.round((preTotal - pointsVal - tradeInValue) * 100) / 100);
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
