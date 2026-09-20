@@ -831,7 +831,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- customers / suppliers ---------------- */
   const saveCustomer = useCallback((c: Customer) => {
-  if (!user) { pushAudit('DENIED', 'Customer', `Blocked customer save for ${c.name || c.id}`); return; }
+  if (!user || (!can('page:customers') && !can('page:pos'))) { pushAudit('DENIED', 'Customer', `Blocked customer save for ${c.name || c.id}`); return; }
   const name = String(c.name || '').trim();
   const phone = String(c.phone || '').trim();
   const email = String(c.email || '').trim().toLowerCase();
@@ -860,10 +860,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   });
   if (duplicate) pushAudit('DENIED', 'Customer', `Blocked duplicate phone/NIC for ${name}`);
   else pushAudit(existing ? 'UPDATE' : 'CREATE', 'Customer', `${existing ? 'Updated' : 'Created'} customer ${name}`);
-}, [pushAudit, state.customers, user]);
+}, [pushAudit, state.customers, user, can]);
 
   const deleteCustomer = useCallback((id: string) => {
-  if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Customer', `Blocked customer delete for ${id}`); return; }
+  if (!user || (!can('page:customers') && !can('page:pos')) || !can('act:deleteRecords')) { pushAudit('DENIED', 'Customer', `Blocked customer delete for ${id}`); return; }
   const c = state.customers.find(x => x.id === id);
   if (!c) return;
   const referencedByHistory = state.sales.some(x => x.customerId === id)
@@ -879,7 +879,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 }, [can, pushAudit, state.customers, state.quotations, state.repairs, state.sales, state.warrantyClaims, user]);
 
   const saveSupplier = useCallback((sp: Supplier) => {
-  if (!user) { pushAudit('DENIED', 'Supplier', `Blocked supplier save for ${sp.name || sp.id}`); return; }
+  if (!user || !can('page:suppliers')) { pushAudit('DENIED', 'Supplier', `Blocked supplier save for ${sp.name || sp.id}`); return; }
   const name = String(sp.name || '').trim();
   const phone = String(sp.phone || '').trim();
   const email = String(sp.email || '').trim().toLowerCase();
@@ -902,10 +902,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   });
   if (duplicate) pushAudit('DENIED', 'Supplier', `Blocked duplicate phone for ${name}`);
   else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Supplier', `${exists ? 'Updated' : 'Created'} supplier ${name}`);
-}, [pushAudit, state.suppliers, user]);
+}, [pushAudit, state.suppliers, user, can]);
 
   const deleteSupplier = useCallback((id: string) => {
-  if (!user || !can('act:deleteRecords')) { pushAudit('DENIED', 'Supplier', `Blocked supplier delete for ${id}`); return; }
+  if (!user || !can('page:suppliers') || !can('act:deleteRecords')) { pushAudit('DENIED', 'Supplier', `Blocked supplier delete for ${id}`); return; }
   const sp = state.suppliers.find(x => x.id === id);
   if (!sp) return;
   const referencedByHistory = state.purchases.some(x => x.supplierId === id)
