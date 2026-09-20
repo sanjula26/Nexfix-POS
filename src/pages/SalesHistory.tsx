@@ -91,10 +91,13 @@ export default function SalesHistory() {
       <div className="card overflow-hidden">
         <div className="p-4 border-b border-line">
           <div className="flex flex-wrap gap-2 items-center">
-            <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="flex-1 min-w-[240px] max-w-md" />\n            <select className="input w-36" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} aria-label="Filter by payment">
+            <SearchInput value={search} onChange={setSearch} placeholder="Search by bill #, customer, cashier..." className="flex-1 min-w-[240px] max-w-md" />
+            <select className="input w-36" value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} aria-label="Filter by payment">
               <option value="all">All payments</option><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank</option><option value="mobile">Mobile</option><option value="credit">Credit</option>
-            </select>\n            <select className="input w-44" value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} aria-label="Filter by cashier">
-              <option value="all">All cashiers</option>{cashiers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}\n            </select>
+            </select>
+            <select className="input w-44" value={cashierFilter} onChange={e => setCashierFilter(e.target.value)} aria-label="Filter by cashier">
+              <option value="all">All cashiers</option>{cashiers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
           </div>
         </div>
         {rows.length === 0 ? (
