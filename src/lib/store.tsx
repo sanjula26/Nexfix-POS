@@ -1253,7 +1253,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       machineId: getMachineIdentity().id, machineName: getMachineIdentity().name,
       customerId: row.customer_id ? String(row.customer_id) : undefined,
       customerName: String(row.customer_name ?? committed.customer?.name ?? 'Walk-in customer'),
-      items: committedItems, subtotal: n(row.subtotal), discount: n(row.discount), tax: n(row.tax),
+      items: committedItems, subtotal: n(row.subtotal), discount: Math.max(0, n(row.discount) - tradeInValue), tax: n(row.tax),
       shipping: n(row.shipping) || undefined, total: n(row.total),
       payment: paymentRows.length > 1 ? paymentRows[0].method : (paymentRows[0]?.method || input.payment),
       payments: paymentRows.length > 1 ? paymentRows : undefined,
