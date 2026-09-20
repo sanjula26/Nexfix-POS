@@ -351,6 +351,19 @@ async function persistState(state: POSState): Promise<void> {
       const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
       if (duplicate) return null;
     }
+    const tradeIn = input.tradeIn;
+    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
+    const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
+    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn?.addToInventory) {
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
+      if (duplicate) return null;
+    }
+    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
         const raw = localStorage.getItem(pendingKey);
         if (raw) {
@@ -1221,7 +1234,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       const cloudUnits = [
         ...(state.units || []),
-        { id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: new Date().toISOString() },
+        { id: tradeInUnitId!, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: new Date().toISOString() },
       ];
       void syncNormalizedCatalog({ ...state, products: cloudProducts, units: cloudUnits }, shop.shopId);
     }
@@ -1291,7 +1304,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           } : c)
         : prev.customers;
       const tradeInUnit = tradeIn?.addToInventory ? {
-        id: uid(), productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+        id: tradeInUnitId!, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
         status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
       } : undefined;
       const updatedUnits = [
