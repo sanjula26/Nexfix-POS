@@ -918,7 +918,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 }, [can, pushAudit, state.products, state.purchases, state.purchaseReturns, state.supplierPayments, state.suppliers, state.grns, user]);
 
   const saveSupplierPayment = useCallback((p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => {
-    if (!user || !state.suppliers.some(s => s.id === p.supplierId)) return null;
+    if (!user || !can('page:suppliers')) {
+      pushAudit('DENIED', 'SupplierPayment', 'Blocked supplier payment without supplier access');
+      return null;
+    }
+    if (!state.suppliers.some(s => s.id === p.supplierId)) return null;
     if (!Number.isFinite(p.amount) || p.amount <= 0) return null;
     const purchaseTotal = state.purchases.filter(x => x.supplierId === p.supplierId && x.status === 'received').reduce((sum, x) => sum + Math.max(0, x.total), 0);
     const returnTotal = (state.purchaseReturns || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, x.total), 0);
@@ -929,15 +933,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, supplierPayments: [payment, ...(s.supplierPayments || [])] }));
     pushAudit('CREATE', 'SupplierPayment', `Payment of Rs. ${payment.amount.toLocaleString()} to supplier ${state.suppliers.find(s => s.id === p.supplierId)?.name || p.supplierId}`);
     return payment;
-  }, [state.suppliers, state.purchases, state.purchaseReturns, state.supplierPayments, user, pushAudit]);
+  }, [state.suppliers, state.purchases, state.purchaseReturns, state.supplierPayments, user, pushAudit, can]);
 
   const deleteSupplierPayment = useCallback((id: string) => {
-    if (!can('act:deleteRecords')) return;
+    if (!user || !can('page:suppliers') || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'SupplierPayment', 'Blocked supplier payment delete without required permissions');
+      return;
+    }
     const payment = (state.supplierPayments || []).find(x => x.id === id);
     if (!payment) return;
     setState(s => ({ ...s, supplierPayments: (s.supplierPayments || []).filter(x => x.id !== id) }));
     pushAudit('DELETE', 'SupplierPayment', `Deleted supplier payment ${id}`);
-  }, [can, state.supplierPayments, pushAudit]);
+  }, [can, state.supplierPayments, pushAudit, user]);
 
   /* ---------------- sales ---------------- */
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
@@ -1519,6 +1526,10 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- expenses ---------------- */
   const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => {
+    if (!user || !can('page:expenses')) {
+      pushAudit('DENIED', 'Expense', 'Blocked expense creation without expense access');
+      return;
+    }
     const amount = Number(e.amount);
     const category = String(e.category || '').trim();
     const note = String(e.note || '').trim();
@@ -1532,13 +1543,17 @@ const deletePurchase = useCallback((id: string) => {
       expenses: [{ ...e, amount: normalizedAmount, category, note, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
     }));
     pushAudit('EXPENSE', 'Expense', `${category}: ${note} · Rs. ${normalizedAmount.toLocaleString()}`);
-  }, [pushAudit, user?.name]);
+  }, [pushAudit, user?.name, user, can]);
 
   const deleteExpense = useCallback((id: string) => {
+    if (!user || !can('page:expenses') || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'Expense', 'Blocked expense delete without required permissions');
+      return;
+    }
     const e = state.expenses.find(x => x.id === id);
     setState(s => ({ ...s, expenses: s.expenses.filter(x => x.id !== id) }));
     if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`);
-  }, [state.expenses, pushAudit]);
+  }, [state.expenses, pushAudit, user, can]);
 
   /* ---------------- exchanges ---------------- */
   const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => {
@@ -1696,7 +1711,7 @@ const deletePurchase = useCallback((id: string) => {
       ),
     }));
     pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${counted.toLocaleString()}${note ? ` · ${note}` : ''}`);
-  }, [pushAudit]);
+  }, [pushAudit, user, can]);
 
   // auto-open today's drawer session once per cashier
   useEffect(() => {
@@ -1764,6 +1779,10 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit) => {
+    if (!user || !can('page:units')) {
+      pushAudit('DENIED', 'Unit', 'Blocked unit save without units access');
+      return;
+    }
     const exists = (state.units || []).some(x => x.id === u.id);
     // prevent duplicate IMEI/serial in stock
     const dup = (state.units || []).find(x =>
@@ -1781,7 +1800,7 @@ const deletePurchase = useCallback((id: string) => {
         : [u, ...(s.units || [])],
     }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Unit', `${exists ? 'Updated' : 'Added'} unit ${u.imei || u.serial || u.id}`);
-  }, [state.units, pushAudit]);
+  }, [state.units, pushAudit, user, can]);
 
   const saveUnitsBulk = useCallback((newUnits: InventoryUnit[]): { ok: boolean; added: number; errors: string[] } => {
     if (!user || !can('act:manageStock')) return { ok: false, added: 0, errors: ['You do not have permission to manage inventory units.'] };
@@ -1825,10 +1844,14 @@ const deletePurchase = useCallback((id: string) => {
   }, [user, can, state.units, pushAudit]);
 
   const deleteUnit = useCallback((id: string) => {
+    if (!user || !can('page:units') || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'Unit', 'Blocked unit delete without required permissions');
+      return;
+    }
     const u = (state.units || []).find(x => x.id === id);
     setState(s => ({ ...s, units: (s.units || []).filter(x => x.id !== id) }));
     if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`);
-  }, [state.units, pushAudit]);
+  }, [state.units, pushAudit, user, can]);
 
   const findUnitByCode = useCallback((code: string) => {
     const q = code.trim().toLowerCase();
@@ -1842,7 +1865,10 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- repairs ---------------- */
   const saveRepair = useCallback((r: RepairJob) => {
-    if (!user) return;
+    if (!user || !can('page:repairs')) {
+      pushAudit('DENIED', 'Repair', 'Blocked repair save without repairs access');
+      return;
+    }
     const repairs=state.repairs||[], exists=repairs.some(x=>x.id===r.id), jobNo=(r.jobNo||'').trim();
     if(!r.customerName.trim()||!r.deviceType.trim()||!r.deviceModel.trim()||!r.fault.trim()) return;
     if(!Number.isFinite(r.laborCost)||r.laborCost<0) return;
@@ -1860,6 +1886,10 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.repairs,state.products,pushAudit,user]);
 
   const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
+    if (!user || !can('page:repairs')) {
+      pushAudit('DENIED', 'Repair', 'Blocked repair status update without repairs access');
+      return;
+    }
     setState(s => ({
       ...s,
       repairs: (s.repairs || []).map(j => {
