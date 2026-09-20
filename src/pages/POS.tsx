@@ -219,7 +219,7 @@ export default function POS() {
     ? Math.min(baseAfterLines, (baseAfterLines * (parseFloat(discount) || 0)) / 100)
     : Math.min(parseFloat(discount) || 0, baseAfterLines);
   const activePromotions = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = dkey(new Date());
     return (state.settings.promotions || []).filter(p => {
       if (p.active === false || !p.category || !Number.isFinite(Number(p.discountPct)) || Number(p.discountPct) <= 0) return false;
       if (p.startDate && today < p.startDate) return false;
@@ -228,7 +228,7 @@ export default function POS() {
     });
   }, [state.settings.promotions]);
   const promoDiscount = Math.min(baseAfterLines - discCart, detailed.reduce((sum, l) => {
-    const pct = activePromotions.filter(p => p.category === l.product.category).reduce((best, p) => Math.max(best, Number(p.discountPct) || 0), 0);
+    const pct = activePromotions.filter(p => p.category.trim().toLowerCase() === l.product.category.trim().toLowerCase()).reduce((best, p) => Math.max(best, Number(p.discountPct) || 0), 0);
     return sum + (linePrice(l) * l.qty - (l.discount || 0)) * Math.min(100, pct) / 100;
   }, 0));
   const taxable = Math.max(0, baseAfterLines - discCart - promoDiscount);
