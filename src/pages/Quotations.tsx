@@ -244,7 +244,8 @@ export default function Quotations() {
         </div>
 
         {msg && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{msg}</div>}
-        {(!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)) && <p className="text-xs text-faint sm:mr-auto">Enter customer name and item descriptions</p>}\n        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-line pt-4">
+        {(!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)) && <p className="text-xs text-faint sm:mr-auto">Enter customer name and item descriptions</p>}
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 border-t border-line pt-4">
           <button type="button" className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={save} disabled={!editing.customerName.trim() || !editing.items.some(it => it.name.trim() && it.qty > 0)}><FileText size={15} /> Save Quotation</button>
         </div>
