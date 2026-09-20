@@ -31,11 +31,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PHONE_SALES_BASE_URL: ${{ secrets.PHONE_SALES_BASE_URL }}
+          OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
         run: |
           set -euo pipefail
           : "${SUPABASE_URL:?Missing SUPABASE_URL secret}"
           : "${SUPABASE_SERVICE_ROLE_KEY:?Missing SUPABASE_SERVICE_ROLE_KEY secret}"
           : "${PHONE_SALES_BASE_URL:?Missing PHONE_SALES_BASE_URL secret}"
+          : "${OWNER_USER_ID:?Missing OWNER_USER_ID secret}"
 
           api="${SUPABASE_URL%/}/rest/v1"
           auth=(-H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
