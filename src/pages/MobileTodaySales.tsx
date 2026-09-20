@@ -16,7 +16,7 @@ export default function MobileTodaySales() {
   const requestedShopId = query.get('shop')?.trim() || '';
   const requestedMachineId = query.get('machine')?.trim() || '';
   const [activeShopId, setActiveShopId] = useState(getCloudShopId());
-  const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId());
+  const [shopReady, setShopReady] = useState(!requestedShopId || requestedShopId === getCloudShopId() || !!getCloudShopId());
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -38,7 +38,7 @@ export default function MobileTodaySales() {
         return;
       }
       if (!supabaseConfigured || !supabase) {
-        if (!cancelled) { setShopError('Hosted cloud login is required to use this shop link.'); setShopReady(false); }
+        if (!cancelled) { setShopError('Cloud connection is required to resolve this machine link.'); setShopReady(false); }
         return;
       }
       const { data: authData } = await supabase.auth.getUser();
@@ -66,12 +66,35 @@ export default function MobileTodaySales() {
     return () => { cancelled = true; };
   }, [requestedShopId]);
 
+  useEffect(() => {
+    if (requestedShopId || !requestedMachineId || activeShopId || !supabaseConfigured || !supabase) return;
+    let cancelled = false;
+    const resolveMachineShop = async () => {
+      const { data, error } = await supabase
+        .from('pos_devices')
+        .select('shop_id')
+        .eq('device_id', requestedMachineId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data?.shop_id) {
+        setShopError('This machine link is not registered to an accessible shop.');
+        setShopReady(false);
+        return;
+      }
+      setCloudShopId(String(data.shop_id));
+      setActiveShopId(String(data.shop_id));
+      setShopReady(true);
+    };
+    void resolveMachineShop();
+    return () => { cancelled = true; };
+  }, [requestedShopId, requestedMachineId, activeShopId]);
+
   const shopId = activeShopId;
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
   const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
-  const phoneLink = shopId && typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}&machine=${encodeURIComponent(machineId)}`
+  const phoneLink = typeof window !== 'undefined'
+    ? `${window.location.origin}${window.location.pathname}#/today?${shopId ? `shop=${encodeURIComponent(shopId)}&` : ''}machine=${encodeURIComponent(machineId)}`
     : '';
 
   const submitPin = () => {
@@ -147,7 +170,7 @@ export default function MobileTodaySales() {
       <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
         <div className="mx-auto max-w-xl rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <h1 className="text-lg font-black">Shop link</h1>
-          <p className="mt-2 text-sm text-slate-600">{shopError || 'Shop එක හඳුනාගනිමින්…'}</p>
+          <p className="mt-2 text-sm text-slate-600">{shopError || 'Resolving shop…'}</p>
           <button type="button" onClick={() => navigate('/login')} className="mt-4 min-h-11 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">Login</button>
         </div>
       </main>
@@ -159,7 +182,7 @@ export default function MobileTodaySales() {
       <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
         <div className="mx-auto mt-16 max-w-sm rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
           <h1 className="text-xl font-black">Today’s Sales</h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">Login එකෙන් පසු The Admin PIN is required to view this read-only sales page.</p>
+          <p className="mt-2 text-sm leading-relaxed text-slate-500">After login, the Admin PIN is required to view this read-only sales page.</p>
           <label className="mt-5 block text-xs font-bold text-slate-600">Admin PIN</label>
           <input className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
           {pinError && <p className="mt-2 text-xs font-bold text-rose-600">{pinError}</p>}
@@ -233,7 +256,7 @@ export default function MobileTodaySales() {
         <section className="mt-5">
           <div className="mb-3 flex items-center gap-2 text-base font-extrabold"><ReceiptText size={18} /> {selectedDate === today ? 'Today’s bills' : 'Sales for selected date'}</div>
           {sales.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No sales recorded today.</div>
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No sales recorded for the selected date.</div>
           ) : (
             <div className="space-y-3">
               {sales.map(sale => {
