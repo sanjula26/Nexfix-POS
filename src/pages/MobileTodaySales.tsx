@@ -27,6 +27,7 @@ export default function MobileTodaySales() {
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dkey(new Date());
   const [selectedDate, setSelectedDate] = useState(today);
+  const [machineLinkCopied, setMachineLinkCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +67,7 @@ export default function MobileTodaySales() {
   const shopId = getCloudShopId();
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
+  const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
   const phoneLink = shopId && typeof window !== 'undefined'
     ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}&machine=${encodeURIComponent(machineId)}`
     : '';
@@ -103,6 +105,15 @@ export default function MobileTodaySales() {
     if (!shopReady) return;
     void loadCloudSales();
   }, [shopReady, loadCloudSales]);
+
+  const copyMachineLink = async () => {
+    if (!phoneLink) return;
+    try {
+      await navigator.clipboard.writeText(phoneLink);
+      setMachineLinkCopied(true);
+      window.setTimeout(() => setMachineLinkCopied(false), 1800);
+    } catch { setMachineLinkCopied(false); }
+  };
 
   const copyPhoneLink = async () => {
     if (!phoneLink) return;
@@ -174,10 +185,10 @@ export default function MobileTodaySales() {
         </header>
 
         <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-violet-700">Phone link — {machine.name}</div>
+          <div className="text-xs font-bold uppercase tracking-wide text-violet-700">This POS machine — {linkMachineName}</div>
           <div className="mt-1 break-all text-xs font-semibold text-slate-700">{phoneLink || 'Shop ID not configured'}</div>
-          <button type="button" onClick={() => void copyPhoneLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
-            {copied ? 'Link copied' : 'Copy phone link'}
+          <button type="button" onClick={() => void copyMachineLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
+            {machineLinkCopied ? 'Link copied' : 'Copy this POS machine link'}
           </button>
           <div className="mt-2 text-[11px] leading-relaxed text-slate-500">මෙම link එකේ shop + machine ID දෙකම තිබෙන නිසා වෙනත් POS machine එකක sales mix වෙන්නේ නැහැ.</div>
         </section>
