@@ -31,7 +31,7 @@ export async function queueWrite(note?:string):Promise<void>{
         shipping:sale.shipping,
         discount:sale.discount,
         tradeInValue:sale.tradeIn?.value || 0,
-        taxPct:sale.subtotal>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))) * 100 : 0,
+        taxPct:Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))) * 100 : 0,
         pointsRedeemed:sale.pointsRedeemed,
         note:sale.note,
         salesmanId:sale.cashierId,
