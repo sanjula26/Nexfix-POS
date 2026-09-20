@@ -1116,6 +1116,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const amountPaid = isSplit
       ? legs.reduce((a, l) => a + l.amount, 0)
       : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
+    if (isCredit && amountPaid > total) return null;
     const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
