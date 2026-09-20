@@ -948,6 +948,10 @@ export default function POS() {
                 <span className="w-24 text-right num text-[12.5px] font-semibold text-rose-500">{discCart > 0 ? `- ${fmtRs(discCart, false)}` : '—'}</span>
               </div>
             </div>
+            {promoDiscount > 0 && <div className="flex items-center justify-between gap-3">
+              <span className="text-[12.5px] text-sub">Promotion <span className="text-emerald-600 dark:text-emerald-400 text-[10.5px]">(active)</span></span>
+              <span className="w-24 text-right num text-[12.5px] font-semibold text-emerald-600 dark:text-emerald-400">- {fmtRs(promoDiscount, false)}</span>
+            </div>}
 
             {/* tax */}
             <div className="flex items-center justify-between gap-3">
