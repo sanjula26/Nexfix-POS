@@ -445,19 +445,22 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const { flushed, pending } = await flushSyncQueue();
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
-        // On reconnect: push full state to Google + local snapshot (cloud preferred)
-        try {
-          await downloadBackup(stateRef.current, 'auto', {
-            download: flushed > 0,
-            cloud: true,
-          });
-          const meta = await idbGetMeta();
-          setBackupMeta(meta);
-        } catch { /* ignore */ }
+        // Backup/export on reconnect requires the export permission.
+        // Queue flushing remains available independently of backup access.
+        if (user && can('act:export')) {
+          try {
+            await downloadBackup(stateRef.current, 'auto', {
+              download: flushed > 0,
+              cloud: true,
+            });
+            const meta = await idbGetMeta();
+            setBackupMeta(meta);
+          } catch { /* ignore */ }
+        }
       }
     });
     return unsub;
-  }, []);
+  }, [user, can]);
 
   // Auto-backup scheduler
   useEffect(() => {
