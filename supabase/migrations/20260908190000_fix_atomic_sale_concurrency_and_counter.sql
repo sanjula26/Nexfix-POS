@@ -28,7 +28,7 @@ declare
   v_earn_div integer; v_point_value numeric(12,2); v_has_credit boolean := false;
   v_existing public.sales; v_product public.products; v_customer public.customers;
   v_line jsonb; v_payment jsonb; v_unit_ids uuid[]; v_qty numeric(12,2); v_price numeric(12,2);
-  v_line_disc numeric(12,2); v_gross numeric(12,2); v_cost numeric(12,2); v_unit_count integer;
+  v_line_disc numeric(12,2); v_line_discount_total numeric(12,2) := 0; v_gross numeric(12,2); v_cost numeric(12,2); v_unit_count integer;
   v_payment_method public.payment_method; v_payment_amount numeric(12,2);
 begin
   if v_uid is null then raise exception 'Authentication required'; end if;
@@ -83,10 +83,13 @@ begin
       perform 1 from public.inventory_units iu where iu.id=any(v_unit_ids) order by iu.id for update;
       if (select count(*) from public.inventory_units iu where iu.id=any(v_unit_ids))<>array_length(v_unit_ids,1) then raise exception 'One or more IMEI/serial units were not found'; end if;
     else v_unit_ids:='{}'::uuid[]; end if;
-    v_subtotal:=v_subtotal+v_gross-v_line_disc; v_discount:=v_discount+v_line_disc; v_profit:=v_profit+((v_price-v_cost)*v_qty)-v_line_disc;
+    v_subtotal:=v_subtotal+v_gross-v_line_disc; v_line_discount_total:=v_line_discount_total+v_line_disc; v_profit:=v_profit+((v_price-v_cost)*v_qty)-v_line_disc;
   end loop;
 
-  v_discount:=round(least(greatest(p_discount,0),v_subtotal),2); v_tax:=round((v_subtotal-v_discount)*p_tax_pct/100,2);
+  -- Keep line-level discounts in the authoritative sale discount total. The line
+  -- discounts are already reflected in v_subtotal, while p_discount is the
+  -- additional cart-level discount (including the trade-in offset used by POS).
+  v_discount:=round(v_line_discount_total + least(greatest(p_discount,0),v_subtotal),2); v_tax:=round((v_subtotal-least(greatest(p_discount,0),v_subtotal))*p_tax_pct/100,2);
   select coalesce(s.loyalty_earn_div,1000),coalesce(s.loyalty_point_value,20) into v_earn_div,v_point_value from public.shops s where s.id=p_shop_id;
   v_earn_div:=greatest(coalesce(v_earn_div,1000),1); v_point_value:=greatest(coalesce(v_point_value,20),0);
   if p_customer_id is not null and v_points_redeemed>coalesce(v_customer.loyalty_points,0) then raise exception 'Insufficient loyalty points'; end if;
