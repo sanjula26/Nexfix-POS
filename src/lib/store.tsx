@@ -36,6 +36,31 @@ interface NewSaleLine {
   unitIds?: string[];
 }
 
+function applyCategoryPromotions(lines: NewSaleLine[], products: readonly Product[], settings: Settings, now = new Date()): NewSaleLine[] {
+  const promotions = Array.isArray(settings.promotions) ? settings.promotions : [];
+  if (!promotions.length) return lines;
+  const day = dkey(now);
+  return lines.map(line => {
+    const product = products.find(p => p.id === line.productId);
+    if (!product) return line;
+    const eligible = promotions.filter(p => {
+      if (p.active === false) return false;
+      if (p.category.trim().toLowerCase() !== product.category.trim().toLowerCase()) return false;
+      if (p.startDate && day < p.startDate) return false;
+      if (p.endDate && day > p.endDate) return false;
+      return Number.isFinite(p.discountPct) && p.discountPct > 0 && p.discountPct <= 100;
+    });
+    if (!eligible.length) return line;
+    const pct = Math.max(...eligible.map(p => p.discountPct));
+    const unitPrice = line.price !== undefined && line.price >= 0 ? line.price : product.price;
+    const gross = Math.max(0, unitPrice * line.qty);
+    const manualDiscount = Math.min(Math.max(line.discount || 0, 0), gross);
+    const promoDiscount = Math.round((gross - manualDiscount) * pct / 100 * 100) / 100;
+    const discount = Math.min(gross, manualDiscount + promoDiscount);
+    return { ...line, discount };
+  });
+}
+
 interface NewSaleInput {
   lines: NewSaleLine[];
   customerId?: string;
@@ -972,6 +997,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
     if (!user || input.lines.length === 0) return null;
     const s = state;
+    const saleLines = applyCategoryPromotions(input.lines, s.products, s.settings);
     const items: SaleItem[] = [];
     const tradeIn = input.tradeIn;
     const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
@@ -988,7 +1014,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const soldUnitIds: string[] = [];
     const requestedQtyByProduct = new Map<string, number>();
     const requiredComponentQty = new Map<string, number>();
-    for (const l of input.lines) {
+    for (const l of saleLines) {
       const p = s.products.find(x => x.id === l.productId);
       if (!p) return null;
       if (!Number.isFinite(l.qty) || l.qty <= 0) return null;
@@ -1169,6 +1195,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       return null;
     }
+    const saleLines = applyCategoryPromotions(input.lines, state.products, state.settings);
     const tradeIn = input.tradeIn;
     const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
     if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
@@ -1213,7 +1240,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: input.salesmanId || user.id,
-      lines: input.lines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
+      lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
     });
     if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) return null;
