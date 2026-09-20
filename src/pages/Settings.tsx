@@ -36,7 +36,7 @@ export default function Settings() {
       invoiceTitle: rest.invoiceTitle || 'INVOICE', invoiceSubtitle: rest.invoiceSubtitle || rest.tagline || 'COMPUTER & PHONE SHOP',
       invoiceCurrency: rest.invoiceCurrency || 'Rs.', invoiceTaxLabel: rest.invoiceTaxLabel || 'Tax',
       invoiceTerms: rest.invoiceTerms || '', invoiceFooter: rest.invoiceFooter || rest.receiptFooter || 'Thank you for your purchase!',
-      invoiceShowTax: rest.invoiceShowTax !== false, taxRegistrationNo: rest.taxRegistrationNo || '', invoicePlaceOfSupply: rest.invoicePlaceOfSupply || '',
+      invoiceShowTax: rest.invoiceShowTax !== false, taxRegistrationNo: rest.taxRegistrationNo || '', invoicePlaceOfSupply: rest.invoicePlaceOfSupply || '', promotions: rest.promotions || [],
     };
   });
   const [pinCur, setPinCur] = useState('');
