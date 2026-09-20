@@ -128,9 +128,9 @@ export default function MobileTodaySales() {
   const usingCloud = !!remoteState;
   const sales = useMemo(
     () => sourceState.sales
-      .filter(s => dkey(new Date(s.date)) === selectedDate && (!requestedMachineId || s.machineId === machineId))
+      .filter(s => dkey(new Date(s.date)) === selectedDate && s.machineId === machineId)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [sourceState.sales, selectedDate],
+    [sourceState.sales, selectedDate, machineId],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
