@@ -381,6 +381,8 @@ export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
   const lowStock = useMemo(
@@ -393,6 +395,19 @@ export default function AppLayout() {
   );
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshDone(false);
+    try {
+      await refreshPOS();
+      setRefreshDone(true);
+      window.setTimeout(() => setRefreshDone(false), 1400);
+    } finally {
+      window.setTimeout(() => setRefreshing(false), 450);
+    }
+  };
 
   if (!user) return null;
 
@@ -447,8 +462,8 @@ export default function AppLayout() {
               </span>
             </button>
           )}
-          <button type="button" className="icon-btn border !border-line bg-raised" onClick={() => { void refreshPOS(); }} aria-label="Refresh POS" title="Refresh POS data">
-            <RefreshCw size={16} />
+          <button type="button" className="icon-btn border !border-line bg-raised" onClick={handleRefresh} aria-label="Refresh POS" title={refreshing ? 'Refreshing POS…' : 'Refresh POS data'} disabled={refreshing}>
+            <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
           <button type="button" className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-line bg-raised px-2.5 py-1.5 text-[11px] font-semibold text-sub hover:text-ink transition-colors" title="Command palette (Ctrl+K)" onClick={() => window.dispatchEvent(new Event('nexfix:open-palette'))}>
             <Search size={13} /><span className="hidden md:inline">Search</span><kbd className="text-[9px] font-mono opacity-70 border border-line rounded px-1">⌘K</kbd>
