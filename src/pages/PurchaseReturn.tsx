@@ -5,7 +5,16 @@ import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../component
 import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
 import type { Purchase, PurchaseReturn } from '../lib/types';
 
-interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }\n\nfunction escapeHtml(value: unknown): string {\n  return String(value ?? '')\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#39;');\n}
+interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function printDebitNote(dn: PurchaseReturn, shopName: string) {
   const w = window.open('', '_blank', 'width=800,height=600');
@@ -91,7 +100,8 @@ export default function PurchaseReturn() {
     const rows = processedGRNs.flatMap(p => p.items.map(i =>
       [p.poNo, dkey(p.date), p.supplierName, i.name, i.qty, i.cost, i.qty * i.cost].join(',')
     ));
-    downloadFile(`GRN-Return-Export.csv`, ['GRN,Date,Supplier,Item,Qty,Cost,Total', ...rows].join('\n'), 'text/csv');
+    downloadFile(`GRN-Return-Export.csv`, ['GRN,Date,Supplier,Item,Qty,Cost,Total', ...rows].join('
+'), 'text/csv');
   };
 
   return (
