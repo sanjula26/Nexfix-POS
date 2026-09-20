@@ -57,7 +57,7 @@ export default function Inventory() {
   const units = state.products.reduce((a, p) => a + p.stock, 0);
   const value = state.products.reduce((a, p) => a + p.stock * p.cost, 0);
   const retail = state.products.reduce((a, p) => a + p.stock * p.price, 0);
-  const low = state.products.filter(p => p.stock <= p.reorderLevel);
+  const low = state.products.filter(p => p.stock <= p.reorderLevel).map(p => ({ ...p, suggestedReorderQty: Math.max(0, p.reorderLevel * 2 - p.stock) }));
 
   const save = () => {
     if (!editing || !editing.name.trim()) return;
@@ -146,6 +146,11 @@ export default function Inventory() {
         <button onClick={() => setParams(lowOnly ? {} : { low: '1' })} className={`btn ${lowOnly ? 'btn-primary' : 'btn-soft'}`}>
           <AlertTriangle size={15} /> Low stock only
         </button>
+      </div>
+
+      <div className="card mb-4 p-4">
+        <div className="text-sm font-bold text-ink mb-2">Low stock reorder hints</div>
+        {low.length === 0 ? <div className="text-sm text-sub">No low-stock products.</div> : <div className="flex flex-wrap gap-2">{low.slice(0, 12).map(p => <Badge key={p.id} tone="amber">{p.name}: order {fmtNum(p.suggestedReorderQty)}</Badge>)}</div>}
       </div>
 
       <div className="card overflow-hidden">
