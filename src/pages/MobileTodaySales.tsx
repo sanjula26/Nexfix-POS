@@ -89,8 +89,23 @@ export default function MobileTodaySales() {
         setShopReady(false);
         return;
       }
-      setCloudShopId(String(data.shop_id));
-      setActiveShopId(String(data.shop_id));
+      // A machine id is not an authorization grant. Verify the logged-in user
+      // is an active member of the shop before accepting the machine link.
+      const resolvedShopId = String(data.shop_id);
+      const { data: membership, error: membershipError } = await client
+        .from('shop_memberships')
+        .select('shop_id')
+        .eq('user_id', uid)
+        .eq('shop_id', resolvedShopId)
+        .eq('active', true)
+        .maybeSingle();
+      if (membershipError || !membership) {
+        setShopError('You do not have access to this shop.');
+        setShopReady(false);
+        return;
+      }
+      setCloudShopId(resolvedShopId);
+      setActiveShopId(resolvedShopId);
       setShopReady(true);
     };
     void resolveMachineShop();
