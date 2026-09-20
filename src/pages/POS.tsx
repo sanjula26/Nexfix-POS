@@ -240,7 +240,8 @@ export default function POS() {
   const preTotal = taxable + tax + shipAmt;
   const loyaltyPointValue = Math.max(0, Number(state.settings.loyaltyPointValue ?? 20));
   const pointsVal = Math.min(redeemedPts * loyaltyPointValue, preTotal);
-  const tradeInValue = Math.max(0, parseFloat(tradeIn.value) || 0);
+  const rawTradeInValue = Math.max(0, parseFloat(tradeIn.value) || 0);
+  const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
   const total = Math.max(0, Math.round((preTotal - pointsVal - tradeInValue) * 100) / 100);
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
