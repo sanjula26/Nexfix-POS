@@ -2023,12 +2023,10 @@ const deletePurchase = useCallback((id: string) => {
     const parts=(r.parts||[]).map(pt=>({...pt,name:pt.name.trim(),qty:Number(pt.qty),cost:Number(pt.cost),productId:pt.productId?.trim()||undefined}));
     if(parts.some(pt=>!pt.name||!Number.isInteger(pt.qty)||pt.qty<=0||!Number.isFinite(pt.cost)||pt.cost<0)) return;
     if(jobNo&&repairs.some(x=>x.id!==r.id&&x.jobNo.trim().toLowerCase()===jobNo.toLowerCase())) return;
-    const old=repairs.find(x=>x.id===r.id), oldBy=new Map<string,number>(), newBy=new Map<string,number>();
-    for(const pt of old?.parts||[]) if(pt.productId) oldBy.set(pt.productId,(oldBy.get(pt.productId)||0)+pt.qty);
-    for(const pt of parts) if(pt.productId) newBy.set(pt.productId,(newBy.get(pt.productId)||0)+pt.qty);
-    for(const id of new Set([...oldBy.keys(),...newBy.keys()])){const d=(newBy.get(id)||0)-(oldBy.get(id)||0),p=state.products.find(x=>x.id===id);if(!p||p.stock-d<0)return;}
-    setState(st=>{let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts,by:r.by||user.name};let counters=st.counters;if(!exists&&(!job.jobNo||job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1;job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`};counters={...st.counters,job:seq};}const products=st.products.map(p=>{const d=(newBy.get(p.id)||0)-(oldBy.get(p.id)||0);return d?{...p,stock:p.stock-d}:p;});return {...st,products,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};});
-    pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
+    const old=repairs.find(x=>x.id===r.id);
+    // Parts are deducted exactly once at delivery, not when the job card is saved.
+    if (old?.partsDeductedAt) return;
+        pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
   }, [state.repairs,state.products,pushAudit,user,can]);
 
   const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
@@ -2080,11 +2078,7 @@ const deletePurchase = useCallback((id: string) => {
     }
     const repair=(state.repairs||[]).find(x=>x.id===id);if(!repair||!['cancelled','delivered'].includes(repair.status))return;
     setState(st=>{
-      const restoreStock = repair.status === 'cancelled';
-      const used=new Map<string,number>();
-      if (restoreStock) for(const pt of repair.parts||[]) if(pt.productId) used.set(pt.productId,(used.get(pt.productId)||0)+pt.qty);
-      const products=restoreStock ? st.products.map(p=>{const q=used.get(p.id)||0;return q?{...p,stock:p.stock+q}:p;}) : st.products;
-      return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};
+      return {...st,repairs:(st.repairs||[]).filter(x=>x.id!==id)};
     });
     pushAudit('DELETE','Repair',`Deleted ${repair.jobNo}`);
   }, [state.repairs,pushAudit,can,user]);
