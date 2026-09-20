@@ -181,6 +181,7 @@ export default function MobileTodaySales() {
 
   const cloudMode = !!shopId && supabaseConfigured && !!supabase;
   const usingCloud = cloudMode && !!remoteState;
+  const cloudUnavailable = cloudMode && !remoteState;
   const sales = useMemo(
     () => (cloudMode ? (remoteState?.sales || []) : state.sales)
       .filter(s => dkey(new Date(s.date)) === selectedDate && s.machineId === machineId)
@@ -261,13 +262,14 @@ export default function MobileTodaySales() {
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Data source</div>
-              <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : 'Local data'}</div>
+              <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
             </div>
             <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700 disabled:opacity-50">
               <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
           {remoteError && <p className="mt-2 text-xs leading-relaxed text-amber-700">{remoteError}</p>}
+          {cloudUnavailable && <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Cloud mode is enabled, so local PC data is not substituted for the shop snapshot.</p>}
         </section>
 
         <section className="grid grid-cols-2 gap-3">
