@@ -194,7 +194,7 @@ function applyInventoryLedger(
       for (const item of sale.items) if (item.qty > 0) {
         add({ id: 'inv:refund:' + sale.id + ':' + item.productId, type: 'REFUND', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
       }
-      if (old.status !== 'refunded' && sale.status === 'refunded' && sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.unitId) add({ id: 'inv:trade-in-refund:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: -1, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Trade-in removed by full refund' });
+      if (sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.unitId) add({ id: 'inv:trade-in-refund:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: -1, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Trade-in removed by full refund' });
     }
   }
 
@@ -803,7 +803,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
       if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
       const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
-      syncToGoogleDrive('Products', productsAfterTradeIn);
+      syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
     if (duplicate) pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
@@ -1294,7 +1294,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             creditBalance: n(customer.credit_balance, c.creditBalance), loyaltyPoints: n(customer.loyalty_points, c.loyaltyPoints),
           } : c)
         : prev.customers;
-      const tradeInUnit = tradeInUnitId ? {
+      const tradeInUnit = tradeInUnitId && tradeIn ? {
         id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
         status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
       } : undefined;
