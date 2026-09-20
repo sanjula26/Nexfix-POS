@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Copy, RefreshCw, Smartphone, ExternalLink } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { usePOS } from '../lib/store';
-import { downloadStateSnapshot, getCloudShopId } from '../lib/cloudSync';
+import { downloadStateSnapshot, ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { getMachineIdentity } from '../lib/machine';
 import type { POSState } from '../lib/types';
 
@@ -15,12 +15,18 @@ export default function TodaySalesLinks() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  const shopId = getCloudShopId();
+  const [shopId, setShopId] = useState(getCloudShopId());
 
   const load = useCallback(async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      let resolvedShopId = getCloudShopId();
+      if (!resolvedShopId) {
+        const ensured = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
+        resolvedShopId = ensured.shopId || '';
+        if (!resolvedShopId) throw new Error(ensured.error || 'Shop ID not configured');
+      }
+      setShopId(resolvedShopId);
       const snapshot = await downloadStateSnapshot();
       if (snapshot) setRemoteState(snapshot.state);
       setMessage('');
@@ -29,7 +35,7 @@ export default function TodaySalesLinks() {
     } finally {
       setLoading(false);
     }
-  }, [shopId]);
+  }, [state.settings.shopName]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -100,7 +106,7 @@ export default function TodaySalesLinks() {
             </div>
           </div>
         </section>
-        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">This shop account can access only this shop, and this page exposes only the current POS machine's stable link. Owner-level cross-shop link management is kept outside the shop UI.</p>
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-slate-500">මෙම shop එකේ මෙම POS machine එකේ link එක පමණක් මෙහි පෙන්වයි. වෙනත් machine හෝ වෙනත් shop links shop UI එකෙන් නොපෙන්වයි.</p>
       </div>
     </main>
   );
