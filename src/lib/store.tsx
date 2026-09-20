@@ -1323,7 +1323,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }),
       ];
       if (tradeInUnit) {
-        productUpdates.set(tradeInUnit.productId, { ...productUpdates.get(tradeInUnit.productId)!, stock: (productUpdates.get(tradeInUnit.productId)?.stock || 0) + 1 });
+        const existingTradeInProduct = productUpdates.get(tradeInUnit.productId) || prev.products.find(p => p.id === tradeInUnit.productId);
+        if (existingTradeInProduct) productUpdates.set(tradeInUnit.productId, { ...existingTradeInProduct, stock: existingTradeInProduct.stock + 1 });
       }
       return {
         ...prev, products: prev.products.map(p => productUpdates.get(p.id) || p), customers: updatedCustomers, units: updatedUnits,
