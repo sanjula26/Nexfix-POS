@@ -172,13 +172,13 @@ export default function MobileTodaySales() {
     } catch { setCopied(false); }
   };
 
-  const sourceState = remoteState || state;
-  const usingCloud = !!remoteState;
+  const cloudMode = !!shopId && supabaseConfigured && !!supabase;
+  const usingCloud = cloudMode && !!remoteState;
   const sales = useMemo(
-    () => sourceState.sales
+    () => (cloudMode ? (remoteState?.sales || []) : state.sales)
       .filter(s => dkey(new Date(s.date)) === selectedDate && s.machineId === machineId)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [sourceState.sales, selectedDate, machineId],
+    [cloudMode, remoteState?.sales, state.sales, selectedDate, machineId],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
