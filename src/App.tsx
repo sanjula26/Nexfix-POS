@@ -23,6 +23,7 @@ const PurchaseReturn = lazy(() => import('./pages/PurchaseReturn'));
 const CSVImport = lazy(() => import('./pages/CSVImport'));
 const SalesHistory = lazy(() => import('./pages/SalesHistory'));
 const MobileTodaySales = lazy(() => import('./pages/MobileTodaySales'));
+const TodaySalesLinks = lazy(() => import('./pages/TodaySalesLinks'));
 const Exchanges = lazy(() => import('./pages/Exchanges'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -135,6 +136,7 @@ function AppRoutes() {
         </Route>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/today" element={<MobileSalesProtected />} />
+        <Route path="/today-links" element={<PermissionProtected adminOnly><TodaySalesLinks /></PermissionProtected>} />
         <Route element={<Protected />}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/mobile-dashboard" element={<MobileDashboard />} />
