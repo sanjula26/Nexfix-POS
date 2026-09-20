@@ -138,7 +138,15 @@ export default function Expenses() {
           <Field label="Note">
             <input className="input" value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="e.g. Shop rent - monthly" />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">\n            <Field label="Period start (optional)">\n              <input type="date" className="input" value={form.periodStart} onChange={e => setForm({ ...form, periodStart: e.target.value })} />\n            </Field>\n            <Field label="Period end (optional)">\n              <input type="date" className="input" value={form.periodEnd} min={form.periodStart || undefined} onChange={e => setForm({ ...form, periodEnd: e.target.value })} />\n            </Field>\n          </div>\n          <Field label="Amount (Rs.)">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Period start (optional)">
+              <input type="date" className="input" value={form.periodStart} onChange={e => setForm({ ...form, periodStart: e.target.value })} />
+            </Field>
+            <Field label="Period end (optional)">
+              <input type="date" className="input" value={form.periodEnd} min={form.periodStart || undefined} onChange={e => setForm({ ...form, periodEnd: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Amount (Rs.)">
             <input className="input num" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value.replace(/[^\d.]/g, '') })} placeholder="0.00" inputMode="decimal" />
           </Field>
           <div className="flex gap-2.5 pt-1">
