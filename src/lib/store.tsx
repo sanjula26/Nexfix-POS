@@ -1363,6 +1363,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- purchases ---------------- */
   const savePurchase = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
+    if (!user || !can('page:purchases')) {
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase order creation without purchase access');
+      return;
+    }
     setState(s => {
       const seq = s.counters.po + 1;
       const po: Purchase = {
@@ -1372,9 +1376,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return { ...s, purchases: [po, ...s.purchases], counters: { ...s.counters, po: seq } };
     });
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
-  }, [pushAudit]);
+  }, [pushAudit, user, can]);
 
   const receivePurchase = useCallback((id: string, processorName?: string) => {
+    if (!user || !can('page:purchases')) {
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
+      return;
+    }
     const po = state.purchases.find(x => x.id === id);
     if (!po || po.status !== 'pending') return;
     const plan = buildPurchaseReceivePlan(po, state.products);
@@ -1420,19 +1428,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
     });
     pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
-  }, [state.purchases, state.products, pushAudit]);
+  }, [state.purchases, state.products, pushAudit, user, can]);
 
   const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
-    if (!user || !p.supplierId || !p.items.length) return null;
+    if (!user || !can('page:purchases')) {
+      pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation without purchase access');
+      return null;
+    }
+    if (!p.supplierId || !p.items.length) return null;
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
     if (!buildPurchaseReceivePlan(validation, state.products)) return null;
     const created: Purchase = { ...p, id: uid(), poNo: `GRN-${String((state.counters.grn ?? 0) + 1).padStart(4, '0')}`, date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
     pushAudit('CREATE', 'GRN', `Draft ${created.poNo} for ${created.supplierName} · Rs. ${created.total.toLocaleString()}`);
     return created;
-  }, [state.products, state.counters.grn, user, pushAudit]);
+  }, [state.products, state.counters.grn, user, pushAudit, can]);
 
   const updateGRNDraft = useCallback((id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => {
+    if (!user || !can('page:purchases')) {
+      pushAudit('DENIED', 'GRN', 'Blocked GRN draft update without purchase access');
+      return false;
+    }
     const current = state.purchases.find(x => x.id === id);
     if (!current || current.status !== 'pending') return false;
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
@@ -1440,11 +1456,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
     pushAudit('EDIT', 'GRN', `Updated draft ${current.poNo}`);
     return true;
-  }, [state.purchases, state.products, pushAudit]);
+  }, [state.purchases, state.products, pushAudit, user, can]);
 
   const processGRN = useCallback((id: string, processorName: string) => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
+  if (!user || !can('page:purchases')) {
+    pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
+    return null;
+  }
   const purchase = state.purchases.find(x => x.id === input.purchaseId);
   if (!purchase || purchase.status !== 'received' || !user || !input.reason.trim()) return null;
   const existing = state.purchaseReturns || [];
@@ -1480,9 +1500,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }));
   pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
   return ret;
-}, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit]);
+}, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can]);
 
 const deletePurchase = useCallback((id: string) => {
+    if (!user || !can('page:purchases') || !can('act:deleteRecords')) {
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase delete without required permissions');
+      return;
+    }
     const po = state.purchases.find(x => x.id === id);
     if (!po || !canDeletePurchase(po)) return;
     setState(s => {
@@ -1491,7 +1515,7 @@ const deletePurchase = useCallback((id: string) => {
       return { ...s, purchases: s.purchases.filter(x => x.id !== id) };
     });
     pushAudit('DELETE', 'Purchase', `Deleted ${po.poNo}`);
-  }, [state.purchases, pushAudit]);
+  }, [state.purchases, pushAudit, user, can]);
 
   /* ---------------- expenses ---------------- */
   const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => {
