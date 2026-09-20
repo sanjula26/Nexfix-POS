@@ -85,6 +85,8 @@ export default function POS() {
   const [taxPct, setTaxPct] = useState(() => String(state.settings.taxDefault || ''));
   const [shipOpen, setShipOpen] = useState(false);
   const [shipping, setShipping] = useState('');
+  const [tradeInOpen, setTradeInOpen] = useState(false);
+  const [tradeIn, setTradeIn] = useState({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
 
   /* loyalty */
   const [redeemOn, setRedeemOn] = useState(false);
@@ -238,7 +240,8 @@ export default function POS() {
   const preTotal = taxable + tax + shipAmt;
   const loyaltyPointValue = Math.max(0, Number(state.settings.loyaltyPointValue ?? 20));
   const pointsVal = Math.min(redeemedPts * loyaltyPointValue, preTotal);
-  const total = Math.max(0, Math.round((preTotal - pointsVal) * 100) / 100);
+  const tradeInValue = Math.max(0, parseFloat(tradeIn.value) || 0);
+  const total = Math.max(0, Math.round((preTotal - pointsVal - tradeInValue) * 100) / 100);
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
   const hasCredit = !splitOn && payment === 'credit';
@@ -375,6 +378,7 @@ export default function POS() {
   const reset = () => {
     setLines([]); setCustomerId(''); setCustQuery(''); setDiscount(''); setDiscMode('rs');
     setTaxPct(String(state.settings.taxDefault || '')); setShipOpen(false); setShipping('');
+    setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
     setRedeemOn(false); setPoints(''); setPayment('cash'); setPaid(''); setPaidAuto(false);
     setWaReceipt(false);
     setSplitOn(false); setLegs([{ method: 'cash', amount: 0 }]); setError('');
@@ -387,6 +391,14 @@ export default function POS() {
     setError('');
     if (lines.length === 0) return setError('Add at least one item to the cart');
     if ((discCart > 0 || lineDisc > 0) && !can('act:discount')) return setError('Your role cannot apply discounts');
+    if (tradeInOpen) {
+      const tp = products.find(p => p.id === tradeIn.productId);
+      if (!tp) return setError('Select the trade-in device/product');
+      if (tradeInValue <= 0) return setError('Enter a valid trade-in value');
+      if (tradeIn.addToInventory && (!tp.trackImei && !tp.trackSerial)) return setError('The selected product is not configured for IMEI/Serial inventory');
+      if (tradeIn.addToInventory && tp.trackImei && !tradeIn.imei.trim()) return setError('Enter the trade-in IMEI');
+      if (tradeIn.addToInventory && tp.trackSerial && !tradeIn.serial.trim()) return setError('Enter the trade-in serial number');
+    }
     if (hasCredit && !customerId) return setError('Credit sales need a registered customer');
     if (hasCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales');
     // Require IMEI/serial for tracked lines
@@ -415,6 +427,7 @@ export default function POS() {
       }),
       customerId: customerId || undefined,
       discount: discCart + promoDiscount,
+      tradeIn: tradeInOpen ? { productId: tradeIn.productId, value: tradeInValue, imei: tradeIn.imei.trim() || undefined, serial: tradeIn.serial.trim() || undefined, addToInventory: tradeIn.addToInventory } : undefined,
       taxPct: parseFloat(taxPct) || 0,
       shipping: shipAmt,
       pointsRedeemed: redeemedPts,
@@ -991,6 +1004,11 @@ export default function POS() {
               </button>
             )}
 
+            {tradeInOpen && tradeInValue > 0 && <div className="flex items-center justify-between gap-3 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/20 px-2.5 py-2">
+              <span className="text-[12.5px] text-sub">Trade-in credit</span>
+              <span className="num text-[12.5px] font-bold text-emerald-600 dark:text-emerald-400">- {fmtRs(tradeInValue, false)}</span>
+            </div>}
+
             {/* loyalty redeem */}
             {customer && customer.loyaltyPoints > 0 && (
               <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-2.5">
@@ -1020,6 +1038,29 @@ export default function POS() {
                     − {fmtRs(pointsVal)} ({redeemedPts} pts × Rs. {loyaltyPointValue})
                   </div>
                 )}
+              </div>
+            )}
+
+            {!tradeInOpen ? (
+              <button className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 hover:opacity-80 flex items-center gap-1" onClick={() => setTradeInOpen(true)}>
+                <ArrowLeftRight size={11} /> Add trade-in
+              </button>
+            ) : (
+              <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5 space-y-2">
+                <div className="flex items-center justify-between"><span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">Trade-in device</span><button className="text-faint hover:text-rose-500" onClick={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}><X size={11} /></button></div>
+                <select className="input !py-1.5 !text-[12px]" value={tradeIn.productId} onChange={e => setTradeIn(v => ({ ...v, productId: e.target.value }))}>
+                  <option value="">Select device/product</option>
+                  {products.filter(p => p.trackImei || p.trackSerial).map(p => <option key={p.id} value={p.id}>{p.name} · {p.trackImei && p.trackSerial ? 'IMEI + Serial' : p.trackImei ? 'IMEI' : 'Serial'}</option>)}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <input className="input !py-1.5 !text-[12px]" placeholder="IMEI" value={tradeIn.imei} onChange={e => setTradeIn(v => ({ ...v, imei: e.target.value }))} />
+                  <input className="input !py-1.5 !text-[12px]" placeholder="Serial" value={tradeIn.serial} onChange={e => setTradeIn(v => ({ ...v, serial: e.target.value }))} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input className="input !py-1.5 !text-[12px] num flex-1" placeholder="Trade-in value (Rs.)" value={tradeIn.value} onChange={e => setTradeIn(v => ({ ...v, value: e.target.value.replace(/[^\d.]/g, '') }))} inputMode="decimal" />
+                  <label className="flex items-center gap-1.5 text-[10.5px] text-sub whitespace-nowrap"><input type="checkbox" checked={tradeIn.addToInventory} onChange={e => setTradeIn(v => ({ ...v, addToInventory: e.target.checked }))} /> Add to inventory</label>
+                </div>
+                <div className="text-[10px] text-faint">Trade-in value is deducted from this bill. When added to inventory, the device is recorded at the trade-in value.</div>
               </div>
             )}
 
