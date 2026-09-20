@@ -425,7 +425,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Debounced persist to IndexedDB + localStorage
+  const user = useMemo(
+    () => (session ? state.users.find(u => u.id === session.userId && u.active) || null : null),
+    [session, state.users],
+  );
+  const can = useCallback(
+    (key: string) => {
+      if (!user) return false;
+      if (user.role === 'admin') return true;
+      return !!state.permissions[user.role]?.[key];
+    },
+    [user, state.permissions],
+  );
+  const viewingAs: Role = user?.role || 'admin';
+\n  // Debounced persist to IndexedDB + localStorage
   useEffect(() => {
     if (!ready) return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
@@ -483,11 +496,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch { /* ignore */ }
   }, [dark]);
 
-  const user = useMemo(
-    () => (session ? state.users.find(u => u.id === session.userId && u.active) || null : null),
-    [session, state.users],
-  );
-  const viewingAs: Role = user?.role || 'admin';
   const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL', updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
@@ -520,14 +528,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user?.email]);
 
-  const can = useCallback(
-    (key: string) => {
-      if (!user) return false;
-      if (user.role === 'admin') return true;
-      return !!state.permissions[user.role]?.[key];
-    },
-    [user, state.permissions],
-  );
 
   const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
     const mail = email.trim().toLowerCase();
