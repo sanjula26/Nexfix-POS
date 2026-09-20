@@ -1794,7 +1794,7 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('IMPORT', 'Settings', `Imported backup data · ${safeUsers.length} users · ${parsed.products.length} products`);
       return true;
     } catch { return false; }
-  }, [pushAudit]);
+  }, [pushAudit, user]);
 
   const resetData = useCallback(() => {
     if (!user || user.role !== 'admin') {
@@ -2031,7 +2031,7 @@ const deletePurchase = useCallback((id: string) => {
       return { ...s, sessions: [...s.sessions, ns] };
     });
     pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${opening.toLocaleString()} · ${u.name}`);
-  }, [state.users, pushAudit]);
+  }, [state.users, pushAudit, user, can]);
 
   const saveBrand = useCallback((name: string) => {
     if (!user || !can('act:manageStock')) {
@@ -2067,7 +2067,7 @@ const deletePurchase = useCallback((id: string) => {
     const meta = await idbGetMeta();
     setBackupMeta(meta);
     pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
-  }, [state, pushAudit]);
+  }, [state, pushAudit, user, can]);
 
   const setAutoBackupHours = useCallback(async (hours: number) => {
     if (!user || user.role !== 'admin') {
@@ -2077,7 +2077,7 @@ const deletePurchase = useCallback((id: string) => {
     const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
     setBackupMeta(meta);
     pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${hours <= 0 ? 'OFF' : hours + 'h'}`);
-  }, [pushAudit]);
+  }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
     const { flushed, pending } = await flushSyncQueue();
