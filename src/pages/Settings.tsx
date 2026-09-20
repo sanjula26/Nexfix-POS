@@ -11,6 +11,7 @@ import {
 } from '../lib/driveSync';
 import { applyBackupRestore } from '../lib/restore';
 import { queueWrite } from '../lib/offline';
+import { uid } from '../lib/utils';
 
 export default function Settings() {
   const {
@@ -81,8 +82,10 @@ export default function Settings() {
     if (!Number.isFinite(openingFloat) || openingFloat < 0) return setBackupMsg('Opening float cannot be negative');
     if (!Number.isFinite(loyaltyPointsPerRs) || loyaltyPointsPerRs < 0 || loyaltyPointsPerRs > 10) return setBackupMsg('Loyalty points per Rs must be between 0 and 10');
     if (!Number.isFinite(loyaltyPointValue) || loyaltyPointValue < 0) return setBackupMsg('Loyalty point value cannot be negative');
+    const promotions = (form.promotions || []).map(p => ({ ...p, name: p.name.trim(), category: p.category.trim(), discountPct: Number(p.discountPct) }));
+    if (promotions.some(p => !p.name || !p.category || !Number.isFinite(p.discountPct) || p.discountPct <= 0 || p.discountPct > 100 || (p.startDate && p.endDate && p.endDate < p.startDate))) return setBackupMsg('Check promotion name, category, discount (1–100%) and dates');
     setBackupMsg('');
-    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue }); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, promotions }); setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
@@ -205,6 +208,28 @@ export default function Settings() {
               <Field label="Value of 1 loyalty point (Rs.)" hint="Used when redeeming points at POS"><input type="number" min="0" step="0.01" className="input num" value={form.loyaltyPointValue || ''} onChange={num('loyaltyPointValue')} /></Field>
             </div>
             <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} /></label>
+          </div>
+
+          <div className="card p-6">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div><h3 className="font-bold text-ink">Promotions</h3><p className="text-xs text-faint mt-1">Optional category percentage discounts. Active date range is applied automatically at POS.</p></div>
+              <button type="button" className="btn btn-soft" onClick={() => setForm(f => ({ ...f, promotions: [...(f.promotions || []), { id: uid(), name: '', category: '', discountPct: 10, startDate: '', endDate: '', active: true }] }))}>Add promotion</button>
+            </div>
+            <div className="space-y-3">
+              {(form.promotions || []).length === 0 && <div className="text-xs text-faint rounded-xl border border-dashed border-line p-4">No promotions configured.</div>}
+              {(form.promotions || []).map((p, i) => <div key={p.id} className="rounded-xl border border-line p-3 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Name"><input className="input" value={p.name} onChange={e => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, name: e.target.value } : x) }))} placeholder="Weekend Accessories" /></Field>
+                  <Field label="Category"><select className="input" value={p.category} onChange={e => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, category: e.target.value } : x) }))}><option value="">Select category…</option>{(state.settings.categories || []).map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></Field>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <Field label="Discount %"><input type="number" min="1" max="100" step="0.01" className="input num" value={p.discountPct} onChange={e => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, discountPct: Number(e.target.value) || 0 } : x) }))} /></Field>
+                  <Field label="Start date"><input type="date" className="input" value={p.startDate || ''} onChange={e => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, startDate: e.target.value || undefined } : x) }))} /></Field>
+                  <Field label="End date"><input type="date" className="input" value={p.endDate || ''} onChange={e => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, endDate: e.target.value || undefined } : x) }))} /></Field>
+                  <div className="flex items-end gap-2"><label className="flex-1 flex items-center justify-between rounded-xl bg-raised border border-line px-3 py-2 text-xs font-semibold text-ink">Active <Toggle checked={p.active !== false} onChange={v => setForm(f => ({ ...f, promotions: (f.promotions || []).map((x, n) => n === i ? { ...x, active: v } : x) }))} /></label><button type="button" className="btn btn-danger-soft" onClick={() => setForm(f => ({ ...f, promotions: (f.promotions || []).filter((_, n) => n !== i) }))}>Remove</button></div>
+                </div>
+              </div>)}
+            </div>
           </div>
 
           <div className="card p-6">
