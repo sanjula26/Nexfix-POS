@@ -1391,9 +1391,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const allocatedDiscount = Math.min(saleDiscount, returnedMerchandise * (saleSubtotal > 0 ? saleDiscount / saleSubtotal : 0));
     const taxableReturned = Math.max(0, returnedMerchandise - allocatedDiscount);
     const taxRefund = postDiscountSubtotal > 0 ? Math.round((sale.tax || 0) * (taxableReturned / postDiscountSubtotal) * 100) / 100 : 0;
+    // Trade-in is stored separately from the local sale discount, but it reduces the
+    // amount the customer actually paid. Allocate that reduction proportionally to
+    // the returned merchandise so local refunds match the cloud return calculation.
+    const tradeInValue = Math.max(0, Number(sale.tradeIn?.value || 0));
+    const allocatedTradeIn = saleSubtotal > 0
+      ? Math.min(tradeInValue, tradeInValue * (returnedMerchandise / saleSubtotal))
+      : 0;
     const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);
     const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
-    const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund) * 100) / 100);
+    const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund - allocatedTradeIn) * 100) / 100);
 
     setStateWithInventoryLedger('REFUND', s => {
       const currentSale = s.sales.find(x => x.id === saleId);
