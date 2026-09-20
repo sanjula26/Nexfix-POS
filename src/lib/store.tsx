@@ -2059,7 +2059,13 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     const repair=(state.repairs||[]).find(x=>x.id===id);if(!repair||!['cancelled','delivered'].includes(repair.status))return;
-    setState(st=>{const used=new Map<string,number>();for(const pt of repair.parts||[])if(pt.productId)used.set(pt.productId,(used.get(pt.productId)||0)+pt.qty);const products=st.products.map(p=>{const q=used.get(p.id)||0;return q?{...p,stock:p.stock+q}:p;});return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};});
+    setState(st=>{
+      const restoreStock = repair.status === 'cancelled';
+      const used=new Map<string,number>();
+      if (restoreStock) for(const pt of repair.parts||[]) if(pt.productId) used.set(pt.productId,(used.get(pt.productId)||0)+pt.qty);
+      const products=restoreStock ? st.products.map(p=>{const q=used.get(p.id)||0;return q?{...p,stock:p.stock+q}:p;}) : st.products;
+      return {...st,products,repairs:(st.repairs||[]).filter(x=>x.id!==id)};
+    });
     pushAudit('DELETE','Repair',`Deleted ${repair.jobNo}`);
   }, [state.repairs,pushAudit,can,user]);
 
