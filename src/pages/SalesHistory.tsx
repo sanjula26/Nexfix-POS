@@ -51,7 +51,7 @@ export default function SalesHistory() {
         sub={`${fmtNum(rows.length)} bills · ${fmtRs(revenue)} revenue${refunded ? ` · ${refunded} refunded` : ''}${reversed ? ` · ${reversed} reversed` : ''}`}
         actions={
           <div className="flex flex-wrap gap-1.5 bg-raised border border-line rounded-xl p-1">
-            {(['today', 'week', 'month', 'all'] as RangeKey[]).map(r => (
+            {(['today', 'custom', 'week', 'month', 'all'] as RangeKey[]).map(r => (
               <button
                 key={r}
                 onClick={() => setRange(r)}
