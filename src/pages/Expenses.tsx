@@ -64,6 +64,11 @@ export default function Expenses() {
         actions={<button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={15} /> Add Expense</button>}
       />
 
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+        <div className="card p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-sub">Month total</p><p className="mt-1 text-2xl font-extrabold text-ink">{fmtRs(monthTotal)}</p></div>
+        <div className="card p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-sub">Filtered total</p><p className="mt-1 text-2xl font-extrabold text-ink">{fmtRs(shownTotal)}</p></div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 items-start">
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-line flex flex-wrap gap-3">
