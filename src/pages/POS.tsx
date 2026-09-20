@@ -273,6 +273,11 @@ export default function POS() {
     return [...seen.values()].filter(c => c.id !== customerId).slice(0, 3);
   }, [state.sales, state.customers, customerId]);
 
+  const customerLastPurchases = useMemo(() => {
+    if (!customerId) return [] as Sale[];
+    return [...state.sales].filter(s => s.customerId === customerId && (s.status === 'completed' || s.status === 'exchanged')).sort((a, b) => +new Date(b.date) - +new Date(a.date)).slice(0, 5);
+  }, [state.sales, customerId]);
+
   useEffect(() => {
     if (!custOpen) return;
     const h = (e: MouseEvent) => {
@@ -642,7 +647,16 @@ export default function POS() {
                         <BadgeDollarSign size={12} /> OUTSTANDING BALANCE
                       </span>
                       <span className="num text-[13px] font-extrabold text-rose-500">{fmtRs(customer.creditBalance)}</span>
+    
+                  {customerLastPurchases.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-line bg-raised/50 px-3 py-2.5">
+                      <div className="text-[10px] font-extrabold uppercase tracking-wider text-sub mb-1.5">Last purchases</div>
+                      <div className="space-y-1">
+                        {customerLastPurchases.map(s => <div key={s.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-sub truncate">{s.billNo} · {s.items.slice(0, 2).map(x => x.name).join(', ')}{s.items.length > 2 ? '…' : ''}</span><span className="num font-semibold text-ink shrink-0">{fmtRs(s.total, false)}</span></div>)}
+                      </div>
                     </div>
+                  )}
+                </div>
                   )}
                 </div>
               ) : (
