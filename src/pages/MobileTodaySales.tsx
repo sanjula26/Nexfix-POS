@@ -190,8 +190,11 @@ export default function MobileTodaySales() {
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
   const revenue = completed.reduce((sum, s) => sum + s.total, 0);
-  const cash = completed.filter(s => s.payment === 'cash' && !s.payments?.length).reduce((sum, s) => sum + s.total, 0);
-  const card = completed.filter(s => s.payment === 'card' && !s.payments?.length).reduce((sum, s) => sum + s.total, 0);
+  const tenderTotal = (sale: Sale, method: string) => sale.payments?.length
+    ? sale.payments.filter(p => p.method === method).reduce((sum, p) => sum + p.amount, 0)
+    : sale.payment === method ? sale.total : 0;
+  const cash = completed.reduce((sum, s) => sum + tenderTotal(s, 'cash'), 0);
+  const card = completed.reduce((sum, s) => sum + tenderTotal(s, 'card'), 0);
 
   const paymentIcon = (payment: string) => payment === 'cash' ? <Banknote size={15} /> : payment === 'card' ? <CreditCard size={15} /> : <Smartphone size={15} />;
 
