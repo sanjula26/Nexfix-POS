@@ -77,6 +77,7 @@ interface StoreCtx {
   saveProduct: (p: Product) => void;
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
+  saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
   adjustStock: (id: string, delta: number, reason: string) => void;
   // customers / suppliers
   saveCustomer: (c: Customer) => void;
@@ -731,6 +732,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   /* ---------------- products ---------------- */
   const saveKitItems = useCallback((items: KitItem[]) => {
     setState(s => ({ ...s, kitItems: items }));
+  }, []);
+
+  const saveQuotations = useCallback((quotations: import('./types').Quotation[], quoteCounter?: number) => {
+    setState(s => ({
+      ...s,
+      quotations,
+      counters: quoteCounter === undefined ? s.counters : { ...s.counters, quote: quoteCounter },
+    }));
   }, []);
 
   const saveProduct = useCallback((p: Product) => {
@@ -1942,7 +1951,7 @@ const deletePurchase = useCallback((id: string) => {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
     signIn, changePassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
-    saveProduct, deleteProduct, saveKitItems, adjustStock,
+    saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
     completeSale, completeSaleCloud, refundSale, requestBillReverse, approveBillReverse, rejectBillReverse, holdSale, resumeHold, deleteHold,
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
