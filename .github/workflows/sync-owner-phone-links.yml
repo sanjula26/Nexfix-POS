@@ -1,0 +1,119 @@
+name: Sync owner phone-sales link registry
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify repository is private
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility="$(gh api repos/${GITHUB_REPOSITORY} --jq '.visibility')"
+          if [ "$visibility" != "private" ]; then
+            echo "Phone-sales link registry is disabled until this repository is private."
+            exit 1
+          fi
+
+      - name: Build private owner registry from Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PHONE_SALES_BASE_URL: ${{ secrets.PHONE_SALES_BASE_URL }}
+        run: |
+          set -euo pipefail
+          : "${SUPABASE_URL:?Missing SUPABASE_URL secret}"
+          : "${SUPABASE_SERVICE_ROLE_KEY:?Missing SUPABASE_SERVICE_ROLE_KEY secret}"
+          : "${PHONE_SALES_BASE_URL:?Missing PHONE_SALES_BASE_URL secret}"
+
+          api="${SUPABASE_URL%/}/rest/v1"
+          auth=(-H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
+
+          curl --fail-with-body --silent --show-error "${api}/shops?select=id,name&order=name" "${auth[@]}" -o /tmp/shops.json
+          curl --fail-with-body --silent --show-error "${api}/pos_devices?select=owner_id,shop_id,device_id,last_seen_at,revoked_at&order=shop_id,device_id" "${auth[@]}" -o /tmp/devices.json
+
+          python3 - <<'PY'
+          import json, os
+          from urllib.parse import quote
+
+          with open('/tmp/shops.json', encoding='utf-8') as f:
+              shops = {str(x['id']): x.get('name') or str(x['id']) for x in json.load(f)}
+          with open('/tmp/devices.json', encoding='utf-8') as f:
+              devices = json.load(f)
+
+          base = os.environ['PHONE_SALES_BASE_URL'].rstrip('/')
+          groups = {}
+          for d in devices:
+              shop_id = str(d.get('shop_id') or '').strip()
+              device_id = str(d.get('device_id') or '').strip()
+              if not shop_id or not device_id:
+                  continue
+              groups.setdefault(shop_id, []).append(d)
+
+          lines = [
+              '# Nexfix POS — Owner Phone Sales Links',
+              '',
+              '> Private owner registry. One permanent phone-sales link is assigned to each POS machine.',
+              '> Do not copy this file into a public repository.',
+              '',
+              '| Shop | Shop ID | POS Machine | Machine ID | Status | Stable phone link | Last seen |',
+              '|---|---|---|---|---|---|---|',
+          ]
+
+          for shop_id in sorted(groups, key=lambda x: shops.get(x, x).lower()):
+              shop_name = shops.get(shop_id, shop_id)
+              for d in sorted(groups[shop_id], key=lambda x: str(x.get('device_id') or '')):
+                  device_id = str(d['device_id'])
+                  status = 'REVOKED' if d.get('revoked_at') else 'ACTIVE'
+                  link = (
+                      base + '/#/today?shop=' + quote(shop_id, safe='')
+                      + '&machine=' + quote(device_id, safe='')
+                  )
+                  seen = str(d.get('last_seen_at') or '')
+                  lines.append(
+                      '| ' + shop_name.replace('|','\\|') + ' | `' + shop_id + '` | '
+                      + device_id.replace('|','\\|') + ' | `' + device_id + '` | ' + status + ' | '
+                      + '[Open phone sales](' + link + ') | ' + seen + ' |'
+                  )
+
+          if len(lines) == 7:
+              lines += ['', '_No registered POS machines found yet._']
+
+          lines += [
+              '',
+              '## Rules',
+              '',
+              '- The shop ID and machine ID are part of every link.',
+              '- The link does not contain a date; phone users select the sales date after opening it.',
+              '- Shop users only receive their own shop/machine link from the POS.',
+              '- Cross-shop owner visibility exists only in this private GitHub registry.',
+              ''
+          ]
+
+          os.makedirs('docs/owner', exist_ok=True)
+          with open('docs/owner/phone-sales-links.md', 'w', encoding='utf-8') as f:
+              f.write('\n'.join(lines))
+          PY
+
+      - name: Commit registry
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/owner/phone-sales-links.md
+          if git diff --cached --quiet; then
+            echo "No registry changes."
+            exit 0
+          fi
+          git commit -m "chore(owner): sync phone sales link registry"
+          git push
