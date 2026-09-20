@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, LogOut, ReceiptText, WalletCards, Banknote, CreditCard, Smartphone, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePOS } from '../lib/store';
@@ -61,7 +61,7 @@ export default function MobileTodaySales() {
     ? `${window.location.origin}${window.location.pathname}#/today?shop=${encodeURIComponent(shopId)}`
     : '';
 
-  const loadCloudSales = async () => {
+  const loadCloudSales = useCallback(async () => {
     if (!supabaseConfigured || !supabase || !shopId) return;
     setRemoteLoading(true);
     setRemoteError('');
@@ -79,12 +79,12 @@ export default function MobileTodaySales() {
     } finally {
       setRemoteLoading(false);
     }
-  };
+  }, [shopId]);
 
   useEffect(() => {
     if (!shopReady) return;
     void loadCloudSales();
-  }, [shopReady, shopId]);
+  }, [shopReady, loadCloudSales]);
 
   const copyPhoneLink = async () => {
     if (!phoneLink) return;
