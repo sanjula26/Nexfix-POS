@@ -1193,6 +1193,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       return null;
     }
+    const tradeIn = input.tradeIn;
+    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
+    const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
+    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn?.addToInventory) {
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
+      if (duplicate) return null;
+    }
+    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     if (user.role === 'admin' || user.role === 'manager') {
       const catalog = await syncNormalizedCatalog(state, shop.shopId);
       if (!catalog.ok) return null;
