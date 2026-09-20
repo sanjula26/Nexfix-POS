@@ -11,6 +11,7 @@ Set these repository secrets before enabling the workflow:
 - `SUPABASE_URL` — the Supabase project URL.
 - `SUPABASE_SERVICE_ROLE_KEY` — Supabase service-role key. Store it only as a GitHub Actions secret; never put it in source code.
 - `PHONE_SALES_BASE_URL` — the deployed POS base URL, without a trailing slash.
+- `OWNER_USER_ID` — your Supabase Auth user UUID. This prevents the private registry from including devices owned by another account.
 
 The workflow refuses to generate the registry while the repository is public.
 
