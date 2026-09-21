@@ -5,6 +5,9 @@
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
+// Central deployment: customers do not need to configure or receive the URL.
+// The Web App URL is a transport address, not a secret.
+const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbytyis-RNV9lhVM-v8LdVwnqkvU7O0BfpHBjVjdiVv0P4G8LsJSzjgvh4Wg8S1f27l_/exec';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
@@ -18,35 +21,21 @@ function isAllowedScriptUrl(value: string): boolean {
 }
 
 export function getGoogleScriptUrl(): string {
-  try {
-    const fromLs = localStorage.getItem(URL_KEY) || '';
-    if (isAllowedScriptUrl(fromLs)) return fromLs;
-  } catch { /* ignore */ }
-  return isAllowedScriptUrl(ENV_URL) ? ENV_URL : '';
+  return isAllowedScriptUrl(BUILT_IN_SCRIPT_URL) ? BUILT_IN_SCRIPT_URL : '';
 }
 
-export function setGoogleScriptUrl(url: string): void {
-  const value = url.trim();
-  if (value && !isAllowedScriptUrl(value)) {
-    throw new Error('Invalid Google Apps Script Web App URL. Use the deployed /macros/s/.../exec URL.');
-  }
-  try {
-    if (value) localStorage.setItem(URL_KEY, value);
-    else localStorage.removeItem(URL_KEY);
-  } catch { /* ignore */ }
+export function setGoogleScriptUrl(_url: string): void {
+  // Kept for backwards compatibility with older builds; the deployment is centrally managed.
+  try { localStorage.removeItem(URL_KEY); } catch { /* ignore */ }
 }
 
 export function isGoogleSyncEnabled(): boolean {
-  try {
-    const stored = localStorage.getItem(ENABLED_KEY);
-    if (stored === '1') return true;
-    if (stored === '0') return false;
-    return isAllowedScriptUrl(ENV_URL);
-  } catch { return isAllowedScriptUrl(ENV_URL); }
+  return isAllowedScriptUrl(BUILT_IN_SCRIPT_URL);
 }
 
-export function setGoogleSyncEnabled(on: boolean): void {
-  try { localStorage.setItem(ENABLED_KEY, on ? '1' : '0'); } catch { /* ignore */ }
+export function setGoogleSyncEnabled(_on: boolean): void {
+  // Google backup is centrally managed and remains enabled for the released POS build.
+  try { localStorage.removeItem(ENABLED_KEY); } catch { /* ignore */ }
 }
 
 function getLocalShopId(): string {
