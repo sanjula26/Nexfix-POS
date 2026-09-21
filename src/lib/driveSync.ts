@@ -130,11 +130,16 @@ export async function syncToGoogleDrive(tableName: string, dataRows: unknown[]):
 }
 
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
+  const sanitized = sanitizeCloudBackup(state);
+  const backupState = sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    && 'state' in (sanitized as Record<string, unknown>)
+    ? (sanitized as Record<string, unknown>).state
+    : sanitized;
   const result = await invokeProxy({
     action: 'backupState',
     kind,
     exportedAt: new Date().toISOString(),
-    state: sanitizeCloudBackup(state),
+    state: backupState,
   });
   return result?.ok === true;
 }
