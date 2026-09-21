@@ -1,6 +1,6 @@
 # Google Apps Script — Nexfix POS Direct Drive Backup
 
-Google Drive backup is an optional operator-configured integration:
+Google Drive backup is centrally configured in the released POS build:
 
 ```text
 Nexfix POS -> Google Apps Script Web App -> dedicated Google Drive folder
@@ -24,13 +24,11 @@ This direct backup path does **not** require Supabase, and the backup Google She
 
 After changing `Code.gs`, update/create the deployment version. Editing the GitHub file alone does not update an already deployed Apps Script Web App.
 
-## 2. Configure Nexfix POS
+## 2. Nexfix POS endpoint configuration
 
-In **Settings → Google Drive Sync & Cloud Backup**:
+The released POS build contains the central `/exec` endpoint. Shop users do **not** enter, save, or toggle a Google Apps Script URL in Settings.
 
-1. Paste the deployed `/exec` Web App URL.
-2. The POS uses the centrally configured endpoint automatically.
-3. No shop-level Google URL or sync toggle is required.
+The `/exec` URL is only updated in the application source when the central Apps Script deployment changes. After changing the deployment, the released POS build must be rebuilt/redeployed with the new endpoint.
 
 The POS sends the complete sanitized POS backup directly to Apps Script. The server writes it under the matching shop folder.
 
