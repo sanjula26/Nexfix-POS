@@ -262,6 +262,7 @@ function latestBackup(ss, shopId) {
     var meta = driveBackup._meta || {};
     return { timestamp: meta.exportedAt || '', backupType: meta.kind || '', version: VERSION, state: JSON.stringify(driveBackup.state) };
   }
+  if (!ss) return null;
   var sheet = ss.getSheetByName(partitionedSheetName(BACKUP_SHEET, shopId));
   if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 5) return null;
   var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(5, sheet.getLastColumn())).getValues();
