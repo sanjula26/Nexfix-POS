@@ -714,6 +714,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, pushAudit]);
 
   const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
+    // Role switching is an authenticated session operation. Never allow an
+    // unauthenticated caller to manufacture a new session by selecting a role.
+    if (!user) return { ok: false, error: 'You must be signed in' };
     // Prefer restoring the previous user when switching back to cashier
     let target = state.users.find(u => u.role === role && u.active);
     if (role === 'cashier' && user?.role === 'admin') {
