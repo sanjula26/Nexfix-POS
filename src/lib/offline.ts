@@ -105,7 +105,27 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
-    if(!snapshotOps.length) return {flushed:flushed,pending:remaining.length,synced:true,conflict:false};
+
+    // Bootstrap the cloud snapshot even when the durable queue is empty.
+    // This is important for a freshly connected POS: otherwise the first
+    // successful startup could report "synced" without ever publishing the
+    // existing local state, leaving read-only/mobile cloud views empty.
+    // Never overwrite an existing cloud snapshot here; normal queued writes
+    // continue to use the revision/conflict protocol below.
+    if(!snapshotOps.length){
+      const shop=await ensureCloudShop('Nexfix Shop');
+      if(shop.ok && shop.shopId){
+        const remote=await downloadStateSnapshot();
+        if(!remote){
+          const initial=await syncStateSnapshot(latestState);
+          if(initial.status==='synced') return {flushed,pending:remaining.length,synced:true,conflict:false};
+          if(initial.status==='conflict') return {flushed,pending:remaining.length,synced:false,conflict:true};
+          return {flushed,pending:remaining.length,synced:false,conflict:false};
+        }
+      }
+      return {flushed:flushed,pending:remaining.length,synced:true,conflict:false};
+    }
+
     const result=await syncStateSnapshot(latestState);
     if(result.status==='synced'){
       const ids=snapshotOps.map(op=>op.id);
