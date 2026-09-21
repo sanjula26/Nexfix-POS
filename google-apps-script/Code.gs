@@ -343,12 +343,31 @@ function doPost(e) {
       try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
     }
 
-    var result;
-    try { checkBackupRateLimit(shopId); } catch (rateError) { return json(fail(rateError)); }
-    result = ok(backupState(null, contents, shopId));
+    // Publish a short-lived pending marker before the Drive operation so the
+    // client can distinguish "request reached Apps Script" from "request never arrived".
+    try {
+      requestCache.put(cacheKey, JSON.stringify({ ok: false, status: 'pending', version: VERSION, pending: true }), 120);
+    } catch (ignorePendingCacheWrite) {}
 
-    try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
-    return json(result);
+    var result;
+    try { checkBackupRateLimit(shopId); } catch (rateError) {
+      var rateFailure = fail(rateError);
+      try { requestCache.put(cacheKey, JSON.stringify(rateFailure), 120); } catch (ignoreRateCacheWrite) {}
+      return json(rateFailure);
+    }
+
+    try {
+      result = ok(backupState(null, contents, shopId));
+      try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
+      return json(result);
+    } catch (backupError) {
+      // Cache the actual server-side failure so the POS can report it instead
+      // of waiting for a generic timeout. This also makes Drive permission,
+      // folder-access, and payload errors diagnosable from backupStatus.
+      var backupFailure = fail(backupError);
+      try { requestCache.put(cacheKey, JSON.stringify(backupFailure), 120); } catch (ignoreFailureCacheWrite) {}
+      return json(backupFailure);
+    }
   } catch (err) {
     return json(fail(err));
   } finally {
