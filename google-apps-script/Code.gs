@@ -238,7 +238,7 @@ function latestDriveBackup(shopId) {
           var state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.state : null;
           if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
           // Accept only Nexfix POS v2 snapshots. The shop partition and optional
-          // shopId must also match the authenticated shop requesting the restore.
+          // shopId must also match the shop requesting the restore.
           if (meta.app && String(meta.app) !== 'Nexfix POS') continue;
           if (meta.version !== undefined && Number(meta.version) !== 2) continue;
           if (meta.shopPartition && String(meta.shopPartition) !== shopPartitionKey(shopId)) continue;
@@ -302,7 +302,8 @@ function doPost(e) {
     if (!requestId || requestId.length > 200) return json(fail('Valid requestId is required'));
 
     var requestCache = CacheService.getScriptCache();
-    var cached = requestCache.get('nexfix_req_' + requestId);
+    var cacheKey = 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
+    var cached = requestCache.get(cacheKey);
     if (cached) {
       try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
     }
@@ -314,7 +315,7 @@ function doPost(e) {
       return json(fail('Only backupState is supported by the direct Drive backup endpoint'));
     }
 
-    try { requestCache.put('nexfix_req_' + requestId, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
+    try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
     return json(result);
   } catch (err) {
     return json(fail(err));
@@ -327,12 +328,14 @@ function getCachedBackupStatus(requestId, shopId) {
   var id = String(requestId || '').trim();
   if (!id || id.length > 200) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
 
-  var cached = CacheService.getScriptCache().get('nexfix_req_' + id);
+  var shopPartition = shopPartitionKey(shopId);
+  var cacheKey = 'nexfix_req_' + shopPartition + '_' + id;
+  var cached = CacheService.getScriptCache().get(cacheKey);
   if (!cached) return { ok: false, status: 'pending', version: VERSION, pending: true };
 
   try {
     var result = JSON.parse(cached);
-    if (result && result.ok === true && result.action === 'backupState') return result;
+    if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
     return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
   } catch (err) {
     return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
