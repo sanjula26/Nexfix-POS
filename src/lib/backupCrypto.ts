@@ -28,6 +28,10 @@ function assertCrypto(): void {
   }
 }
 
+function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
@@ -46,7 +50,7 @@ function base64ToBytes(value: string): Uint8Array {
 
 async function compress(data: Uint8Array): Promise<{ data: Uint8Array; compressed: boolean }> {
   if (typeof CompressionStream === 'undefined') return { data, compressed: false };
-  const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('gzip'));
+  const stream = new Blob([asArrayBuffer(data)]).stream().pipeThrough(new CompressionStream('gzip'));
   const buffer = await new Response(stream).arrayBuffer();
   return { data: new Uint8Array(buffer), compressed: true };
 }
@@ -63,13 +67,13 @@ async function deriveKey(passphrase: string, salt: Uint8Array, iterations = PBKD
   assertCrypto();
   const material = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(passphrase),
+    asArrayBuffer(new TextEncoder().encode(passphrase)),
     'PBKDF2',
     false,
     ['deriveKey'],
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: asArrayBuffer(salt), iterations, hash: 'SHA-256' },
     material,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -94,7 +98,7 @@ export function hasBackupPassphrase(): boolean {
 
 export async function sha256Hex(value: string): Promise<string> {
   assertCrypto();
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  const digest = await crypto.subtle.digest('SHA-256', asArrayBuffer(new TextEncoder().encode(value)));
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -115,7 +119,7 @@ export async function encryptBackupState(
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const key = await deriveKey(sessionPassphrase, salt, PBKDF2_ITERATIONS);
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, packed.data);
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: asArrayBuffer(iv) }, key, asArrayBuffer(packed.data));
   return {
     v: 1,
     alg: 'AES-256-GCM',
@@ -154,9 +158,9 @@ export async function decryptBackupEnvelope(envelope: EncryptedBackupEnvelope): 
     if (salt.length < SALT_BYTES || iv.length !== IV_BYTES) throw new Error('Encrypted backup metadata is invalid.');
     const key = await deriveKey(sessionPassphrase, salt, envelope.iterations);
     const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
+      { name: 'AES-GCM', iv: asArrayBuffer(iv) },
       key,
-      base64ToBytes(envelope.ciphertext),
+      asArrayBuffer(base64ToBytes(envelope.ciphertext)),
     );
     const data = envelope.compressed ? await decompress(new Uint8Array(plaintext)) : new Uint8Array(plaintext);
     return JSON.parse(new TextDecoder().decode(data));
