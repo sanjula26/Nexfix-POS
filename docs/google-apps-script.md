@@ -29,9 +29,8 @@ After changing `Code.gs`, update/create the deployment version. Editing the GitH
 In **Settings → Google Drive Sync & Cloud Backup**:
 
 1. Paste the deployed `/exec` Web App URL.
-2. Click **Save URL**.
-3. Enable Google sync.
-4. Click **Backup now to Google**.
+2. The POS uses the centrally configured endpoint automatically.
+3. No shop-level Google URL or sync toggle is required.
 
 The POS sends the complete sanitized POS backup directly to Apps Script. The server writes it under the matching shop folder.
 
@@ -75,8 +74,8 @@ Automatic/reconnect backups are cloud-only; they do not download JSON files to t
 
 The scheduler requires:
 
-- Google sync enabled.
-- A valid Apps Script URL.
+- The released POS build has the centrally configured Apps Script endpoint.
+- The device is online when a cloud backup is attempted.
 - Browser online connectivity.
 - A configured auto-backup interval.
 
