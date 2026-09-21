@@ -92,13 +92,35 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   };
 
   try {
-    await fetch(getGoogleScriptUrl(), {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-      body: JSON.stringify(payload),
-    });
+    // Google Apps Script web apps commonly redirect the /exec URL before
+    // handling the request. A cross-origin fetch can turn that redirected POST
+    // into a GET, so use a native HTML form POST instead. The form POST is a
+    // browser-supported cross-origin navigation and reliably reaches doPost.
+    const iframeName = 'nexfixGoogleBackupFrame_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const iframe = document.createElement('iframe');
+    iframe.name = iframeName;
+    iframe.style.display = 'none';
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = getGoogleScriptUrl();
+    form.target = iframeName;
+    form.style.display = 'none';
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'payload';
+    input.value = JSON.stringify(payload);
+    form.appendChild(input);
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    form.submit();
+    window.setTimeout(() => {
+      form.remove();
+      iframe.remove();
+    }, 30000);
 
+    // The iframe response is cross-origin and intentionally ignored. Confirm
+    // the server-side Drive write through the JSONP status endpoint instead.
+    //
     // no-cors hides the POST response, so confirm that Apps Script cached a
     // successful Drive write before reporting cloud=true to the POS.
     const baseUrl = getGoogleScriptUrl();
