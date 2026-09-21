@@ -132,18 +132,16 @@ function normalizeDriveFolderId(value) {
 }
 
 function getRootBackupFolder() {
-  var configured = normalizeDriveFolderId(
-    PropertiesService.getScriptProperties().getProperty(ROOT_BACKUP_FOLDER_ID_PROPERTY) || DEFAULT_ROOT_BACKUP_FOLDER_ID
-  );
-  if (configured) {
-    try {
-      return DriveApp.getFolderById(configured);
-    } catch (ignore) {
-      throw new Error('Configured ROOT_BACKUP_FOLDER_ID cannot be accessed by the Apps Script account');
-    }
+  var propertyValue = PropertiesService.getScriptProperties().getProperty(ROOT_BACKUP_FOLDER_ID_PROPERTY);
+  var raw = propertyValue === null ? DEFAULT_ROOT_BACKUP_FOLDER_ID : String(propertyValue).trim();
+  if (!raw) throw new Error('ROOT_BACKUP_FOLDER_ID is empty');
+  var configured = normalizeDriveFolderId(raw);
+  if (!configured) throw new Error('ROOT_BACKUP_FOLDER_ID is invalid');
+  try {
+    return DriveApp.getFolderById(configured);
+  } catch (ignore) {
+    throw new Error('Configured ROOT_BACKUP_FOLDER_ID cannot be accessed by the Apps Script account');
   }
-  var folders = DriveApp.getFoldersByName(ROOT_BACKUP_FOLDER_NAME);
-  return folders.hasNext() ? folders.next() : DriveApp.createFolder(ROOT_BACKUP_FOLDER_NAME);
 }
 
 function getShopBackupFolder(shopId, shopName) {
