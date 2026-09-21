@@ -2059,7 +2059,14 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     const u = (state.units || []).find(x => x.id === id);
-    setState(s => ({ ...s, units: (s.units || []).filter(x => x.id !== id) }));
+    if (!u) return;
+    setState(s => ({
+      ...s,
+      units: (s.units || []).filter(x => x.id !== id),
+      products: u.status === 'in_stock'
+        ? s.products.map(p => p.id === u.productId ? { ...p, stock: Math.max(0, p.stock - 1) } : p)
+        : s.products,
+    }));
     if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`);
   }, [state.units, pushAudit, user, can]);
 
