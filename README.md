@@ -10,16 +10,20 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Cloud sales: server-side atomic sale completion with idempotent sale IDs
 - Cloud returns: server-side atomic sale-return processing with idempotent return IDs
 - Cloud state sync: authenticated multi-PC snapshot revisioning with durable conflict-safe queueing
-- Multi-shop isolation: every cloud device, snapshot and Google backup request is scoped to an explicit `shop_id`; one shop cannot use another shop's cloud data
+- Multi-shop isolation: every cloud device and snapshot is scoped to an explicit `shop_id`
 - Web deployment: Netlify-compatible Vite build; GitHub Pages preview workflow is also configured
 - Desktop target: Windows Electron wrapper (build separately)
-- Backup target: one dedicated Google account / one Apps Script deployment / one bound spreadsheet can serve all shops; each shop is isolated into its own `shop_id`-derived backup partitions
+- Google backup: direct Nexfix POS → Google Apps Script → dedicated Google Drive folder; Supabase is not required for this backup transport
+- Google backup storage: the supplied master Drive folder is separate from the operator's Google Sheet; each shop receives a deterministic partitioned Drive folder
 
 ## Important safety changes
 
 - Offline queue operations are **never discarded just because the browser becomes online**. A remote acknowledgement is required before a sync operation is acknowledged.
 - Private Supabase implementation RPCs are not executable by the authenticated client role; public wrapper RPCs remain the supported boundary.
-- Google backup is not separated by email address. A single dedicated Google backup account can serve many shops, while `shop_id`, authenticated membership and deterministic shop-specific partitions enforce isolation.
-- Google backup and restore requests are checked at both the Supabase proxy and Apps Script layers for an active `admin`/`manager` membership in the exact requested shop.
+- Direct Google backup requests require an explicit `shopId` and `requestId`; Drive files are partitioned by a deterministic SHA-256-derived shop key.
 - Cloud backup payloads intentionally omit local POS authentication secrets; restore preserves the current device's local authentication state.
-- Google backup remains an optional secondary backup transport. Supabase/cloud state and the local offline store remain separate reliability mechanisms.
+- Google backup confirmation is server-side: the POS reports cloud success only after Apps Script reports a successful Drive write.
+- Google backup is an optional backup transport. Supabase/cloud state and the local offline store remain separate reliability mechanisms.
+- The direct Apps Script endpoint is not a substitute for application authentication; a public Web App endpoint must be treated as a transport boundary, not as a private API.
+
+See `google-apps-script/README.md` and `docs/google-apps-script.md` for the direct Drive deployment flow.
