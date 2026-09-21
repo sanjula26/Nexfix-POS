@@ -137,7 +137,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     } catch { /* metadata must not claim local success */ }
   }
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
-    try { cloud = await backupStateToGoogle(payload, kind); } catch { cloud = false; }
+    try { cloud = await backupStateToGoogle(payload, kind); } catch (error) { console.error('[Google Backup] cloud backup failed', error); cloud = false; }
   }
   const successful = local || cloud;
   if (successful) {
