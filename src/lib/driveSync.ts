@@ -198,16 +198,24 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   if (!shopId) return false;
 
   try {
-    const safeState = sanitizeCloudState(state);
+    const source = state && typeof state === 'object' && !Array.isArray(state)
+      ? state as Record<string, unknown>
+      : {};
+    const businessState = source.state && typeof source.state === 'object' && !Array.isArray(source.state)
+      ? source.state
+      : state;
+    const safeState = sanitizeCloudState(businessState);
     const exportedAt = new Date().toISOString();
     const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
     const serialized = JSON.stringify(envelope);
     const totalBytes = utf8Bytes(serialized);
     const backupId = makeBackupId();
     const dayKey = getDayKey();
-    const shopName = state && typeof state === 'object' && !Array.isArray(state) && (state as Record<string, unknown>).settings && typeof (state as Record<string, unknown>).settings === 'object'
-      ? String(((state as Record<string, unknown>).settings as Record<string, unknown>).shopName || 'Shop')
-      : 'Shop';
+    const businessRecord = safeState && typeof safeState === 'object' && !Array.isArray(safeState) ? safeState as Record<string, unknown> : {};
+    const settings = businessRecord.settings && typeof businessRecord.settings === 'object' && !Array.isArray(businessRecord.settings)
+      ? businessRecord.settings as Record<string, unknown>
+      : {};
+    const shopName = String(settings.shopName || 'Shop');
 
     if (totalBytes <= SINGLE_LIMIT_BYTES) {
       return await postGoogleBackup({
