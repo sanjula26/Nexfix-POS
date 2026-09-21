@@ -9,6 +9,7 @@ const ENABLED_KEY = 'nexfix_google_sync_enabled';
 // The Web App URL is a transport address, not a secret.
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
+const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
 
@@ -38,10 +39,32 @@ export function setGoogleSyncEnabled(_on: boolean): void {
   try { localStorage.removeItem(ENABLED_KEY); } catch { /* ignore */ }
 }
 
+/**
+ * Return the Supabase shop id when one exists. Private/offline users do not have
+ * a cloud shop id, so Drive backup gets its own stable browser-local id instead.
+ * Never write a generated Drive id into nexfix_cloud_shop_id.
+ */
 function getLocalShopId(): string {
   try {
-    const id = (localStorage.getItem(SHOP_KEY) || '').trim();
-    return id.length > 0 && id.length <= 100 ? id : '';
+    const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
+    if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
+
+    const existingDriveId = (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
+    if (existingDriveId.length > 0 && existingDriveId.length <= 100) return existingDriveId;
+
+    let driveId = '';
+    try {
+      if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+        driveId = `drive-${crypto.randomUUID()}`;
+      }
+    } catch { /* ignore */ }
+
+    if (!driveId) {
+      driveId = `drive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+
+    localStorage.setItem(DRIVE_SHOP_KEY, driveId);
+    return driveId;
   } catch { return ''; }
 }
 
@@ -120,9 +143,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
 
     // The iframe response is cross-origin and intentionally ignored. Confirm
     // the server-side Drive write through the JSONP status endpoint instead.
-    //
-    // no-cors hides the POST response, so confirm that Apps Script cached a
-    // successful Drive write before reporting cloud=true to the POS.
     const baseUrl = getGoogleScriptUrl();
     const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
