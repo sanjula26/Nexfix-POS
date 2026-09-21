@@ -7,6 +7,10 @@
 var BACKUP_SHEET = 'FullBackup';
 var VERSION = '3.0.1';
 var SHOP_ID_MAX_LENGTH = 100;
+var REQUEST_ID_MAX_LENGTH = 200;
+var MAX_BACKUP_BYTES = 45 * 1024 * 1024;
+var BACKUP_RATE_LIMIT = 30;
+var BACKUP_RATE_WINDOW_SECONDS = 60;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
 // Default Nexfix master Drive folder supplied for this deployment.
@@ -65,6 +69,38 @@ function normalizeShopId(shopId) {
   var value = String(shopId || '').trim();
   if (!value || value.length > SHOP_ID_MAX_LENGTH) throw new Error('Valid shopId is required');
   return value;
+}
+
+function validateBackupContents(contents) {
+  if (!contents || typeof contents !== 'object' || Array.isArray(contents)) {
+    throw new Error('Invalid backup payload');
+  }
+  if (contents.action !== 'backupState') throw new Error('Only backupState is supported by the direct Drive backup endpoint');
+  if (!contents.state || typeof contents.state !== 'object' || Array.isArray(contents.state)) {
+    throw new Error('A valid backup state is required');
+  }
+  var serialized = JSON.stringify(contents.state);
+  if (serialized.length > MAX_BACKUP_BYTES) {
+    throw new Error('Backup is too large for the Google Drive backup endpoint');
+  }
+}
+
+function validateRequestId(requestId) {
+  var value = String(requestId || '').trim();
+  if (!value || value.length > REQUEST_ID_MAX_LENGTH || !/^[A-Za-z0-9._:-]+$/.test(value)) {
+    throw new Error('Valid requestId is required');
+  }
+  return value;
+}
+
+function checkBackupRateLimit(shopId) {
+  var cache = CacheService.getScriptCache();
+  var key = 'nexfix_rate_' + shopPartitionKey(shopId);
+  var current = Number(cache.get(key) || 0);
+  if (current >= BACKUP_RATE_LIMIT) {
+    throw new Error('Backup rate limit reached. Please retry shortly.');
+  }
+  cache.put(key, String(current + 1), BACKUP_RATE_WINDOW_SECONDS);
 }
 
 /**
@@ -229,7 +265,7 @@ function latestDriveBackup(shopId) {
       var files = backupFolder.getFiles();
       while (files.hasNext()) {
         var file = files.next();
-        if (file.getMimeType() !== 'application/json' || file.getName().indexOf(partitionPrefix) !== 0) continue;
+        if (file.getMimeType() !== 'application/json' || file.getName().indexOf(partitionPrefix) !== 0 || file.getSize() > MAX_BACKUP_BYTES) continue;
         try {
           var parsed = JSON.parse(file.getBlob().getDataAsString());
           var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
@@ -296,8 +332,9 @@ function doPost(e) {
     var contents = parsePostBody(e);
     var shopId;
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
-    var requestId = String(contents.requestId || '').trim();
-    if (!requestId || requestId.length > 200) return json(fail('Valid requestId is required'));
+    var requestId;
+    try { requestId = validateRequestId(contents.requestId); } catch (requestError) { return json(fail(requestError)); }
+    try { validateBackupContents(contents); } catch (payloadError) { return json(fail(payloadError)); }
 
     var requestCache = CacheService.getScriptCache();
     var cacheKey = 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
@@ -307,11 +344,8 @@ function doPost(e) {
     }
 
     var result;
-    if (contents.action === 'backupState') {
-      result = ok(backupState(null, contents, shopId));
-    } else {
-      return json(fail('Only backupState is supported by the direct Drive backup endpoint'));
-    }
+    try { checkBackupRateLimit(shopId); } catch (rateError) { return json(fail(rateError)); }
+    result = ok(backupState(null, contents, shopId));
 
     try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
     return json(result);
@@ -324,7 +358,7 @@ function doPost(e) {
 
 function getCachedBackupStatus(requestId, shopId) {
   var id = String(requestId || '').trim();
-  if (!id || id.length > 200) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
+  if (!id || id.length > REQUEST_ID_MAX_LENGTH || !/^[A-Za-z0-9._:-]+$/.test(id)) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
 
   var shopPartition = shopPartitionKey(shopId);
   var cacheKey = 'nexfix_req_' + shopPartition + '_' + id;
