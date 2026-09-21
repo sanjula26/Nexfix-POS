@@ -322,6 +322,14 @@ function doPost(e) {
     var user = authenticateUser(contents.accessToken, shopId);
     if (!user) return json(unauthorized('Valid admin/manager Supabase session required for this shop'));
 
+    var requestId = String(contents.requestId || '').trim();
+    if (!requestId || requestId.length > 200) return json(fail('Valid requestId is required'));
+    var requestCache = CacheService.getScriptCache();
+    var cached = requestCache.get('nexfix_req_' + requestId);
+    if (cached) {
+      try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
+    }
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var result;
     if (contents.action === 'backupState') {
@@ -335,6 +343,9 @@ function doPost(e) {
     } else {
       return json(fail('Unsupported action or table is not allowed'));
     }
+    try {
+      requestCache.put('nexfix_req_' + requestId, JSON.stringify(result), 21600);
+    } catch (ignoreCacheWrite) {}
     return json(result);
   } catch (err) {
     return json(fail(err));
