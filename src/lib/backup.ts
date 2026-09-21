@@ -144,7 +144,14 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     const now = new Date().toISOString();
     const meta = await idbGetMeta();
     await idbSetMeta(kind === 'auto'
-      ? { lastAutoBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) }
+      ? {
+          lastAutoBackupAt: now,
+          backupCount: (meta.backupCount || 0) + 1,
+          pendingAutoBackupAt: undefined,
+          nextAutoBackupRetryAt: undefined,
+          autoBackupFailureCount: 0,
+          ...(cloud ? { lastCloudBackupAt: now } : {}),
+        }
       : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
   }
   return { local, cloud };
@@ -152,23 +159,60 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
 
 export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void): () => void {
   let running = false;
+  const RETRY_DELAY_MS = 60_000;
   const tick = async (force = false) => {
     if (running) return;
     try {
       const meta = await idbGetMeta();
+      const now = Date.now();
       const online = typeof navigator === 'undefined' || navigator.onLine;
       const intervalHours = Number(meta.autoBackupHours) || 0;
       if (intervalHours <= 0) return;
+      // A configured Google backup is the only successful destination for an automatic backup.
+      // If no script URL is configured, leave the scheduler idle rather than creating a
+      // permanent pending failure that cannot succeed until configuration changes.
+      const cloudRequired = isGoogleSyncEnabled();
+      if (!cloudRequired) return;
+
       const last = meta.lastAutoBackupAt ? new Date(meta.lastAutoBackupAt).getTime() : 0;
-      const due = Date.now() - last >= intervalHours * 60 * 60 * 1000;
-      if (!force && !due) return;
+      const due = now - last >= intervalHours * 60 * 60 * 1000;
+      const pending = Boolean(meta.pendingAutoBackupAt);
+      const retryAt = meta.nextAutoBackupRetryAt ? new Date(meta.nextAutoBackupRetryAt).getTime() : 0;
+      if (!force && !due && !pending) return;
+      if (!force && pending && retryAt > now) return;
+
+      // Persist the pending marker before the network operation. This survives tab/browser
+      // restarts and ensures a failed upload is retried instead of being silently lost.
+      if (!pending) {
+        await idbSetMeta({ pendingAutoBackupAt: new Date().toISOString(), autoBackupFailureCount: 0 });
+      }
       if (!online) return;
+
       running = true;
       const result = await downloadBackup(getState(), 'auto', { download: false, cloud: true });
-      const cloudRequired = isGoogleSyncEnabled();
-      const successful = cloudRequired ? result.cloud : false;
-      if (successful) onBackup?.(new Date().toISOString());
-    } catch { /* retry on next tick */ } finally { running = false; }
+      if (result.cloud) {
+        onBackup?.(new Date().toISOString());
+        return;
+      }
+
+      const latest = await idbGetMeta();
+      const failures = (latest.autoBackupFailureCount || 0) + 1;
+      await idbSetMeta({
+        pendingAutoBackupAt: latest.pendingAutoBackupAt || new Date().toISOString(),
+        nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+        autoBackupFailureCount: failures,
+      });
+    } catch {
+      // Keep the durable pending marker; the next retry tick will attempt the upload again.
+      try {
+        const meta = await idbGetMeta();
+        await idbSetMeta({
+          pendingAutoBackupAt: meta.pendingAutoBackupAt || new Date().toISOString(),
+          nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+          autoBackupFailureCount: (meta.autoBackupFailureCount || 0) + 1,
+        });
+      } catch { /* metadata is best-effort */ }
+    } finally { running = false; }
   };
   const onOnline = () => { void tick(true); };
   window.addEventListener('online', onOnline);
