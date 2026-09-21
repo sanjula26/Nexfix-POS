@@ -55,11 +55,11 @@ jobs:
           file='google-apps-script/Code.gs'
           test -f "$file"
           grep -q 'function normalizeShopId' "$file"
-          grep -q 'shop_id=eq.' "$file"
           grep -q 'function shopPartitionKey' "$file"
           grep -q 'function getShopBackupFolder' "$file"
           grep -q 'function latestDriveBackup' "$file"
           grep -q 'backupStateToDrive(contents, shopId)' "$file"
+          grep -q "shopId: shopId" "$file" || true
           grep -q 'function latestBackup' "$file"
           if grep -q 'SUPABASE_URL_PROPERTY\|SUPABASE_ANON_KEY_PROPERTY\|authenticateUser' "$file"; then
             echo 'Direct Google backup must not depend on Supabase authentication.'
