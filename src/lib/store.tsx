@@ -998,7 +998,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- sales ---------------- */
   const completeSale = useCallback((input: NewSaleInput): Sale | null => {
-    if (!user || input.lines.length === 0) return null;
+    if (!user || !can('page:pos') || input.lines.length === 0) {
+      if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked sale completion without POS access');
+      return null;
+    }
     const s = state;
     const saleLines = applyCategoryPromotions(input.lines, s.products, s.settings);
     const items: SaleItem[] = [];
@@ -1194,7 +1197,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
-    if (!user || input.lines.length === 0) return null;
+    if (!user || !can('page:pos') || input.lines.length === 0) {
+      if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
+      return null;
+    }
     if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);
     const shop = await ensureCloudShop('Nexfix Shop');
     if (!shop.ok || !shop.shopId) {
