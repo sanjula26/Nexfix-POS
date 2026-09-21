@@ -9,7 +9,7 @@ import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId,
 } from '../lib/driveSync';
-import { clearBackupPassphrase, hasBackupPassphrase, setBackupPassphrase } from '../lib/backupCrypto';
+import { clearBackupPassphrase, decryptBackupEnvelope, hasBackupPassphrase, isEncryptedBackupEnvelope, setBackupPassphrase, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
@@ -141,29 +141,78 @@ export default function Settings() {
     setPinCur(''); setPinNew(''); setPinConfirm('');
   };
 
-  const onImport = (file: File) => {
+  const onImport = (files: File[]) => {
     if (!user || user.role !== 'admin') {
       setImportMsg('Backup restore requires admin access');
       return;
     }
+    if (!files.length) return;
     if (!window.confirm('Import this backup? Current local POS data will be replaced. A safety checkpoint will be created first.')) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
+
+    const readFile = (file: File) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Could not read backup file: ' + file.name));
+      reader.readAsText(file);
+    });
+
+    const importBackupFiles = async () => {
       setImportMsg('Validating backup and creating safety checkpoint…');
-      try {
-        const restored = await applyBackupRestore(state, String(reader.result));
-        void restored;
-        await queueWrite('backup_restore');
-        setImportMsg('Backup restored safely. Reloading…');
-        window.setTimeout(() => window.location.reload(), 450);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Restore failed';
-        setImportMsg(message);
-        window.setTimeout(() => setImportMsg(''), 5000);
+      const texts = new Map<string, string>();
+      for (const file of files) texts.set(file.name, await readFile(file));
+
+      let parsed: unknown;
+      const firstJson = Array.from(texts.values()).find(value => value.trim());
+      if (!firstJson) throw new Error('Backup file is empty.');
+      try { parsed = JSON.parse(firstJson); } catch { throw new Error('Backup file is not valid JSON.'); }
+
+      let restoreInput: unknown = parsed;
+      const candidate = parsed as Record<string, unknown> | null;
+
+      // Google Drive encrypted single-file backup: {_meta, payload: AES envelope}.
+      if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload) {
+        const meta = candidate._meta as Record<string, unknown>;
+        if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
+          const decrypted = await decryptBackupEnvelope(candidate.payload);
+          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+        }
+      // Google Drive multipart backup: select the manifest plus all .partNNN files.
+      } else if (candidate && typeof candidate === 'object' && candidate.encrypted === true && Array.isArray(candidate.partNames)) {
+        const manifest = candidate as {
+          encrypted: boolean; shopId?: string; shopPartition?: string; backupId?: string;
+          totalBytes?: number; parts?: number; partNames: string[]; sha256?: string;
+        };
+        const currentShopId = getLocalShopId();
+        if (!currentShopId || manifest.shopId !== currentShopId) throw new Error('Restore refused: backup belongs to a different shop.');
+        if (!manifest.backupId || manifest.partNames.length !== Number(manifest.parts) || !manifest.sha256) {
+          throw new Error('Invalid multipart backup manifest.');
+        }
+        const chunks = manifest.partNames.map(name => texts.get(name));
+        if (chunks.some(chunk => typeof chunk !== 'string')) throw new Error('Multipart restore requires the manifest and every listed .part file.');
+        const rawPayload = chunks.join('');
+        if (new TextEncoder().encode(rawPayload).byteLength !== Number(manifest.totalBytes)) throw new Error('Multipart backup size verification failed.');
+        if (await sha256Hex(rawPayload) !== manifest.sha256) throw new Error('Multipart backup integrity check failed. Restore was cancelled.');
+        let envelope: unknown;
+        try { envelope = JSON.parse(rawPayload); } catch { throw new Error('Multipart encrypted payload is not valid JSON.'); }
+        if (!isEncryptedBackupEnvelope(envelope)) throw new Error('Multipart encrypted backup envelope is invalid.');
+        const decrypted = await decryptBackupEnvelope(envelope);
+        restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+      } else if (isEncryptedBackupEnvelope(parsed)) {
+        const decrypted = await decryptBackupEnvelope(parsed);
+        restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       }
+
+      await applyBackupRestore(state, restoreInput);
+      await queueWrite('backup_restore');
+      setImportMsg('Backup restored safely. Reloading…');
+      window.setTimeout(() => window.location.reload(), 450);
     };
-    reader.onerror = () => setImportMsg('Could not read backup file');
-    reader.readAsText(file);
+
+    void importBackupFiles().catch(error => {
+      const message = error instanceof Error ? error.message : 'Restore failed';
+      setImportMsg(message);
+      window.setTimeout(() => setImportMsg(''), 5000);
+    });
   };
 
   const runGoogleBackupNow = async () => {
@@ -373,7 +422,7 @@ export default function Settings() {
             <p className="text-xs text-faint mb-3">Primary store: <b className="text-ink">IndexedDB</b> (large capacity). localStorage kept as fast cache. Works fully offline — auto-syncs when the network returns.</p>
             <div className="flex flex-wrap gap-2 mb-4 text-[11px] font-semibold"><span className={`badge ${connectivity === 'online' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-500'}`}>{connectivity === 'online' ? '● ONLINE' : '● OFFLINE'}</span>{pendingQueueCount > 0 && <span className="badge bg-amber-500/15 text-amber-600">{pendingQueueCount} queued write(s)</span>}{backupMeta.lastManualBackupAt && <span className="badge bg-sky-500/10 text-sky-600">Last manual: {new Date(backupMeta.lastManualBackupAt).toLocaleString()}</span>}{backupMeta.lastAutoBackupAt && <span className="badge bg-violet-500/10 text-violet-600">Last auto: {new Date(backupMeta.lastAutoBackupAt).toLocaleString()}</span>}{backupMeta.lastCloudBackupAt && <span className="badge bg-emerald-500/10 text-emerald-600">Last cloud: {new Date(backupMeta.lastCloudBackupAt).toLocaleString()}</span>}</div>
             <div className="rounded-xl border border-line bg-raised/40 p-3.5 mb-4"><div className="text-[12px] font-bold text-ink mb-2">Auto backup interval</div><div className="flex flex-wrap items-center gap-2">{[0, 0.25, 0.5, 1, 3, 6, 12, 24].map(h => <button key={h} type="button" className={`btn !py-1.5 !px-3 text-[12px] ${autoHours === h ? 'btn-primary' : 'btn-soft'}`} onClick={async () => { setAutoHours(h); await setAutoBackupHours(h); setBackupMsg(h === 0 ? 'Auto-backup disabled' : `Auto-backup every ${h}h`); }}>{h === 0 ? 'OFF' : h < 1 ? `${Math.round(h * 60)}m` : `${h}h`}</button>)}</div><p className="text-[11px] text-faint mt-2">When due, a JSON snapshot is saved to the configured Google Drive shop backup folder automatically.</p></div>
-            <div className="flex flex-wrap gap-2.5">{can('act:export') && <button className="btn btn-soft" onClick={async () => { await runManualBackup(); setBackupMsg('Manual backup downloaded'); }}><Download size={15} /> Export backup</button>}{user?.role === 'admin' && <button className="btn btn-soft" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</button>}<input ref={fileRef} type="file" accept="application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />{pendingQueueCount > 0 && connectivity === 'online' && <button className="btn btn-emerald" onClick={async () => { const n = await flushOfflineQueue(); setBackupMsg(`Flushed ${n} queued write(s)`); }}>Sync now</button>}</div>
+            <div className="flex flex-wrap gap-2.5">{can('act:export') && <button className="btn btn-soft" onClick={async () => { await runManualBackup(); setBackupMsg('Manual backup downloaded'); }}><Download size={15} /> Export backup</button>}{user?.role === 'admin' && <button className="btn btn-soft" onClick={() => fileRef.current?.click()}><Upload size={15} /> Import backup</button>}<input ref={fileRef} type="file" accept=".json,.part001,.part002,.part003,.part004,.part005,application/json,text/plain" multiple className="hidden" onChange={e => { const files = Array.from(e.target.files || []); if (files.length) onImport(files); e.target.value = ''; }} />{pendingQueueCount > 0 && connectivity === 'online' && <button className="btn btn-emerald" onClick={async () => { const n = await flushOfflineQueue(); setBackupMsg(`Flushed ${n} queued write(s)`); }}>Sync now</button>}</div>
             {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') || (importMsg || backupMsg).includes('Reloading') ? 'text-emerald-500' : 'text-rose-500'}`}>{importMsg || backupMsg}</p>}
           </div>
 
