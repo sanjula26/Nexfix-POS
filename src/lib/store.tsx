@@ -1921,7 +1921,13 @@ const deletePurchase = useCallback((id: string) => {
     }));
   }, [user?.email]);
 
-  const exportData = useCallback(() => JSON.stringify(state, null, 2), [state]);
+  const exportData = useCallback(() => {
+    if (!user || !can('act:export')) {
+      pushAudit('DENIED', 'Settings', 'Blocked data export without export permission');
+      return '';
+    }
+    return JSON.stringify(state, null, 2);
+  }, [state, user, can, pushAudit]);
 
   const importData = useCallback((json: string) => {
     if (!user || user.role !== 'admin') {
