@@ -97,7 +97,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify(payload),
-      keepalive: true,
     });
 
     // no-cors hides the POST response, so confirm that Apps Script cached a
