@@ -108,7 +108,7 @@ export async function encryptBackupState(
   const packed = await compress(plaintext);
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await deriveKey(sessionPassphrase, salt, envelope.iterations);
+  const key = await deriveKey(sessionPassphrase, salt, PBKDF2_ITERATIONS);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, packed.data);
   return {
     v: 1,
@@ -146,7 +146,7 @@ export async function decryptBackupEnvelope(envelope: EncryptedBackupEnvelope): 
     const salt = base64ToBytes(envelope.salt);
     const iv = base64ToBytes(envelope.iv);
     if (salt.length < SALT_BYTES || iv.length !== IV_BYTES) throw new Error('Encrypted backup metadata is invalid.');
-    const key = await deriveKey(sessionPassphrase, salt);
+    const key = await deriveKey(sessionPassphrase, salt, envelope.iterations);
     const plaintext = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv },
       key,
