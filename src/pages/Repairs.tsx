@@ -87,11 +87,17 @@ export default function Repairs() {
     // store implementation from double-deducting or failing to restore stock on edits.
     const original = jobs.find(j => j.id === editing.id);
     const parts = !isNew && original ? original.parts : editing.parts;
+    const statusChanged = !isNew && !!original && editing.status !== original.status;
+    const nextStatus = editing.status;
+    // Status transitions must go through updateRepairStatus so delivery performs
+    // the one-time inventory-part deduction and stock validation. Saving the
+    // job itself must never bypass that lifecycle rule.
     saveRepair({
-      ...editing, parts, customerName: editing.customerName.trim(), deviceBrand: editing.deviceBrand.trim(),
+      ...editing, status: original?.status || editing.status, parts, customerName: editing.customerName.trim(), deviceBrand: editing.deviceBrand.trim(),
       deviceModel: editing.deviceModel.trim(), fault: editing.fault.trim(), diagnosis: editing.diagnosis?.trim() || undefined,
       imei: editing.imei?.trim() || undefined, serial: editing.serial?.trim() || undefined, customerPhone: editing.customerPhone?.trim() || undefined,
     });
+    if (statusChanged && original) updateRepairStatus(original.id, nextStatus);
     setEditing(null);
   };
 
