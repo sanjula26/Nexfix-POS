@@ -251,7 +251,6 @@ function writeShopMetadata(folder, shopId, shopName, encrypted) {
   var metadata = {
     app: 'Nexfix POS',
     version: VERSION,
-    shopId: shopId,
     shopPartition: shopPartitionKey(shopId),
     shopName: sanitizeDriveName(shopName || 'Shop'),
     updatedAt: new Date().toISOString(),
