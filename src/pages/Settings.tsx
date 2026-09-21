@@ -136,7 +136,7 @@ export default function Settings() {
     try {
       const latest = await fetchLatestGoogleBackup();
       if (!latest) {
-        setGMsg('No valid FullBackup was found in Google Sheets');
+        setGMsg('No valid Google Drive backup was found for this shop');
         return;
       }
       setConfirmGoogleRestore(latest);
