@@ -81,7 +81,7 @@ export function isCloudSafeBackup(input: unknown): boolean {
     && (input as Record<string, unknown>)[CLOUD_SAFE_MARKER] === true;
 }
 
-/** Direct fire-and-forget backup. Apps Script receives text/plain to avoid a CORS preflight. */
+/** Direct backup. POST avoids a CORS preflight; a JSONP status check confirms Drive actually accepted it. */
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return false;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
@@ -110,11 +110,56 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       body: JSON.stringify(payload),
       keepalive: true,
     });
-    return true;
+
+    // no-cors hides the POST response, so confirm that Apps Script cached a
+    // successful Drive write before reporting cloud=true to the POS.
+    const baseUrl = getGoogleScriptUrl();
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, payload.requestId);
+      if (status === true) return true;
+      if (status === false) return false;
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+    }
+    console.error('[Google Backup] Drive confirmation timed out');
+    return false;
   } catch (error) {
     console.error('[Google Backup] direct request failed', error);
     return false;
   }
+}
+
+async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    const callbackName = `__nexfixGoogleBackupStatus_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement('script');
+    let settled = false;
+    const finish = (value: boolean | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      try { delete (window as unknown as Record<string, unknown>)[callbackName]; } catch { /* ignore */ }
+      script.remove();
+      resolve(value);
+    };
+    const timer = window.setTimeout(() => finish(null), 5000);
+    (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
+      if (!result || typeof result !== 'object') return finish(null);
+      const data = result as { ok?: boolean; pending?: boolean; status?: string };
+      if (data.ok === true && data.status === 'success') return finish(true);
+      if (data.status === 'pending') return finish(null);
+      finish(false);
+    };
+    const url = new URL(baseUrl);
+    url.searchParams.set('action', 'backupStatus');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', requestId);
+    url.searchParams.set('callback', callbackName);
+    script.async = true;
+    script.src = url.toString();
+    script.onerror = () => finish(null);
+    document.head.appendChild(script);
+  });
 }
 
 /** Table sync is intentionally disabled in the direct Drive-only backup mode. */
