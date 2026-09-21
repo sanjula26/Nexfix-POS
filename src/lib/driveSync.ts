@@ -1,17 +1,23 @@
 /** Direct Google Drive backup integration for Nexfix POS.
  * POS -> Google Apps Script Web App -> dedicated Google Drive folder.
- * This backup path does not use Supabase.
+ * Business-state encryption happens in the browser before anything is uploaded.
  */
+
+import {
+  decryptBackupEnvelope,
+  encryptBackupState,
+  isEncryptedBackupEnvelope,
+  sha256Hex,
+} from './backupCrypto';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
-// Central deployment: customers do not need to configure or receive the URL.
-// The Web App URL is a transport address, not a secret.
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
-const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
+const SINGLE_LIMIT_BYTES = 8.5 * 1024 * 1024;
+const PART_SIZE_CHARS = 6 * 1024 * 1024;
 
 function isAllowedScriptUrl(value: string): boolean {
   try {
@@ -26,7 +32,6 @@ export function getGoogleScriptUrl(): string {
 }
 
 export function setGoogleScriptUrl(_url: string): void {
-  // Kept for backwards compatibility with older builds; the deployment is centrally managed.
   try { localStorage.removeItem(URL_KEY); } catch { /* ignore */ }
 }
 
@@ -35,34 +40,21 @@ export function isGoogleSyncEnabled(): boolean {
 }
 
 export function setGoogleSyncEnabled(_on: boolean): void {
-  // Google backup is centrally managed and remains enabled for the released POS build.
   try { localStorage.removeItem(ENABLED_KEY); } catch { /* ignore */ }
 }
 
-/**
- * Return the Supabase shop id when one exists. Private/offline users do not have
- * a cloud shop id, so Drive backup gets its own stable browser-local id instead.
- * Never write a generated Drive id into nexfix_cloud_shop_id.
- */
 export function getLocalShopId(): string {
   try {
     const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
     if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
-
     const existingDriveId = (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
     if (existingDriveId.length > 0 && existingDriveId.length <= 100) return existingDriveId;
 
     let driveId = '';
     try {
-      if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-        driveId = `drive-${crypto.randomUUID()}`;
-      }
+      if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) driveId = `drive-${crypto.randomUUID()}`;
     } catch { /* ignore */ }
-
-    if (!driveId) {
-      driveId = `drive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    }
-
+    if (!driveId) driveId = `drive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     localStorage.setItem(DRIVE_SHOP_KEY, driveId);
     return driveId;
   } catch { return ''; }
@@ -95,17 +87,21 @@ function makeRequestId(): string {
   return `nexfix-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function sanitizeCloudBackup(input: unknown): unknown {
+function makeBackupId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  } catch { /* ignore */ }
+  return `backup-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function sanitizeCloudState(input: unknown): unknown {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
-  const envelope = input as Record<string, unknown>;
-  const stateValue = envelope.state;
-  if (!stateValue || typeof stateValue !== 'object' || Array.isArray(stateValue)) return input;
-  const state = stateValue as Record<string, unknown>;
+  const state = input as Record<string, unknown>;
   const safeState: Record<string, unknown> = { ...state, users: [] };
   if (state.settings && typeof state.settings === 'object' && !Array.isArray(state.settings)) {
     safeState.settings = { ...(state.settings as Record<string, unknown>), adminPinHash: '' };
   }
-  return { ...envelope, state: safeState, [CLOUD_SAFE_MARKER]: true };
+  return safeState;
 }
 
 export function isCloudSafeBackup(input: unknown): boolean {
@@ -113,39 +109,28 @@ export function isCloudSafeBackup(input: unknown): boolean {
     && (input as Record<string, unknown>)[CLOUD_SAFE_MARKER] === true;
 }
 
-/** Direct backup. POST avoids a CORS preflight; a JSONP status check confirms Drive actually accepted it. */
-export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
-  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return false;
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
-  const shopId = getLocalShopId();
-  if (!shopId) return false;
+function getDayKey(date = new Date()): string {
+  return date.toISOString().slice(0, 10);
+}
 
-  const sanitized = sanitizeCloudBackup(state);
-  const backupState = sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
-    && 'state' in (sanitized as Record<string, unknown>)
-    ? (sanitized as Record<string, unknown>).state : sanitized;
+function utf8Bytes(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
 
-  const payload = {
-    action: 'backupState',
-    shopId,
-    requestId: makeRequestId(),
-    kind,
-    exportedAt: new Date().toISOString(),
-    state: backupState,
-  };
+async function postGoogleBackup(body: Record<string, unknown>, shopId: string): Promise<boolean> {
+  const baseUrl = getGoogleScriptUrl();
+  if (!baseUrl) return false;
+  const requestId = makeRequestId();
+  const payload = { action: 'backupState', shopId, requestId, ...body };
 
   try {
-    // Google Apps Script web apps commonly redirect the /exec URL before
-    // handling the request. A cross-origin fetch can turn that redirected POST
-    // into a GET, so use a native HTML form POST instead. The form POST is a
-    // browser-supported cross-origin navigation and reliably reaches doPost.
     const iframeName = 'nexfixGoogleBackupFrame_' + Date.now() + '_' + Math.random().toString(36).slice(2);
     const iframe = document.createElement('iframe');
     iframe.name = iframeName;
     iframe.style.display = 'none';
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = getGoogleScriptUrl();
+    form.action = baseUrl;
     form.target = iframeName;
     form.style.display = 'none';
     const input = document.createElement('input');
@@ -156,22 +141,16 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     document.body.appendChild(iframe);
     document.body.appendChild(form);
     form.submit();
-    window.setTimeout(() => {
-      form.remove();
-      iframe.remove();
-    }, 30000);
+    window.setTimeout(() => { form.remove(); iframe.remove(); }, 60000);
 
-    // The iframe response is cross-origin and intentionally ignored. Confirm
-    // the server-side Drive write through the JSONP status endpoint instead.
-    const baseUrl = getGoogleScriptUrl();
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
-      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, payload.requestId);
+      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
       if (status === true) return true;
       if (status === false) return false;
       await new Promise((resolve) => window.setTimeout(resolve, 750));
     }
-    console.error('[Google Backup] Drive confirmation timed out');
+    console.error('[Google Backup] confirmation timed out');
     return false;
   } catch (error) {
     console.error('[Google Backup] direct request failed', error);
@@ -212,7 +191,78 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
   });
 }
 
-/** Table sync is intentionally disabled in the direct Drive-only backup mode. */
+export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
+  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return false;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+  const shopId = getLocalShopId();
+  if (!shopId) return false;
+
+  try {
+    const safeState = sanitizeCloudState(state);
+    const exportedAt = new Date().toISOString();
+    const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
+    const serialized = JSON.stringify(envelope);
+    const totalBytes = utf8Bytes(serialized);
+    const backupId = makeBackupId();
+    const dayKey = getDayKey();
+
+    if (totalBytes <= SINGLE_LIMIT_BYTES) {
+      return await postGoogleBackup({
+        format: 'encrypted-single',
+        dayKey,
+        backupId,
+        exportedAt,
+        state: serialized,
+      }, shopId);
+    }
+
+    const totalParts = Math.ceil(serialized.length / PART_SIZE_CHARS);
+    const sha256 = await sha256Hex(serialized);
+    const partNames: string[] = [];
+
+    for (let index = 0; index < totalParts; index += 1) {
+      const partName = `NEXFIX_${shopId}_${dayKey}.part${String(index + 1).padStart(3, '0')}`;
+      partNames.push(partName);
+      const chunk = serialized.slice(index * PART_SIZE_CHARS, (index + 1) * PART_SIZE_CHARS);
+      const ok = await postGoogleBackup({
+        format: 'encrypted-part',
+        dayKey,
+        backupId,
+        partIndex: index + 1,
+        totalParts,
+        partName,
+        totalBytes,
+        sha256,
+        chunk,
+        exportedAt,
+        encrypted: true,
+      }, shopId);
+      if (!ok) {
+        console.error('[Google Backup] multipart upload failed at part', index + 1);
+        return false;
+      }
+    }
+
+    return await postGoogleBackup({
+      format: 'encrypted-manifest',
+      dayKey,
+      backupId,
+      totalParts,
+      totalBytes,
+      partSize: PART_SIZE_CHARS,
+      partNames,
+      sha256,
+      exportedAt,
+      kind,
+      encrypted: true,
+      shopPartition: undefined,
+    }, shopId);
+  } catch (error) {
+    console.error('[Google Backup] encryption/upload failed', error);
+    return false;
+  }
+}
+
 export async function syncToGoogleDrive(_tableName: string, _dataRows: unknown[]): Promise<boolean> {
   return false;
 }
@@ -221,12 +271,26 @@ export async function fetchFromGoogleDrive(_tableName: string): Promise<unknown[
   return [];
 }
 
-/** Read the latest backup directly from Apps Script using JSONP (no Supabase proxy). */
-export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string; shopId?: string; shopPartition?: string; shopName?: string } | null> {
-  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
-  const shopId = getLocalShopId();
-  if (!shopId) return null;
+interface LatestGoogleBackup {
+  state: unknown;
+  backedUpAt?: string;
+  kind?: string;
+  shopId?: string;
+  shopPartition?: string;
+  shopName?: string;
+  encrypted?: boolean;
+  multipart?: boolean;
+  manifest?: {
+    backupId: string;
+    totalBytes: number;
+    totalParts: number;
+    partNames: string[];
+    sha256: string;
+    exportedAt: string;
+  };
+}
 
+function getJsonp<T>(url: URL, timeoutMs = 30000): Promise<T | null> {
   return new Promise((resolve) => {
     const callbackName = `__nexfixGoogleBackup_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
@@ -234,45 +298,112 @@ export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backe
       try { delete (window as unknown as Record<string, unknown>)[callbackName]; } catch { /* ignore */ }
       script.remove();
     };
-    const timer = window.setTimeout(() => { cleanup(); resolve(null); }, 30000);
-
-    (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
+    const timer = window.setTimeout(() => { cleanup(); resolve(null); }, timeoutMs);
+    (window as unknown as Record<string, unknown>)[callbackName] = (result: T) => {
       window.clearTimeout(timer);
       cleanup();
-      if (!result || typeof result !== 'object') return resolve(null);
-      const data = result as {
-        ok?: boolean;
-        backup?: {
-          state?: unknown;
-          timestamp?: unknown;
-          backupType?: unknown;
-          shopId?: unknown;
-          shopPartition?: unknown;
-          shopName?: unknown;
-        };
-      };
-      if (data.ok !== true || !data.backup || typeof data.backup.state !== 'string') return resolve(null);
-      try {
-        const parsed: unknown = JSON.parse(data.backup.state);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return resolve(null);
-        resolve({
-          state: { [CLOUD_SAFE_MARKER]: true, state: parsed },
-          backedUpAt: typeof data.backup.timestamp === 'string' ? data.backup.timestamp : undefined,
-          kind: data.backup.backupType === 'manual' || data.backup.backupType === 'auto' ? data.backup.backupType : undefined,
-          shopId: typeof data.backup.shopId === 'string' ? data.backup.shopId : undefined,
-          shopPartition: typeof data.backup.shopPartition === 'string' ? data.backup.shopPartition : undefined,
-          shopName: typeof data.backup.shopName === 'string' ? data.backup.shopName : undefined,
-        });
-      } catch { resolve(null); }
+      resolve(result);
     };
-
-    const url = new URL(getGoogleScriptUrl());
-    url.searchParams.set('action', 'getLatestBackup');
-    url.searchParams.set('shopId', shopId);
     url.searchParams.set('callback', callbackName);
     script.async = true;
     script.src = url.toString();
     script.onerror = () => { window.clearTimeout(timer); cleanup(); resolve(null); };
     document.head.appendChild(script);
   });
+}
+
+export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | null> {
+  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
+  const shopId = getLocalShopId();
+  if (!shopId) return null;
+
+  try {
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'getLatestBackup');
+    url.searchParams.set('shopId', shopId);
+    const result = await getJsonp<{
+      ok?: boolean;
+      backup?: {
+        state?: unknown;
+        timestamp?: unknown;
+        backupType?: unknown;
+        shopId?: unknown;
+        shopPartition?: unknown;
+        shopName?: unknown;
+        encrypted?: unknown;
+        multipart?: unknown;
+        manifest?: LatestGoogleBackup['manifest'];
+      };
+    }>(url);
+    if (!result?.ok || !result.backup) return null;
+    const backup = result.backup;
+    if (typeof backup.shopId !== 'string' || typeof backup.shopPartition !== 'string') return null;
+    if (backup.shopId !== shopId) throw new Error('Restore refused: Google backup belongs to a different shop.');
+
+    let rawPayload = '';
+    if (backup.multipart && backup.manifest) {
+      const manifest = backup.manifest;
+      if (!manifest.backupId || !Number.isInteger(manifest.totalParts) || manifest.totalParts < 1 || manifest.partNames.length !== manifest.totalParts) {
+        throw new Error('Invalid multipart backup manifest. Restore was not performed.');
+      }
+      const chunks: string[] = [];
+      for (let index = 0; index < manifest.totalParts; index += 1) {
+        const partUrl = new URL(getGoogleScriptUrl());
+        partUrl.searchParams.set('action', 'getBackupPart');
+        partUrl.searchParams.set('shopId', shopId);
+        partUrl.searchParams.set('backupId', manifest.backupId);
+        partUrl.searchParams.set('partName', manifest.partNames[index]);
+        const part = await getJsonp<{ ok?: boolean; chunk?: unknown }>(partUrl, 30000);
+        if (!part?.ok || typeof part.chunk !== 'string') throw new Error(`Missing backup part ${index + 1}.`);
+        chunks.push(part.chunk);
+      }
+      rawPayload = chunks.join('');
+      if (utf8Bytes(rawPayload) !== manifest.totalBytes) throw new Error('Multipart backup size verification failed.');
+      if (await sha256Hex(rawPayload) !== manifest.sha256) throw new Error('Multipart backup integrity check failed. Restore was not performed.');
+    } else {
+      if (typeof backup.state !== 'string') return null;
+      rawPayload = backup.state;
+    }
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(rawPayload); } catch { throw new Error('Backup payload is not valid JSON.'); }
+
+    if (backup.encrypted || isEncryptedBackupEnvelope(parsed)) {
+      if (!isEncryptedBackupEnvelope(parsed)) throw new Error('Encrypted backup metadata is invalid.');
+      const decrypted = await decryptBackupEnvelope(parsed);
+      if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) throw new Error('Decrypted backup state is invalid.');
+      return {
+        state: { [CLOUD_SAFE_MARKER]: true, state: decrypted },
+        backedUpAt: typeof backup.timestamp === 'string' ? backup.timestamp : undefined,
+        kind: backup.backupType === 'manual' || backup.backupType === 'auto' ? backup.backupType : undefined,
+        shopId,
+        shopPartition: backup.shopPartition,
+        shopName: typeof backup.shopName === 'string' ? backup.shopName : undefined,
+        encrypted: true,
+        multipart: !!backup.multipart,
+        manifest: backup.manifest,
+      };
+    }
+
+    // Backward compatibility: old small plaintext snapshots are still accepted,
+    // then restored through the existing cloud-safe path (local credentials remain local).
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Legacy backup payload is invalid.');
+    return {
+      state: { [CLOUD_SAFE_MARKER]: true, state: parsed },
+      backedUpAt: typeof backup.timestamp === 'string' ? backup.timestamp : undefined,
+      kind: backup.backupType === 'manual' || backup.backupType === 'auto' ? backup.backupType : undefined,
+      shopId,
+      shopPartition: backup.shopPartition,
+      shopName: typeof backup.shopName === 'string' ? backup.shopName : undefined,
+      encrypted: false,
+      multipart: false,
+    };
+  } catch (error) {
+    console.error('[Google Backup] restore read failed', error);
+    throw error;
+  }
+}
+
+export async function getGoogleBackupSecurityStatus(): Promise<{ encrypted: boolean; passphraseRequired: boolean }> {
+  return { encrypted: true, passphraseRequired: true };
 }
