@@ -138,33 +138,33 @@ function AppRoutes() {
         <Route path="/today" element={<MobileSalesProtected />} />
         <Route path="/today-links" element={<PermissionProtected adminOnly><TodaySalesLinks /></PermissionProtected>} />
         <Route element={<Protected />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/mobile-dashboard" element={<MobileDashboard />} />
-          <Route path="/pos" element={<POS />} />
-          <Route path="/inventory" element={<Inventory />} />
-          <Route path="/units" element={<Units />} />
-          <Route path="/repairs" element={<Repairs />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/suppliers" element={<Suppliers />} />
-          <Route path="/supplier-payments" element={<SupplierPayments />} />
-          <Route path="/purchases" element={<Purchases />} />
-          <Route path="/grn" element={<GRN />} />
-          <Route path="/grn-report" element={<GRNReport />} />
-          <Route path="/purchase-return" element={<PurchaseReturn />} />
-          <Route path="/csv-import" element={<CSVImport />} />
-          <Route path="/sales" element={<SalesHistory />} />
-          <Route path="/exchanges" element={<Exchanges />} />
-          <Route path="/expenses" element={<Expenses />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/price-tags" element={<PriceTags />} />
-          <Route path="/quotations" element={<Quotations />} />
+          <Route path="/dashboard" element={<PermissionProtected permission="page:dashboard"><Dashboard /></PermissionProtected>} />
+          <Route path="/mobile-dashboard" element={<PermissionProtected permission="page:dashboard"><MobileDashboard /></PermissionProtected>} />
+          <Route path="/pos" element={<PermissionProtected permission="page:pos"><POS /></PermissionProtected>} />
+          <Route path="/inventory" element={<PermissionProtected permission="page:inventory"><Inventory /></PermissionProtected>} />
+          <Route path="/units" element={<PermissionProtected permission="page:units"><Units /></PermissionProtected>} />
+          <Route path="/repairs" element={<PermissionProtected permission="page:repairs"><Repairs /></PermissionProtected>} />
+          <Route path="/customers" element={<PermissionProtected permission="page:customers"><Customers /></PermissionProtected>} />
+          <Route path="/suppliers" element={<PermissionProtected permission="page:suppliers"><Suppliers /></PermissionProtected>} />
+          <Route path="/supplier-payments" element={<PermissionProtected permission="page:suppliers"><SupplierPayments /></PermissionProtected>} />
+          <Route path="/purchases" element={<PermissionProtected permission="page:purchases"><Purchases /></PermissionProtected>} />
+          <Route path="/grn" element={<PermissionProtected permission="page:purchases"><GRN /></PermissionProtected>} />
+          <Route path="/grn-report" element={<PermissionProtected permission="page:purchases"><GRNReport /></PermissionProtected>} />
+          <Route path="/purchase-return" element={<PermissionProtected permission="page:purchases"><PurchaseReturn /></PermissionProtected>} />
+          <Route path="/csv-import" element={<PermissionProtected adminOnly><CSVImport /></PermissionProtected>} />
+          <Route path="/sales" element={<PermissionProtected permission="page:sales"><SalesHistory /></PermissionProtected>} />
+          <Route path="/exchanges" element={<PermissionProtected permission="page:exchanges"><Exchanges /></PermissionProtected>} />
+          <Route path="/expenses" element={<PermissionProtected permission="page:expenses"><Expenses /></PermissionProtected>} />
+          <Route path="/reports" element={<PermissionProtected permission="page:reports"><Reports /></PermissionProtected>} />
+          <Route path="/price-tags" element={<PermissionProtected permission="page:pricetags"><PriceTags /></PermissionProtected>} />
+          <Route path="/quotations" element={<PermissionProtected permission="page:pos"><Quotations /></PermissionProtected>} />
           <Route path="/warranty-claims" element={<PermissionProtected permission="page:repairs"><WarrantyClaims /></PermissionProtected>} />
           <Route path="/kits" element={<PermissionProtected permission="page:inventory"><Kits /></PermissionProtected>} />
           <Route path="/audit-log" element={<PermissionProtected adminOnly><AuditLog /></PermissionProtected>} />
-          <Route path="/users" element={<Users />} />
-          <Route path="/cashier-balances" element={<CashierBalances />} />
-          <Route path="/permissions" element={<Permissions />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/users" element={<PermissionProtected adminOnly><Users /></PermissionProtected>} />
+          <Route path="/cashier-balances" element={<PermissionProtected adminOnly><CashierBalances /></PermissionProtected>} />
+          <Route path="/permissions" element={<PermissionProtected adminOnly><Permissions /></PermissionProtected>} />
+          <Route path="/settings" element={<PermissionProtected adminOnly><Settings /></PermissionProtected>} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
