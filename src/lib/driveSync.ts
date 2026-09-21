@@ -99,7 +99,7 @@ async function invokeProxy(body: Record<string, unknown>): Promise<Record<string
 }
 
 /**
- * Google Sheets is a secondary backup location, not an authentication store.
+ * Google Drive is a secondary backup location, not an authentication store.
  * Local user records, password hashes and the admin PIN are intentionally not
  * exported there. Restore keeps the current device's complete auth state.
  */
