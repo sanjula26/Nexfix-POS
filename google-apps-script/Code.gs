@@ -230,12 +230,30 @@ function backupStateToDrive(contents, shopId) {
   };
   var serialized = JSON.stringify(envelope);
   var files = backupFolder.getFilesByName(fileName);
-  var file;
+  var file = null;
+
+  // Keep exactly one live daily snapshot for this shop/day.
+  // If an older deployment or a previous race created duplicates with the
+  // same exact filename, keep one, overwrite it with the latest full state,
+  // and trash the extras.
   if (files.hasNext()) {
     file = files.next();
     file.setContent(serialized);
+
+    while (files.hasNext()) {
+      var duplicate = files.next();
+      try {
+        duplicate.setTrashed(true);
+      } catch (ignoreDuplicateTrash) {}
+    }
   } else {
-    file = backupFolder.createFile(Utilities.newBlob(serialized, 'application/json', fileName));
+    file = backupFolder.createFile(
+      Utilities.newBlob(
+        serialized,
+        'application/json',
+        fileName
+      )
+    );
   }
   return { action: 'backupState', backupType: kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition };
 }
