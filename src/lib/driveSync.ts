@@ -48,7 +48,16 @@ export function setGoogleScriptUrl(url: string): void {
 }
 
 export function isGoogleSyncEnabled(): boolean {
-  try { return localStorage.getItem(ENABLED_KEY) === '1'; } catch { return false; }
+  try {
+    const stored = localStorage.getItem(ENABLED_KEY);
+    if (stored === '1') return true;
+    if (stored === '0') return false;
+    // A deployment-provided Apps Script URL opts the installation into the
+    // configured automatic backup flow without requiring a second toggle.
+    return isAllowedScriptUrl(ENV_URL);
+  } catch {
+    return isAllowedScriptUrl(ENV_URL);
+  }
 }
 
 export function setGoogleSyncEnabled(on: boolean): void {
