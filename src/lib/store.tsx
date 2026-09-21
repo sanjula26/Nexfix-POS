@@ -1194,7 +1194,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       `Bill ${billNo} · ${input.lines.length} item(s) · Rs. ${total.toLocaleString()}${tradeInValue ? ` · trade-in Rs. ${tradeInValue.toLocaleString()}` : ''}${soldUnitIds.length ? ` · ${soldUnitIds.length} unit(s)` : ''}${isSplit ? ` · split (${legs.map(l => l.method).join('+')})` : ''}${input.note?.trim() ? ' · note: ' + input.note.trim().slice(0, 40) : ''}${items.some(i => i.priceOverridden) ? ' · price override' : ''}`,
     );
     return sale;
-  }, [user, state, pushAudit]);
+  }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
     if (!user || !can('page:pos') || input.lines.length === 0) {
@@ -1370,7 +1370,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     syncToGoogleDrive('Products', committed.products);
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
-  }, [user, state, pushAudit, completeSale]);
+  }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback((saleId: string) => {
     if (!user || !can('act:refund')) {
