@@ -172,8 +172,19 @@ function getRootBackupFolder() {
 
 function getShopBackupFolder(shopId, shopName) {
   var root = getRootBackupFolder();
-  var folderName = 'Shop_' + shopPartitionKey(shopId) + ' - ' + sanitizeDriveName(shopName || 'Shop');
-  return getOrCreateFolder(root, folderName);
+  var partitionPrefix = 'Shop_' + shopPartitionKey(shopId) + ' - ';
+  var desiredName = partitionPrefix + sanitizeDriveName(shopName || 'Shop');
+  var folders = root.getFolders();
+  while (folders.hasNext()) {
+    var folder = folders.next();
+    if (folder.getName().indexOf(partitionPrefix) === 0) {
+      if (folder.getName() !== desiredName) {
+        try { folder.setName(desiredName); } catch (ignore) {}
+      }
+      return folder;
+    }
+  }
+  return root.createFolder(desiredName);
 }
 
 function writeShopMetadata(folder, shopId, state) {
