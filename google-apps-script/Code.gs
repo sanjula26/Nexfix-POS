@@ -15,6 +15,7 @@ var SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
 var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
 var SHOP_ID_MAX_LENGTH = 100;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
+var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
 var DRIVE_BACKUP_SUBFOLDER_NAME = 'Backups';
 var DRIVE_METADATA_FILENAME = 'shop.json';
 
@@ -165,7 +166,25 @@ function getOrCreateFolder(parent, name) {
   return folders.hasNext() ? folders.next() : parent.createFolder(name);
 }
 
+function normalizeDriveFolderId(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  var match = raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  return /^[a-zA-Z0-9_-]{10,}$/.test(raw) ? raw : '';
+}
+
 function getRootBackupFolder() {
+  var configured = normalizeDriveFolderId(
+    PropertiesService.getScriptProperties().getProperty(ROOT_BACKUP_FOLDER_ID_PROPERTY)
+  );
+  if (configured) {
+    try {
+      return DriveApp.getFolderById(configured);
+    } catch (ignore) {
+      throw new Error('Configured ROOT_BACKUP_FOLDER_ID cannot be accessed by the Apps Script account');
+    }
+  }
   var folders = DriveApp.getFoldersByName(ROOT_BACKUP_FOLDER_NAME);
   return folders.hasNext() ? folders.next() : DriveApp.createFolder(ROOT_BACKUP_FOLDER_NAME);
 }
