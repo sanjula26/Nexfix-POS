@@ -8,7 +8,7 @@ import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
-import { downloadBackup, startAutoBackup } from './backup';
+import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, flushSyncQueue, registerServiceWorker,
   type Connectivity,
@@ -1191,6 +1191,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Auto-Sync to Google Sheet (Sales & Products Inventory)
     syncToGoogleDrive('SalesHistory', [sale]);
     syncToGoogleDrive('Products', updatedProducts);
+    scheduleGoogleBackup(() => stateRef.current, 'sale');
 
     pushAudit(
       'SALE', 'Sale',
@@ -1371,6 +1372,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // The pending marker is cleared only after durable local persistence.
     syncToGoogleDrive('SalesHistory', [sale]);
     syncToGoogleDrive('Products', committed.products);
+    scheduleGoogleBackup(() => stateRef.current, 'sale');
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
   }, [user, state, pushAudit, completeSale, can]);
@@ -1876,6 +1878,10 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));
+    // Queue a debounced full-state Drive snapshot. This intentionally reads the
+    // latest state when the debounce expires, so a shop-name change also reaches
+    // Apps Script and triggers the existing Shop_<partition> folder rename.
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
     pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`);
   }, [pushAudit, user]);
 
