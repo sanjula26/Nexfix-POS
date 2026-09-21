@@ -7,7 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
-  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId,
+  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId,
 } from '../lib/driveSync';
 import { clearBackupPassphrase, decryptBackupEnvelope, hasBackupPassphrase, isEncryptedBackupEnvelope, setBackupPassphrase, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
@@ -172,12 +172,18 @@ export default function Settings() {
 
       let restoreInput: unknown = parsed;
       const candidate = parsed as Record<string, unknown> | null;
+      const adoptImportedShop = (shopId: unknown) => {
+        if (typeof shopId !== 'string' || !shopId.trim()) throw new Error('Backup does not contain a valid Shop Backup ID.');
+        const result = adoptBackupShopId(shopId);
+        if (!result.ok) throw new Error(result.error || 'Could not connect this PC to the backup shop.');
+      };
 
       // Google Drive encrypted single-file backup: {_meta, payload: AES envelope}.
       if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload) {
         const meta = candidate._meta as Record<string, unknown>;
         if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
           const decrypted = await decryptBackupEnvelope(candidate.payload);
+          adoptImportedShop(candidate.payload.shopId);
           restoreInput = { __nexfixCloudSafe: true, state: decrypted };
         }
       // Google Drive multipart backup: select the manifest plus all .partNNN files.
@@ -187,7 +193,7 @@ export default function Settings() {
           totalBytes?: number; parts?: number; totalParts?: number; partNames: string[]; sha256?: string;
         };
         const currentShopId = getLocalShopId();
-        if (!currentShopId || manifest.shopId !== currentShopId) throw new Error('Restore refused: backup belongs to a different shop.');
+        if (!currentShopId || manifest.shopId !== currentShopId) adoptImportedShop(manifest.shopId);
         const expectedParts = Number(manifest.parts ?? manifest.totalParts);
         if (!manifest.backupId || !Number.isInteger(expectedParts) || expectedParts < 1
           || manifest.partNames.length !== expectedParts || !manifest.sha256) {
@@ -202,10 +208,11 @@ export default function Settings() {
         try { envelope = JSON.parse(rawPayload); } catch { throw new Error('Multipart encrypted payload is not valid JSON.'); }
         if (!isEncryptedBackupEnvelope(envelope)) throw new Error('Multipart encrypted backup envelope is invalid.');
         const decrypted = await decryptBackupEnvelope(envelope);
+        adoptImportedShop(envelope.shopId);
         restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       } else if (isEncryptedBackupEnvelope(parsed)) {
-        if (parsed.shopId !== getLocalShopId()) throw new Error('Restore refused: encrypted backup belongs to a different shop.');
         const decrypted = await decryptBackupEnvelope(parsed);
+        adoptImportedShop(parsed.shopId);
         restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       }
 
