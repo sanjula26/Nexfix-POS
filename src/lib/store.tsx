@@ -1975,8 +1975,8 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit) => {
-    if (!user || !can('page:units')) {
-      pushAudit('DENIED', 'Unit', 'Blocked unit save without units access');
+    if (!user || !can('page:units') || !can('act:manageStock')) {
+      pushAudit('DENIED', 'Unit', 'Blocked unit save without required inventory permissions');
       return;
     }
     const exists = (state.units || []).some(x => x.id === u.id);
