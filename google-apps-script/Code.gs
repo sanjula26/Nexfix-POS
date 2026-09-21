@@ -246,13 +246,26 @@ function latestDriveBackup(shopId) {
   var backupFolder = backups.next();
   var files = backupFolder.getFiles();
   var latest = null;
+  var latestPayload = null;
+  var partitionPrefix = 'NEXFIX_' + shopPartitionKey(shopId) + '_';
   while (files.hasNext()) {
     var file = files.next();
-    if (file.getMimeType() !== 'application/json' || file.getName().indexOf('NEXFIX_' + shopPartitionKey(shopId) + '_') !== 0) continue;
-    if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) latest = file;
+    if (file.getMimeType() !== 'application/json' || file.getName().indexOf(partitionPrefix) !== 0) continue;
+    try {
+      var parsed = JSON.parse(file.getBlob().getDataAsString());
+      var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
+      var state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.state : null;
+      if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+      if (meta.shopPartition && String(meta.shopPartition) !== shopPartitionKey(shopId)) continue;
+      if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
+        latest = file;
+        latestPayload = parsed;
+      }
+    } catch (ignore) {
+      // Ignore a malformed/incomplete Drive file and continue with older valid backups.
+    }
   }
-  if (!latest) return null;
-  return JSON.parse(latest.getBlob().getDataAsString());
+  return latestPayload;
 }
 
 function latestBackup(ss, shopId) {
