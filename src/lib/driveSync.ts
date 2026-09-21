@@ -205,6 +205,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     const totalBytes = utf8Bytes(serialized);
     const backupId = makeBackupId();
     const dayKey = getDayKey();
+    const shopName = state && typeof state === 'object' && !Array.isArray(state) && (state as Record<string, unknown>).settings && typeof (state as Record<string, unknown>).settings === 'object'
+      ? String(((state as Record<string, unknown>).settings as Record<string, unknown>).shopName || 'Shop')
+      : 'Shop';
 
     if (totalBytes <= SINGLE_LIMIT_BYTES) {
       return await postGoogleBackup({
@@ -213,6 +216,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         backupId,
         exportedAt,
         state: serialized,
+        shopName,
       }, shopId);
     }
 
@@ -221,7 +225,8 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     const partNames: string[] = [];
 
     for (let index = 0; index < totalParts; index += 1) {
-      const partName = `NEXFIX_${shopId}_${dayKey}.part${String(index + 1).padStart(3, '0')}`;
+      const partition = (await sha256Hex(shopId)).slice(0, 24);
+      const partName = `NEXFIX_${partition}_${dayKey}.part${String(index + 1).padStart(3, '0')}`;
       partNames.push(partName);
       const chunk = serialized.slice(index * PART_SIZE_CHARS, (index + 1) * PART_SIZE_CHARS);
       const ok = await postGoogleBackup({
@@ -236,6 +241,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         chunk,
         exportedAt,
         encrypted: true,
+        shopName,
       }, shopId);
       if (!ok) {
         console.error('[Google Backup] multipart upload failed at part', index + 1);
@@ -255,7 +261,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       exportedAt,
       kind,
       encrypted: true,
-      shopPartition: undefined,
+      shopName,
     }, shopId);
   } catch (error) {
     console.error('[Google Backup] encryption/upload failed', error);
