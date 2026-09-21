@@ -1,6 +1,6 @@
 # Google Apps Script — Nexfix POS Sync
 
-Google Sheets / Apps Script backup is an **optional operator-configured integration**. The application does not ship with a default deployment URL. This prevents the released POS from silently sending data to a deployment that the operator did not configure.
+Google Drive / Apps Script backup is an **optional operator-configured integration**. The application does not ship with a default deployment URL. This prevents the released POS from silently sending data to a deployment that the operator did not configure.
 
 ## 1. One Google account for all shops
 
@@ -18,7 +18,7 @@ One Nexfix backup Google account
         +-- ...
 ```
 
-The Google account owns the Apps Script deployment and the bound backup spreadsheet. The `shopId` is the isolation boundary: every backup, restore, table read and table write is scoped to the active shop.
+The Google account owns the Apps Script deployment, the bound backup spreadsheet, and the Drive backup folder tree. The `shopId` is the isolation boundary: every backup, restore, table read and table write is scoped to the active shop. Drive backups are stored under the existing `Nexfix POS Backup` root, with one deterministic shop folder per shop.
 
 1. Go to `script.google.com` while logged into the **single dedicated Google account that should own all Nexfix backups**.
 2. **New project** → paste the approved `google-apps-script/Code.gs` implementation from this repository.
@@ -48,7 +48,7 @@ For production use:
 - Do not manually rename or merge shop partitions.
 - Test two separate shops and verify that each shop can only read/write its own partition before relying on the integration for disaster recovery.
 
-The same Google account therefore stores backups for many shops without mixing their data. Shop separation is enforced by `shopId` and server-side authorization, **not by the email address**.
+The same Google account therefore stores backups for many shops without mixing their data. Shop separation is enforced by `shopId` and server-side authorization, **not by the email address**. The shop folder name is only a human-readable index; authorization does not rely on the folder name.
 
 ## 3. What the POS sends
 
