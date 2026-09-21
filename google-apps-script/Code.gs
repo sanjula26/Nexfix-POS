@@ -219,15 +219,25 @@ function backupStateToDrive(contents, shopId) {
   var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
   writeShopMetadata(shopFolder, shopId, state);
   var now = new Date();
-  var stamp = Utilities.formatDate(now, Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd_HH-mm-ss_SSS');
+  var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
+  var dayKey = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var kind = contents.kind === 'auto' ? 'auto' : 'manual';
-  var fileName = 'NEXFIX_' + shopPartitionKey(shopId) + '_' + kind + '_' + stamp + '.json';
+  var partition = shopPartitionKey(shopId);
+  var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
   var envelope = {
-    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: kind, shopId: shopId, shopPartition: shopPartitionKey(shopId), shopName: shopName },
+    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: kind, shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey },
     state: state
   };
-  var file = backupFolder.createFile(Utilities.newBlob(JSON.stringify(envelope), 'application/json', fileName));
-  return { action: 'backupState', backupType: kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: shopPartitionKey(shopId) };
+  var serialized = JSON.stringify(envelope);
+  var files = backupFolder.getFilesByName(fileName);
+  var file;
+  if (files.hasNext()) {
+    file = files.next();
+    file.setContent(serialized);
+  } else {
+    file = backupFolder.createFile(Utilities.newBlob(serialized, 'application/json', fileName));
+  }
+  return { action: 'backupState', backupType: kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition };
 }
 
 function backupState(ss, contents, shopId) {
