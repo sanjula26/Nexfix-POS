@@ -8,7 +8,7 @@ var BACKUP_SHEET = 'FullBackup';
 var VERSION = '3.0.1';
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
-var MAX_BACKUP_BYTES = 45 * 1024 * 1024;
+var MAX_BACKUP_BYTES = 9 * 1024 * 1024; // Keep below DriveApp File.setContent() 10 MB limit.
 var BACKUP_RATE_LIMIT = 30;
 var BACKUP_RATE_WINDOW_SECONDS = 60;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
@@ -80,7 +80,8 @@ function validateBackupContents(contents) {
     throw new Error('A valid backup state is required');
   }
   var serialized = JSON.stringify(contents.state);
-  if (serialized.length > MAX_BACKUP_BYTES) {
+  var serializedBytes = Utilities.newBlob(serialized, 'application/json').getBytes().length;
+  if (serializedBytes > MAX_BACKUP_BYTES) {
     throw new Error('Backup is too large for the Google Drive backup endpoint');
   }
 }
