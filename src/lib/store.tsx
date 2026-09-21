@@ -747,7 +747,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
-    try { sessionStorage.setItem('nexfix_role_switch', '1'); } catch { /* ignore */ }
+    try {
+      if (role === 'admin') sessionStorage.setItem('nexfix_role_switch', '1');
+      else sessionStorage.removeItem('nexfix_role_switch');
+    } catch { /* ignore */ }
     setSession(sess);
     try {
       if (sess.remember) { localStorage.setItem(SESSION_KEY, JSON.stringify(sess)); sessionStorage.removeItem(SESSION_KEY); }
