@@ -1,67 +1,102 @@
-# Google Apps Script — Nexfix POS Sync
+# Google Apps Script — Nexfix POS Direct Drive Backup
 
-Google Drive / Apps Script backup is an **optional operator-configured integration**. The application does not ship with a default deployment URL. This prevents the released POS from silently sending data to a deployment that the operator did not configure.
-
-## 1. One Google account for all shops
-
-Nexfix POS is designed to support **one dedicated Google account / one backup spreadsheet for all Nexfix shops**. You do **not** need to create a separate Gmail account for every shop.
-
-Example:
+Google Drive backup is an optional operator-configured integration:
 
 ```text
-One Nexfix backup Google account
-        |
-        +-- Shop A -> Shop A partitions
-        +-- Shop B -> Shop B partitions
-        +-- Shop C -> Shop C partitions
-        +-- Shop D -> Shop D partitions
-        +-- ...
+Nexfix POS -> Google Apps Script Web App -> dedicated Google Drive folder
 ```
 
-The Google account owns the Apps Script deployment, the bound backup spreadsheet, and the Drive backup folder tree. The `shopId` is the isolation boundary: every backup, restore, table read and table write is scoped to the active shop. Drive backups are stored under the existing `Nexfix POS Backup` root, with one deterministic shop folder per shop.
+This direct backup path does **not** require Supabase, and the backup Google Sheet is **separate** from the Drive folder. A Google Sheet is not required for the direct Drive backup.
 
-1. Go to `script.google.com` while logged into the **single dedicated Google account that should own all Nexfix backups**.
-2. **New project** → paste the approved `google-apps-script/Code.gs` implementation from this repository.
-3. Create one Google Sheet and bind the Apps Script project to that spreadsheet.
-4. In **Project Settings → Script Properties**, configure `SUPABASE_URL` and the public `SUPABASE_ANON_KEY`.
-5. **Deploy → New deployment → Web app**.
-   - Execute as: **Me**
-   - Access: choose the minimum access required by your deployment policy.
-6. Copy only the deployed `/macros/s/.../exec` Web App URL.
-7. Configure that URL in the POS Google Sync settings, or provide it through `VITE_GOOGLE_SCRIPT_URL` at build/deployment time.
+## 1. Configure the Apps Script
 
-> Do not create one Google account per shop. One deployment and one spreadsheet can safely contain many shop partitions.
+1. Open Google Apps Script using the Google account that should own the backups.
+2. Create or open the Apps Script project.
+3. Paste the approved `google-apps-script/Code.gs` from this repository.
+4. Save it.
+5. The repository already contains the master Drive folder ID:
+   `1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK`
+6. Optionally set Script Property `ROOT_BACKUP_FOLDER_ID` to that folder ID. If the property is absent, the code uses the configured default ID.
+7. Deploy as **Web app**:
+   - **Execute as:** Me
+   - **Who has access:** choose an access setting that allows the POS browser to reach the deployment. For a direct browser deployment this is commonly **Anyone**, subject to the Google account's deployment policy.
+8. Copy the deployed **`/macros/s/.../exec`** URL.
 
-> Do not use a `/macros/library/d/...` library URL. The POS accepts only HTTPS `script.google.com/macros/s/.../(exec|dev)` URLs.
+After changing `Code.gs`, update/create the deployment version. Editing the GitHub file alone does not update an already deployed Apps Script Web App.
 
-## 2. Security and shop isolation
+## 2. Configure Nexfix POS
 
-The browser must be able to contact the Apps Script deployment, so a secret embedded in the frontend is **not a real secret**. Treat this integration as an optional backup transport, not as the security boundary for the POS.
+In **Settings → Google Drive Sync & Cloud Backup**:
 
-For production use:
+1. Paste the deployed `/exec` Web App URL.
+2. Click **Save URL**.
+3. Enable Google sync.
+4. Click **Backup now to Google**.
 
-- Keep Google Sync **disabled unless explicitly configured and tested**.
-- Use the single dedicated backup spreadsheet/account with appropriate access controls.
-- Do not put service-account keys, OAuth client secrets, or other private credentials in the Vite frontend or Apps Script properties.
-- The Apps Script requires an explicit `shopId` and validates the signed-in Supabase JWT against an active `admin`/`manager` membership for that exact shop.
-- Backup and table data are stored in deterministic shop-specific sheet partitions (`<table>_<partition>`); there is no shared unscoped `FullBackup` data sheet.
-- Do not manually rename or merge shop partitions.
-- Test two separate shops and verify that each shop can only read/write its own partition before relying on the integration for disaster recovery.
+The POS sends the complete sanitized POS backup directly to Apps Script. The server writes it under the matching shop folder.
 
-The same Google account therefore stores backups for many shops without mixing their data. Shop separation is enforced by `shopId` and server-side authorization, **not by the email address**. The shop folder name is only a human-readable index; authorization does not rely on the folder name.
+## 3. Drive folder structure
 
-## 3. What the POS sends
+The supplied master folder remains the top-level destination:
 
-| Event | Action | Sheet / behaviour |
-|-------|--------|-------------------|
-| Product create/update/delete | `saveData` → `Products` | Active-shop partition |
-| Sale completed | `saveData` → `SalesHistory` + `Products` | Active-shop partition |
-| Customer save | `saveData` → `Customers` | Active-shop partition |
-| Manual / auto backup | `backupState` | `FullBackup_<shop-partition>` full JSON snapshot |
+```text
+Nexfix POS Backup
+  +-- Shop_<partition> - <shop name>
+        +-- shop.json
+        +-- Backups
+              +-- NEXFIX_<partition>_manual_<timestamp>.json
+              +-- NEXFIX_<partition>_auto_<timestamp>.json
+```
 
-## 4. Offline behaviour
+The Google Sheet is separate and is not placed inside this folder by the direct backup implementation.
 
-- While **offline**, local IndexedDB keeps data locally; Google calls are skipped.
-- When online again, Google backup can resume if it has been explicitly enabled and a valid Web App URL is configured.
-- Google backup is not the authoritative POS database. Supabase/cloud sync and the local offline queue remain separate reliability mechanisms.
-- A real backup/restore drill with the single deployed Apps Script, the dedicated Google account, and at least two separate shops remains required before storing live business data.
+## 4. Shop isolation
+
+The POS sends an explicit `shopId`. Apps Script derives a SHA-256 partition key and uses it for the shop folder and backup filename.
+
+On restore, Apps Script scans only the matching shop folder/partition and validates the stored `shopPartition` and `shopId` metadata when present.
+
+Do not manually rename or merge shop folders.
+
+## 5. Backup confirmation
+
+A successful POS cloud backup means:
+
+1. POS submitted the backup request.
+2. Apps Script accepted and processed the request.
+3. Apps Script cached a success result for that request.
+4. POS confirmed the result through `backupStatus`.
+
+If confirmation times out or the server reports an error, POS does not mark the cloud backup as successful.
+
+## 6. Automatic backup
+
+Automatic/reconnect backups are cloud-only; they do not download JSON files to the computer.
+
+The scheduler requires:
+
+- Google sync enabled.
+- A valid Apps Script URL.
+- Browser online connectivity.
+- A configured auto-backup interval.
+
+If a cloud backup fails, POS keeps a durable pending marker and retries.
+
+## 7. Restore
+
+The admin can use **Restore latest Google backup** in Settings.
+
+The POS:
+
+1. Reads the newest shop-specific snapshot.
+2. Validates the backup structure.
+3. Creates a local safety checkpoint.
+4. Replaces the local POS dataset only after confirmation.
+
+Current local authentication/security data is preserved by the restore flow rather than being replaced by the cloud snapshot.
+
+## 8. Important security note
+
+The browser must be able to reach the Web App. Do not put a private service-account key or OAuth client secret in the Vite frontend.
+
+The direct endpoint is intentionally a backup transport, not a replacement for the POS application's own authentication system. Test the complete backup/restore flow with separate shop IDs before using it for live business data.
