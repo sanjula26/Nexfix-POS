@@ -9,7 +9,7 @@ import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId,
 } from '../lib/driveSync';
-import { clearBackupPassphrase, getBackupSecurityMessage, hasBackupPassphrase, setBackupPassphrase } from '../lib/backupCrypto';
+import { clearBackupPassphrase, hasBackupPassphrase, setBackupPassphrase } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
