@@ -16,6 +16,9 @@ var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
 var SHOP_ID_MAX_LENGTH = 100;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
+// Default Nexfix master Drive folder supplied for this deployment.
+// Script Properties can override this value without changing the code.
+var DEFAULT_ROOT_BACKUP_FOLDER_ID = '1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK';
 var DRIVE_BACKUP_SUBFOLDER_NAME = 'Backups';
 var DRIVE_METADATA_FILENAME = 'shop.json';
 
@@ -176,7 +179,7 @@ function normalizeDriveFolderId(value) {
 
 function getRootBackupFolder() {
   var configured = normalizeDriveFolderId(
-    PropertiesService.getScriptProperties().getProperty(ROOT_BACKUP_FOLDER_ID_PROPERTY)
+    PropertiesService.getScriptProperties().getProperty(ROOT_BACKUP_FOLDER_ID_PROPERTY) || DEFAULT_ROOT_BACKUP_FOLDER_ID
   );
   if (configured) {
     try {
@@ -240,7 +243,9 @@ function backupStateToDrive(contents, shopId) {
 }
 
 function backupState(ss, contents, shopId) {
+  // Drive is the primary Google backup destination; spreadsheet binding is optional.
   var driveResult = backupStateToDrive(contents, shopId);
+  if (!ss) return driveResult;
   var sheetName = partitionedSheetName(BACKUP_SHEET, shopId);
   var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
   var state = contents.state || {};
@@ -349,7 +354,8 @@ function doPost(e) {
       try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
     }
 
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = null;
+    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (ignoreSpreadsheet) {}
     var result;
     if (contents.action === 'backupState') {
       result = ok(backupState(ss, contents, shopId));
