@@ -72,7 +72,7 @@ function normalizeShopId(shopId) {
   return value;
 }
 
-function validateEncryptedEnvelope(serialized) {
+function validateEncryptedEnvelope(serialized, expectedShopId) {
   if (typeof serialized !== 'string' || !serialized) throw new Error('Encrypted backup payload is required');
   var bytes = Utilities.newBlob(serialized, 'application/json').getBytes().length;
   if (bytes > MAX_BACKUP_BYTES) throw new Error('Encrypted backup payload is too large for a single Drive file');
@@ -84,6 +84,9 @@ function validateEncryptedEnvelope(serialized) {
   if (typeof envelope.ciphertext !== 'string' || !envelope.ciphertext || typeof envelope.shopId !== 'string') {
     throw new Error('Encrypted backup envelope is incomplete');
   }
+  if (String(envelope.shopId) !== String(expectedShopId || '')) {
+    throw new Error('Encrypted backup shop identity does not match the request');
+  }
 }
 
 function validateBackupContents(contents) {
@@ -92,7 +95,7 @@ function validateBackupContents(contents) {
   var format = String(contents.format || 'legacy').trim();
 
   if (format === 'encrypted-single') {
-    validateEncryptedEnvelope(contents.state);
+    validateEncryptedEnvelope(contents.state, contents.shopId);
     return;
   }
 
@@ -507,7 +510,10 @@ function getBackupPart(shopId, backupId, partName) {
   if (!/^[A-Za-z0-9._:-]+$/.test(safeBackupId) || !/^[A-Za-z0-9._:-]+$/.test(safePartName)) return null;
   var root = getRootBackupFolder();
   var folders = root.getFolders();
-  var prefix = 'Shop_' + shopPartitionKey(normalizedShopId) + ' - ';
+  var partition = shopPartitionKey(normalizedShopId);
+  var prefix = 'Shop_' + partition + ' - ';
+  var expectedPartPrefix = 'NEXFIX_' + partition + '_';
+  if (safePartName.indexOf(expectedPartPrefix) !== 0 || safePartName.indexOf('.part') < 0) return null;
   while (folders.hasNext()) {
     var shopFolder = folders.next();
     if (shopFolder.getName().indexOf(prefix) !== 0) continue;
