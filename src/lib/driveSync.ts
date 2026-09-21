@@ -384,6 +384,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
 
     if (backup.encrypted || isEncryptedBackupEnvelope(parsed)) {
       if (!isEncryptedBackupEnvelope(parsed)) throw new Error('Encrypted backup metadata is invalid.');
+      if (parsed.shopId !== shopId) throw new Error('Restore refused: encrypted backup belongs to a different shop.');
       const decrypted = await decryptBackupEnvelope(parsed);
       if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) throw new Error('Decrypted backup state is invalid.');
       return {
