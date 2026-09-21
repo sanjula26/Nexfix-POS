@@ -7,6 +7,7 @@ import type { POSState } from './types';
 import { idbGetMeta, idbSetMeta } from './db';
 import { downloadFile, dkey } from './utils';
 import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
+import { hasBackupPassphrase } from './backupCrypto';
 import { isValidInventoryTransaction } from './inventoryLedger';
 
 export interface BackupEnvelope {
@@ -231,6 +232,9 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       if (!pending) {
         await idbSetMeta({ pendingAutoBackupAt: new Date().toISOString(), autoBackupFailureCount: 0 });
       }
+      // Encrypted cloud backups require the session-only passphrase. Do not
+      // turn a locked browser session into a permanent retry/failure loop.
+      if (!hasBackupPassphrase()) return;
       if (!online) return;
 
       running = true;
