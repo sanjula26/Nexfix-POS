@@ -157,7 +157,7 @@ function syncTable(ss, table, rows, shopId) {
 }
 
 function sanitizeDriveName(value) {
-  return String(value || 'Shop').trim().replace(/[\\\\/:*?"<>|#%{}~&]/g, '_').replace(/\\s+/g, ' ').slice(0, 80) || 'Shop';
+  return String(value || 'Shop').trim().replace(/[\\/:*?"<>|#%{}~&]/g, '_').replace(/\s+/g, ' ').slice(0, 80) || 'Shop';
 }
 
 function getOrCreateFolder(parent, name) {
