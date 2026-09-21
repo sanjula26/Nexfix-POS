@@ -259,7 +259,12 @@ function latestDriveBackup(shopId) {
           var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
           var state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.state : null;
           if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+          // Accept only Nexfix POS v2 snapshots. The shop partition and optional
+          // shopId must also match the authenticated shop requesting the restore.
+          if (meta.app && String(meta.app) !== 'Nexfix POS') continue;
+          if (meta.version !== undefined && Number(meta.version) !== 2) continue;
           if (meta.shopPartition && String(meta.shopPartition) !== shopPartitionKey(shopId)) continue;
+          if (meta.shopId && String(meta.shopId) !== String(shopId)) continue;
           if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
             latest = file;
             latestPayload = parsed;
