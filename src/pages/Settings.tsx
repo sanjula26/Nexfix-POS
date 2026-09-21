@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal,
+  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
-  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup,
+  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId,
 } from '../lib/driveSync';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
@@ -25,7 +25,18 @@ export default function Settings() {
   const gEnabled = isGoogleSyncEnabled();
   const [gMsg, setGMsg] = useState('');
   const [gRestoreBusy, setGRestoreBusy] = useState(false);
-  const [confirmGoogleRestore, setConfirmGoogleRestore] = useState<{ state: unknown; backedUpAt?: string; kind?: string } | null>(null);
+  const [confirmGoogleRestore, setConfirmGoogleRestore] = useState<{
+    state: unknown;
+    backedUpAt?: string;
+    kind?: string;
+    shopId?: string;
+    shopPartition?: string;
+    shopName?: string;
+  } | null>(null);
+  const [driveShopId, setDriveShopId] = useState(() => getDriveShopId());
+  const [existingDriveShopId, setExistingDriveShopId] = useState('');
+  const [shopIdMsg, setShopIdMsg] = useState('');
+  const [shopIdCopied, setShopIdCopied] = useState(false);
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
@@ -91,6 +102,32 @@ export default function Settings() {
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
 
+  const copyShopBackupId = async () => {
+    const id = getLocalShopId();
+    if (!id) return setShopIdMsg('Shop Backup ID is not available in this browser.');
+    try {
+      await navigator.clipboard.writeText(id);
+      setDriveShopId(id);
+      setShopIdCopied(true);
+      setShopIdMsg('Shop Backup ID copied.');
+      window.setTimeout(() => setShopIdCopied(false), 2000);
+    } catch {
+      setShopIdMsg('Copy failed. Select and copy the ID manually.');
+    }
+  };
+
+  const useExistingShopBackupId = () => {
+    const result = setExistingDriveShopId(existingDriveShopId);
+    if (!result.ok) {
+      setShopIdMsg(result.error || 'Invalid Shop Backup ID');
+      return;
+    }
+    const id = getLocalShopId();
+    setDriveShopId(id);
+    setExistingDriveShopId('');
+    setShopIdMsg('Existing Shop Backup ID saved. This browser will use that shop partition for Google Drive backup and restore.');
+  };
+
   const submitPin = () => {
     setPinMsg(null);
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
@@ -146,12 +183,18 @@ export default function Settings() {
     if (!gEnabled) return setGMsg('Google Drive backup is not available in this build');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
     if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
+    const currentShopId = getLocalShopId();
+    if (!currentShopId) return setGMsg('Shop Backup ID is missing. Set one before restoring Google Drive data.');
     setGRestoreBusy(true);
     setGMsg('Reading the latest Google backup…');
     try {
       const latest = await fetchLatestGoogleBackup();
-      if (!latest) {
-        setGMsg('No valid Google Drive backup was found for this shop');
+      if (!latest || !latest.shopId || !latest.shopPartition) {
+        setGMsg('No valid Google Drive backup was found for this shop, or the backup has no shop identity.');
+        return;
+      }
+      if (latest.shopId !== currentShopId) {
+        setGMsg('Restore refused: the Google backup belongs to a different shop identity.');
         return;
       }
       setConfirmGoogleRestore(latest);
@@ -271,6 +314,26 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="card p-6 border border-violet-500/20">
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><Cloud size={15} /></span>Shop Backup Identity</h3>
+            <p className="text-xs text-faint mb-4">This ID selects the isolated Google Drive backup partition for this shop. Keep it safe if the same shop needs to use another browser or PC.</p>
+            <Field label="Current Shop Backup ID" hint="Read-only">
+              <div className="flex gap-2">
+                <input className="input flex-1 font-mono text-xs" value={driveShopId || getLocalShopId() || ''} readOnly />
+                <button type="button" className="btn btn-soft shrink-0" onClick={copyShopBackupId} disabled={!getLocalShopId()}><Copy size={15} /> {shopIdCopied ? 'Copied' : 'Copy'}</button>
+              </div>
+            </Field>
+            <div className="mt-4 pt-4 border-t border-line">
+              <Field label="Use existing Shop Backup ID" hint="Use this only when connecting another PC/browser to the same shop backup partition">
+                <div className="flex gap-2">
+                  <input className="input flex-1 font-mono text-xs" value={existingDriveShopId} onChange={e => { setExistingDriveShopId(e.target.value); setShopIdMsg(''); }} placeholder="Paste the existing Shop Backup ID" maxLength={100} />
+                  <button type="button" className="btn btn-primary shrink-0" onClick={useExistingShopBackupId}>Use ID</button>
+                </div>
+              </Field>
+            </div>
+            {shopIdMsg && <p className="text-[12px] font-medium mt-3 text-emerald-500">{shopIdMsg}</p>}
+          </div>
+
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Database size={15} /></span>Data &amp; Backup</h3>
             <p className="text-xs text-faint mb-3">Primary store: <b className="text-ink">IndexedDB</b> (large capacity). localStorage kept as fast cache. Works fully offline — auto-syncs when the network returns.</p>
@@ -288,7 +351,7 @@ export default function Settings() {
         </div>
       </div>
 
-      <Modal open={confirmGoogleRestore !== null} onClose={() => !gRestoreBusy && setConfirmGoogleRestore(null)} title="Restore latest Google backup?" sub="This will replace the current local POS data"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" /><span>The selected cloud snapshot will replace the current local dataset. A safety checkpoint is created first, and the restore is cancelled if the checkpoint cannot be saved.</span></div>{confirmGoogleRestore && <div className="rounded-xl bg-raised border border-line px-4 py-3 mt-4 text-xs text-faint"><div><b className="text-ink">Backup type:</b> {confirmGoogleRestore.kind || 'unknown'}</div>{confirmGoogleRestore.backedUpAt && <div className="mt-1"><b className="text-ink">Backed up:</b> {new Date(confirmGoogleRestore.backedUpAt).toLocaleString()}</div>}</div>}<div className="flex gap-2.5 mt-5"><button className="btn btn-primary flex-1" disabled={gRestoreBusy} onClick={confirmGoogleRestoreNow}><Cloud size={15} /> {gRestoreBusy ? 'Restoring…' : 'Restore backup'}</button><button className="btn btn-soft flex-1" disabled={gRestoreBusy} onClick={() => setConfirmGoogleRestore(null)}>Cancel</button></div></Modal>
+      <Modal open={confirmGoogleRestore !== null} onClose={() => !gRestoreBusy && setConfirmGoogleRestore(null)} title="Restore latest Google backup?" sub="This will replace the current local POS data"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" /><span>This will restore THIS SHOP ONLY. The selected cloud snapshot is scoped to the displayed Shop Backup ID and partition. It will replace the current local dataset. A safety checkpoint is created first, and the restore is cancelled if the checkpoint cannot be saved.</span></div>{confirmGoogleRestore && <div className="rounded-xl bg-raised border border-line px-4 py-3 mt-4 text-xs text-faint"><div><b className="text-ink">Shop name:</b> {confirmGoogleRestore.shopName || state.settings.shopName || 'Shop'}</div><div className="mt-1"><b className="text-ink">Shop partition:</b> <span className="font-mono">{confirmGoogleRestore.shopPartition}</span></div><div className="mt-1"><b className="text-ink">Shop Backup ID:</b> <span className="font-mono break-all">{confirmGoogleRestore.shopId}</span></div><div className="mt-1"><b className="text-ink">Backup type:</b> {confirmGoogleRestore.kind || 'unknown'}</div>{confirmGoogleRestore.backedUpAt && <div className="mt-1"><b className="text-ink">Backed up:</b> {new Date(confirmGoogleRestore.backedUpAt).toLocaleString()}</div></div>}<div className="flex gap-2.5 mt-5"><button className="btn btn-primary flex-1" disabled={gRestoreBusy} onClick={confirmGoogleRestoreNow}><Cloud size={15} /> {gRestoreBusy ? 'Restoring…' : 'Restore backup'}</button><button className="btn btn-soft flex-1" disabled={gRestoreBusy} onClick={() => setConfirmGoogleRestore(null)}>Cancel</button></div></Modal>
       <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { resetData(); setConfirmReset(false); }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div></Modal>
     </div>
   );
