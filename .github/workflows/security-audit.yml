@@ -59,7 +59,7 @@ jobs:
           grep -q 'function getShopBackupFolder' "$file"
           grep -q 'function latestDriveBackup' "$file"
           grep -q 'backupStateToDrive(contents, shopId)' "$file"
-          grep -q "shopId: shopId" "$file" || true
+          grep -q "shopPartitionKey(shopId)" "$file"
           grep -q 'function latestBackup' "$file"
           if grep -q 'SUPABASE_URL_PROPERTY\|SUPABASE_ANON_KEY_PROPERTY\|authenticateUser' "$file"; then
             echo 'Direct Google backup must not depend on Supabase authentication.'
