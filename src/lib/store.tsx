@@ -495,9 +495,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const { flushed, pending } = await flushSyncQueue();
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
-        // Backup/export on reconnect requires the export permission.
-        // Queue flushing remains available independently of backup access.
-        if (user && can('act:export')) {
+        // Automatic cloud backup is a system operation, not a manual export.
+        // It must continue even when the active cashier/technician lacks export permission.
+        if (user) {
           try {
             await downloadBackup(stateRef.current, 'auto', {
               download: false,
@@ -514,10 +514,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   // Auto-backup scheduler
   useEffect(() => {
-    // Automatic backups are an export operation: only an authenticated user
-    // with the export permission may start the scheduler. This also tears the
-    // scheduler down when an admin switches to a lower-privilege account.
-    if (!ready || !user || !can('act:export')) return;
+    // Automatic backups are a system operation. Any authenticated POS user
+    // may keep the scheduler running; manual JSON export remains permission-gated.
+    if (!ready || !user) return;
     const stop = startAutoBackup(
       () => stateRef.current,
       async () => {
