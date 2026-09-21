@@ -20,7 +20,16 @@ export type QueueOp =
   | { id: string; ts: string; type: 'custom'; note: string; payload?: string }
   | { id: string; ts: string; type: 'sale_create'; payload: string }
   | { id: string; ts: string; type: 'return_create'; payload: string };
-export interface BackupMeta { lastAutoBackupAt?: string; lastManualBackupAt?: string; lastCloudBackupAt?: string; autoBackupHours: number; backupCount: number; }
+export interface BackupMeta {
+  lastAutoBackupAt?: string;
+  lastManualBackupAt?: string;
+  lastCloudBackupAt?: string;
+  pendingAutoBackupAt?: string;
+  nextAutoBackupRetryAt?: string;
+  autoBackupFailureCount?: number;
+  autoBackupHours: number;
+  backupCount: number;
+}
 
 function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{ const req=indexedDB.open(DB_NAME,DB_VERSION); req.onerror=()=>reject(req.error||new Error('IDB open failed')); req.onsuccess=()=>resolve(req.result); req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});if(!db.objectStoreNames.contains(STORE_QUEUE)){const q=db.createObjectStore(STORE_QUEUE,{keyPath:'id'});q.createIndex('ts','ts',{unique:false});}if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});};}); }
 function idbReq<T>(req: IDBRequest<T>): Promise<T> { return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);}); }
