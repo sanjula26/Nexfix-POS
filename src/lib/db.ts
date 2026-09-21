@@ -45,8 +45,8 @@ function getDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-/** Repair only the documented recovery accounts. Existing business data and
- * all other user accounts are preserved. */
+/** Repair only missing recovery accounts. Existing account credentials, roles,
+ * activation state, and password-change flags are preserved. */
 export function repairDefaultAccounts(state: POSState): POSState {
   const users = [...(state.users || [])];
   let changed = false;
@@ -61,8 +61,11 @@ export function repairDefaultAccounts(state: POSState): POSState {
     changed = true;
   } else {
     const u = users[adminIdx];
-    if (u.email !== DEFAULT_ADMIN_EMAIL || u.password !== SEED_HASH_ADMIN || u.role !== 'admin' || !u.active) {
-      users[adminIdx] = { ...u, email:DEFAULT_ADMIN_EMAIL, password:SEED_HASH_ADMIN, role:'admin', active:true, name:u.name || 'Shop Administrator' };
+    const email = (u.email || '').trim().toLowerCase();
+    // Normalize only the old recovery email. Never reset a password that the
+    // user has changed, and never silently reactivate or re-role an account.
+    if (email === LEGACY_DEFAULT_ADMIN_EMAIL && u.email !== DEFAULT_ADMIN_EMAIL) {
+      users[adminIdx] = { ...u, email:DEFAULT_ADMIN_EMAIL };
       changed = true;
     }
   }
@@ -71,12 +74,6 @@ export function repairDefaultAccounts(state: POSState): POSState {
   if (cashierIdx < 0) {
     users.push({ id:'u-nimal', name:'Cashier', email:DEFAULT_CASHIER_EMAIL, password:SEED_HASH_CASHIER, role:'cashier', active:true, createdAt:now });
     changed = true;
-  } else {
-    const u = users[cashierIdx];
-    if (u.password !== SEED_HASH_CASHIER || u.role !== 'cashier' || !u.active) {
-      users[cashierIdx] = { ...u, email:DEFAULT_CASHIER_EMAIL, password:SEED_HASH_CASHIER, role:'cashier', active:true, name:u.name || 'Cashier' };
-      changed = true;
-    }
   }
 
   return changed ? { ...state, users } : state;
@@ -102,9 +99,6 @@ export async function idbLoadState():Promise<POSState|null>{
     if (!row?.value || repaired !== row.value) await idbSaveState(repaired);
     return repaired;
   } catch {
-    // Some private/preview environments expose indexedDB but reject opening it.
-    // Return the repaired local snapshot instead of handing the provider a null
-    // state that can lose the documented login accounts.
     return loadLocalFallback();
   }
 }
