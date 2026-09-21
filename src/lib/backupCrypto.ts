@@ -92,7 +92,7 @@ export function hasBackupPassphrase(): boolean {
   return !!sessionPassphrase;
 }
 
-export function getBackupSecurityMessage(): string {
+export async function sha256Hex(value: string): Promise<string> {\n  assertCrypto();\n  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));\n  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');\n}\n\nexport function getBackupSecurityMessage(): string {
   return 'Google Drive backups are encrypted in this browser. The passphrase is never stored or sent to Google. If it is lost, the encrypted backup cannot be restored.';
 }
 
