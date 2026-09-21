@@ -25,7 +25,7 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 - A real two-device acceptance drill is still required before live multi-PC use.
 
 ### Google backup and restore
-- Google backup is opt-in and disabled by default.
+- Google backup is centrally configured in the released POS build; shop users do not configure the endpoint.
 - The production Google backup path is direct: Nexfix POS → Google Apps Script Web App → the dedicated master Google Drive folder.
 - Supabase is **not required** for this backup path, and the separate Google Sheet is **not required** or assumed to be inside the Drive folder.
 - The Apps Script uses the configured master Drive folder ID and creates one shop-specific folder per deterministic shop partition.
@@ -55,7 +55,7 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 ## Remaining production acceptance gates
 
 1. Complete a real two-PC cloud synchronization drill using separate devices/accounts.
-2. Deploy/configure the direct Google Apps Script integration and perform a two-shop backup/restore test with a real Google account and separate Drive partitions.
+2. Deploy/update the direct Google Apps Script integration and perform a two-shop backup/restore test with a real Google account and separate Drive partitions.
 3. Configure Netlify public environment variables and verify the live production site.
 4. Test the actual receipt printer, barcode scanner, and cash drawer hardware.
 5. Perform a complete disaster-recovery restore drill using a known-good backup before storing live business data.
