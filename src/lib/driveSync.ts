@@ -7,7 +7,7 @@ const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 // Central deployment: customers do not need to configure or receive the URL.
 // The Web App URL is a transport address, not a secret.
-const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzv8sFWgCYExkCZZorzShnCV7h240EGrpyf8nTLqOcYHs-G54KGFhr1w39ah4-Dx7xYW/exec';
+const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const ENV_URL = (import.meta.env.VITE_GOOGLE_SCRIPT_URL || '').trim();
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
