@@ -114,16 +114,17 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     // continue to use the revision/conflict protocol below.
     if(!snapshotOps.length){
       const shop=await ensureCloudShop('Nexfix Shop');
-      if(shop.ok && shop.shopId){
-        const remote=await downloadStateSnapshot();
-        if(!remote){
-          const initial=await syncStateSnapshot(latestState);
-          if(initial.status==='synced') return {flushed,pending:remaining.length,synced:true,conflict:false};
-          if(initial.status==='conflict') return {flushed,pending:remaining.length,synced:false,conflict:true};
-          return {flushed,pending:remaining.length,synced:false,conflict:false};
-        }
+      if(!shop.ok || !shop.shopId){
+        return {flushed,pending:remaining.length,synced:false,conflict:false};
       }
-      return {flushed:flushed,pending:remaining.length,synced:true,conflict:false};
+      const remote=await downloadStateSnapshot();
+      if(!remote){
+        const initial=await syncStateSnapshot(latestState);
+        if(initial.status==='synced') return {flushed,pending:remaining.length,synced:true,conflict:false};
+        if(initial.status==='conflict') return {flushed,pending:remaining.length,synced:false,conflict:true};
+        return {flushed,pending:remaining.length,synced:false,conflict:false};
+      }
+      return {flushed,pending:remaining.length,synced:true,conflict:false};
     }
 
     const result=await syncStateSnapshot(latestState);
