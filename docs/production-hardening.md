@@ -70,7 +70,7 @@ The repository CI pipeline checks dependency installation, TypeScript typechecki
 ## Security principles
 
 - Never commit `.env.local`, Supabase service-role keys, database passwords, Google credentials, or other secrets.
-- Browser builds may contain only public Supabase URL/anon-key configuration and the operator-configured Google deployment URL.
+- Browser builds may contain only public Supabase URL/anon-key configuration and the centrally configured Google deployment endpoint.
 - Do not treat Google Drive backups as the primary transaction database.
 - Keep cloud snapshots free of local authentication secrets.
 - Preserve idempotency keys and server-side transaction boundaries when changing sale, return, inventory, or synchronization code.
