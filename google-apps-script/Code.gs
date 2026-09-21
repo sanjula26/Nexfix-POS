@@ -1,18 +1,11 @@
 /**
- * Nexfix POS Google Apps Script API.
+ * Nexfix POS direct Google Drive backup API.
  * Deploy as a Web app: Execute as Me.
- *
- * Requests carry a Supabase user JWT from the authenticated Edge Function proxy.
- * Configure SUPABASE_URL and SUPABASE_ANON_KEY in Script Properties.
- *
- * Every operation is additionally bound to an explicit shopId and stored in a
- * deterministic, shop-specific sheet partition. This protects the external
- * backup store even if the Web App URL is reached without the Supabase proxy.
+ * POS calls this endpoint directly; Supabase is not required for Google Backup.
+ * The supplied master Drive folder remains separate from any Google Sheet.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '2.1.0';
-var SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
-var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
+var VERSION = '3.0.0';
 var SHOP_ID_MAX_LENGTH = 100;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
@@ -89,45 +82,6 @@ function shopPartitionKey(shopId) {
 
 function partitionedSheetName(baseName, shopId) {
   return String(baseName).slice(0, 70) + '_' + shopPartitionKey(shopId);
-}
-
-function supabaseConfig() {
-  var url = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_URL_PROPERTY) || '').trim().replace(/\/$/, '');
-  var anonKey = String(PropertiesService.getScriptProperties().getProperty(SUPABASE_ANON_KEY_PROPERTY) || '').trim();
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url) || !anonKey) throw new Error('Supabase configuration is missing from Script Properties');
-  return { url: url, anonKey: anonKey };
-}
-
-function authenticateUser(accessToken, shopId) {
-  if (!accessToken || String(accessToken).length < 20) return null;
-  var normalizedShopId;
-  try { normalizedShopId = normalizeShopId(shopId); } catch (ignore) { return null; }
-
-  var config = supabaseConfig();
-  var userResponse = UrlFetchApp.fetch(config.url + '/auth/v1/user', {
-    method: 'get',
-    headers: { 'apikey': config.anonKey, 'Authorization': 'Bearer ' + String(accessToken) },
-    muteHttpExceptions: true
-  });
-  if (userResponse.getResponseCode() < 200 || userResponse.getResponseCode() >= 300) return null;
-
-  var user;
-  try { user = JSON.parse(userResponse.getContentText()); } catch (ignore2) { return null; }
-  if (!user || !user.id) return null;
-
-  var membershipUrl = config.url + '/rest/v1/shop_memberships?select=role,active&user_id=eq.' + encodeURIComponent(user.id) + '&shop_id=eq.' + encodeURIComponent(normalizedShopId) + '&active=eq.true';
-  var membershipResponse = UrlFetchApp.fetch(membershipUrl, {
-    method: 'get',
-    headers: { 'apikey': config.anonKey, 'Authorization': 'Bearer ' + String(accessToken) },
-    muteHttpExceptions: true
-  });
-  if (membershipResponse.getResponseCode() < 200 || membershipResponse.getResponseCode() >= 300) return null;
-
-  var memberships;
-  try { memberships = JSON.parse(membershipResponse.getContentText()); } catch (ignore3) { return null; }
-  if (!Array.isArray(memberships)) return null;
-  var allowed = memberships.some(function(m) { return m && (m.role === 'admin' || m.role === 'manager') && m.active === true; });
-  return allowed ? user : null;
 }
 
 function syncTable(ss, table, rows, shopId) {
@@ -342,35 +296,24 @@ function doPost(e) {
     lock.waitLock(30000);
     var contents = parsePostBody(e);
     var shopId;
-    try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(unauthorized('A valid shopId is required')); }
-    var user = authenticateUser(contents.accessToken, shopId);
-    if (!user) return json(unauthorized('Valid admin/manager Supabase session required for this shop'));
-
+    try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId = String(contents.requestId || '').trim();
     if (!requestId || requestId.length > 200) return json(fail('Valid requestId is required'));
+
     var requestCache = CacheService.getScriptCache();
     var cached = requestCache.get('nexfix_req_' + requestId);
     if (cached) {
       try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
     }
 
-    var ss = null;
-    try { ss = SpreadsheetApp.getActiveSpreadsheet(); } catch (ignoreSpreadsheet) {}
     var result;
     if (contents.action === 'backupState') {
-      result = ok(backupState(ss, contents, shopId));
-    } else if (contents.action === 'saveData' && isAllowedDataTable(contents.table)) {
-      result = ok(syncTable(ss, contents.table, contents.rows, shopId));
-    } else if (contents.action === 'getLatestBackup') {
-      result = ok({ action: 'getLatestBackup', backup: latestBackup(ss, shopId) });
-    } else if (contents.action === 'getTable' && isAllowedDataTable(contents.table)) {
-      result = ok({ action: 'getTable', table: normalizeTableName(contents.table), rows: getTable(ss, contents.table, shopId) });
+      result = ok(backupState(null, contents, shopId));
     } else {
-      return json(fail('Unsupported action or table is not allowed'));
+      return json(fail('Only backupState is supported by the direct Drive backup endpoint'));
     }
-    try {
-      requestCache.put('nexfix_req_' + requestId, JSON.stringify(result), 21600);
-    } catch (ignoreCacheWrite) {}
+
+    try { requestCache.put('nexfix_req_' + requestId, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
     return json(result);
   } catch (err) {
     return json(fail(err));
@@ -395,6 +338,18 @@ function getTable(ss, table, shopId) {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Sync API is running' }));
-  return json(unauthorized('Authenticated POST endpoint required'));
+  if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Direct Google Backup API is running' }));
+
+  if (p.action === 'getLatestBackup') {
+    var shopId;
+    try { shopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
+    var result = ok({ action: 'getLatestBackup', backup: latestBackup(null, shopId) });
+    var callback = String(p.callback || '').trim();
+    if (callback && /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(callback)) {
+      return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return json(result);
+  }
+
+  return json(unauthorized('Unsupported action'));
 }
