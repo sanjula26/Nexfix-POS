@@ -100,6 +100,8 @@ function validateBackupContents(contents) {
   }
 
   if (format === 'encrypted-part') {
+    var dayKeyPart = validateDayKey(contents.dayKey);
+    var expectedPartPrefix = getBackupFilePrefix(contents.shopId, dayKeyPart) + '.';
     var chunk = String(contents.chunk || '');
     var chunkBytes = Utilities.newBlob(chunk, 'text/plain').getBytes().length;
     if (!chunk || chunkBytes > MAX_MULTIPART_PART_BYTES) throw new Error('Backup part is empty or too large');
@@ -110,17 +112,19 @@ function validateBackupContents(contents) {
     }
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.partName || ''))) throw new Error('Invalid backup part name');
+    if (String(contents.partName).indexOf(expectedPartPrefix) !== 0 || String(contents.partName).indexOf('.part') < 0) throw new Error('Backup part does not belong to the requested shop/day');
     return;
   }
 
   if (format === 'encrypted-manifest') {
+    var dayKeyManifest = validateDayKey(contents.dayKey);
     var totalPartsManifest = Number(contents.totalParts);
     var totalBytes = Number(contents.totalBytes);
     var partNames = contents.partNames;
     if (!Number.isInteger(totalPartsManifest) || totalPartsManifest < 1 || totalPartsManifest > 1000) throw new Error('Invalid multipart count');
     if (!Number.isInteger(totalBytes) || totalBytes < 1) throw new Error('Invalid multipart byte count');
     if (!Array.isArray(partNames) || partNames.length !== totalPartsManifest) throw new Error('Invalid multipart part list');
-    var expectedPartPrefix = getBackupFilePrefix(contents.shopId, contents.dayKey || '') + '.';
+    var expectedPartPrefix = getBackupFilePrefix(contents.shopId, dayKeyManifest) + '.';
     partNames.forEach(function(name) {
       if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]+$/.test(name) || name.indexOf(expectedPartPrefix) !== 0 || name.indexOf('.part') < 0) throw new Error('Invalid multipart filename');
     });
@@ -144,6 +148,12 @@ function validateRequestId(requestId) {
   if (!value || value.length > REQUEST_ID_MAX_LENGTH || !/^[A-Za-z0-9._:-]+$/.test(value)) {
     throw new Error('Valid requestId is required');
   }
+  return value;
+}
+
+function validateDayKey(dayKey) {
+  var value = String(dayKey || '').trim();
+  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
   return value;
 }
 
@@ -302,7 +312,7 @@ function backupStateToDrive(contents, shopId) {
 
   var now = new Date();
   var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
-  var dayKey = contents.dayKey || Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
+  var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
 
   if (format === 'encrypted-single') {
