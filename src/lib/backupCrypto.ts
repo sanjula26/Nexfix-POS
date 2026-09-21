@@ -32,6 +32,10 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
   const chunk = 0x8000;
@@ -59,7 +63,7 @@ async function decompress(data: Uint8Array): Promise<Uint8Array> {
   if (typeof DecompressionStream === 'undefined') {
     throw new Error('This browser cannot decompress the encrypted backup.');
   }
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const stream = new Blob([asArrayBuffer(data)]).stream().pipeThrough(new DecompressionStream('gzip'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
