@@ -9,6 +9,7 @@ import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId,
 } from '../lib/driveSync';
+import { clearBackupPassphrase, getBackupSecurityMessage, hasBackupPassphrase, setBackupPassphrase } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
@@ -56,6 +57,9 @@ export default function Settings() {
   const [pinConfirm, setPinConfirm] = useState('');
   const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showPins, setShowPins] = useState(false);
+  const [backupPassphrase, setBackupPassphraseInput] = useState('');
+  const [backupPassphraseMsg, setBackupPassphraseMsg] = useState('');
+  const [backupPassphraseReady, setBackupPassphraseReady] = useState(() => hasBackupPassphrase());
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -318,6 +322,30 @@ export default function Settings() {
               {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
               <button className="btn btn-primary" onClick={submitPin} disabled={!pinCur || !pinNew || !pinConfirm}><ShieldCheck size={15} /> Update admin unlock PIN</button>
             </div>
+          </div>
+
+          <div className="card p-6 border border-emerald-500/20">
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup Encryption</h3>
+            <p className="text-xs text-faint mb-4">Google Drive backups are encrypted in this browser. The passphrase is never stored or sent to Google. If it is lost, the encrypted backup cannot be restored.</p>
+            <Field label="Backup Passphrase" hint="Memory-only for this browser session. Never stored in localStorage or sent to Google.">
+              <input type="password" className="input font-mono" value={backupPassphrase} onChange={e => { setBackupPassphraseInput(e.target.value); setBackupPassphraseMsg(''); }} placeholder="Enter a strong backup passphrase" autoComplete="new-password" />
+            </Field>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button type="button" className="btn btn-primary" disabled={!backupPassphrase} onClick={() => {
+                const result = setBackupPassphrase(backupPassphrase);
+                if (!result.ok) { setBackupPassphraseMsg(result.error || 'Could not set passphrase'); return; }
+                setBackupPassphraseInput('');
+                setBackupPassphraseReady(true);
+                setBackupPassphraseMsg('Backup encryption unlocked for this browser session.');
+              }}>Unlock encryption</button>
+              {backupPassphraseReady && <button type="button" className="btn btn-soft" onClick={() => {
+                clearBackupPassphrase();
+                setBackupPassphraseReady(false);
+                setBackupPassphraseMsg('Backup encryption locked. Automatic Google backups will wait until you unlock it again.');
+              }}>Lock encryption</button>}
+            </div>
+            {backupPassphraseMsg && <p className={`text-[12px] font-medium mt-3 ${backupPassphraseMsg.includes('unlocked') ? 'text-emerald-500' : 'text-rose-500'}`}>{backupPassphraseMsg}</p>}
+            <p className="text-[11px] text-faint mt-3">{backupPassphraseReady ? 'Encrypted Google backup is unlocked for this browser session.' : 'Enter the passphrase before using Google Drive backup or restore. Losing the passphrase means the encrypted backup cannot be restored.'}</p>
           </div>
 
           <div className="card p-6 border border-violet-500/20">
