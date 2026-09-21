@@ -44,7 +44,7 @@ export function setGoogleSyncEnabled(_on: boolean): void {
  * a cloud shop id, so Drive backup gets its own stable browser-local id instead.
  * Never write a generated Drive id into nexfix_cloud_shop_id.
  */
-function getLocalShopId(): string {
+export function getLocalShopId(): string {
   try {
     const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
     if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
@@ -66,6 +66,26 @@ function getLocalShopId(): string {
     localStorage.setItem(DRIVE_SHOP_KEY, driveId);
     return driveId;
   } catch { return ''; }
+}
+
+export function getDriveShopId(): string {
+  try { return (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim(); } catch { return ''; }
+}
+
+const SHOP_ID_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/;
+
+export function setExistingDriveShopId(input: string): { ok: boolean; error?: string } {
+  const value = input.trim();
+  if (!value) return { ok: false, error: 'Shop Backup ID is required' };
+  if (value.length > 100 || !SHOP_ID_PATTERN.test(value)) {
+    return { ok: false, error: 'Shop Backup ID must be 1–100 characters: letters, numbers, dot, underscore, colon, or hyphen.' };
+  }
+  try {
+    localStorage.setItem(DRIVE_SHOP_KEY, value);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Could not save Shop Backup ID on this browser.' };
+  }
 }
 
 function makeRequestId(): string {
@@ -220,7 +240,17 @@ export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backe
       window.clearTimeout(timer);
       cleanup();
       if (!result || typeof result !== 'object') return resolve(null);
-      const data = result as { ok?: boolean; backup?: { state?: unknown; timestamp?: unknown; backupType?: unknown } };
+      const data = result as {
+        ok?: boolean;
+        backup?: {
+          state?: unknown;
+          timestamp?: unknown;
+          backupType?: unknown;
+          shopId?: unknown;
+          shopPartition?: unknown;
+          shopName?: unknown;
+        };
+      };
       if (data.ok !== true || !data.backup || typeof data.backup.state !== 'string') return resolve(null);
       try {
         const parsed: unknown = JSON.parse(data.backup.state);
@@ -229,6 +259,9 @@ export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backe
           state: { [CLOUD_SAFE_MARKER]: true, state: parsed },
           backedUpAt: typeof data.backup.timestamp === 'string' ? data.backup.timestamp : undefined,
           kind: data.backup.backupType === 'manual' || data.backup.backupType === 'auto' ? data.backup.backupType : undefined,
+          shopId: typeof data.backup.shopId === 'string' ? data.backup.shopId : undefined,
+          shopPartition: typeof data.backup.shopPartition === 'string' ? data.backup.shopPartition : undefined,
+          shopName: typeof data.backup.shopName === 'string' ? data.backup.shopName : undefined,
         });
       } catch { resolve(null); }
     };
