@@ -5,7 +5,7 @@
  * The supplied master Drive folder remains separate from any Google Sheet.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '3.0.0';
+var VERSION = '3.0.1';
 var SHOP_ID_MAX_LENGTH = 100;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
