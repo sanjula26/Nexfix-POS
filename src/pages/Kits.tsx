@@ -54,7 +54,7 @@ export default function Kits() {
         title="Kits / BOM"
         sub="Bundle products — CCTV packages, laptop bundles, accessory kits"
         actions={
-          <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}>
+          <button type="button" className="btn btn-primary" onClick={() => setOpen(true)} disabled={!can('act:manageStock')}>
             <Plus size={16} /> Manage kit
           </button>
         }
@@ -109,11 +109,11 @@ export default function Kits() {
               ))}
             </select>
           </Field>
-          {kitProductId && !state.products.find(p => p.id === kitProductId)?.isKit && (
-            {can('act:manageStock') && <button type="button" className="btn btn-soft text-sm" onClick={() => {
+          {kitProductId && !state.products.find(p => p.id === kitProductId)?.isKit && can('act:manageStock') && (
+            <button type="button" className="btn btn-soft text-sm" onClick={() => {
               const p = state.products.find(x => x.id === kitProductId);
               if (p) markAsKit(p);
-            }}>Mark selected product as Kit</button>}
+            }}>Mark selected product as Kit</button>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
             <Field label="Component">
