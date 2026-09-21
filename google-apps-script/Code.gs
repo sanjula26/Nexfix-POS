@@ -322,7 +322,15 @@ function latestBackup(ss, shopId) {
   var driveBackup = latestDriveBackup(shopId);
   if (driveBackup && driveBackup.state) {
     var meta = driveBackup._meta || {};
-    return { timestamp: meta.exportedAt || '', backupType: meta.kind || '', version: VERSION, state: JSON.stringify(driveBackup.state) };
+    return {
+      timestamp: meta.exportedAt || '',
+      backupType: meta.kind || '',
+      version: VERSION,
+      shopId: meta.shopId || shopId,
+      shopPartition: meta.shopPartition || shopPartitionKey(shopId),
+      shopName: meta.shopName || (driveBackup.state && driveBackup.state.settings && driveBackup.state.settings.shopName ? String(driveBackup.state.settings.shopName) : 'Shop'),
+      state: JSON.stringify(driveBackup.state)
+    };
   }
   if (!ss) return null;
   var sheet = ss.getSheetByName(partitionedSheetName(BACKUP_SHEET, shopId));
