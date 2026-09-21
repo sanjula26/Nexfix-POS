@@ -6,7 +6,7 @@
 import type { POSState } from './types';
 import { idbGetMeta, idbSetMeta } from './db';
 import { downloadFile, dkey } from './utils';
-import { backupStateToGoogle, isGoogleSyncEnabled } from './driveSync';
+import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
 import { isValidInventoryTransaction } from './inventoryLedger';
 
 export interface BackupEnvelope {
@@ -171,7 +171,7 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       // A configured Google backup is the only successful destination for an automatic backup.
       // If no script URL is configured, leave the scheduler idle rather than creating a
       // permanent pending failure that cannot succeed until configuration changes.
-      const cloudRequired = isGoogleSyncEnabled();
+      const cloudRequired = isGoogleSyncEnabled() && !!getGoogleScriptUrl();
       if (!cloudRequired) return;
 
       const last = meta.lastAutoBackupAt ? new Date(meta.lastAutoBackupAt).getTime() : 0;
