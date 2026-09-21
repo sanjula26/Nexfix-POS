@@ -26,14 +26,15 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 
 ### Google backup and restore
 - Google backup is opt-in and disabled by default.
-- Google requests use the authenticated Supabase proxy path rather than a shared client API key.
-- Only HTTPS `script.google.com` deployment URLs are accepted.
-- Google backup payloads exclude local password hashes, local user records, and the admin PIN hash.
-- The Apps Script requires an explicit `shopId`, validates exact-shop admin/manager membership, and stores each shop in a deterministic partitioned sheet namespace.
-- Unscoped `FullBackup` access is rejected by the repository security workflow.
-- Cloud restore preserves the current device's authentication credentials and local-only users while restoring business data.
-- The restore path validates backup structure before applying it and rolls back through the local checkpoint path if persistence fails.
-- End-to-end testing against a real deployed Apps Script and Google account remains an external acceptance gate.
+- The production Google backup path is direct: Nexfix POS → Google Apps Script Web App → the dedicated master Google Drive folder.
+- Supabase is **not required** for this backup path, and the separate Google Sheet is **not required** or assumed to be inside the Drive folder.
+- The Apps Script uses the configured master Drive folder ID and creates one shop-specific folder per deterministic shop partition.
+- Backup writes require both `shopId` and `requestId`; repeated request IDs are idempotently acknowledged per shop partition.
+- The POS uses a CORS-safe POST followed by JSONP status polling and reports cloud success only after the server confirms the Drive write.
+- Cloud backup payloads exclude local password hashes, local user records, and the admin PIN hash.
+- Direct restore reads only the requested shop partition and validates the Nexfix POS snapshot envelope before applying it.
+- The Web App endpoint is a transport boundary, not a replacement for POS authentication. A publicly reachable Apps Script endpoint must be treated accordingly.
+- End-to-end testing against the actual deployed Apps Script and Google Drive account remains an external acceptance gate.
 
 ### Desktop packaging
 - Electron uses context isolation, sandboxing, disabled Node integration, and restricted navigation.
@@ -54,7 +55,7 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 ## Remaining production acceptance gates
 
 1. Complete a real two-PC cloud synchronization drill using separate devices/accounts.
-2. Deploy and configure the Google Apps Script integration and perform a two-shop backup/restore test with a real Google account and separate storage partitions.
+2. Deploy/configure the direct Google Apps Script integration and perform a two-shop backup/restore test with a real Google account and separate Drive partitions.
 3. Configure Netlify public environment variables and verify the live production site.
 4. Test the actual receipt printer, barcode scanner, and cash drawer hardware.
 5. Perform a complete disaster-recovery restore drill using a known-good backup before storing live business data.
