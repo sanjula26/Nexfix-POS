@@ -59,7 +59,7 @@ async function decompress(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(passphrase: string, salt: Uint8Array, iterations = PBKDF2_ITERATIONS): Promise<CryptoKey> {
   assertCrypto();
   const material = await crypto.subtle.importKey(
     'raw',
@@ -69,7 +69,7 @@ async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKe
     ['deriveKey'],
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     material,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -108,7 +108,7 @@ export async function encryptBackupState(
   const packed = await compress(plaintext);
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const key = await deriveKey(sessionPassphrase, salt);
+  const key = await deriveKey(sessionPassphrase, salt, envelope.iterations);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, packed.data);
   return {
     v: 1,
