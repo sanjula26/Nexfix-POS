@@ -6,7 +6,7 @@ import { fmtRs, uid } from '../lib/utils';
 import type { KitItem, Product } from '../lib/types';
 
 export default function Kits() {
-  const { state, saveProduct, saveKitItems, logAudit } = usePOS();
+  const { state, saveProduct, saveKitItems, logAudit, can } = usePOS();
   const kits = state.kitItems || [];
   const [q, setQ] = useState('');
   const [kitProductId, setKitProductId] = useState('');
@@ -89,7 +89,7 @@ export default function Kits() {
                     {lines.map(l => (
                       <li key={l.id} className="flex justify-between gap-2 border-t border-line pt-1.5">
                         <span>{nameOf(l.componentProductId)} × {l.qty}</span>
-                        <button type="button" className="text-rose-500" onClick={() => removeLine(l.id)}><Trash2 size={14} /></button>
+                        {can('act:manageStock') && <button type="button" className="text-rose-500" onClick={() => removeLine(l.id)}><Trash2 size={14} /></button>}
                       </li>
                     ))}
                   </ul>
@@ -110,10 +110,10 @@ export default function Kits() {
             </select>
           </Field>
           {kitProductId && !state.products.find(p => p.id === kitProductId)?.isKit && (
-            <button type="button" className="btn btn-soft text-sm" onClick={() => {
+            {can('act:manageStock') && <button type="button" className="btn btn-soft text-sm" onClick={() => {
               const p = state.products.find(x => x.id === kitProductId);
               if (p) markAsKit(p);
-            }}>Mark selected product as Kit</button>
+            }}>Mark selected product as Kit</button>}
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
             <Field label="Component">
@@ -125,7 +125,7 @@ export default function Kits() {
             <Field label="Qty">
               <input type="number" className="input" value={compQty} min={0.01} step={0.01} onChange={e => setCompQty(Number(e.target.value) || 1)} />
             </Field>
-            <button type="button" className="btn btn-primary" onClick={addComponent}>Add to BOM</button>
+            <button type="button" className="btn btn-primary" onClick={addComponent} disabled={!can('act:manageStock')}>Add to BOM</button>
           </div>
           {kitProductId && (
             <div className="rounded-xl border border-line p-3">
@@ -133,7 +133,7 @@ export default function Kits() {
               {linesFor(kitProductId).length === 0 ? <p className="text-sm text-faint">Empty</p> : linesFor(kitProductId).map(l => (
                 <div key={l.id} className="flex justify-between text-sm py-1 border-t border-line">
                   <span>{nameOf(l.componentProductId)} × {l.qty}</span>
-                  <button type="button" className="text-rose-500" onClick={() => removeLine(l.id)}>Remove</button>
+                  {can('act:manageStock') && <button type="button" className="text-rose-500" onClick={() => removeLine(l.id)}>Remove</button>}
                 </div>
               ))}
             </div>
