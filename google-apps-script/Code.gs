@@ -117,8 +117,9 @@ function validateBackupContents(contents) {
     if (!Number.isInteger(totalPartsManifest) || totalPartsManifest < 1 || totalPartsManifest > 1000) throw new Error('Invalid multipart count');
     if (!Number.isInteger(totalBytes) || totalBytes < 1) throw new Error('Invalid multipart byte count');
     if (!Array.isArray(partNames) || partNames.length !== totalPartsManifest) throw new Error('Invalid multipart part list');
+    var expectedPartPrefix = getBackupFilePrefix(contents.shopId, contents.dayKey || '') + '_';
     partNames.forEach(function(name) {
-      if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]+$/.test(name)) throw new Error('Invalid multipart filename');
+      if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]+$/.test(name) || name.indexOf(expectedPartPrefix) !== 0 || name.indexOf('.part') < 0) throw new Error('Invalid multipart filename');
     });
     if (typeof contents.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(contents.sha256)) throw new Error('Invalid multipart hash');
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
