@@ -127,7 +127,7 @@ export default function Settings() {
 
   const requestGoogleRestore = async () => {
     if (!user || user.role !== 'admin') return setGMsg('Cloud restore requires admin access');
-    if (!gEnabled) return setGMsg('Enable Google sync before restoring a cloud backup');
+    if (!gEnabled) return setGMsg('Google Drive backup is not available in this build');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
     if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
     setGRestoreBusy(true);
