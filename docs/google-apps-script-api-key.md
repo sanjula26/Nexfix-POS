@@ -1,26 +1,35 @@
-# Nexfix POS Google Apps Script API Key
+# Google Apps Script API Key — Legacy Note
 
-The Nexfix POS Google Apps Script integration uses an operator-configured API key.
+The Nexfix POS Google backup integration no longer uses a client API key.
 
-## Apps Script setup
+The current production path is:
 
-1. Open the Google Apps Script project used by Nexfix POS.
-2. Open **Project Settings → Script properties**.
-3. Add the property `NEXFIX_API_KEY`.
-4. Set its value to a long random string (32+ random characters recommended).
-5. Deploy the project as a Web app, executing as the spreadsheet owner/operator.
-6. Use the deployed `/macros/s/.../exec` URL in Nexfix POS.
+```text
+Nexfix POS
+   |
+   v
+Google Apps Script Web App
+   |
+   v
+Dedicated Nexfix POS Backup Google Drive folder
+```
 
-The repository's `google-apps-script/Code.gs` requires this key for backup writes, backup-status acknowledgements, and table reads. Missing or incorrect keys are rejected.
+## Current configuration
 
-## POS setup
+- Do **not** create `NEXFIX_API_KEY` for the current `google-apps-script/Code.gs`.
+- Do **not** configure `VITE_GOOGLE_SCRIPT_API_KEY`; the current client does not use it.
+- Configure the Apps Script Web App to execute as the owner/operator so it can write to the dedicated Drive folder.
+- Configure the master folder through `ROOT_BACKUP_FOLDER_ID` when desired; the repository also contains the supplied master folder ID as its default.
+- In Nexfix POS Settings, use the deployed HTTPS `/macros/s/.../exec` URL.
 
-The POS reads the key from `VITE_GOOGLE_SCRIPT_API_KEY` when provided at build time, or from browser local storage after an operator enters it when the Google integration first needs authentication. The key is never committed to the repository.
+## Security model
 
-Because a browser-visible key cannot be a true secret, this key is an access gate rather than the primary security boundary. Do not use it as a substitute for Supabase authentication/RLS or Google account permissions.
+The browser cannot safely keep a secret API key, so adding a frontend key would not create a private API boundary. The current direct endpoint instead isolates backup storage by deterministic `shopId` partitions and requires `shopId` plus `requestId` for backup operations.
+
+Because a Web App that is reachable by the browser may be publicly callable, this should not be treated as a replacement for POS authentication or Supabase RLS. Do not place service-account keys, private OAuth secrets, or other private credentials in the frontend.
 
 ## Restore safety
 
-Google restore is destructive to the current local dataset. The POS requires an explicit confirmation and creates a local safety checkpoint before applying the validated cloud snapshot. Cloud restore is not a multi-PC merge operation.
+Google restore is destructive to the current local dataset. The POS requires explicit admin confirmation and creates a local safety checkpoint before applying the validated cloud snapshot. Cloud restore is not a multi-PC merge operation.
 
-If a key is exposed, rotate `NEXFIX_API_KEY` in Apps Script and clear/re-enter the browser's stored key.
+This file is retained only to prevent older API-key setup instructions from being mistaken for the current configuration. The authoritative guide is `google-apps-script/README.md`.
