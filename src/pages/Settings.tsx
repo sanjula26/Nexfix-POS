@@ -212,6 +212,12 @@ export default function Settings() {
       return;
     }
     if (!confirmGoogleRestore) return;
+    const currentShopId = getLocalShopId();
+    if (!currentShopId || confirmGoogleRestore.shopId !== currentShopId) {
+      setConfirmGoogleRestore(null);
+      setGMsg('Restore refused: the current Shop Backup ID no longer matches the selected backup.');
+      return;
+    }
     setGRestoreBusy(true);
     setGMsg('Validating cloud backup and creating safety checkpoint…');
     try {
