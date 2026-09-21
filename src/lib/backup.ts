@@ -178,8 +178,8 @@ export function scheduleGoogleBackup(
     window.clearTimeout(scheduledGoogleBackupTimer);
   }
 
-  const DEBOUNCE_MS = 2 * 60 * 1000;
-  const RATE_LIMIT_MS = 2 * 60 * 1000;
+  const DEBOUNCE_MS = 60 * 1000;
+  const RATE_LIMIT_MS = 60 * 1000;
   const delay = Math.max(DEBOUNCE_MS, RATE_LIMIT_MS - (Date.now() - scheduledGoogleBackupLastRunAt));
 
   scheduledGoogleBackupTimer = window.setTimeout(async () => {
