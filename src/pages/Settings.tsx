@@ -7,7 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
-  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId,
+  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId,
 } from '../lib/driveSync';
 import { clearBackupPassphrase, decryptBackupEnvelope, hasBackupPassphrase, isEncryptedBackupEnvelope, setBackupPassphrase, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
@@ -121,7 +121,7 @@ export default function Settings() {
   };
 
   const useExistingShopBackupId = () => {
-    const result = setExistingDriveShopId(existingDriveShopId);
+    const result = saveExistingDriveShopId(existingDriveShopId);
     if (!result.ok) {
       setShopIdMsg(result.error || 'Invalid Shop Backup ID');
       return;
