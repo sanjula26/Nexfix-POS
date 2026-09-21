@@ -76,12 +76,24 @@ async function registerDeviceForShop(shopId: string): Promise<void> {
   if (error || !data?.ok) throw new Error(error?.message || 'Could not register this device for the selected shop');
 }
 
-async function downloadShopSnapshot(shopId: string): Promise<{ state: POSState; revision: number } | null> {
-  if (!supabaseConfigured || !supabase) return null;
-  const { data, error } = await supabase.from('pos_state_snapshots').select('state, revision').eq('shop_id', shopId).maybeSingle();
-  if (error || !data || !validState(data.state)) return null;
+type ShopSnapshotResult = {
+  snapshot: { state: POSState; revision: number } | null;
+  error?: string;
+};
+
+async function downloadShopSnapshot(shopId: string): Promise<ShopSnapshotResult> {
+  if (!supabaseConfigured || !supabase) return { snapshot: null, error: 'Cloud authentication is not configured' };
+  const { data, error } = await supabase
+    .from('pos_state_snapshots')
+    .select('state, revision')
+    .eq('shop_id', shopId)
+    .maybeSingle();
+  if (error) return { snapshot: null, error: error.message };
+  if (!data) return { snapshot: null };
+  if (!validState(data.state)) return { snapshot: null, error: 'Cloud shop snapshot has an invalid state format' };
   const revision = Number(data.revision);
-  return Number.isSafeInteger(revision) && revision >= 0 ? { state: data.state, revision } : null;
+  if (!Number.isSafeInteger(revision) || revision < 0) return { snapshot: null, error: 'Cloud shop snapshot has an invalid revision' };
+  return { snapshot: { state: data.state, revision } };
 }
 
 function readCachedState(shopId: string): POSState | null {
@@ -132,7 +144,9 @@ export default function ShopSwitcher() {
         let remote: { state: POSState; revision: number } | null = null;
         if (online) {
           await registerDeviceForShop(activeShop.id);
-          remote = await downloadShopSnapshot(activeShop.id);
+          const remoteResult = await downloadShopSnapshot(activeShop.id);
+          if (remoteResult.error) throw new Error(remoteResult.error);
+          remote = remoteResult.snapshot;
         }
         const cached = remote ? null : readCachedState(activeShop.id);
         if (!remote && !cached) {
@@ -178,7 +192,9 @@ export default function ShopSwitcher() {
       let remote: { state: POSState; revision: number } | null = null;
       if (online) {
         await registerDeviceForShop(target.id);
-        remote = await downloadShopSnapshot(target.id);
+        const remoteResult = await downloadShopSnapshot(target.id);
+        if (remoteResult.error) throw new Error(remoteResult.error);
+        remote = remoteResult.snapshot;
       }
       const cached = remote ? null : readCachedState(target.id);
       if (!remote && !cached) throw new Error(online
