@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
+import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
