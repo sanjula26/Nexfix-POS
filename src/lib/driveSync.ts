@@ -157,10 +157,18 @@ export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backe
   const backup = result.backup as { state?: unknown; timestamp?: unknown; backupType?: unknown };
   if (typeof backup.state !== 'string') return null;
   try {
+    const parsed: unknown = JSON.parse(backup.state);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const backedUpAt = typeof backup.timestamp === 'string' && Number.isFinite(Date.parse(backup.timestamp))
+      ? backup.timestamp
+      : undefined;
+    const kind = backup.backupType === 'manual' || backup.backupType === 'auto'
+      ? backup.backupType
+      : undefined;
     return {
-      state: { [CLOUD_SAFE_MARKER]: true, state: JSON.parse(backup.state) },
-      backedUpAt: typeof backup.timestamp === 'string' ? backup.timestamp : undefined,
-      kind: typeof backup.backupType === 'string' ? backup.backupType : undefined,
+      state: { [CLOUD_SAFE_MARKER]: true, state: parsed },
+      backedUpAt,
+      kind,
     };
   } catch {
     return null;
