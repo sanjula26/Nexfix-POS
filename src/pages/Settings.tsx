@@ -7,7 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
-  isGoogleSyncEnabled, fetchLatestGoogleBackup,
+  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup,
 } from '../lib/driveSync';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
@@ -129,7 +129,7 @@ export default function Settings() {
     if (!user || user.role !== 'admin') return setGMsg('Cloud restore requires admin access');
     if (!gEnabled) return setGMsg('Enable Google sync before restoring a cloud backup');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
-    if (!getGoogleScriptUrl()) return setGMsg('Save the Google Apps Script URL first');
+    if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
     setGRestoreBusy(true);
     setGMsg('Reading the latest Google backup…');
     try {
