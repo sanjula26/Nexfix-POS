@@ -2207,8 +2207,8 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user, can]);
 
   const openSession = useCallback((cashierId: string, opening: number) => {
-    if (!user || !can('page:pos')) {
-      pushAudit('DENIED', 'Session', 'Blocked cash-session open without POS access');
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session open without admin access');
       return;
     }
     const u = state.users.find(x => x.id === cashierId);
