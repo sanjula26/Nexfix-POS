@@ -15,6 +15,7 @@ const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
+const DRIVE_SHOP_OVERRIDE_KEY = 'nexfix_drive_shop_id_override';
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
 const SINGLE_LIMIT_BYTES = 8.5 * 1024 * 1024;
 const PART_SIZE_CHARS = 6 * 1024 * 1024;
@@ -45,6 +46,8 @@ export function setGoogleSyncEnabled(_on: boolean): void {
 
 export function getLocalShopId(): string {
   try {
+    const recoveryOverride = (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || '').trim();
+    if (recoveryOverride.length > 0 && recoveryOverride.length <= 100 && SHOP_ID_PATTERN.test(recoveryOverride)) return recoveryOverride;
     const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
     if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
     const existingDriveId = (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
@@ -61,12 +64,18 @@ export function getLocalShopId(): string {
 }
 
 export function getDriveShopId(): string {
-  try { return (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim(); } catch { return ''; }
+  try {
+    return (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
+  } catch { return ''; }
+}
+
+export function adoptBackupShopId(input: string): { ok: boolean; error?: string } {
+  return setExistingDriveShopId(input, true);
 }
 
 const SHOP_ID_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/;
 
-export function setExistingDriveShopId(input: string): { ok: boolean; error?: string } {
+export function setExistingDriveShopId(input: string, recoveryOverride = true): { ok: boolean; error?: string } {
   const value = input.trim();
   if (!value) return { ok: false, error: 'Shop Backup ID is required' };
   if (value.length > 100 || !SHOP_ID_PATTERN.test(value)) {
@@ -74,6 +83,7 @@ export function setExistingDriveShopId(input: string): { ok: boolean; error?: st
   }
   try {
     localStorage.setItem(DRIVE_SHOP_KEY, value);
+    if (recoveryOverride) localStorage.setItem(DRIVE_SHOP_OVERRIDE_KEY, value);
     return { ok: true };
   } catch {
     return { ok: false, error: 'Could not save Shop Backup ID on this browser.' };
