@@ -14,6 +14,9 @@ var VERSION = '2.1.0';
 var SUPABASE_URL_PROPERTY = 'SUPABASE_URL';
 var SUPABASE_ANON_KEY_PROPERTY = 'SUPABASE_ANON_KEY';
 var SHOP_ID_MAX_LENGTH = 100;
+var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
+var DRIVE_BACKUP_SUBFOLDER_NAME = 'Backups';
+var DRIVE_METADATA_FILENAME = 'shop.json';
 
 var ALLOWED_DATA_TABLES = {
   'saleshistory': true,
@@ -153,7 +156,61 @@ function syncTable(ss, table, rows, shopId) {
   return { table: safeTable, rows: rows.length, shopPartition: shopPartitionKey(shopId) };
 }
 
+function sanitizeDriveName(value) {
+  return String(value || 'Shop').trim().replace(/[\\\\/:*?"<>|#%{}~&]/g, '_').replace(/\\s+/g, ' ').slice(0, 80) || 'Shop';
+}
+
+function getOrCreateFolder(parent, name) {
+  var folders = parent.getFoldersByName(name);
+  return folders.hasNext() ? folders.next() : parent.createFolder(name);
+}
+
+function getRootBackupFolder() {
+  var folders = DriveApp.getFoldersByName(ROOT_BACKUP_FOLDER_NAME);
+  return folders.hasNext() ? folders.next() : DriveApp.createFolder(ROOT_BACKUP_FOLDER_NAME);
+}
+
+function getShopBackupFolder(shopId, shopName) {
+  var root = getRootBackupFolder();
+  var folderName = 'Shop_' + shopPartitionKey(shopId) + ' - ' + sanitizeDriveName(shopName || 'Shop');
+  return getOrCreateFolder(root, folderName);
+}
+
+function writeShopMetadata(folder, shopId, state) {
+  var metadata = {
+    app: 'Nexfix POS',
+    version: VERSION,
+    shopId: shopId,
+    shopPartition: shopPartitionKey(shopId),
+    shopName: state && state.settings && state.settings.shopName ? String(state.settings.shopName) : 'Shop',
+    updatedAt: new Date().toISOString()
+  };
+  var files = folder.getFilesByName(DRIVE_METADATA_FILENAME);
+  var blob = Utilities.newBlob(JSON.stringify(metadata, null, 2), 'application/json', DRIVE_METADATA_FILENAME);
+  if (files.hasNext()) files.next().setContent(blob.getDataAsString());
+  else folder.createFile(blob);
+}
+
+function backupStateToDrive(contents, shopId) {
+  var state = contents.state || {};
+  var shopName = state && state.settings && state.settings.shopName ? String(state.settings.shopName) : 'Shop';
+  var shopFolder = getShopBackupFolder(shopId, shopName);
+  var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
+  writeShopMetadata(shopFolder, shopId, state);
+  var now = new Date();
+  var stamp = Utilities.formatDate(now, Session.getScriptTimeZone() || 'Etc/UTC', 'yyyy-MM-dd_HH-mm-ss_SSS');
+  var kind = contents.kind === 'auto' ? 'auto' : 'manual';
+  var fileName = 'NEXFIX_' + shopPartitionKey(shopId) + '_' + kind + '_' + stamp + '.json';
+  var envelope = {
+    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: kind, shopId: shopId, shopPartition: shopPartitionKey(shopId), shopName: shopName },
+    state: state
+  };
+  var file = backupFolder.createFile(Utilities.newBlob(JSON.stringify(envelope), 'application/json', fileName));
+  return { action: 'backupState', backupType: kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: shopPartitionKey(shopId) };
+}
+
 function backupState(ss, contents, shopId) {
+  var driveResult = backupStateToDrive(contents, shopId);
   var sheetName = partitionedSheetName(BACKUP_SHEET, shopId);
   var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
   var state = contents.state || {};
@@ -161,10 +218,38 @@ function backupState(ss, contents, shopId) {
   sheet.clearContents();
   sheet.getRange(1, 1, 1, 5).setValues([['Timestamp', 'BackupType', 'Version', 'ShopPartition', 'StateJSON']]);
   sheet.getRange(2, 1, 1, 5).setValues([[now, contents.kind || 'manual', VERSION, shopPartitionKey(shopId), JSON.stringify(state)]]);
-  return { action: 'backupState', backupType: contents.kind || 'manual', timestamp: now.toISOString(), sheet: sheetName, shopPartition: shopPartitionKey(shopId) };
+  return driveResult;
+}
+
+function latestDriveBackup(shopId) {
+  var root = getRootBackupFolder();
+  var shopFolders = root.getFolders();
+  var target = null;
+  while (shopFolders.hasNext()) {
+    var folder = shopFolders.next();
+    if (folder.getName().indexOf('Shop_' + shopPartitionKey(shopId) + ' - ') === 0) { target = folder; break; }
+  }
+  if (!target) return null;
+  var backups = target.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
+  if (!backups.hasNext()) return null;
+  var backupFolder = backups.next();
+  var files = backupFolder.getFiles();
+  var latest = null;
+  while (files.hasNext()) {
+    var file = files.next();
+    if (file.getMimeType() !== 'application/json' || file.getName().indexOf('NEXFIX_' + shopPartitionKey(shopId) + '_') !== 0) continue;
+    if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) latest = file;
+  }
+  if (!latest) return null;
+  return JSON.parse(latest.getBlob().getDataAsString());
 }
 
 function latestBackup(ss, shopId) {
+  var driveBackup = latestDriveBackup(shopId);
+  if (driveBackup && driveBackup.state) {
+    var meta = driveBackup._meta || {};
+    return { timestamp: meta.exportedAt || '', backupType: meta.kind || '', version: VERSION, state: JSON.stringify(driveBackup.state) };
+  }
   var sheet = ss.getSheetByName(partitionedSheetName(BACKUP_SHEET, shopId));
   if (!sheet || sheet.getLastRow() < 2 || sheet.getLastColumn() < 5) return null;
   var values = sheet.getRange(1, 1, sheet.getLastRow(), Math.max(5, sheet.getLastColumn())).getValues();
