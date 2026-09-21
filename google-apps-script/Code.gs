@@ -364,7 +364,7 @@ function doGet(e) {
     }
     var statusResult = getCachedBackupStatus(p.requestId, p.shopId);
     var statusCallback = String(p.callback || '').trim();
-    if (statusCallback && /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(statusCallback)) {
+    if (statusCallback && /^__nexfixGoogleBackupStatus_[0-9]+_[A-Za-z0-9]+$/.test(statusCallback)) {
       return ContentService.createTextOutput(statusCallback + '(' + JSON.stringify(statusResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
     }
     return json(statusResult);
@@ -375,7 +375,7 @@ function doGet(e) {
     try { shopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
     var result = ok({ action: 'getLatestBackup', backup: latestBackup(null, shopId) });
     var callback = String(p.callback || '').trim();
-    if (callback && /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(callback)) {
+    if (callback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(callback)) {
       return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
     }
     return json(result);
