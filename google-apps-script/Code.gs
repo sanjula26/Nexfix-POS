@@ -235,34 +235,39 @@ function backupState(ss, contents, shopId) {
 function latestDriveBackup(shopId) {
   var root = getRootBackupFolder();
   var shopFolders = root.getFolders();
-  var target = null;
-  while (shopFolders.hasNext()) {
-    var folder = shopFolders.next();
-    if (folder.getName().indexOf('Shop_' + shopPartitionKey(shopId) + ' - ') === 0) { target = folder; break; }
-  }
-  if (!target) return null;
-  var backups = target.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
-  if (!backups.hasNext()) return null;
-  var backupFolder = backups.next();
-  var files = backupFolder.getFiles();
   var latest = null;
   var latestPayload = null;
   var partitionPrefix = 'NEXFIX_' + shopPartitionKey(shopId) + '_';
-  while (files.hasNext()) {
-    var file = files.next();
-    if (file.getMimeType() !== 'application/json' || file.getName().indexOf(partitionPrefix) !== 0) continue;
-    try {
-      var parsed = JSON.parse(file.getBlob().getDataAsString());
-      var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
-      var state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.state : null;
-      if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
-      if (meta.shopPartition && String(meta.shopPartition) !== shopPartitionKey(shopId)) continue;
-      if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
-        latest = file;
-        latestPayload = parsed;
+  var shopFolderPrefix = 'Shop_' + shopPartitionKey(shopId) + ' - ';
+
+  // Scan every matching shop folder so backups created before the folder-stability
+  // fix are still discoverable. The shop partition, not the folder name, remains
+  // the authoritative shop-isolation key.
+  while (shopFolders.hasNext()) {
+    var shopFolder = shopFolders.next();
+    if (shopFolder.getName().indexOf(shopFolderPrefix) !== 0) continue;
+
+    var backups = shopFolder.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
+    while (backups.hasNext()) {
+      var backupFolder = backups.next();
+      var files = backupFolder.getFiles();
+      while (files.hasNext()) {
+        var file = files.next();
+        if (file.getMimeType() !== 'application/json' || file.getName().indexOf(partitionPrefix) !== 0) continue;
+        try {
+          var parsed = JSON.parse(file.getBlob().getDataAsString());
+          var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
+          var state = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed.state : null;
+          if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+          if (meta.shopPartition && String(meta.shopPartition) !== shopPartitionKey(shopId)) continue;
+          if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
+            latest = file;
+            latestPayload = parsed;
+          }
+        } catch (ignore) {
+          // Ignore a malformed/incomplete Drive file and continue with older valid backups.
+        }
       }
-    } catch (ignore) {
-      // Ignore a malformed/incomplete Drive file and continue with older valid backups.
     }
   }
   return latestPayload;
