@@ -157,6 +157,51 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   return { local, cloud };
 }
 
+type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
+
+let scheduledGoogleBackupTimer: number | undefined;
+let scheduledGoogleBackupRunning = false;
+let scheduledGoogleBackupLastRunAt = 0;
+let scheduledGoogleBackupGetter: (() => POSState) | undefined;
+
+/**
+ * Coalesces event-driven cloud backups so settings typing / multiple sale-side
+ * state changes cannot exceed the Apps Script rate limit. The latest full state
+ * is read only when the debounce expires.
+ */
+export function scheduleGoogleBackup(
+  getState: () => POSState,
+  _reason: GoogleBackupReason,
+): void {
+  scheduledGoogleBackupGetter = getState;
+  if (scheduledGoogleBackupTimer !== undefined) {
+    window.clearTimeout(scheduledGoogleBackupTimer);
+  }
+
+  const DEBOUNCE_MS = 2 * 60 * 1000;
+  const RATE_LIMIT_MS = 2 * 60 * 1000;
+  const delay = Math.max(DEBOUNCE_MS, RATE_LIMIT_MS - (Date.now() - scheduledGoogleBackupLastRunAt));
+
+  scheduledGoogleBackupTimer = window.setTimeout(async () => {
+    scheduledGoogleBackupTimer = undefined;
+    if (scheduledGoogleBackupRunning) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      // Keep the latest request pending; the normal auto-backup/online path can retry.
+      return;
+    }
+    const getter = scheduledGoogleBackupGetter;
+    if (!getter) return;
+
+    scheduledGoogleBackupRunning = true;
+    try {
+      scheduledGoogleBackupLastRunAt = Date.now();
+      await downloadBackup(getter(), 'auto', { download: false, cloud: true });
+    } finally {
+      scheduledGoogleBackupRunning = false;
+    }
+  }, delay);
+}
+
 export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void): () => void {
   let running = false;
   const RETRY_DELAY_MS = 60_000;
