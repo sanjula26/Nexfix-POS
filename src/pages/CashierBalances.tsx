@@ -263,7 +263,7 @@ export default function CashierBalances() {
       <Modal open={!!openFloatId} onClose={() => setOpenFloatId(null)} title="Set opening cash">
         <div className="space-y-3">
           <p className="text-sm text-sub">
-            Morning float — අතේ තියෙන මුදල. Day end එකේ expected drawer = opening + cash sales.
+            Morning float — starting cash kept in the drawer. Day-end expected drawer = opening + cash sales.
           </p>
           <Field label="Opening amount (Rs.)">
             <input
