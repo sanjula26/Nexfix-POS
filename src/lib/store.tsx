@@ -539,6 +539,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
 
   const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
+    if (!user) return false;
     const ok = verifyPassword(pin || '', state.settings.adminPinHash);
     if (!ok) {
       setState(s => ({
