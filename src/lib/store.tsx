@@ -1857,6 +1857,10 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     if (role === 'admin') return;
+    if (!PERMISSION_KEYS.some(item => item.key === key)) {
+      pushAudit('DENIED', 'Permissions', `Blocked unknown permission key: ${role}:${key}`);
+      return;
+    }
     setState(s => ({
       ...s,
       permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } },
