@@ -98,11 +98,30 @@ function RouteFallback() {
   return <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] font-semibold">Loading…</div>;
 }
 
+function PermissionDenied() {
+  return (
+    <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] p-6">
+      <div className="card max-w-md w-full p-6 text-center">
+        <h1 className="text-lg font-extrabold">Access denied</h1>
+        <p className="text-sm text-sub mt-2">Your account does not have permission to open this page.</p>
+      </div>
+    </div>
+  );
+}
+
 function PermissionProtected({ permission, adminOnly, children }: { permission?: string; adminOnly?: boolean; children: ReactNode }) {
   const { user, can } = usePOS();
   if (!user) return <Navigate to="/login" replace />;
-  if (adminOnly && user.role !== 'admin') return <Navigate to={can('page:dashboard') ? '/dashboard' : '/pos'} replace />;
-  if (permission && !can(permission)) return <Navigate to={can('page:dashboard') ? '/dashboard' : '/pos'} replace />;
+  if (adminOnly && user.role !== 'admin') {
+    if (can('page:dashboard')) return <Navigate to="/dashboard" replace />;
+    if (can('page:pos')) return <Navigate to="/pos" replace />;
+    return <PermissionDenied />;
+  }
+  if (permission && !can(permission)) {
+    if (can('page:dashboard')) return <Navigate to="/dashboard" replace />;
+    if (can('page:pos')) return <Navigate to="/pos" replace />;
+    return <PermissionDenied />;
+  }
   return <>{children}</>;
 }
 
