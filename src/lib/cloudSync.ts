@@ -13,6 +13,18 @@ function storage(): Storage | null {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
 }
 
+function sanitizeCloudSnapshotState(state: POSState): POSState {
+  return {
+    ...state,
+    users: [],
+    sessions: [],
+    settings: {
+      ...state.settings,
+      adminPinHash: '',
+    },
+  };
+}
+
 function deviceId(): string {
   const machineId = getMachineIdentity().id;
   if (machineId) return machineId;
@@ -283,7 +295,8 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
   const { error: deviceError } = await supabase.rpc('register_pos_device', { p_shop_id: shopId, p_device_id: currentDeviceId });
   if (deviceError) return { status: 'error', message: deviceError.message };
   const expectedRevision = getRevision();
-  const { data, error } = await supabase.rpc('upsert_pos_snapshot', { p_shop_id: shopId, p_device_id: currentDeviceId, p_expected_revision: expectedRevision, p_state: state });
+  const cloudState = sanitizeCloudSnapshotState(state);
+  const { data, error } = await supabase.rpc('upsert_pos_snapshot', { p_shop_id: shopId, p_device_id: currentDeviceId, p_expected_revision: expectedRevision, p_state: cloudState });
   if (error) return { status: 'error', message: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) return { status: 'error', message: 'No sync response received' };
@@ -303,7 +316,8 @@ export async function downloadStateSnapshot(): Promise<{ state: POSState; revisi
   const revision = Number(data.revision);
   if (!Number.isSafeInteger(revision) || revision < 0) return null;
   setRevision(revision);
-  return { state: data.state as POSState, revision };
+  const cloudState = sanitizeCloudSnapshotState(data.state as POSState);
+  return { state: cloudState, revision };
 }
 
 export async function resolveCloudConflict(): Promise<{ state: POSState; revision: number } | null> { return downloadStateSnapshot(); }
