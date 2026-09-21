@@ -222,7 +222,7 @@ export async function fetchFromGoogleDrive(_tableName: string): Promise<unknown[
 }
 
 /** Read the latest backup directly from Apps Script using JSONP (no Supabase proxy). */
-export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string } | null> {
+export async function fetchLatestGoogleBackup(): Promise<{ state: unknown; backedUpAt?: string; kind?: string; shopId?: string; shopPartition?: string; shopName?: string } | null> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
   const shopId = getLocalShopId();
   if (!shopId) return null;
