@@ -312,7 +312,7 @@ export async function downloadStateSnapshot(): Promise<{ state: POSState; revisi
   const { data: sessionData } = await supabase.auth.getSession();
   if (!sessionData.session) return null;
   const { data, error } = await supabase.from('pos_state_snapshots').select('state, revision').eq('shop_id', getCloudShopId()).maybeSingle();
-  if (error || !data || !data.state) return null;
+  if (error || !data || !data.state || typeof data.state !== 'object' || Array.isArray(data.state)) return null;
   const revision = Number(data.revision);
   if (!Number.isSafeInteger(revision) || revision < 0) return null;
   setRevision(revision);
