@@ -2,7 +2,6 @@
  * POS -> Google Apps Script Web App -> dedicated Google Drive folder.
  * This backup path does not use Supabase.
  */
-import type { POSState } from './types';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
