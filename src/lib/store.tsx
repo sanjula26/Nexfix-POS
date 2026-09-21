@@ -500,7 +500,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (user && can('act:export')) {
           try {
             await downloadBackup(stateRef.current, 'auto', {
-              download: flushed > 0,
+              download: false,
               cloud: true,
             });
             const meta = await idbGetMeta();
