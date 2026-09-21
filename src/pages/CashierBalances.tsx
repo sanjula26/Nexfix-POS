@@ -128,7 +128,7 @@ export default function CashierBalances() {
     { label: "Today's sales", value: fmtRs(grossSales), icon: TrendingUp, tone: 'emerald' },
     { label: 'Cash in drawer', value: fmtRs(cashSales), icon: Banknote, tone: 'sky' },
     { label: 'Card / Bank / Mobile', value: fmtRs(cardSales + bankSales + mobileSales), icon: CreditCard, tone: 'blue' },
-    { label: 'Credit (නයට)', value: fmtRs(creditSales), icon: HandCoins, tone: 'amber' },
+    { label: 'Credit', value: fmtRs(creditSales), icon: HandCoins, tone: 'amber' },
     { label: 'Refunds / returns', value: fmtRs(refundTotal), icon: RotateCcw, tone: 'rose' },
     { label: 'Expenses', value: fmtRs(todayExpenses), icon: Receipt, tone: 'slate' },
     { label: 'Expected cash', value: fmtRs(shopExpected), icon: Landmark, tone: 'violet' },
