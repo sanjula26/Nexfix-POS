@@ -323,6 +323,22 @@ function doPost(e) {
   }
 }
 
+function getCachedBackupStatus(requestId, shopId) {
+  var id = String(requestId || '').trim();
+  if (!id || id.length > 200) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
+
+  var cached = CacheService.getScriptCache().get('nexfix_req_' + id);
+  if (!cached) return { ok: false, status: 'pending', version: VERSION, pending: true };
+
+  try {
+    var result = JSON.parse(cached);
+    if (result && result.ok === true && result.action === 'backupState') return result;
+    return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
+  } catch (err) {
+    return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
+  }
+}
+
 function getTable(ss, table, shopId) {
   if (!isAllowedDataTable(table)) throw new Error('Table is not allowed');
   var safeTable = normalizeTableName(table);
@@ -340,6 +356,18 @@ function getTable(ss, table, shopId) {
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Direct Google Backup API is running' }));
+
+  if (p.action === 'backupStatus') {
+    try { normalizeShopId(p.shopId); } catch (err) {
+      return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' });
+    }
+    var statusResult = getCachedBackupStatus(p.requestId, p.shopId);
+    var statusCallback = String(p.callback || '').trim();
+    if (statusCallback && /^[A-Za-z_$][0-9A-Za-z_$\.]*$/.test(statusCallback)) {
+      return ContentService.createTextOutput(statusCallback + '(' + JSON.stringify(statusResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return json(statusResult);
+  }
 
   if (p.action === 'getLatestBackup') {
     var shopId;
