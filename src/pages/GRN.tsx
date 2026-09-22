@@ -55,7 +55,17 @@ export default function GRN() {
     const returnedByItem = new Map<number, number>();
     for (const ret of state.purchaseReturns || []) if (ret.purchaseId === p.id) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
     setReturnPurchase(p); setReturnReason('');
-    setReturnLines(p.items.map((item, itemIdx) => { const already=returnedByItem.get(itemIdx)||0; const stock=state.products.find(x=>x.id===item.productId)?.stock??0; return { itemIdx, maxQty: Math.min(Math.max(0,item.qty-already),Math.max(0,stock)), qty:0 }; }));
+    setReturnLines(p.items.map((item, itemIdx) => {
+      const already = returnedByItem.get(itemIdx) || 0;
+      const product = state.products.find(x => x.id === item.productId);
+      const stock = Math.max(0, product?.stock ?? 0);
+      const tracked = !!(product?.trackImei || product?.trackSerial);
+      const unitStock = tracked
+        ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === p.id && u.status === 'in_stock').length
+        : Number.MAX_SAFE_INTEGER;
+      const remaining = Math.max(0, item.qty - already);
+      return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0 };
+    }));
   };
   const edit = (p: Purchase) => { setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\\n') }))); setFormMode('receive'); setView('form'); };
 
