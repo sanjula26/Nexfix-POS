@@ -4,7 +4,7 @@
  * v1 backups remain passphrase-compatible for backward compatibility.
  * New backups use an automatically generated 256-bit recovery key. The key is
  * kept locally for automatic operation and can be recovered from the shop's
- * protected Drive recovery file when a PC is replaced.
+ * RECOVERY_KEY.txt file when a PC is replaced.
  */
 const PBKDF2_ITERATIONS = 310000;
 const SALT_BYTES = 16;
