@@ -7,7 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
-import type { Product } from '../lib/types';
+import type { Product, InventoryUnit } from '../lib/types';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -20,7 +20,7 @@ const blankProduct = (lowDefault: number): Product => ({
 });
 
 export default function Inventory() {
-  const { state, saveProduct, deleteProduct, adjustStock, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
+  const { state, saveProduct, saveUnitsBulk, deleteProduct, adjustStock, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
@@ -83,8 +83,59 @@ export default function Inventory() {
       return;
     }
 
-    saveProduct(editing);
+    // For a new tracked product, identifiers entered in this modal are created as
+    // normal InventoryUnit records so the Units page is populated immediately.
+    if (isNew && nextTracked && newUnitText.trim()) {
+      const lines = newUnitText.split(/\\r?\\n/);
+      const newUnits: InventoryUnit[] = [];
+      const parseErrors: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i].trim();
+        if (!raw) continue;
+        const parts = raw.split(',').map(x => x.trim());
+        let imei = '', serial = '';
+        if (editing.trackImei && editing.trackSerial) {
+          if (parts.length !== 2 || !parts[0] || !parts[1]) {
+            parseErrors.push('Line ' + (i + 1) + ': enter IMEI,SERIAL');
+            continue;
+          }
+          imei = parts[0]; serial = parts[1];
+        } else if (editing.trackImei) {
+          if (parts.length !== 1 || !parts[0]) {
+            parseErrors.push('Line ' + (i + 1) + ': enter one IMEI');
+            continue;
+          }
+          imei = parts[0];
+        } else {
+          if (parts.length !== 1 || !parts[0]) {
+            parseErrors.push('Line ' + (i + 1) + ': enter one serial number');
+            continue;
+          }
+          serial = parts[0];
+        }
+        newUnits.push({
+          id: uid(),
+          productId: editing.id,
+          imei: imei || undefined,
+          serial: serial || undefined,
+          status: 'in_stock',
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (parseErrors.length) {
+        alert(parseErrors.join('\\n'));
+        return;
+      }
+      saveProduct(editing);
+      const result = saveUnitsBulk(newUnits);
+      if (!result.ok || result.errors.length) {
+        alert(result.errors.length ? result.errors.join('\\n') : 'The product was saved, but the unit identifiers could not be added.');
+      }
+    } else {
+      saveProduct(editing);
+    }
     setEditing(null);
+    setNewUnitText('');
   };
 
   const num = (v: string) => Number(v.replace(/[^\d.]/g, '')) || 0;
@@ -110,7 +161,7 @@ export default function Inventory() {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault)); setIsNew(true); }}
+                onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault)); setNewUnitText(''); setIsNew(true); }}
               >
                 <Plus size={15} /> Add Product
               </button>
@@ -241,6 +292,30 @@ export default function Inventory() {
               <label className={`flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3 ${!isNew && editing.trackSerial !== current?.trackSerial && !stockAligned ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}><input type="checkbox" className="accent-violet-600 w-4 h-4" checked={!!editing.trackSerial} disabled={!isNew && editing.trackSerial !== current?.trackSerial && !stockAligned} onChange={e => setEditing({ ...editing, trackSerial: e.target.checked })} /><span className="text-sm text-ink font-medium">Track Serial No.</span></label>
             </div>
             {currentTracked && !tracked && inStockUnits > 0 && <p className="text-xs font-medium text-rose-600">Tracking cannot be disabled while in-stock units remain. Reconcile those units first.</p>}
+            {isNew && tracked && (
+              <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 space-y-3">
+                <div>
+                  <div className="text-sm font-bold text-ink">Initial IMEI / Serial numbers</div>
+                  <p className="text-xs text-sub mt-0.5">
+                    Add one unit per line. {editing.trackImei && editing.trackSerial
+                      ? 'For both, use IMEI,SERIAL on each line.'
+                      : editing.trackImei ? 'Enter one IMEI per line.' : 'Enter one serial number per line.'}
+                  </p>
+                </div>
+                <textarea
+                  className="input min-h-[150px] font-mono text-sm bg-white"
+                  value={newUnitText}
+                  onChange={e => setNewUnitText(e.target.value)}
+                  placeholder={editing.trackImei && editing.trackSerial
+                    ? '356789012345678,ABC123\\n356789012345679,ABC124'
+                    : editing.trackImei
+                      ? '356789012345678\\n356789012345679'
+                      : 'SN-ABC123\\nSN-ABC124'}
+                  aria-label="Initial IMEI or serial numbers"
+                />
+                <p className="text-[11px] text-sub">Blank lines are ignored. Duplicate identifiers are rejected.</p>
+              </div>
+            )}
             <Field label="Warranty (months)" hint="Printed on receipt for this product"><input className="input num" value={editing.warrantyMonths || ''} onChange={e => setEditing({ ...editing, warrantyMonths: Math.round(num(e.target.value)) || undefined })} placeholder="e.g. 12" /></Field>
             
           </div>;
