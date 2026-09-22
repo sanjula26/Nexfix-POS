@@ -7,7 +7,6 @@ import type { POSState } from './types';
 import { idbGetMeta, idbSetMeta } from './db';
 import { downloadFile, dkey } from './utils';
 import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
-import { hasBackupPassphrase } from './backupCrypto';
 import { isValidInventoryTransaction } from './inventoryLedger';
 
 export interface BackupEnvelope {
@@ -193,10 +192,6 @@ export function scheduleGoogleBackup(
   scheduledGoogleBackupTimer = window.setTimeout(async () => {
     scheduledGoogleBackupTimer = undefined;
     if (scheduledGoogleBackupRunning) return;
-    if (!hasBackupPassphrase()) {
-      console.info('[Google Backup] Automatic backup skipped: Backup Passphrase is not unlocked for this browser session.');
-      return;
-    }
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       // Keep the latest request pending; the normal auto-backup/online path can retry.
       return;
@@ -238,12 +233,6 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       if (!force && !due && !pending) return;
       if (!force && pending && retryAt > now) return;
 
-      // Encrypted cloud backups require the session-only passphrase. Do not
-      // create a durable pending marker while the browser session is locked.
-      if (!hasBackupPassphrase()) {
-        console.info('[Google Backup] Automatic backup skipped: Backup Passphrase is not unlocked for this browser session.');
-        return;
-      }
       // Persist the pending marker before the network operation. This survives tab/browser
       // restarts and ensures a failed upload is retried instead of being silently lost.
       if (!pending) {
