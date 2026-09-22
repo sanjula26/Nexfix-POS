@@ -162,6 +162,19 @@ export default function Settings() {
       const texts = new Map<string, string>();
       for (const file of files) texts.set(file.name, await readFile(file));
 
+      // A downloaded RECOVERY_KEY.txt can be selected together with the backup.
+      // This makes offline/disaster recovery possible without retyping the key.
+      for (const [name, text] of texts) {
+        if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
+        const match = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+        if (match) {
+          const result = setRecoveryKey(match[1]);
+          if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
+          setRecoveryKeyReady(true);
+          break;
+        }
+      }
+
       let parsed: unknown;
       const jsonCandidates = files
         .filter(file => file.name.toLowerCase().endsWith('.json'))
@@ -255,6 +268,7 @@ export default function Settings() {
     try {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
       if (result.cloud) {
+        setRecoveryKeyReady(hasRecoveryKey());
         setGMsg('Google Drive backup completed successfully.');
       } else {
         setGMsg(result.error || 'Google Drive backup failed. No backup was uploaded.');
