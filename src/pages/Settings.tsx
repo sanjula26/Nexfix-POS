@@ -183,7 +183,6 @@ export default function Settings() {
         const meta = candidate._meta as Record<string, unknown>;
         if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
           const decrypted = await decryptBackupEnvelope(candidate.payload);
-          adoptImportedShop(candidate.payload.shopId);
           restoreInput = { __nexfixCloudSafe: true, state: decrypted };
         }
       // Google Drive multipart backup: select the manifest plus all .partNNN files.
@@ -206,15 +205,34 @@ export default function Settings() {
         try { envelope = JSON.parse(rawPayload); } catch { throw new Error('Multipart encrypted payload is not valid JSON.'); }
         if (!isEncryptedBackupEnvelope(envelope)) throw new Error('Multipart encrypted backup envelope is invalid.');
         const decrypted = await decryptBackupEnvelope(envelope);
-        adoptImportedShop(envelope.shopId);
         restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       } else if (isEncryptedBackupEnvelope(parsed)) {
         const decrypted = await decryptBackupEnvelope(parsed);
-        adoptImportedShop(parsed.shopId);
         restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       }
 
       await applyBackupRestore(state, restoreInput);
+
+      // Bind a recovered PC to the imported shop only after the restore has
+      // been fully validated, decrypted, persisted, and checkpoint-cleared.
+      if (isEncryptedBackupEnvelope(parsed)) {
+        adoptImportedShop(parsed.shopId);
+      } else if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload
+        && (candidate._meta as Record<string, unknown>).encrypted === true
+        && isEncryptedBackupEnvelope(candidate.payload)) {
+        adoptImportedShop(candidate.payload.shopId);
+      } else if (candidate && typeof candidate === 'object' && candidate.encrypted === true
+        && Array.isArray(candidate.partNames)) {
+        let importedEnvelope: unknown = null;
+        try {
+          const importedRaw = (candidate.partNames as string[]).map(name => texts.get(name) || '').join('');
+          importedEnvelope = JSON.parse(importedRaw);
+        } catch {
+          importedEnvelope = null;
+        }
+        if (isEncryptedBackupEnvelope(importedEnvelope)) adoptImportedShop(importedEnvelope.shopId);
+      }
+
       await queueWrite('backup_restore');
       setImportMsg('Backup restored safely. Reloading…');
       window.setTimeout(() => window.location.reload(), 450);
