@@ -9,7 +9,7 @@ import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId,
 } from '../lib/driveSync';
-import { clearBackupPassphrase, decryptBackupEnvelope, hasBackupPassphrase, isEncryptedBackupEnvelope, setBackupPassphrase, sha256Hex } from '../lib/backupCrypto';
+import { decryptBackupEnvelope, getBackupSecurityMessage, getRecoveryKey, hasRecoveryKey, isEncryptedBackupEnvelope, setRecoveryKey, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
@@ -57,9 +57,10 @@ export default function Settings() {
   const [pinConfirm, setPinConfirm] = useState('');
   const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showPins, setShowPins] = useState(false);
-  const [backupPassphrase, setBackupPassphraseInput] = useState('');
-  const [backupPassphraseMsg, setBackupPassphraseMsg] = useState('');
-  const [backupPassphraseReady, setBackupPassphraseReady] = useState(() => hasBackupPassphrase());
+  const [recoveryKeyInput, setRecoveryKeyInput] = useState('');
+  const [recoveryKeyMsg, setRecoveryKeyMsg] = useState('');
+  const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey());
+  const [recoveryKeyCopied, setRecoveryKeyCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -249,8 +250,7 @@ export default function Settings() {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
     if (connectivity !== 'online') return setGMsg('Google backup requires an online connection');
-    if (!hasBackupPassphrase()) return setGMsg('Set the Backup Passphrase in Settings before using Google Drive backup (minimum 12 characters).');
-    setGRestoreBusy(true);
+        setGRestoreBusy(true);
     setGMsg('Sending backup to Google Drive…');
     try {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
@@ -271,7 +271,7 @@ export default function Settings() {
     if (!gEnabled) return setGMsg('Google Drive backup is not available in this build');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
     if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
-    if (!hasBackupPassphrase()) return setGMsg('Set the Backup Passphrase in Settings before restoring encrypted Google Drive data (minimum 12 characters).');
+    if (!hasRecoveryKey()) return setGMsg('Recovery Key is required for automatic encrypted restore. Paste the Recovery Key from RECOVERY_KEY.txt in the Shop Backup Identity section first.');
     const currentShopId = getLocalShopId();
     if (!currentShopId) return setGMsg('Shop Backup ID is missing. Set one before restoring Google Drive data.');
     setGRestoreBusy(true);
@@ -411,26 +411,43 @@ export default function Settings() {
 
           <div className="card p-6 border border-emerald-500/20">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup Encryption</h3>
-            <p className="text-xs text-faint mb-4">Google Drive backups are encrypted in this browser. The passphrase is never stored or sent to Google. If it is lost, the encrypted backup cannot be restored.</p>
-            <Field label="Backup Passphrase" hint="Memory-only for this browser session. Never stored in localStorage or sent to Google.">
-              <input type="password" className="input font-mono" value={backupPassphrase} onChange={e => { setBackupPassphraseInput(e.target.value); setBackupPassphraseMsg(''); }} placeholder="Enter a strong backup passphrase" autoComplete="new-password" />
-            </Field>
-            <div className="flex flex-wrap gap-2 mt-3">
-              <button type="button" className="btn btn-primary" disabled={!backupPassphrase} onClick={() => {
-                const result = setBackupPassphrase(backupPassphrase);
-                if (!result.ok) { setBackupPassphraseMsg(result.error || 'Could not set passphrase'); return; }
-                setBackupPassphraseInput('');
-                setBackupPassphraseReady(true);
-                setBackupPassphraseMsg('Backup encryption unlocked for this browser session.');
-              }}>Unlock encryption</button>
-              {backupPassphraseReady && <button type="button" className="btn btn-soft" onClick={() => {
-                clearBackupPassphrase();
-                setBackupPassphraseReady(false);
-                setBackupPassphraseMsg('Backup encryption locked. Automatic Google backups will wait until you unlock it again.');
-              }}>Lock encryption</button>}
+            <p className="text-xs text-faint mb-4">{getBackupSecurityMessage()}</p>
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3.5 py-3 text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">
+              Encryption is automatic. You do not need to enter or unlock a passphrase for normal backups.
             </div>
-            {backupPassphraseMsg && <p className={`text-[12px] font-medium mt-3 ${backupPassphraseMsg.includes('unlocked') ? 'text-emerald-500' : 'text-rose-500'}`}>{backupPassphraseMsg}</p>}
-            <p className="text-[11px] text-faint mt-3">{backupPassphraseReady ? 'Encrypted Google backup is unlocked for this browser session.' : 'Enter the passphrase before using Google Drive backup or restore. Losing the passphrase means the encrypted backup cannot be restored.'}</p>
+            <Field label="Recovery Key" hint="Generated automatically on the first Google backup. Keep a private copy outside the PC.">
+              <div className="flex gap-2">
+                <input type="text" className="input flex-1 font-mono text-xs" value={getRecoveryKey()} readOnly placeholder="Will be generated automatically on first backup" />
+                <button type="button" className="btn btn-soft shrink-0" disabled={!getRecoveryKey()} onClick={async () => {
+                  const key = getRecoveryKey();
+                  if (!key) return;
+                  try {
+                    await navigator.clipboard.writeText(key);
+                    setRecoveryKeyCopied(true);
+                    setRecoveryKeyMsg('Recovery Key copied. Keep it in a secure place.');
+                    window.setTimeout(() => setRecoveryKeyCopied(false), 2500);
+                  } catch {
+                    setRecoveryKeyMsg('Copy failed. Select the Recovery Key and copy it manually.');
+                  }
+                }}><Copy size={15} /> {recoveryKeyCopied ? 'Copied' : 'Copy'}</button>
+              </div>
+            </Field>
+            <div className="mt-4 pt-4 border-t border-line">
+              <Field label="Use existing Recovery Key" hint="Use this after replacing/reinstalling Windows. Paste the key from RECOVERY_KEY.txt or your saved copy.">
+                <div className="flex gap-2">
+                  <input type="text" className="input flex-1 font-mono text-xs" value={recoveryKeyInput} onChange={e => { setRecoveryKeyInput(e.target.value.trim()); setRecoveryKeyMsg(''); }} placeholder="Paste the existing Recovery Key" maxLength={64} />
+                  <button type="button" className="btn btn-primary shrink-0" disabled={!recoveryKeyInput} onClick={() => {
+                    const result = setRecoveryKey(recoveryKeyInput);
+                    if (!result.ok) { setRecoveryKeyMsg(result.error || 'Invalid Recovery Key'); return; }
+                    setRecoveryKeyInput('');
+                    setRecoveryKeyReady(true);
+                    setRecoveryKeyMsg('Recovery Key saved. Automatic encryption and restore are ready.');
+                  }}>Use Key</button>
+                </div>
+              </Field>
+            </div>
+            {recoveryKeyMsg && <p className="text-[12px] font-medium mt-3 text-emerald-500">{recoveryKeyMsg}</p>}
+            <p className="text-[11px] text-faint mt-3">{recoveryKeyReady ? 'Automatic encrypted Google backup is ready on this browser.' : 'The Recovery Key will be generated automatically when the first encrypted Google backup is created.'}</p>
           </div>
 
           <div className="card p-6 border border-violet-500/20">
@@ -464,7 +481,7 @@ export default function Settings() {
 
           {user?.role === 'admin' && <div className="card p-6 border border-rose-500/25"><h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3><p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p><button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button></div>}
 
-          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Drive Backup</h3><p className="text-xs text-faint mb-3">Automatic Google Drive backup is centrally managed. The POS sends each shop's backup to its own isolated folder; shop users do not need to configure a Google URL.</p><div className="flex items-center gap-2 text-[12px] font-semibold text-emerald-600 mb-3"><CheckCircle2 size={15} /> Automatic backup is enabled</div>{!backupPassphraseReady && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3 text-[12px] font-semibold text-amber-700 dark:text-amber-300 mb-3">Automatic Google backups are waiting. Set and unlock the Backup Passphrase above (minimum 12 characters) for this browser session.</div>}<div className="flex flex-wrap gap-2 mt-3">{user?.role === 'admin' && <><button type="button" className="btn btn-primary" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={runGoogleBackupNow}><Cloud size={15} /> {gRestoreBusy ? 'Backing up…' : 'Backup now to Google Drive'}</button><button type="button" className="btn btn-soft" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={requestGoogleRestore}><RotateCcw size={15} /> {gRestoreBusy ? 'Working…' : 'Restore latest Google backup'}</button></>}</div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('failed') || gMsg.includes('disabled') || gMsg.includes('requires') || gMsg.includes('No valid') || gMsg.includes('Invalid') || gMsg.includes('Could not') || gMsg.includes('Set the Backup Passphrase') || gMsg.includes('No backup was uploaded') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}<p className="text-[11px] text-faint mt-3">If Windows is reinstalled or this POS is moved to a new PC, import a downloaded Google Drive backup and the encrypted backup's Shop Backup ID is adopted automatically after validation. You can also enter the existing Shop Backup ID above before using cloud restore.</p></div>
+          <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Drive Backup</h3><p className="text-xs text-faint mb-3">Automatic Google Drive backup is centrally managed. The POS sends each shop's backup to its own isolated folder; shop users do not need to configure a Google URL.</p><div className="flex items-center gap-2 text-[12px] font-semibold text-emerald-600 mb-3"><CheckCircle2 size={15} /> Automatic backup is enabled</div>{!recoveryKeyReady && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3 text-[12px] font-semibold text-amber-700 dark:text-amber-300 mb-3">The first encrypted Google backup will generate the Recovery Key automatically. On a replacement PC, paste the saved Recovery Key before restoring.</div>}<div className="flex flex-wrap gap-2 mt-3">{user?.role === 'admin' && <><button type="button" className="btn btn-primary" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={runGoogleBackupNow}><Cloud size={15} /> {gRestoreBusy ? 'Backing up…' : 'Backup now to Google Drive'}</button><button type="button" className="btn btn-soft" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={requestGoogleRestore}><RotateCcw size={15} /> {gRestoreBusy ? 'Working…' : 'Restore latest Google backup'}</button></>}</div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('failed') || gMsg.includes('disabled') || gMsg.includes('requires') || gMsg.includes('No valid') || gMsg.includes('Invalid') || gMsg.includes('Could not') || gMsg.includes('Set the Backup Passphrase') || gMsg.includes('No backup was uploaded') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}<p className="text-[11px] text-faint mt-3">If Windows is damaged or this POS is moved to a new PC, first use the existing Shop Backup ID above to reconnect to the same shop, then paste the Recovery Key from RECOVERY_KEY.txt and restore the latest encrypted backup.</p></div>
 
           <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3><div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div><p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p></div>
         </div>
