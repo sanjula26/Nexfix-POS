@@ -166,7 +166,7 @@ export default function Settings() {
       // This makes offline/disaster recovery possible without retyping the key.
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
-        const match = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+        const match = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
         if (match) {
           const result = setRecoveryKey(match[1]);
           if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
