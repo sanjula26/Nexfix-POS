@@ -1630,8 +1630,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         units: [...newUnits, ...(s.units || [])],
       };
     });
-    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · recorded IMEI/Serial units`);
     purchaseReceiveLockRef.current = false;
+    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · recorded IMEI/Serial units`);
     return true;
   }, [state.purchases, state.products, state.units, pushAudit, user, can]);
 
@@ -1705,8 +1705,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
     counters: { ...prev.counters, dn: seq },
   }));
-  pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
   purchaseReturnLockRef.current = false;
+  pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
   return ret;
 }, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can]);
 
