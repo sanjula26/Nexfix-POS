@@ -129,6 +129,13 @@ function validateBackupContents(contents) {
       if (typeof name !== 'string' || !/^[A-Za-z0-9._:-]+$/.test(name) || name.indexOf(expectedPartPrefix) !== 0 || name.indexOf('.part') < 0) throw new Error('Invalid multipart filename');
     });
     if (typeof contents.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(contents.sha256)) throw new Error('Invalid multipart hash');
+    var partSizeManifest = Number(contents.partSize);
+    if (!Number.isInteger(partSizeManifest) || partSizeManifest < 1 || partSizeManifest > MAX_MULTIPART_PART_BYTES) throw new Error('Invalid multipart part size');
+    var seenPartNames = {};
+    partNames.forEach(function(name) {
+      if (seenPartNames[name]) throw new Error('Duplicate multipart part name');
+      seenPartNames[name] = true;
+    });
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
     return;
   }
