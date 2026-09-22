@@ -377,6 +377,17 @@ function writeShopInfoText(folder, shopId, metadata) {
   }
 }
 
+function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
+  var key = validateRecoveryKey(recoveryKey);
+  var files = folder.getFilesByName('RECOVERY_KEY.txt');
+  if (!files.hasNext()) return;
+  var file = files.next();
+  var existing = String(file.getBlob().getDataAsString() || '');
+  var match = existing.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+  if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
+  if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+}
+
 function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
   var key = validateRecoveryKey(recoveryKey);
   metadata = metadata || {};
@@ -536,6 +547,11 @@ function backupStateToDrive(contents, shopId) {
   var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
   var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
+  // Preflight the recovery-key invariant before touching any backup payload.
+  // Otherwise an old implementation could write the new daily backup first,
+  // then fail while updating RECOVERY_KEY.txt, leaving the client reporting
+  // "Backup request failed" while SHOP_INFO.txt stayed stale.
+  if (recoveryKey) assertRecoveryKeyMatchesExisting(shopFolder, recoveryKey);
 
   if (format === 'encrypted-single') {
     var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
