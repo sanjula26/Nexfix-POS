@@ -2183,6 +2183,7 @@ const deletePurchase = useCallback((id: string) => {
       if (cats.some(c => c.toLowerCase() === n.toLowerCase())) return s;
       return { ...s, settings: { ...s.settings, categories: [...cats, n] } };
     });
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
   const removeCategory = useCallback((name: string) => {
@@ -2194,6 +2195,7 @@ const deletePurchase = useCallback((id: string) => {
       ...s,
       settings: { ...s.settings, categories: (s.settings.categories || []).filter(c => c !== name) },
     }));
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
   const renameCategory = useCallback((oldName: string, newName: string) => {
@@ -2215,6 +2217,7 @@ const deletePurchase = useCallback((id: string) => {
         products: s.products.map(p => (p.category === oldName ? { ...p, category: n } : p)),
       };
     });
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
     pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
   }, [pushAudit, user, can]);
 
@@ -2261,6 +2264,7 @@ const deletePurchase = useCallback((id: string) => {
       if (brands.some(b => b.toLowerCase() === n.toLowerCase())) return s;
       return { ...s, settings: { ...s.settings, brands: [...brands, n] } };
     });
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
   const removeBrand = useCallback((name: string) => {
@@ -2272,6 +2276,7 @@ const deletePurchase = useCallback((id: string) => {
       ...s,
       settings: { ...s.settings, brands: (s.settings.brands || []).filter(b => b !== name) },
     }));
+    scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
   const runManualBackup = useCallback(async () => {
