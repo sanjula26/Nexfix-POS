@@ -294,14 +294,20 @@ function writeShopMetadata(folder, shopId, shopName, encrypted) {
   else folder.createFile(blob);
 }
 
-function trashDailyBackupSet(backupFolder, shopId, dayKey, keepNames) {
+function trashDailyBackupSet(backupFolder, shopId, dayKey, keepNames, keepBackupId) {
   var prefix = getBackupFilePrefix(shopId, dayKey);
+  var keepDescription = keepBackupId ? backupPartDescription(keepBackupId) : '';
   var files = backupFolder.getFiles();
   while (files.hasNext()) {
     var file = files.next();
     var name = file.getName();
     if (name.indexOf(prefix) !== 0) continue;
-    if (keepNames && keepNames[name]) continue;
+    if (keepNames && keepNames[name]) {
+      if (keepBackupId && name.indexOf('.part') > 0 && String(file.getDescription() || '') !== keepDescription) {
+        try { file.setTrashed(true); } catch (ignoreOldPart) {}
+      }
+      continue;
+    }
     try { file.setTrashed(true); } catch (ignore) {}
   }
 }
@@ -317,6 +323,34 @@ function upsertDailyFile(folder, fileName, content) {
     return file;
   }
   return folder.createFile(Utilities.newBlob(content, 'application/json', fileName));
+}
+
+function backupPartDescription(backupId) {
+  return 'NEXFIX-BACKUP:' + String(backupId || '');
+}
+
+function upsertMultipartPart(folder, fileName, content, backupId) {
+  var expectedDescription = backupPartDescription(backupId);
+  var files = folder.getFilesByName(fileName);
+  while (files.hasNext()) {
+    var file = files.next();
+    if (String(file.getDescription() || '') === expectedDescription) {
+      file.setContent(content);
+      return file;
+    }
+  }
+  return folder.createFile(Utilities.newBlob(content, 'text/plain', fileName))
+    .setDescription(expectedDescription);
+}
+
+function findMultipartPart(folder, fileName, backupId) {
+  var expectedDescription = backupPartDescription(backupId);
+  var files = folder.getFilesByName(fileName);
+  while (files.hasNext()) {
+    var file = files.next();
+    if (String(file.getDescription() || '') === expectedDescription) return file;
+  }
+  return null;
 }
 
 function backupStateToDrive(contents, shopId) {
@@ -359,7 +393,7 @@ function backupStateToDrive(contents, shopId) {
     var partName = String(contents.partName);
     var partBytes = Utilities.newBlob(String(contents.chunk), 'text/plain').getBytes().length;
     if (partBytes > MAX_MULTIPART_PART_BYTES) throw new Error('Backup part exceeds Drive safety limit');
-    var partFile = upsertDailyFile(backupFolder, partName, String(contents.chunk));
+    var partFile = upsertMultipartPart(backupFolder, partName, String(contents.chunk), contents.backupId);
     return { action: 'backupState', backupType: contents.kind === 'auto' ? 'auto' : 'manual', timestamp: now.toISOString(), driveFileId: partFile.getId(), driveFileName: partFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true };
   }
 
@@ -370,9 +404,8 @@ function backupStateToDrive(contents, shopId) {
     var totalParts = Number(contents.totalParts);
     var totalFoundBytes = 0;
     for (var i = 0; i < partNames.length; i++) {
-      var partFiles = backupFolder.getFilesByName(partNames[i]);
-      if (!partFiles.hasNext()) throw new Error('Multipart part is missing: ' + partNames[i]);
-      var partFile = partFiles.next();
+      var partFile = findMultipartPart(backupFolder, partNames[i], contents.backupId);
+      if (!partFile) throw new Error('Multipart part is missing: ' + partNames[i]);
       totalFoundBytes += partFile.getSize();
     }
     if (totalFoundBytes !== totalBytes) throw new Error('Multipart byte count does not match stored parts');
@@ -395,10 +428,11 @@ function backupStateToDrive(contents, shopId) {
     };
     var manifestText = JSON.stringify(manifest);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
+    manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
     keep[manifestName] = true;
     partNames.forEach(function(name){ keep[name] = true; });
-    trashDailyBackupSet(backupFolder, shopId, dayKey, keep);
+    trashDailyBackupSet(backupFolder, shopId, dayKey, keep, contents.backupId);
     return { action: 'backupState', backupType: manifest.kind, timestamp: now.toISOString(), driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts };
   }
 
@@ -456,8 +490,8 @@ function latestDriveBackup(shopId) {
             if (!Array.isArray(manifest.partNames) || manifest.partNames.length !== Number(manifest.parts)) continue;
             var partsOk = true;
             for (var mi = 0; mi < manifest.partNames.length; mi++) {
-              var pf = backupFolder.getFilesByName(manifest.partNames[mi]);
-              if (!pf.hasNext()) { partsOk = false; break; }
+              var pf = findMultipartPart(backupFolder, manifest.partNames[mi], manifest.backupId);
+              if (!pf) { partsOk = false; break; }
             }
             if (!partsOk) continue;
             if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
@@ -548,9 +582,8 @@ function getBackupPart(shopId, backupId, partName) {
     var backups = shopFolder.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
     while (backups.hasNext()) {
       var backupFolder = backups.next();
-      var files = backupFolder.getFilesByName(safePartName);
-      while (files.hasNext()) {
-        var file = files.next();
+      var file = findMultipartPart(backupFolder, safePartName, safeBackupId);
+      if (file) {
         var chunk = file.getBlob().getDataAsString();
         if (!chunk) return null;
         return { chunk: chunk, shopPartition: shopPartitionKey(normalizedShopId), backupId: safeBackupId, partName: safePartName };
