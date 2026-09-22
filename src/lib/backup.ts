@@ -124,12 +124,15 @@ export function validateBackupForRestore(input: unknown): BackupEnvelope {
 
 export interface BackupOptions { download?: boolean; cloud?: boolean; }
 
-export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<{ local: boolean; cloud: boolean }> {
+export interface BackupResult { local: boolean; cloud: boolean; error?: string; }
+
+export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<BackupResult> {
   // Automatic/reconnect backups are cloud-only. A local JSON file is an explicit manual action.
   const wantDownload = kind === 'manual' && options.download !== false;
   const wantCloud = options.cloud !== false && isGoogleSyncEnabled();
   let local = false;
   let cloud = false;
+  let errorMessage: string | undefined;
   const payload: BackupEnvelope = { _meta: { app: 'Nexfix POS', version: 2, exportedAt: new Date().toISOString(), kind }, state };
   if (wantDownload) {
     try {
@@ -138,7 +141,11 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     } catch { /* metadata must not claim local success */ }
   }
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
-    try { cloud = await backupStateToGoogle(payload, kind); } catch (error) { console.error('[Google Backup] cloud backup failed', error); cloud = false; }
+    try { cloud = await backupStateToGoogle(payload, kind); } catch (error) {
+      errorMessage = error instanceof Error ? error.message : 'Google Drive backup failed';
+      console.error('[Google Backup] cloud backup failed:', errorMessage);
+      cloud = false;
+    }
   }
   const successful = local || cloud;
   if (successful) {
@@ -155,7 +162,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
         }
       : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
   }
-  return { local, cloud };
+  return { local, cloud, ...(errorMessage ? { error: errorMessage } : {}) };
 }
 
 type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
@@ -186,6 +193,10 @@ export function scheduleGoogleBackup(
   scheduledGoogleBackupTimer = window.setTimeout(async () => {
     scheduledGoogleBackupTimer = undefined;
     if (scheduledGoogleBackupRunning) return;
+    if (!hasBackupPassphrase()) {
+      console.info('[Google Backup] Automatic backup skipped: Backup Passphrase is not unlocked for this browser session.');
+      return;
+    }
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       // Keep the latest request pending; the normal auto-backup/online path can retry.
       return;
@@ -227,14 +238,17 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       if (!force && !due && !pending) return;
       if (!force && pending && retryAt > now) return;
 
+      // Encrypted cloud backups require the session-only passphrase. Do not
+      // create a durable pending marker while the browser session is locked.
+      if (!hasBackupPassphrase()) {
+        console.info('[Google Backup] Automatic backup skipped: Backup Passphrase is not unlocked for this browser session.');
+        return;
+      }
       // Persist the pending marker before the network operation. This survives tab/browser
       // restarts and ensures a failed upload is retried instead of being silently lost.
       if (!pending) {
         await idbSetMeta({ pendingAutoBackupAt: new Date().toISOString(), autoBackupFailureCount: 0 });
       }
-      // Encrypted cloud backups require the session-only passphrase. Do not
-      // turn a locked browser session into a permanent retry/failure loop.
-      if (!hasBackupPassphrase()) return;
       if (!online) return;
 
       running = true;
