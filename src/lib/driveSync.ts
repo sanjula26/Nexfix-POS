@@ -184,12 +184,16 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string): 
     form.submit();
     window.setTimeout(() => { form.remove(); iframe.remove(); }, 60000);
 
-    const deadline = Date.now() + 30000;
+    // The POST itself is fire-and-forget; poll the short-lived server status
+    // cache without adding a long delay between multipart parts.
+    const deadline = Date.now() + 20000;
+    let pollDelay = 300;
     while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
       const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
       if (status === true) return true;
       if (status === false) return false;
-      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      pollDelay = Math.min(1000, Math.round(pollDelay * 1.5));
     }
     console.error('[Google Backup] confirmation timed out');
     return false;
@@ -212,7 +216,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
       script.remove();
       resolve(value);
     };
-    const timer = window.setTimeout(() => finish(null), 5000);
+    const timer = window.setTimeout(() => finish(null), 2000);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
       const data = result as { ok?: boolean; pending?: boolean; status?: string };
