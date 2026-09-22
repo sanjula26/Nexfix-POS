@@ -15,7 +15,7 @@ import {
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
-import { buildPurchaseReceivePlan, canDeletePurchase } from './purchaseReconciliation';
+import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog } from './cloudSync';
 
@@ -1589,7 +1589,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const currentPo = s.purchases.find(x => x.id === id);
       if (!currentPo || currentPo.status !== 'pending') return s;
       const currentPlan = buildPurchaseReceivePlan(currentPo, s.products);
-      if (!currentPlan) return s;
+      if (!currentPlan || !validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || [])) return s;
       const now = new Date().toISOString();
       const newUnits: InventoryUnit[] = [];
       const products = s.products.map(p => {
@@ -1599,18 +1599,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const trackedQty = currentPlan.trackedUnitCount.get(p.id) || 0;
         if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
           for (let i = 0; i < trackedQty; i++) {
-            newUnits.push({
-              id: uid(),
-              productId: p.id,
-              imei: p.trackImei ? '' : undefined,
-              serial: p.trackSerial && !p.trackImei ? '' : undefined,
-              status: 'in_stock',
-              purchaseId: currentPo.id,
-              cost,
-              expiryDate: currentPo.items.find(item => item.productId === p.id)?.expiryDate,
-              note: `From ${currentPo.poNo} — fill IMEI/Serial in Units`,
-              createdAt: now,
-            } as InventoryUnit);
+            const purchaseItem = currentPo.items.find(item => item.productId === p.id);
+            for (const identifier of purchaseItem?.unitIdentifiers || []) {
+              newUnits.push({
+                id: uid(),
+                productId: p.id,
+                imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                serial: p.trackSerial ? identifier.serial?.trim() : undefined,
+                status: 'in_stock',
+                purchaseId: currentPo.id,
+                cost,
+                expiryDate: purchaseItem?.expiryDate,
+                note: `From ${currentPo.poNo}`,
+                createdAt: now,
+              } as InventoryUnit);
+            }
           }
         }
         const purchaseItem = currentPo.items.find(item => item.productId === p.id);
@@ -1625,7 +1628,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         units: [...newUnits, ...(s.units || [])],
       };
     });
-    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · auto units for IMEI/Serial items`);
+    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · recorded IMEI/Serial units`);
   }, [state.purchases, state.products, pushAudit, user, can]);
 
   const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
@@ -1635,7 +1638,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!p.supplierId || !p.items.length) return null;
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
-    if (!buildPurchaseReceivePlan(validation, state.products)) return null;
+    if (!buildPurchaseReceivePlan(validation, state.products) || !validatePurchaseUnitIdentifiers(validation, state.products, state.units || [])) return null;
     const created: Purchase = { ...p, id: uid(), poNo: `GRN-${String((state.counters.grn ?? 0) + 1).padStart(4, '0')}`, date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
     pushAudit('CREATE', 'GRN', `Draft ${created.poNo} for ${created.supplierName} · Rs. ${created.total.toLocaleString()}`);
@@ -1650,7 +1653,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const current = state.purchases.find(x => x.id === id);
     if (!current || current.status !== 'pending') return false;
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
-    if (!buildPurchaseReceivePlan(next, state.products)) return false;
+    if (!buildPurchaseReceivePlan(next, state.products) || !validatePurchaseUnitIdentifiers(next, state.products, state.units || [])) return false;
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
     pushAudit('EDIT', 'GRN', `Updated draft ${current.poNo}`);
     return true;
