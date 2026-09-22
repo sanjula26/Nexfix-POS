@@ -15,7 +15,7 @@ export type PaymentMethod='cash'|'card'|'bank'|'mobile'|'credit';
 export interface PaymentLeg { method:PaymentMethod; amount:number }
 export interface TradeIn { productId:string; value:number; imei?:string; serial?:string; addToInventory?:boolean; unitId?:string; }
 export interface Sale { id:string; billNo:string; date:string; cashierId:string; cashierName:string; machineId?:string; machineName?:string; customerId?:string; customerName:string; items:SaleItem[]; subtotal:number; discount:number; tax:number; total:number; payment:PaymentMethod; payments?:PaymentLeg[]; shipping?:number; pointsRedeemed?:number; pointsEarned?:number; note?:string; amountPaid:number; change:number; profit:number; tradeIn?: TradeIn; status:'completed'|'refunded'|'reversed'|'exchanged'; }
-export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; sellingPrice?:number; sellDiscountPct?:number; sellDiscountAmt?:number; updateSellingPrice?:boolean; }
+export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; sellingPrice?:number; sellDiscountPct?:number; sellDiscountAmt?:number; updateSellingPrice?:boolean; unitIdentifiers?:Array<{ imei?:string; serial?:string }>; }
 export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; supplierInvoiceNo?:string; notes?:string; processedAt?:string; processedBy?:string; }
 
 export interface PurchaseReturnItem { itemIdx:number; productId:string; name:string; qty:number; cost:number; total:number; }
