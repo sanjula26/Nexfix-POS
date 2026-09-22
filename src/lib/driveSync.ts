@@ -307,7 +307,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         encrypted: true,
         kind,
         ...shopMetadata,
-        backupId,
       }, shopId);
       if (!ok) {
         console.error('[Google Backup] multipart upload failed at part', index + 1);
