@@ -5,7 +5,7 @@
  * The supplied master Drive folder remains separate from any Google Sheet.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '3.1.0';
+var VERSION = '3.2.0';
 var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
@@ -72,23 +72,26 @@ function normalizeShopId(shopId) {
   return value;
 }
 
+function validateRecoveryKey(value) {
+  var key = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(key)) throw new Error('Invalid Recovery Key');
+  return key;
+}
+
 function validateEncryptedEnvelope(serialized, expectedShopId) {
   if (typeof serialized !== 'string' || !serialized) throw new Error('Encrypted backup payload is required');
   var bytes = Utilities.newBlob(serialized, 'application/json').getBytes().length;
   if (bytes > MAX_BACKUP_BYTES) throw new Error('Encrypted backup payload is too large for a single Drive file');
   var envelope;
   try { envelope = JSON.parse(serialized); } catch (err) { throw new Error('Encrypted backup payload is not valid JSON'); }
-  if (!envelope || envelope.v !== 1 || envelope.alg !== 'AES-256-GCM' || envelope.kdf !== 'PBKDF2-SHA-256') {
-    throw new Error('Unsupported encrypted backup envelope');
-  }
-  if (typeof envelope.ciphertext !== 'string' || !envelope.ciphertext || typeof envelope.shopId !== 'string') {
-    throw new Error('Encrypted backup envelope is incomplete');
-  }
-  if (String(envelope.shopId) !== String(expectedShopId || '')) {
-    throw new Error('Encrypted backup shop identity does not match the request');
-  }
+  var validV1 = envelope && envelope.v === 1 && envelope.alg === 'AES-256-GCM' && envelope.kdf === 'PBKDF2-SHA-256';
+  var validV2 = envelope && envelope.v === 2 && envelope.alg === 'AES-256-GCM' && envelope.keyMode === 'random-recovery-key';
+  if (!validV1 && !validV2) throw new Error('Unsupported encrypted backup envelope');
+  if (typeof envelope.ciphertext !== 'string' || !envelope.ciphertext || typeof envelope.shopId !== 'string') throw new Error('Encrypted backup envelope is incomplete');
+  if (validV1 && (Number(envelope.iterations) < 310000 || typeof envelope.salt !== 'string' || typeof envelope.iv !== 'string')) throw new Error('Encrypted backup KDF metadata is invalid');
+  if (validV2 && (typeof envelope.iv !== 'string' || !envelope.iv)) throw new Error('Encrypted backup IV is invalid');
+  if (String(envelope.shopId) !== String(expectedShopId || '')) throw new Error('Encrypted backup shop identity does not match the request');
 }
-
 function validateBackupContents(contents) {
   if (!contents || typeof contents !== 'object' || Array.isArray(contents)) throw new Error('Invalid backup payload');
   if (contents.action !== 'backupState') throw new Error('Only backupState is supported by the direct Drive backup endpoint');
@@ -172,14 +175,23 @@ function checkBackupRateLimit(shopId, backupId, format) {
   var current = null;
   try { current = raw ? JSON.parse(raw) : null; } catch (ignore) { current = null; }
 
-  // Multipart uploads contain many parts but represent one logical backup.
-  // Allow all parts for the same backupId while keeping the per-shop rate limit
-  // for new logical backups.
+  var safeBackupId = String(backupId || '');
+  // A multipart backup is one logical operation. Once its first request has
+  // passed the shop-level limit, subsequent parts are allowed for a short
+  // upload window without moving the original rate-limit timestamp.
   if (format === 'encrypted-part' && current
-      && current.backupId === String(backupId || '')
+      && current.backupId === safeBackupId
       && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    cache.put(key, JSON.stringify({ startedAt: now, backupId: String(backupId || '') }), BACKUP_RATE_WINDOW_SECONDS);
     return;
+  }
+
+  // If the normal 60s rate entry expired, an in-flight multipart upload still
+  // needs a separate short-lived lease so later parts do not become "new"
+  // logical backups and get blocked by the shop-level limiter.
+  if (format === 'encrypted-part' && safeBackupId) {
+    var multipartKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
+    var multipartLease = cache.get(multipartKey);
+    if (multipartLease === '1') return;
   }
 
   if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
@@ -188,8 +200,17 @@ function checkBackupRateLimit(shopId, backupId, format) {
 
   cache.put(key, JSON.stringify({
     startedAt: now,
-    backupId: String(backupId || '')
+    backupId: safeBackupId
   }), BACKUP_RATE_WINDOW_SECONDS);
+
+  if (format === 'encrypted-part' && safeBackupId) {
+    var leaseKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
+    cache.put(leaseKey, '1', 600);
+  }
+}
+
+function requestPayloadFingerprint(contents) {
+  return sha256HexText(JSON.stringify(contents));
 }
 
 function sha256HexText(value) {
@@ -334,25 +355,55 @@ function writeShopInfoText(folder, shopId, metadata) {
     'Backup ID: ' + metadataText(metadata.backupId, 100),
     'Last Backup Exported At: ' + metadataText(metadata.exportedAt || new Date().toISOString(), 80),
     'Apps Script Version: ' + VERSION,
+    'Recovery Key File: RECOVERY_KEY.txt',
     '',
     'Recovery note: Use the Shop Backup ID above to reconnect this shop after reinstalling or moving the POS to another PC.',
+    'The Recovery Key is stored separately in RECOVERY_KEY.txt. Keep a private copy outside the PC for disaster recovery.',
     'This file contains shop identification/contact metadata only. POS business records remain inside the encrypted backup payload.',
     'Do not edit this file manually; it is regenerated by Nexfix POS during backup.'
   ];
-  var content = lines.join('\n') + '\n';
+  var content = lines.join('\\n') + '\\n';
   var fileName = 'SHOP_INFO.txt';
   var files = folder.getFilesByName(fileName);
   if (files.hasNext()) {
     var file = files.next();
     file.setContent(content);
-    while (files.hasNext()) {
-      try { files.next().setTrashed(true); } catch (ignoreDuplicate) {}
-    }
+    while (files.hasNext()) { try { files.next().setTrashed(true); } catch (ignoreDuplicate) {} }
   } else {
     folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
   }
 }
 
+function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
+  var key = validateRecoveryKey(recoveryKey);
+  metadata = metadata || {};
+  var lines = [
+    'NEXFIX POS - RECOVERY KEY',
+    '=========================',
+    '',
+    'Shop Name: ' + metadataText(metadata.shopName || 'Shop', 120),
+    'Shop Backup ID: ' + metadataText(metadata.shopId, SHOP_ID_MAX_LENGTH),
+    'Shop Partition: ' + metadataText(metadata.shopPartition, 40),
+    '',
+    'Recovery Key: ' + key,
+    '',
+    'IMPORTANT:',
+    'Keep this key in a secure private place.',
+    'This key can decrypt automatic encrypted Nexfix POS backups for this shop.',
+    'Anyone who has access to both this key and the encrypted backup can decrypt the backup.',
+    'Do not edit this file manually. Nexfix POS regenerates it during backup.'
+  ];
+  var content = lines.join('\\n') + '\\n';
+  var fileName = 'RECOVERY_KEY.txt';
+  var files = folder.getFilesByName(fileName);
+  if (files.hasNext()) {
+    var file = files.next();
+    file.setContent(content);
+    while (files.hasNext()) { try { files.next().setTrashed(true); } catch (ignoreDuplicate) {} }
+  } else {
+    folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
+  }
+}
 function trashDailyBackupSet(backupFolder, shopId, dayKey, keepNames, keepBackupId) {
   var prefix = getBackupFilePrefix(shopId, dayKey);
   var keepDescription = keepBackupId ? backupPartDescription(keepBackupId) : '';
@@ -382,6 +433,56 @@ function upsertDailyFile(folder, fileName, content) {
     return file;
   }
   return folder.createFile(Utilities.newBlob(content, 'application/json', fileName));
+}
+
+function parseExportedAtMillis(value) {
+  var text = String(value || '').trim();
+  if (!text) return 0;
+  var millis = Date.parse(text);
+  return isNaN(millis) ? 0 : millis;
+}
+
+function getLatestDailyBackupInfo(backupFolder, shopId, dayKey) {
+  var prefix = getBackupFilePrefix(shopId, dayKey);
+  var files = backupFolder.getFiles();
+  var latest = null;
+  while (files.hasNext()) {
+    var file = files.next();
+    var name = file.getName();
+    if (name.indexOf(prefix) !== 0 || name.indexOf('.part') > 0) continue;
+    try {
+      var parsed = JSON.parse(file.getBlob().getDataAsString());
+      var exportedAt = '';
+      var backupId = '';
+      if (name.indexOf('.manifest.json') > 0) {
+        if (!parsed || parsed.app !== 'Nexfix POS' || parsed.encrypted !== true) continue;
+        exportedAt = parsed.exportedAt || '';
+        backupId = String(parsed.backupId || '');
+      } else {
+        var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
+        if (!meta || String(meta.app || '') !== 'Nexfix POS') continue;
+        exportedAt = meta.exportedAt || '';
+        backupId = String(meta.backupId || '');
+      }
+      var millis = parseExportedAtMillis(exportedAt);
+      if (!millis) continue;
+      if (!latest || millis > latest.exportedAtMillis) {
+        latest = { exportedAtMillis: millis, exportedAt: String(exportedAt), backupId: backupId, fileName: name };
+      }
+    } catch (ignore) {}
+  }
+  return latest;
+}
+
+function assertDailyBackupIsFresh(backupFolder, shopId, dayKey, incomingExportedAt, incomingBackupId) {
+  var incomingMillis = parseExportedAtMillis(incomingExportedAt);
+  if (!incomingMillis) throw new Error('Valid backup exportedAt is required');
+  var latest = getLatestDailyBackupInfo(backupFolder, shopId, dayKey);
+  if (!latest) return;
+  if (latest.backupId && String(latest.backupId) === String(incomingBackupId || '')) return;
+  if (latest.exportedAtMillis > incomingMillis) {
+    throw new Error('Stale backup rejected: a newer backup already exists for this shop/day.');
+  }
 }
 
 function backupPartDescription(backupId) {
@@ -425,6 +526,8 @@ function backupStateToDrive(contents, shopId) {
   var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
   var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
+  var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
+  if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
 
   if (format === 'encrypted-single') {
     var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -438,13 +541,16 @@ function backupStateToDrive(contents, shopId) {
         shopPartition: partition,
         shopName: shopName,
         dayKey: dayKey,
+        backupId: String(contents.backupId || ''),
         encrypted: true
       },
       payload: JSON.parse(contents.state)
     };
     var serialized = JSON.stringify(envelope);
+    assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
     writeShopInfoText(backupFolder, shopId, contents);
+    writeShopInfoText(shopFolder, shopId, contents);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
     return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
   }
@@ -454,7 +560,6 @@ function backupStateToDrive(contents, shopId) {
     var partBytes = Utilities.newBlob(String(contents.chunk), 'text/plain').getBytes().length;
     if (partBytes > MAX_MULTIPART_PART_BYTES) throw new Error('Backup part exceeds Drive safety limit');
     var partFile = upsertMultipartPart(backupFolder, partName, String(contents.chunk), contents.backupId);
-    writeShopInfoText(backupFolder, shopId, contents);
     return { action: 'backupState', backupType: contents.kind === 'auto' ? 'auto' : 'manual', timestamp: now.toISOString(), driveFileId: partFile.getId(), driveFileName: partFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true };
   }
 
@@ -497,6 +602,7 @@ function backupStateToDrive(contents, shopId) {
       kind: contents.kind === 'auto' ? 'auto' : 'manual'
     };
     var manifestText = JSON.stringify(manifest);
+    assertDailyBackupIsFresh(backupFolder, shopId, dayKey, manifest.exportedAt, manifest.backupId);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
     writeShopInfoText(backupFolder, shopId, contents);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
@@ -509,10 +615,11 @@ function backupStateToDrive(contents, shopId) {
 
   var legacyName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
   var legacyEnvelope = {
-    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: contents.kind === 'auto' ? 'auto' : 'manual', shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey, encrypted: false },
+    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: contents.kind === 'auto' ? 'auto' : 'manual', shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey, backupId: String(contents.backupId || ''), encrypted: false },
     state: state
   };
   var legacySerialized = JSON.stringify(legacyEnvelope);
+  assertDailyBackupIsFresh(backupFolder, shopId, dayKey, legacyEnvelope._meta.exportedAt, legacyEnvelope._meta.backupId);
   var legacyFile = upsertDailyFile(backupFolder, legacyName, legacySerialized);
   writeShopInfoText(backupFolder, shopId, contents);
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
@@ -558,11 +665,16 @@ function latestDriveBackup(shopId) {
             if (String(manifest.shopPartition) !== shopPartitionKey(shopId) || String(manifest.shopId) !== String(shopId)) continue;
             if (!Array.isArray(manifest.partNames) || manifest.partNames.length !== Number(manifest.parts)) continue;
             var partsOk = true;
+            var manifestBytes = 0;
+            var manifestPayload = '';
             for (var mi = 0; mi < manifest.partNames.length; mi++) {
               var pf = findMultipartPart(backupFolder, manifest.partNames[mi], manifest.backupId);
               if (!pf) { partsOk = false; break; }
+              manifestBytes += pf.getSize();
+              manifestPayload += pf.getBlob().getDataAsString();
             }
-            if (!partsOk) continue;
+            if (!partsOk || manifestBytes !== Number(manifest.totalBytes)) continue;
+            if (!manifest.sha256 || sha256HexText(manifestPayload) !== String(manifest.sha256)) continue;
             if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
               latest = file;
               latestPayload = { multipart: true, manifest: manifest, shopName: manifest.shopName, timestamp: manifest.exportedAt, kind: manifest.kind, shopId: manifest.shopId, shopPartition: manifest.shopPartition };
@@ -681,29 +793,48 @@ function doPost(e) {
 
     var requestCache = CacheService.getScriptCache();
     var cacheKey = 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
+    var requestFingerprint = requestPayloadFingerprint(contents);
     var cached = requestCache.get(cacheKey);
     if (cached) {
-      try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
+      try {
+        var cachedRecord = JSON.parse(cached);
+        // Idempotency is bound to the complete validated payload, not only the
+        // requestId. Reusing a requestId with changed contents must never replay
+        // the previous success/failure.
+        if (cachedRecord && cachedRecord.fingerprint) {
+          if (cachedRecord.fingerprint !== requestFingerprint) {
+            return json(fail('requestId has already been used with different backup contents'));
+          }
+          return json(cachedRecord.result || cachedRecord);
+        }
+        // An older cache entry has no payload binding. Do not replay it,
+        // because doing so would let a reused requestId bypass idempotency
+        // validation after a deployment/cache rollover.
+        return json(fail('Request idempotency record is not bound to backup contents; retry with a new requestId'));
+      } catch (ignoreCached) {}
     }
 
     try {
-      requestCache.put(cacheKey, JSON.stringify({ ok: false, status: 'pending', version: VERSION, pending: true }), 120);
+      requestCache.put(cacheKey, JSON.stringify({
+        fingerprint: requestFingerprint,
+        result: { ok: false, status: 'pending', version: VERSION, pending: true }
+      }), 120);
     } catch (ignorePendingCacheWrite) {}
 
     var result;
     try { checkBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (rateError) {
       var rateFailure = fail(rateError);
-      try { requestCache.put(cacheKey, JSON.stringify(rateFailure), 120); } catch (ignoreRateCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: rateFailure }), 120); } catch (ignoreRateCacheWrite) {}
       return json(rateFailure);
     }
 
     try {
       result = ok(backupStateToDrive(contents, shopId));
-      try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600); } catch (ignoreCacheWrite) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
-      try { requestCache.put(cacheKey, JSON.stringify(backupFailure), 120); } catch (ignoreFailureCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: backupFailure }), 120); } catch (ignoreFailureCacheWrite) {}
       return json(backupFailure);
     }
   } catch (err) {
@@ -723,7 +854,8 @@ function getCachedBackupStatus(requestId, shopId) {
   if (!cached) return { ok: false, status: 'pending', version: VERSION, pending: true };
 
   try {
-    var result = JSON.parse(cached);
+    var record = JSON.parse(cached);
+    var result = record && record.result ? record.result : record;
     if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
     return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
   } catch (err) {
