@@ -297,7 +297,7 @@ function getRootBackupFolder() {
   }
 }
 
-function getShopBackupFolder(shopId, shopName) {
+function getShopBackupFolder(shopId, shopName, renameNow) {
   var root = getRootBackupFolder();
   var partitionPrefix = 'Shop_' + shopPartitionKey(shopId) + ' - ';
   var desiredName = partitionPrefix + sanitizeDriveName(shopName || 'Shop');
@@ -305,7 +305,9 @@ function getShopBackupFolder(shopId, shopName) {
   while (folders.hasNext()) {
     var folder = folders.next();
     if (folder.getName().indexOf(partitionPrefix) === 0) {
-      if (folder.getName() !== desiredName) {
+      // During backup validation, never rename an existing shop folder from a
+      // stale/failed request. Rename only after the new backup is accepted.
+      if (renameNow !== false && folder.getName() !== desiredName) {
         try { folder.setName(desiredName); } catch (ignore) {}
       }
       return folder;
@@ -522,17 +524,18 @@ function backupStateToDrive(contents, shopId) {
   var format = String(contents.format || 'legacy').trim();
   var state = format === 'legacy' ? (contents.state || {}) : null;
   var shopName = String(contents.shopName || (state && state.settings && state.settings.shopName) || 'Shop');
-  var shopFolder = getShopBackupFolder(shopId, shopName);
+  // Do not rename/update shop metadata from an uncommitted or stale backup.
+  // The stable partition identifies the shop; display details are committed only
+  // after the backup itself passes freshness/integrity checks.
+  var shopFolder = getShopBackupFolder(shopId, shopName, false);
   var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
   var encrypted = format.indexOf('encrypted-') === 0;
-  writeShopMetadata(shopFolder, shopId, shopName, encrypted);
 
   var now = new Date();
   var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
   var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
   var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
-  if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
 
   if (format === 'encrypted-single') {
     var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -554,6 +557,11 @@ function backupStateToDrive(contents, shopId) {
     var serialized = JSON.stringify(envelope);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
+    if (shopFolder.getName() !== partition + ' - ' + sanitizeDriveName(shopName)) {
+      try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+    }
+    writeShopMetadata(shopFolder, shopId, shopName, encrypted);
+    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
     writeShopInfoText(shopFolder, shopId, contents);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
     return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
@@ -608,6 +616,11 @@ function backupStateToDrive(contents, shopId) {
     var manifestText = JSON.stringify(manifest);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, manifest.exportedAt, manifest.backupId);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
+    if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
+      try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+    }
+    writeShopMetadata(shopFolder, shopId, shopName, encrypted);
+    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
     writeShopInfoText(shopFolder, shopId, contents);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
@@ -625,6 +638,10 @@ function backupStateToDrive(contents, shopId) {
   var legacySerialized = JSON.stringify(legacyEnvelope);
   assertDailyBackupIsFresh(backupFolder, shopId, dayKey, legacyEnvelope._meta.exportedAt, legacyEnvelope._meta.backupId);
   var legacyFile = upsertDailyFile(backupFolder, legacyName, legacySerialized);
+  if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
+    try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+  }
+  writeShopMetadata(shopFolder, shopId, shopName, encrypted);
   writeShopInfoText(shopFolder, shopId, contents);
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
   return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
