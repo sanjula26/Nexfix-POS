@@ -261,6 +261,15 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       ? businessRecord.settings as Record<string, unknown>
       : {};
     const shopName = String(settings.shopName || 'Shop');
+    const shopMetadata = {
+      shopName,
+      shopPhone: String(settings.phone || ''),
+      shopEmail: String(settings.email || ''),
+      shopAddress: String(settings.address || ''),
+      shopTagline: String(settings.tagline || ''),
+      taxRegistrationNo: String(settings.taxRegistrationNo || ''),
+      invoicePlaceOfSupply: String(settings.invoicePlaceOfSupply || ''),
+    };
 
     if (totalBytes <= SINGLE_LIMIT_BYTES) {
       return await postGoogleBackup({
@@ -269,7 +278,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         backupId,
         exportedAt,
         state: serialized,
-        shopName,
+        kind,
+        ...shopMetadata,
+        backupId,
       }, shopId);
     }
 
@@ -295,7 +306,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         chunk,
         exportedAt,
         encrypted: true,
-        shopName,
+        kind,
+        ...shopMetadata,
+        backupId,
       }, shopId);
       if (!ok) {
         console.error('[Google Backup] multipart upload failed at part', index + 1);
@@ -315,7 +328,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       exportedAt,
       kind,
       encrypted: true,
-      shopName,
+      ...shopMetadata,
     }, shopId);
   } catch (error) {
     console.error('[Google Backup] encryption/upload failed', error);
