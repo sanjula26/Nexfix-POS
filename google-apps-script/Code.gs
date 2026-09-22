@@ -402,6 +402,56 @@ function upsertDailyFile(folder, fileName, content) {
   return folder.createFile(Utilities.newBlob(content, 'application/json', fileName));
 }
 
+function parseExportedAtMillis(value) {
+  var text = String(value || '').trim();
+  if (!text) return 0;
+  var millis = Date.parse(text);
+  return isNaN(millis) ? 0 : millis;
+}
+
+function getLatestDailyBackupInfo(backupFolder, shopId, dayKey) {
+  var prefix = getBackupFilePrefix(shopId, dayKey);
+  var files = backupFolder.getFiles();
+  var latest = null;
+  while (files.hasNext()) {
+    var file = files.next();
+    var name = file.getName();
+    if (name.indexOf(prefix) !== 0 || name.indexOf('.part') > 0) continue;
+    try {
+      var parsed = JSON.parse(file.getBlob().getDataAsString());
+      var exportedAt = '';
+      var backupId = '';
+      if (name.indexOf('.manifest.json') > 0) {
+        if (!parsed || parsed.app !== 'Nexfix POS' || parsed.encrypted !== true) continue;
+        exportedAt = parsed.exportedAt || '';
+        backupId = String(parsed.backupId || '');
+      } else {
+        var meta = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed._meta || {}) : {};
+        if (!meta || String(meta.app || '') !== 'Nexfix POS') continue;
+        exportedAt = meta.exportedAt || '';
+        backupId = String(meta.backupId || '');
+      }
+      var millis = parseExportedAtMillis(exportedAt);
+      if (!millis) continue;
+      if (!latest || millis > latest.exportedAtMillis) {
+        latest = { exportedAtMillis: millis, exportedAt: String(exportedAt), backupId: backupId, fileName: name };
+      }
+    } catch (ignore) {}
+  }
+  return latest;
+}
+
+function assertDailyBackupIsFresh(backupFolder, shopId, dayKey, incomingExportedAt, incomingBackupId) {
+  var incomingMillis = parseExportedAtMillis(incomingExportedAt);
+  if (!incomingMillis) throw new Error('Valid backup exportedAt is required');
+  var latest = getLatestDailyBackupInfo(backupFolder, shopId, dayKey);
+  if (!latest) return;
+  if (latest.backupId && String(latest.backupId) === String(incomingBackupId || '')) return;
+  if (latest.exportedAtMillis > incomingMillis) {
+    throw new Error('Stale backup rejected: a newer backup already exists for this shop/day.');
+  }
+}
+
 function backupPartDescription(backupId) {
   return 'NEXFIX-BACKUP:' + String(backupId || '');
 }
@@ -456,11 +506,13 @@ function backupStateToDrive(contents, shopId) {
         shopPartition: partition,
         shopName: shopName,
         dayKey: dayKey,
+        backupId: String(contents.backupId || ''),
         encrypted: true
       },
       payload: JSON.parse(contents.state)
     };
     var serialized = JSON.stringify(envelope);
+    assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
     writeShopInfoText(backupFolder, shopId, contents);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
@@ -472,7 +524,6 @@ function backupStateToDrive(contents, shopId) {
     var partBytes = Utilities.newBlob(String(contents.chunk), 'text/plain').getBytes().length;
     if (partBytes > MAX_MULTIPART_PART_BYTES) throw new Error('Backup part exceeds Drive safety limit');
     var partFile = upsertMultipartPart(backupFolder, partName, String(contents.chunk), contents.backupId);
-    writeShopInfoText(backupFolder, shopId, contents);
     return { action: 'backupState', backupType: contents.kind === 'auto' ? 'auto' : 'manual', timestamp: now.toISOString(), driveFileId: partFile.getId(), driveFileName: partFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true };
   }
 
@@ -515,6 +566,7 @@ function backupStateToDrive(contents, shopId) {
       kind: contents.kind === 'auto' ? 'auto' : 'manual'
     };
     var manifestText = JSON.stringify(manifest);
+    assertDailyBackupIsFresh(backupFolder, shopId, dayKey, manifest.exportedAt, manifest.backupId);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
     writeShopInfoText(backupFolder, shopId, contents);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
@@ -527,10 +579,11 @@ function backupStateToDrive(contents, shopId) {
 
   var legacyName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
   var legacyEnvelope = {
-    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: contents.kind === 'auto' ? 'auto' : 'manual', shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey, encrypted: false },
+    _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: contents.kind === 'auto' ? 'auto' : 'manual', shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey, backupId: String(contents.backupId || ''), encrypted: false },
     state: state
   };
   var legacySerialized = JSON.stringify(legacyEnvelope);
+  assertDailyBackupIsFresh(backupFolder, shopId, dayKey, legacyEnvelope._meta.exportedAt, legacyEnvelope._meta.backupId);
   var legacyFile = upsertDailyFile(backupFolder, legacyName, legacySerialized);
   writeShopInfoText(backupFolder, shopId, contents);
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
