@@ -6,6 +6,30 @@ export interface PurchaseReceivePlan {
   trackedUnitCount: Map<string, number>;
 }
 
+/** Validates explicit IMEI/Serial values before a tracked purchase can be saved or received. */
+export function validatePurchaseUnitIdentifiers(po: Purchase, products: readonly Product[], existingUnits: readonly InventoryUnit[] = []): boolean {
+  const productById = new Map(products.map(p => [p.id, p]));
+  const seenImei = new Set<string>();
+  const seenSerial = new Set<string>();
+  for (const unit of existingUnits) {
+    if (unit.imei?.trim()) seenImei.add(unit.imei.trim().toLowerCase());
+    if (unit.serial?.trim()) seenSerial.add(unit.serial.trim().toLowerCase());
+  }
+  for (const item of po.items) {
+    const product = productById.get(item.productId);
+    if (!product) return false;
+    if (!(product.trackImei || product.trackSerial)) { if (item.unitIdentifiers?.length) return false; continue; }
+    if (!Array.isArray(item.unitIdentifiers) || item.unitIdentifiers.length !== item.qty) return false;
+    for (const raw of item.unitIdentifiers) {
+      const imei = raw?.imei?.trim() || ''; const serial = raw?.serial?.trim() || '';
+      if (product.trackImei && !imei) return false; if (product.trackSerial && !serial) return false;
+      if (!product.trackImei && imei) return false; if (!product.trackSerial && serial) return false;
+      if (imei) { const key=imei.toLowerCase(); if (seenImei.has(key)) return false; seenImei.add(key); }
+      if (serial) { const key=serial.toLowerCase(); if (seenSerial.has(key)) return false; seenSerial.add(key); }
+    }
+  }
+  return true;
+}
 /**
  * Builds a deterministic receive plan from every purchase line.
  * Purchase creation rejects duplicate product lines, so the store-layer
