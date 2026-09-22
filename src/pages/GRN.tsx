@@ -288,6 +288,14 @@ export default function GRN() {
                 </select>
               </Field>
 
+              {!returnPurchase && (
+                <div className="md:col-span-2 rounded-xl border border-dashed border-line bg-raised p-8 text-center">
+                  <Trash2 size={24} className="mx-auto text-faint mb-2" />
+                  <div className="font-semibold text-ink">Select a processed GRN</div>
+                  <div className="text-xs text-sub mt-1">Choose a processed GRN above to see remaining returnable quantities and the debit amount.</div>
+                </div>
+              )}
+
               {returnPurchase && (
                 <div className="md:col-span-2 mt-5 space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-sub mb-2">Items to return</div>
