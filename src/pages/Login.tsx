@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff, ShieldCheck, UserRound } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
@@ -120,7 +120,6 @@ export default function Login() {
               <div className="text-[13px] font-bold text-[#17133c]">Cashier</div><div className="text-[10.5px] text-[#7f83ad] truncate">cashier@nexfixsolution.com</div>
             </button>
           </div>
-          <div className="mt-6 text-center text-xs text-[#7b7f9f]">Need a new installation? <Link to="/signup" className="font-bold text-violet-600">Create account</Link></div>
         </div>
       </div>
     </div>
