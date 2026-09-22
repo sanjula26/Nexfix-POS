@@ -29,7 +29,7 @@ export default function Units() {
 }
 
 function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:InventoryUnit|null;products:any[];units:InventoryUnit[];isNew:boolean;onSave:(u:InventoryUnit)=>void;onClose:()=>void}){
- const [productId,setProductId]=useState(value?.productId||products[0]?.id||''); const [imei,setImei]=useState(value?.imei||''); const [serial,setSerial]=useState(value?.serial||''); const [status,setStatus]=useState<UnitStatus>(value?.status||'in_stock'); const [note,setNote]=useState(value?.note||''); const [error,setError]=useState('');
+ const [productId,setProductId]=useState(value?.productId||products[0]?.id||''); const product=products.find(p=>p.id===productId); const [imei,setImei]=useState(value?.imei||''); const [serial,setSerial]=useState(value?.serial||''); const [status,setStatus]=useState<UnitStatus>(value?.status||'in_stock'); const [note,setNote]=useState(value?.note||''); const [error,setError]=useState('');
  const submit=()=>{
    const product=products.find(p=>p.id===productId);
    if(!product){setError('Select a product.');return;}
