@@ -148,7 +148,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
       if (!result.ok) {
         const rawError = result.error || 'Google Drive backup failed';
         errorMessage = rawError.toLowerCase().includes('rate limit')
-          ? 'Please wait about 60 seconds between Google backups.'
+          ? 'Google backup is temporarily busy. Please retry shortly.'
           : rawError;
       }
       if (!result.ok) console.error('[Google Backup] cloud backup failed:', errorMessage);
@@ -181,30 +181,41 @@ type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
 let scheduledGoogleBackupTimer: number | undefined;
 let scheduledGoogleBackupRunning = false;
 let scheduledGoogleBackupLastRunAt = 0;
+let scheduledGoogleBackupFirstQueuedAt = 0;
 let scheduledGoogleBackupGetter: (() => POSState) | undefined;
 
 /**
- * Coalesces event-driven cloud backups so settings typing / multiple sale-side
- * state changes cannot exceed the Apps Script rate limit. The latest full state
- * is read only when the debounce expires.
+ * Event-driven Google backup scheduler.
+ * - Coalesces bursts for 30s.
+ * - Never lets a continuous stream of state changes postpone a backup forever:
+ *   maximum queue age is 90s.
+ * - Failed uploads stay queued and retry after 15s.
+ * - The latest full POS state is read only when the upload starts.
  */
 export function scheduleGoogleBackup(
   getState: () => POSState,
   _reason: GoogleBackupReason,
 ): void {
   scheduledGoogleBackupGetter = getState;
-  if (scheduledGoogleBackupTimer !== undefined) {
-    window.clearTimeout(scheduledGoogleBackupTimer);
-  }
+  const now = Date.now();
+  if (!scheduledGoogleBackupFirstQueuedAt) scheduledGoogleBackupFirstQueuedAt = now;
 
-  const DEBOUNCE_MS = 60 * 1000;
-  const RATE_LIMIT_MS = 60 * 1000;
-  const delay = Math.max(DEBOUNCE_MS, RATE_LIMIT_MS - (Date.now() - scheduledGoogleBackupLastRunAt));
+  if (scheduledGoogleBackupTimer !== undefined) return;
+
+  const DEBOUNCE_MS = 30 * 1000;
+  const MAX_QUEUE_MS = 90 * 1000;
+  const RETRY_MS = 15 * 1000;
+  const MIN_GAP_MS = 5 * 1000;
+
+  const age = now - scheduledGoogleBackupFirstQueuedAt;
+  const untilMax = Math.max(0, MAX_QUEUE_MS - age);
+  const sinceLastRun = now - scheduledGoogleBackupLastRunAt;
+  const untilRate = Math.max(0, MIN_GAP_MS - sinceLastRun);
+  const delay = Math.max(0, Math.min(DEBOUNCE_MS, untilMax, untilRate));
 
   scheduledGoogleBackupTimer = window.setTimeout(async () => {
     scheduledGoogleBackupTimer = undefined;
-    // A large encrypted/multipart upload can outlive the debounce window. Keep the
-    // latest settings snapshot queued instead of dropping it when an upload is active.
+
     if (scheduledGoogleBackupRunning) {
       scheduledGoogleBackupTimer = window.setTimeout(() => {
         scheduledGoogleBackupTimer = undefined;
@@ -212,28 +223,35 @@ export function scheduleGoogleBackup(
       }, 1000);
       return;
     }
+
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      // Keep the latest request pending; retry shortly and also on the browser online event.
       scheduledGoogleBackupTimer = window.setTimeout(() => {
         scheduledGoogleBackupTimer = undefined;
         if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
-      }, 15_000);
+      }, RETRY_MS);
       return;
     }
+
     const getter = scheduledGoogleBackupGetter;
-    if (!getter) return;
+    if (!getter) {
+      scheduledGoogleBackupFirstQueuedAt = 0;
+      return;
+    }
 
     scheduledGoogleBackupRunning = true;
     try {
-      scheduledGoogleBackupLastRunAt = Date.now();
       const result = await downloadBackup(getter(), 'auto', { download: false, cloud: true });
+      scheduledGoogleBackupLastRunAt = Date.now();
+
       if (!result.cloud) {
-        // Event-driven settings/sale backups must not be lost when the endpoint is
-        // temporarily rate-limited or a transient network/server error occurs.
+        // Keep the latest state queued. Temporary endpoint/rate/network failures
+        // must never turn an event-driven backup into a lost update.
         scheduledGoogleBackupTimer = window.setTimeout(() => {
           scheduledGoogleBackupTimer = undefined;
           if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
-        }, RATE_LIMIT_MS);
+        }, RETRY_MS);
+      } else {
+        scheduledGoogleBackupFirstQueuedAt = 0;
       }
     } finally {
       scheduledGoogleBackupRunning = false;
