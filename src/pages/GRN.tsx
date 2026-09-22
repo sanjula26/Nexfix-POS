@@ -43,7 +43,7 @@ export default function GRN() {
     const next = { ...r, ...patch };
     if (patch.productId) {
       const p = state.products.find(x => x.id === patch.productId);
-      if (p) { next.cost = p.cost; next.sellingPrice = p.price; }
+      if (p) { next.cost = p.cost; next.sellingPrice = p.price; next.unitText = ''; }
     }
     return next;
   }));
