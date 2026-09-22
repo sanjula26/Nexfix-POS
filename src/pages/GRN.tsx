@@ -155,7 +155,14 @@ export default function GRN() {
       setFormMode('receive'); setFormError('The GRN changed after the confirmation opened. Its IMEI/Serial data is no longer valid. Correct it before processing.'); setView('form');
       return;
     }
-    processGRN(confirmId, user?.name || 'Unknown'); setConfirmId(null); setPriceChanges([]); setView('list');
+    const ok = processGRN(confirmId, user?.name || 'Unknown');
+    setConfirmId(null); setPriceChanges([]);
+    if (!ok) {
+      setFormError('Unable to process this GRN. No stock was changed. Re-open the pending GRN, verify its data, and try again.');
+      setView('list');
+      return;
+    }
+    setFormError(''); setView('list');
   };
 
   return <div>
