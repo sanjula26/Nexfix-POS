@@ -65,7 +65,12 @@ export function getLocalShopId(): string {
 
 export function getDriveShopId(): string {
   try {
-    return (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
+    return (
+      localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY)
+      || localStorage.getItem(SHOP_KEY)
+      || localStorage.getItem(DRIVE_SHOP_KEY)
+      || ''
+    ).trim();
   } catch { return ''; }
 }
 
