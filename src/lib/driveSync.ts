@@ -243,10 +243,10 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
 
     const totalParts = Math.ceil(serialized.length / PART_SIZE_CHARS);
     const sha256 = await sha256Hex(serialized);
+    const partition = (await sha256Hex(shopId)).slice(0, 24);
     const partNames: string[] = [];
 
     for (let index = 0; index < totalParts; index += 1) {
-      const partition = (await sha256Hex(shopId)).slice(0, 24);
       const partName = `NEXFIX_${partition}_${dayKey}.part${String(index + 1).padStart(3, '0')}`;
       partNames.push(partName);
       const chunk = serialized.slice(index * PART_SIZE_CHARS, (index + 1) * PART_SIZE_CHARS);
