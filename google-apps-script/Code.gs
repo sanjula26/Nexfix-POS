@@ -153,7 +153,7 @@ function validateRequestId(requestId) {
 
 function validateDayKey(dayKey) {
   var value = String(dayKey || '').trim();
-  if (!/^\d{4}-\\d{2}-\\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
   return value;
 }
 
@@ -185,10 +185,6 @@ function checkBackupRateLimit(shopId, backupId, format) {
   }), BACKUP_RATE_WINDOW_SECONDS);
 }
 
-/**
- * Convert a shop id to a stable sheet-safe partition key without exposing the
- * raw shop id in the Google spreadsheet tab name.
- */
 function shopPartitionKey(shopId) {
   var normalized = normalizeShopId(shopId);
   var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, normalized, Utilities.Charset.UTF_8);
@@ -436,7 +432,6 @@ function backupStateToDrive(contents, shopId) {
     return { action: 'backupState', backupType: manifest.kind, timestamp: now.toISOString(), driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts };
   }
 
-  // Backward-compatible plaintext snapshot path for old clients only.
   var legacyName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
   var legacyEnvelope = {
     _meta: { app: 'Nexfix POS', version: 2, exportedAt: contents.exportedAt || now.toISOString(), kind: contents.kind === 'auto' ? 'auto' : 'manual', shopId: shopId, shopPartition: partition, shopName: shopName, dayKey: dayKey, encrypted: false },
@@ -448,9 +443,7 @@ function backupStateToDrive(contents, shopId) {
   return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
 }
 
-
 function backupState(ss, contents, shopId) {
-  // Drive is the primary Google backup destination; spreadsheet binding is optional.
   var driveResult = backupStateToDrive(contents, shopId);
   if (!ss) return driveResult;
   var sheetName = partitionedSheetName(BACKUP_SHEET, shopId);
@@ -617,8 +610,6 @@ function doPost(e) {
       try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
     }
 
-    // Publish a short-lived pending marker before the Drive operation so the
-    // client can distinguish "request reached Apps Script" from "request never arrived".
     try {
       requestCache.put(cacheKey, JSON.stringify({ ok: false, status: 'pending', version: VERSION, pending: true }), 120);
     } catch (ignorePendingCacheWrite) {}
@@ -635,9 +626,6 @@ function doPost(e) {
       try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
       return json(result);
     } catch (backupError) {
-      // Cache the actual server-side failure so the POS can report it instead
-      // of waiting for a generic timeout. This also makes Drive permission,
-      // folder-access, and payload errors diagnosable from backupStatus.
       var backupFailure = fail(backupError);
       try { requestCache.put(cacheKey, JSON.stringify(backupFailure), 120); } catch (ignoreFailureCacheWrite) {}
       return json(backupFailure);
