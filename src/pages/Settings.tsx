@@ -192,8 +192,6 @@ export default function Settings() {
           encrypted: boolean; shopId?: string; shopPartition?: string; backupId?: string;
           totalBytes?: number; parts?: number; totalParts?: number; partNames: string[]; sha256?: string;
         };
-        const currentShopId = getLocalShopId();
-        if (!currentShopId || manifest.shopId !== currentShopId) adoptImportedShop(manifest.shopId);
         const expectedParts = Number(manifest.parts ?? manifest.totalParts);
         if (!manifest.backupId || !Number.isInteger(expectedParts) || expectedParts < 1
           || manifest.partNames.length !== expectedParts || !manifest.sha256) {
