@@ -356,6 +356,7 @@ function writeShopInfoText(folder, shopId, metadata) {
     'Last Backup Exported At: ' + metadataText(metadata.exportedAt || new Date().toISOString(), 80),
     'Apps Script Version: ' + VERSION,
     'Recovery Key File: RECOVERY_KEY.txt',
+    'Shop Backup ID Copy: ' + metadataText(shopId, SHOP_ID_MAX_LENGTH),
     '',
     'Recovery note: Use the Shop Backup ID above to reconnect this shop after reinstalling or moving the POS to another PC.',
     'The Recovery Key is stored separately in RECOVERY_KEY.txt. Keep a private copy outside the PC for disaster recovery.',
