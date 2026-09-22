@@ -8,6 +8,9 @@ import {
   encryptBackupState,
   isEncryptedBackupEnvelope,
   sha256Hex,
+  ensureRecoveryKey,
+  getRecoveryKey,
+  setRecoveryKey,
 } from './backupCrypto';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
@@ -256,6 +259,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       : state;
     const safeState = sanitizeCloudState(businessState);
     const exportedAt = new Date().toISOString();
+    const recoveryKey = ensureRecoveryKey();
     const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
     const serialized = JSON.stringify(envelope);
     const totalBytes = utf8Bytes(serialized);
@@ -284,6 +288,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         state: serialized,
         kind,
         ...shopMetadata,
+        recoveryKey,
         backupId,
       }, shopId);
     }
@@ -312,6 +317,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         encrypted: true,
         kind,
         ...shopMetadata,
+        recoveryKey,
       }, shopId);
       if (!ok) {
         console.error('[Google Backup] multipart upload failed at part', index + 1);
