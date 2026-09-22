@@ -100,7 +100,7 @@ interface StoreCtx {
   /** verify the admin password without switching role (used for price overrides etc.) */
   verifyAdminPin: (pin: string, reason?: string) => boolean;
   // products
-  saveProduct: (p: Product) => void;
+  saveProduct: (p: Product) => boolean;
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
   saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
@@ -833,10 +833,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user, can, pushAudit]);
 
-  const saveProduct = useCallback((p: Product) => {
+  const saveProduct = useCallback((p: Product): boolean => {
     if (!user || !can('act:manageStock')) {
       pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
-      return;
+      return false;
     }
     const name = String(p.name || '').trim();
     const sku = String(p.sku || '').trim();
@@ -844,7 +844,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const values = [p.cost, p.price, p.stock, p.reorderLevel, ...(p.warrantyMonths === undefined ? [] : [p.warrantyMonths])];
     if (!name || values.some(v => !Number.isFinite(v) || v < 0) || !Number.isInteger(p.stock) || !Number.isInteger(p.reorderLevel) || (p.warrantyMonths !== undefined && !Number.isInteger(p.warrantyMonths))) {
       pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
-      return;
+      return false;
     }
     const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
     const exists = state.products.some(x => x.id === normalized.id);
@@ -857,8 +857,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
-    if (duplicate) pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
-    else pushAudit(exists ? 'UPDATE' : 'CREATE', 'Product', `${exists ? 'Updated' : 'Added'} product ${normalized.name}`);
+    if (duplicate) {
+      pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
+      return false;
+    }
+    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Product', `${exists ? 'Updated' : 'Added'} product ${normalized.name}`);
+    return true;
   }, [can, pushAudit, state.products, user]);
 
   const deleteProduct = useCallback((id: string) => {
