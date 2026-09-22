@@ -607,7 +607,7 @@ function backupStateToDrive(contents, shopId) {
     var manifestText = JSON.stringify(manifest);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, manifest.exportedAt, manifest.backupId);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
-    writeShopInfoText(backupFolder, shopId, contents);
+    writeShopInfoText(shopFolder, shopId, contents);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
     keep[manifestName] = true;
