@@ -143,7 +143,12 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     try {
       const result = await backupStateToGoogle(payload, kind);
       cloud = result.ok;
-      if (!result.ok) errorMessage = result.error || 'Google Drive backup failed';
+      if (!result.ok) {
+        const rawError = result.error || 'Google Drive backup failed';
+        errorMessage = rawError.toLowerCase().includes('rate limit')
+          ? 'Please wait about 60 seconds between Google backups.'
+          : rawError;
+      }
       if (!result.ok) console.error('[Google Backup] cloud backup failed:', errorMessage);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Google Drive backup failed';
