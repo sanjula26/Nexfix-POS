@@ -408,6 +408,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
+  const purchaseReceiveLockRef = useRef(false);
+  const purchaseReturnLockRef = useRef(false);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -1577,6 +1579,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit, user, can]);
 
   const receivePurchase = useCallback((id: string, processorName?: string): boolean => {
+    if (purchaseReceiveLockRef.current) return false;
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
       return false;
@@ -1585,6 +1588,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!po || po.status !== 'pending') return false;
     const plan = buildPurchaseReceivePlan(po, state.products);
     if (!plan || !validatePurchaseUnitIdentifiers(po, state.products, state.units || [])) return false;
+    purchaseReceiveLockRef.current = true;
     setStateWithInventoryLedger('PURCHASE_RECEIVE', s => {
       const currentPo = s.purchases.find(x => x.id === id);
       if (!currentPo || currentPo.status !== 'pending') return s;
@@ -1627,6 +1631,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
     });
     pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · recorded IMEI/Serial units`);
+    purchaseReceiveLockRef.current = false;
     return true;
   }, [state.purchases, state.products, state.units, pushAudit, user, can]);
 
@@ -1661,6 +1666,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const processGRN = useCallback((id: string, processorName: string): boolean => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
+  if (purchaseReturnLockRef.current) return null;
   if (!user || !can('page:purchases')) {
     pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
     return null;
@@ -1689,6 +1695,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     items.push({ itemIdx, productId: source.productId, name: source.name, qty, cost: source.cost, total: qty * source.cost });
   }
   if (!items.length) return null;
+  purchaseReturnLockRef.current = true;
   const seq = (state.counters.dn || 0) + 1;
   const ret: PurchaseReturn = { id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo, supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items, total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email };
   setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({
@@ -1699,6 +1706,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     counters: { ...prev.counters, dn: seq },
   }));
   pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
+  purchaseReturnLockRef.current = false;
   return ret;
 }, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can]);
 
