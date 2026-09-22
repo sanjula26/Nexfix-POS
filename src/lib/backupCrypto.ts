@@ -60,7 +60,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
-  return bytesToBase64(bytes).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function base64ToBytes(value: string): Uint8Array {
