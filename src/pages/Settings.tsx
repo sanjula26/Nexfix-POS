@@ -257,7 +257,7 @@ export default function Settings() {
       if (result.cloud) {
         setGMsg('Google Drive backup completed successfully.');
       } else {
-        setGMsg('Google Drive backup failed. No backup was uploaded. Check the error message or Apps Script status.');
+        setGMsg(result.error || 'Google Drive backup failed. No backup was uploaded.');
       }
     } catch (error) {
       setGMsg(error instanceof Error ? error.message : 'Google Drive backup failed');
