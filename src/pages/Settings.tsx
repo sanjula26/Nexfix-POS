@@ -249,11 +249,16 @@ export default function Settings() {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
     if (connectivity !== 'online') return setGMsg('Google backup requires an online connection');
+    if (!hasBackupPassphrase()) return setGMsg('Set the Backup Passphrase in Settings before using Google Drive backup (minimum 12 characters).');
     setGRestoreBusy(true);
     setGMsg('Sending backup to Google Drive…');
     try {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
-      setGMsg(result.cloud ? 'Google Drive backup completed successfully.' : 'Google Drive backup failed. Check the Apps Script execution log.');
+      if (result.cloud) {
+        setGMsg('Google Drive backup completed successfully.');
+      } else {
+        setGMsg('Google Drive backup failed. No backup was uploaded. Check the error message or Apps Script status.');
+      }
     } catch (error) {
       setGMsg(error instanceof Error ? error.message : 'Google Drive backup failed');
     } finally {
@@ -266,6 +271,7 @@ export default function Settings() {
     if (!gEnabled) return setGMsg('Google Drive backup is not available in this build');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
     if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
+    if (!hasBackupPassphrase()) return setGMsg('Set the Backup Passphrase in Settings before restoring encrypted Google Drive data (minimum 12 characters).');
     const currentShopId = getLocalShopId();
     if (!currentShopId) return setGMsg('Shop Backup ID is missing. Set one before restoring Google Drive data.');
     setGRestoreBusy(true);
