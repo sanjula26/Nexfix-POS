@@ -163,16 +163,23 @@ export default function Settings() {
       for (const file of files) texts.set(file.name, await readFile(file));
 
       // A downloaded RECOVERY_KEY.txt can be selected together with the backup.
-      // This makes offline/disaster recovery possible without retyping the key.
+      // Do not replace the currently working local key until the backup has been
+      // fully validated, decrypted, persisted, and the restore has succeeded.
+      // Otherwise a failed/mismatched key file could strand this browser from
+      // its existing automatic backups.
+      const previousRecoveryKey = getRecoveryKey();
+      let importedRecoveryKey: string | undefined;
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
         const match = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
         if (match) {
-          const result = setRecoveryKey(match[1]);
-          if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
-          setRecoveryKeyReady(true);
+          importedRecoveryKey = match[1];
           break;
         }
+      }
+      if (importedRecoveryKey) {
+        const result = setRecoveryKey(importedRecoveryKey);
+        if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
       }
 
       let parsed: unknown;
@@ -225,7 +232,22 @@ export default function Settings() {
         restoreInput = { __nexfixCloudSafe: true, state: decrypted };
       }
 
-      await applyBackupRestore(state, restoreInput);
+      try {
+        await applyBackupRestore(state, restoreInput);
+      } catch (error) {
+        // A failed restore must not leave a newly imported Recovery Key active.
+        // Restore the key that was already working on this browser.
+        if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
+          if (previousRecoveryKey) setRecoveryKey(previousRecoveryKey);
+          else {
+            try { localStorage.removeItem('nexfix_backup_recovery_key_v1'); } catch { /* ignore */ }
+          }
+          setRecoveryKeyReady(Boolean(previousRecoveryKey));
+        }
+        throw error;
+      }
+
+      if (importedRecoveryKey) setRecoveryKeyReady(true);
 
       // Bind a recovered PC to the imported shop only after the restore has
       // been fully validated, decrypted, persisted, and checkpoint-cleared.
