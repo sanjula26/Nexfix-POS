@@ -636,8 +636,8 @@ function backupStateToDrive(contents, shopId) {
     if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
       try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
     }
-    writeShopMetadata(shopFolder, shopId, shopName, encrypted);
-    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
+    writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
+    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: partition, shopName: shopName }));
     writeShopInfoText(shopFolder, shopId, contents);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
     return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
@@ -695,8 +695,8 @@ function backupStateToDrive(contents, shopId) {
     if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
       try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
     }
-    writeShopMetadata(shopFolder, shopId, shopName, encrypted);
-    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
+    writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
+    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: partition, shopName: shopName }));
     writeShopInfoText(shopFolder, shopId, contents);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
@@ -717,7 +717,7 @@ function backupStateToDrive(contents, shopId) {
   if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
     try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
   }
-  writeShopMetadata(shopFolder, shopId, shopName, encrypted);
+  writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
   writeShopInfoText(shopFolder, shopId, contents);
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
   return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
