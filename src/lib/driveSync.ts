@@ -130,6 +130,34 @@ function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/**
+ * Split a JSON string into UTF-8 byte-safe chunks.
+ * JavaScript string length is UTF-16 code units, so slicing by character count
+ * can exceed the Apps Script Drive part-size limit when the payload contains
+ * non-ASCII shop/product/customer text.
+ */
+function splitUtf8Chunks(value: string, maxBytes: number): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+  let bytes = 0;
+  let index = 0;
+
+  while (index < value.length) {
+    const codePoint = value.codePointAt(index) ?? 0;
+    const width = codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+    if (bytes > 0 && bytes + width > maxBytes) {
+      chunks.push(value.slice(start, index));
+      start = index;
+      bytes = 0;
+    }
+    bytes += width;
+    index += codePoint > 0xffff ? 2 : 1;
+  }
+
+  if (start < value.length) chunks.push(value.slice(start));
+  return chunks;
+}
+
 async function postGoogleBackup(body: Record<string, unknown>, shopId: string): Promise<boolean> {
   const baseUrl = getGoogleScriptUrl();
   if (!baseUrl) return false;
@@ -241,7 +269,8 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       }, shopId);
     }
 
-    const totalParts = Math.ceil(serialized.length / PART_SIZE_CHARS);
+    const chunks = splitUtf8Chunks(serialized, PART_SIZE_CHARS);
+    const totalParts = chunks.length;
     const sha256 = await sha256Hex(serialized);
     const partition = (await sha256Hex(shopId)).slice(0, 24);
     const partNames: string[] = [];
@@ -249,7 +278,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     for (let index = 0; index < totalParts; index += 1) {
       const partName = `NEXFIX_${partition}_${dayKey}.part${String(index + 1).padStart(3, '0')}`;
       partNames.push(partName);
-      const chunk = serialized.slice(index * PART_SIZE_CHARS, (index + 1) * PART_SIZE_CHARS);
+      const chunk = chunks[index];
       const ok = await postGoogleBackup({
         format: 'encrypted-part',
         dayKey,
