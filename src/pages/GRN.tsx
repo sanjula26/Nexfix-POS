@@ -37,6 +37,8 @@ export default function GRN() {
   const [returnGrnId, setReturnGrnId] = useState('');
   const [formError, setFormError] = useState('');
   const [actionRunning, setActionRunning] = useState(false);
+  const [invoiceWarning, setInvoiceWarning] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
@@ -58,7 +60,7 @@ export default function GRN() {
     return next;
   }));
 
-  const startNew = () => { setFormError(''); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form'); };
+  const startNew = () => { setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form'); };
   const openReturn = (p: Purchase) => {
     const returnedByItem = new Map<number, number>();
     for (const ret of state.purchaseReturns || []) if (ret.purchaseId === p.id) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
@@ -127,8 +129,15 @@ export default function GRN() {
     setFormError('');
     try {
       const payload = { supplierId: supplier.id, supplierName: supplier.name, supplierInvoiceNo: invoiceNo.trim() || undefined, notes: notes.trim() || undefined, items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0) };
-      const result = editingId ? updateGRNDraft(editingId, payload) : saveGRNDraft(payload);
-      if (!result.ok) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
+      if (editingId) {
+        const result = updateGRNDraft(editingId, payload);
+        if (!result.ok) { setFormError(result.error || 'Unable to update this GRN draft.'); return; }
+        setHighlightedId(editingId);
+      } else {
+        const result = saveGRNDraft(payload);
+        if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
+        setHighlightedId(result.purchase.id);
+      }
       setView('list');
     } finally {
       setActionRunning(false);
@@ -431,7 +440,7 @@ export default function GRN() {
                 <thead><tr><th className="th">GRN / PO</th><th className="th">Date</th><th className="th">Supplier</th><th className="th">Invoice</th><th className="th">Items</th><th className="th">Status</th><th className="th !text-right">Total</th><th className="th !text-right">Actions</th></tr></thead>
                 <tbody>
                   {list.map(p => (
-                    <tr key={p.id} className="hover:bg-raised/40">
+                    <tr key={p.id} className={`hover:bg-raised/40 transition-colors ${highlightedId === p.id ? 'bg-emerald-500/[0.08] ring-1 ring-inset ring-emerald-500/20' : ''}`}>
                       <td className="td font-bold text-violet-500">{p.poNo}</td>
                       <td className="td text-xs text-sub">{fmtDate(p.date)}</td>
                       <td className="td font-semibold">{p.supplierName}</td>
@@ -475,6 +484,16 @@ export default function GRN() {
 
       <Modal open={!!confirmId} onClose={() => !actionRunning && setConfirmId(null)} title="Process GRN?" sub="Stock will be added once, and the GRN becomes immutable.">
         <p className="text-sm text-sub">This action updates inventory and records the receipt in the inventory ledger. It cannot be repeated after processing.</p>
+        {confirmId && (() => {
+          const p = state.purchases.find(x => x.id === confirmId);
+          if (!p) return null;
+          const unitCount = p.items.filter(i => state.products.find(x => x.id === i.productId)?.trackImei || state.products.find(x => x.id === i.productId)?.trackSerial).reduce((sum, i) => sum + i.qty, 0);
+          return <div className="mt-4 rounded-xl border border-line bg-raised p-3 text-sm space-y-1">
+            <div><span className="text-sub">Supplier:</span> <b>{p.supplierName}</b></div>
+            <div><span className="text-sub">Total:</span> <b className="num">{fmtRs(p.total)}</b></div>
+            <div><span className="text-sub">Units:</span> <b>{unitCount}</b></div>
+          </div>;
+        })()}
         {priceChanges.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
             <p className="text-xs font-bold text-amber-600 mb-2">Selling price changes</p>
