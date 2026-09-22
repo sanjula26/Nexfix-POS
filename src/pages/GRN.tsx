@@ -89,6 +89,8 @@ export default function GRN() {
         if (ids.some(u => (product.trackImei && !u.imei?.trim()) || (product.trackSerial && !u.serial?.trim()))) return `${item.name}: every tracked unit must have the required identifier.`;
       }
     }
+    const validationPurchase: Purchase = { id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), supplierId, supplierName: state.suppliers.find(s => s.id === supplierId)?.name || '', items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0), status: 'pending' };
+    if (!validatePurchaseUnitIdentifiers(validationPurchase, state.products, state.units || [])) return 'One or more IMEI/Serial values are duplicated or invalid.';
     return '';
   };
 
