@@ -485,7 +485,6 @@ export default function GRN() {
     </div>
   );
 }
-}
 function ProductSearchSelect({ value, products, onChange }: { value: string; products: Array<{ id: string; name: string; sku: string; barcode: string; brand: string }>; onChange: (id: string) => void }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
