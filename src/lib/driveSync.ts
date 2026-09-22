@@ -164,9 +164,9 @@ function splitUtf8Chunks(value: string, maxBytes: number): string[] {
   return chunks;
 }
 
-interface GoogleBackupPostResult { ok: boolean; error?: string; }
+interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSeconds?: number; }
 
-async function postGoogleBackup(body: Record<string, unknown>, shopId: string): Promise<GoogleBackupPostResult> {
+async function postGoogleBackup(body: Record<string, unknown>, shopId: string, attempt = 0): Promise<GoogleBackupPostResult> {
   const baseUrl = getGoogleScriptUrl();
   if (!baseUrl) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
@@ -202,7 +202,15 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string): 
       await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
       const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
       if (status === true) return { ok: true };
-      if (status && typeof status === 'object' && 'ok' in status && status.ok === false) return { ok: false, error: status.error };
+      if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
+        const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
+        const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
+        if (retryAfterSeconds && attempt < 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
+          return postGoogleBackup(body, shopId, attempt + 1);
+        }
+        return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+      }
       if (status === false) return { ok: false, error: 'Google Drive backup request failed.' };
       pollDelay = Math.min(1000, Math.round(pollDelay * 1.5));
     }
@@ -211,7 +219,13 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string): 
     const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
     if (finalStatus === true) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
-      return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.' };
+      const rateMatch = /retry in about (\d+) seconds/i.exec(finalStatus.error || '');
+      const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
+      if (retryAfterSeconds && attempt < 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
+        return postGoogleBackup(body, shopId, attempt + 1);
+      }
+      return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.', ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
     console.error('[Google Backup] confirmation timed out', { requestId });
     return { ok: false, error: 'Google Drive backup confirmation timed out. Please check Google Drive and try again.' };
