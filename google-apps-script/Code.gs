@@ -553,7 +553,6 @@ function backupStateToDrive(contents, shopId) {
     var serialized = JSON.stringify(envelope);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
-    writeShopInfoText(backupFolder, shopId, contents);
     writeShopInfoText(shopFolder, shopId, contents);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
     return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
