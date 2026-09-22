@@ -2302,7 +2302,7 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
       return;
     }
-    await downloadBackup(state, 'manual');
+    await downloadBackup(state, 'manual', { download: true, cloud: false });
     const meta = await idbGetMeta();
     setBackupMeta(meta);
     pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
