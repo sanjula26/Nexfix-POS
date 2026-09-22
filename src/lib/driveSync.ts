@@ -487,5 +487,5 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
 }
 
 export async function getGoogleBackupSecurityStatus(): Promise<{ encrypted: boolean; passphraseRequired: boolean }> {
-  return { encrypted: true, passphraseRequired: true };
+  return { encrypted: true, passphraseRequired: false };
 }
