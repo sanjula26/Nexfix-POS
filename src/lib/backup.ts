@@ -64,7 +64,8 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
-  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns'];
+  if ('reverseRequests' in state && !hasArray(state.reverseRequests)) return false;
+  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns', 'reverseRequests'];
   for (const key of idCollections) {
     const collection = state[key];
     if (collection !== undefined && (!hasArray(collection) || !hasUniqueStringIds(collection))) return false;
@@ -98,6 +99,7 @@ function normalizeRestoredState(state: POSState): POSState {
     supplierPayments: state.supplierPayments ?? [],
     inventoryTransactions: state.inventoryTransactions ?? [],
     grns: state.grns ?? [],
+    reverseRequests: state.reverseRequests ?? [],
   };
 }
 
