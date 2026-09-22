@@ -160,7 +160,7 @@ interface StoreCtx {
   flushOfflineQueue: () => Promise<number>;
   pendingQueueCount: number;
   // Phase 3 — units & repairs
-  saveUnit: (u: InventoryUnit) => void;
+  saveUnit: (u: InventoryUnit) => boolean;
   saveUnitsBulk: (units: InventoryUnit[]) => { ok: boolean; added: number; errors: string[] };
   deleteUnit: (id: string) => void;
   findUnitByCode: (code: string) => InventoryUnit | undefined;
@@ -2054,29 +2054,47 @@ const deletePurchase = useCallback((id: string) => {
   }, []);
 
   /* ---------------- units (IMEI / serial) ---------------- */
-  const saveUnit = useCallback((u: InventoryUnit) => {
+  const saveUnit = useCallback((u: InventoryUnit): boolean => {
     if (!user || !can('page:units') || !can('act:manageStock')) {
       pushAudit('DENIED', 'Unit', 'Blocked unit save without required inventory permissions');
-      return;
+      return false;
+    }
+    const product = state.products.find(p => p.id === u.productId);
+    if (!product || (!product.trackImei && !product.trackSerial)) {
+      pushAudit('DENIED', 'Unit', `Blocked unit save for untracked product ${u.productId}`);
+      return false;
+    }
+    const imei = u.imei?.trim() || '';
+    const serial = u.serial?.trim() || '';
+    if (product.trackImei && !imei || product.trackSerial && !serial) {
+      pushAudit('DENIED', 'Unit', `Blocked incomplete tracked unit for ${u.productId}`);
+      return false;
+    }
+    if (!product.trackImei && imei || !product.trackSerial && serial) {
+      pushAudit('DENIED', 'Unit', `Blocked unexpected identifier for ${u.productId}`);
+      return false;
     }
     const exists = (state.units || []).some(x => x.id === u.id);
-    // prevent duplicate IMEI/serial in stock
     const dup = (state.units || []).find(x =>
       x.id !== u.id && x.status === 'in_stock' &&
-      ((u.imei && x.imei === u.imei) || (u.serial && x.serial === u.serial)),
+      ((imei && (x.imei || '').trim().toLowerCase() === imei.toLowerCase()) ||
+       (serial && (x.serial || '').trim().toLowerCase() === serial.toLowerCase())),
     );
     if (dup) {
-      pushAudit('DENIED', 'Unit', `Duplicate IMEI/serial blocked: ${u.imei || u.serial}`);
-      return;
+      pushAudit('DENIED', 'Unit', `Duplicate IMEI/serial blocked: ${imei || serial}`);
+      return false;
     }
+    const normalized = { ...u, imei: imei || undefined, serial: serial || undefined };
     setState(s => ({
       ...s,
       units: exists
-        ? (s.units || []).map(x => (x.id === u.id ? u : x))
-        : [u, ...(s.units || [])],
+        ? (s.units || []).map(x => (x.id === u.id ? normalized : x))
+        : [normalized, ...(s.units || [])],
+      products: exists ? s.products : s.products.map(p => p.id === u.productId ? { ...p, stock: p.stock + 1 } : p),
     }));
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Unit', `${exists ? 'Updated' : 'Added'} unit ${u.imei || u.serial || u.id}`);
-  }, [state.units, pushAudit, user, can]);
+    pushAudit(exists ? 'UPDATE' : 'CREATE', 'Unit', `${exists ? 'Updated' : 'Added'} unit ${imei || serial || u.id}`);
+    return true;
+  }, [state.units, state.products, pushAudit, user, can]);
 
   const saveUnitsBulk = useCallback((newUnits: InventoryUnit[]): { ok: boolean; added: number; errors: string[] } => {
     if (!user || !can('act:manageStock')) return { ok: false, added: 0, errors: ['You do not have permission to manage inventory units.'] };
