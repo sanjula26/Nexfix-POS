@@ -275,7 +275,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       return await postGoogleBackup({
         format: 'encrypted-single',
         dayKey,
-        backupId,
         exportedAt,
         state: serialized,
         kind,
