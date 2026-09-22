@@ -558,11 +558,16 @@ function latestDriveBackup(shopId) {
             if (String(manifest.shopPartition) !== shopPartitionKey(shopId) || String(manifest.shopId) !== String(shopId)) continue;
             if (!Array.isArray(manifest.partNames) || manifest.partNames.length !== Number(manifest.parts)) continue;
             var partsOk = true;
+            var manifestBytes = 0;
+            var manifestPayload = '';
             for (var mi = 0; mi < manifest.partNames.length; mi++) {
               var pf = findMultipartPart(backupFolder, manifest.partNames[mi], manifest.backupId);
               if (!pf) { partsOk = false; break; }
+              manifestBytes += pf.getSize();
+              manifestPayload += pf.getBlob().getDataAsString();
             }
-            if (!partsOk) continue;
+            if (!partsOk || manifestBytes !== Number(manifest.totalBytes)) continue;
+            if (!manifest.sha256 || sha256HexText(manifestPayload) !== String(manifest.sha256)) continue;
             if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
               latest = file;
               latestPayload = { multipart: true, manifest: manifest, shopName: manifest.shopName, timestamp: manifest.exportedAt, kind: manifest.kind, shopId: manifest.shopId, shopPartition: manifest.shopPartition };
