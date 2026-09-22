@@ -404,6 +404,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const previousBackupStateRef = useRef(state);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
@@ -474,6 +475,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     [user, state.permissions],
   );
   const viewingAs: Role = user?.role || 'admin';
+
+  // Any authenticated POS state mutation is backup-eligible. This catch-all watcher
+  // intentionally covers every write path (inventory, customers, suppliers, purchases,
+  // repairs, units/IMEI, payments, holds, returns, quotations, warranty claims, sessions,
+  // permissions/settings, reversals, and future POS state fields) so a newly added write
+  // path cannot silently bypass Google Drive backup. Existing event-specific scheduling
+  // remains as an earlier debounce trigger; this watcher is the safety net.
+  useEffect(() => {
+    if (!ready || !user) {
+      previousBackupStateRef.current = state;
+      return;
+    }
+    if (previousBackupStateRef.current !== state) {
+      scheduleGoogleBackup(() => stateRef.current, 'settings');
+    }
+    previousBackupStateRef.current = state;
+  }, [state, ready, user?.id]);
 
   // Debounced persist to IndexedDB + localStorage
   useEffect(() => {
