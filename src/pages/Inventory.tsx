@@ -38,6 +38,7 @@ export default function Inventory() {
   const [stockTakeOpen, setStockTakeOpen] = useState(false);
   const [stockCounts, setStockCounts] = useState<Record<string, string>>({});
   const [stockTakeReason, setStockTakeReason] = useState('Stock take adjustment');
+  const [newUnitText, setNewUnitText] = useState('');
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -86,7 +87,7 @@ export default function Inventory() {
     // For a new tracked product, identifiers entered in this modal are created as
     // normal InventoryUnit records so the Units page is populated immediately.
     if (isNew && nextTracked && newUnitText.trim()) {
-      const lines = newUnitText.split(/\\r?\\n/);
+      const lines = newUnitText.split(/\r?\n/);
       const newUnits: InventoryUnit[] = [];
       const parseErrors: string[] = [];
       for (let i = 0; i < lines.length; i++) {
@@ -123,13 +124,13 @@ export default function Inventory() {
         });
       }
       if (parseErrors.length) {
-        alert(parseErrors.join('\\n'));
+        alert(parseErrors.join('\n'));
         return;
       }
       saveProduct(editing);
       const result = saveUnitsBulk(newUnits);
       if (!result.ok || result.errors.length) {
-        alert(result.errors.length ? result.errors.join('\\n') : 'The product was saved, but the unit identifiers could not be added.');
+        alert(result.errors.length ? result.errors.join('\n') : 'The product was saved, but the unit identifiers could not be added.');
       }
     } else {
       saveProduct(editing);
@@ -307,10 +308,10 @@ export default function Inventory() {
                   value={newUnitText}
                   onChange={e => setNewUnitText(e.target.value)}
                   placeholder={editing.trackImei && editing.trackSerial
-                    ? '356789012345678,ABC123\\n356789012345679,ABC124'
+                    ? '356789012345678,ABC123\n356789012345679,ABC124'
                     : editing.trackImei
-                      ? '356789012345678\\n356789012345679'
-                      : 'SN-ABC123\\nSN-ABC124'}
+                      ? '356789012345678\n356789012345679'
+                      : 'SN-ABC123\nSN-ABC124'}
                   aria-label="Initial IMEI or serial numbers"
                 />
                 <p className="text-[11px] text-sub">Blank lines are ignored. Duplicate identifiers are rejected.</p>
