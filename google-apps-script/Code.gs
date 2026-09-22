@@ -557,7 +557,7 @@ function backupStateToDrive(contents, shopId) {
     var serialized = JSON.stringify(envelope);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
-    if (shopFolder.getName() !== partition + ' - ' + sanitizeDriveName(shopName)) {
+    if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
       try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
     }
     writeShopMetadata(shopFolder, shopId, shopName, encrypted);
