@@ -138,9 +138,15 @@ export default function GRN() {
     setFormError('');
     try {
       const payload = { supplierId: supplier.id, supplierName: supplier.name, supplierInvoiceNo: invoiceNo.trim() || undefined, notes: notes.trim() || undefined, items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0) };
-      const result = editingId ? updateGRNDraft(editingId, payload) : saveGRNDraft(payload);
-      if (!result.ok) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
-      setConfirmId(editingId || result.purchase!.id);
+      if (editingId) {
+        const result = updateGRNDraft(editingId, payload);
+        if (!result.ok) { setFormError(result.error || 'Unable to update this GRN draft.'); return; }
+        setConfirmId(editingId);
+      } else {
+        const result = saveGRNDraft(payload);
+        if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
+        setConfirmId(result.purchase.id);
+      }
     } finally {
       setActionRunning(false);
     }
