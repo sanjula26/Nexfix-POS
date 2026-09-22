@@ -153,7 +153,7 @@ function validateRequestId(requestId) {
 
 function validateDayKey(dayKey) {
   var value = String(dayKey || '').trim();
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
+  if (!/^\d{4}-\\d{2}-\\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
   return value;
 }
 
