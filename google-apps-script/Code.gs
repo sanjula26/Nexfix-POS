@@ -99,6 +99,8 @@ function validateBackupContents(contents) {
 
   if (format === 'encrypted-single') {
     validateEncryptedEnvelope(contents.state, contents.shopId);
+    validateBackupId(contents.backupId);
+    validateExportedAt(contents.exportedAt);
     return;
   }
 
@@ -113,7 +115,7 @@ function validateBackupContents(contents) {
     if (!Number.isInteger(partIndex) || partIndex < 1 || !Number.isInteger(totalParts) || totalParts < 1 || partIndex > totalParts) {
       throw new Error('Invalid backup part index');
     }
-    if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
+    validateBackupId(contents.backupId);
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.partName || ''))) throw new Error('Invalid backup part name');
     if (String(contents.partName).indexOf(expectedPartPrefix) !== 0 || String(contents.partName).indexOf('.part') < 0) throw new Error('Backup part does not belong to the requested shop/day');
     return;
@@ -139,7 +141,8 @@ function validateBackupContents(contents) {
       if (seenPartNames[name]) throw new Error('Duplicate multipart part name');
       seenPartNames[name] = true;
     });
-    if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
+    validateBackupId(contents.backupId);
+    validateExportedAt(contents.exportedAt);
     return;
   }
 
@@ -165,6 +168,18 @@ function validateDayKey(dayKey) {
   var value = String(dayKey || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Valid backup dayKey is required');
   return value;
+}
+
+function validateBackupId(value) {
+  var id = String(value || '').trim();
+  if (!id || id.length > 100 || !/^[A-Za-z0-9._:-]+$/.test(id)) throw new Error('Valid backup id is required');
+  return id;
+}
+
+function validateExportedAt(value) {
+  var text = String(value || '').trim();
+  if (!text || isNaN(Date.parse(text))) throw new Error('Valid backup exportedAt is required');
+  return text;
 }
 
 function checkBackupRateLimit(shopId, backupId, format) {
@@ -591,6 +606,24 @@ function findMultipartPart(folder, fileName, backupId) {
   return null;
 }
 
+function commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey) {
+  var warnings = [];
+  try { writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents); }
+  catch (err) { warnings.push('shop.json update failed: ' + String(err)); }
+  if (recoveryKey) {
+    try { writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: shopPartitionKey(shopId), shopName: shopName })); }
+    catch (err) { warnings.push('RECOVERY_KEY.txt update failed: ' + String(err)); }
+  }
+  try { writeShopInfoText(shopFolder, shopId, contents); }
+  catch (err) { warnings.push('SHOP_INFO.txt update failed: ' + String(err)); }
+  return warnings;
+}
+
+function backupResultWithWarnings(result, warnings) {
+  if (warnings && warnings.length) result.metadataWarnings = warnings;
+  return result;
+}
+
 function backupStateToDrive(contents, shopId) {
   var format = String(contents.format || 'legacy').trim();
   var state = format === 'legacy' ? (contents.state || {}) : null;
@@ -636,11 +669,9 @@ function backupStateToDrive(contents, shopId) {
     if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
       try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
     }
-    writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
-    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: partition, shopName: shopName }));
-    writeShopInfoText(shopFolder, shopId, contents);
+    var singleWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
-    return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
+    return backupResultWithWarnings({ action: 'backupState', backupType: envelope._meta.kind, timestamp: envelope._meta.exportedAt, driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false, backupId: envelope._meta.backupId }, singleWarnings);
   }
 
   if (format === 'encrypted-part') {
@@ -695,15 +726,13 @@ function backupStateToDrive(contents, shopId) {
     if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
       try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
     }
-    writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
-    if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: partition, shopName: shopName }));
-    writeShopInfoText(shopFolder, shopId, contents);
+    var manifestWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
     keep[manifestName] = true;
     partNames.forEach(function(name){ keep[name] = true; });
     trashDailyBackupSet(backupFolder, shopId, dayKey, keep, contents.backupId);
-    return { action: 'backupState', backupType: manifest.kind, timestamp: now.toISOString(), driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts };
+    return backupResultWithWarnings({ action: 'backupState', backupType: manifest.kind, timestamp: manifest.exportedAt, driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts }, manifestWarnings);
   }
 
   var legacyName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -717,10 +746,9 @@ function backupStateToDrive(contents, shopId) {
   if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
     try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
   }
-  writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents);
-  writeShopInfoText(shopFolder, shopId, contents);
+  var legacyWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, '');
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
-  return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
+  return backupResultWithWarnings({ action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: legacyEnvelope._meta.exportedAt, driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false, backupId: legacyEnvelope._meta.backupId }, legacyWarnings);
 }
 
 function backupState(ss, contents, shopId) {
