@@ -143,7 +143,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   }
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
     try {
-      const result = await backupStateToGoogle(payload, kind);
+      const result = await runCloudBackupSerialized(state, kind);
       cloud = result.ok;
       if (!result.ok) {
         const rawError = result.error || 'Google Drive backup failed';
@@ -177,6 +177,23 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
 }
 
 type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
+
+let cloudBackupQueue: Promise<void> = Promise.resolve();
+
+async function runCloudBackupSerialized(
+  state: POSState,
+  kind: 'manual' | 'auto',
+): Promise<{ ok: boolean; error?: string }> {
+  const previous = cloudBackupQueue;
+  let release!: () => void;
+  cloudBackupQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    return await backupStateToGoogle(state, kind);
+  } finally {
+    release();
+  }
+}
 
 let scheduledGoogleBackupTimer: number | undefined;
 let scheduledGoogleBackupRunning = false;
