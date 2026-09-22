@@ -227,7 +227,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     const callbackName = `__nexfixGoogleBackupStatus_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
     let settled = false;
-    const finish = (value: boolean | null) => {
+    const finish = (value: boolean | { ok: false; error: string } | null) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
