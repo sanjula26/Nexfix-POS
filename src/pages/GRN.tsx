@@ -3,6 +3,7 @@ import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageC
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
+import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { Purchase, PurchaseItem } from '../lib/types';
 import { validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 
@@ -39,6 +40,12 @@ export default function GRN() {
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
+  useBarcodeScanner(code => {
+    const match = state.products.find(p => p.barcode.trim().toLowerCase() === code.trim().toLowerCase());
+    if (!match || actionRunning || formMode !== 'receive' || view !== 'form') return;
+    const blank = rows.findIndex(r => !r.productId);
+    setRow(blank >= 0 ? blank : rows.length - 1, { productId: match.id });
+  }, { enabled: view === 'form' && formMode === 'receive' && !actionRunning, force: true, minLength: 3 });
   const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q)).sort((a, b) => +new Date(b.date) - +new Date(a.date));
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
@@ -72,7 +79,7 @@ export default function GRN() {
 
   const buildItems = (): PurchaseItem[] => rows.filter(r => r.productId).map(r => {
     const product = state.products.find(p => p.id === r.productId);
-    const qty = Math.floor(r.qty);
+    const qty = Number(r.qty);
     const rawLines = r.unitText.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
     const unitIdentifiers = (product?.trackImei || product?.trackSerial)
       ? rawLines.map(line => {
@@ -82,12 +89,16 @@ export default function GRN() {
           return { serial: parts[0] || '' };
         })
       : undefined;
-    return { productId: r.productId, name: product?.name || '', qty, cost: Math.max(0, r.cost), sellingPrice: Math.max(0, r.sellingPrice), updateSellingPrice: r.updateSellingPrice, ...(unitIdentifiers ? { unitIdentifiers } : {}) };
+    return { productId: r.productId, name: product?.name || '', qty, cost: Number(r.cost), sellingPrice: Number(r.sellingPrice), updateSellingPrice: r.updateSellingPrice, ...(unitIdentifiers ? { unitIdentifiers } : {}) };
   });
 
   const validateForm = (items: PurchaseItem[]) => {
     if (!state.suppliers.some(s => s.id === supplierId)) return 'Select a supplier.';
     if (!items.length) return 'Add at least one valid product line.';
+    for (const item of items) {
+      if (!Number.isInteger(item.qty) || item.qty <= 0) return item.name + ': quantity must be a positive whole number.';
+      if (!Number.isFinite(item.cost) || item.cost < 0) return item.name + ': cost cannot be negative.';
+    }
     const seen = new Set<string>();
     for (const item of items) {
       if (seen.has(item.productId)) return 'Each product can appear only once per GRN.';
@@ -341,7 +352,8 @@ export default function GRN() {
                   </select>
                 </Field>
                 <Field label="Supplier invoice number">
-                  <input className="input" value={invoiceNo} onChange={e => setInvoiceNo(e.target.value)} placeholder="Optional" disabled={actionRunning} />
+                  <input className={`input ${invoiceWarning ? 'border-amber-500/50' : ''}`} value={invoiceNo} onChange={e => { setInvoiceNo(e.target.value); setInvoiceWarning(false); }} placeholder="Supplier invoice / reference (recommended)" disabled={actionRunning} />
+                  {invoiceWarning && <div className="text-xs text-amber-600 mt-1">Invoice number is empty. You can continue, but verify the supplier reference before processing.</div>}
                 </Field>
                 <Field label="Notes">
                   <input className="input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional receiving note" disabled={actionRunning} />
@@ -353,25 +365,35 @@ export default function GRN() {
                   <span className="text-xs font-bold uppercase tracking-wider text-sub">Items</span>
                   <button className="btn btn-soft !text-xs" onClick={() => setRows(r => [...r, emptyRow()])} disabled={actionRunning}><Plus size={13} /> Add line</button>
                 </div>
-                <div className="space-y-2">
-                  {rows.map((r, i) => (
-                    <div key={i} className="grid grid-cols-[minmax(220px,1fr)_65px_100px_minmax(190px,1fr)_120px_36px] gap-2 items-center">
-                      <ProductSearchSelect value={r.productId} products={state.products} onChange={id => setRow(i, { productId: id })} />
-                      <input className="input num" type="number" min="1" value={r.qty || ''} onChange={e => setRow(i, { qty: Number(e.target.value) || 0 })} placeholder="Qty" disabled={actionRunning} />
-                      <input className="input num" type="number" min="0" step="0.01" value={r.cost || ''} onChange={e => setRow(i, { cost: Number(e.target.value) || 0 })} placeholder="Cost" disabled={actionRunning} />
-                      {(() => {
-                        const p = state.products.find(x => x.id === r.productId);
-                        return p?.trackImei || p?.trackSerial
-                          ? <textarea className="input min-h-10 text-xs" rows={2} value={r.unitText} onChange={e => setRow(i, { unitText: e.target.value })} placeholder={p.trackImei && p.trackSerial ? 'IMEI,SERIAL — one unit per line' : p.trackImei ? 'IMEI — one per line' : 'SERIAL — one per line'} disabled={actionRunning} />
-                          : <span className="text-xs text-faint px-2">Not tracked</span>;
-                      })()}
-                      <label className="flex items-center gap-2 text-xs text-sub">
-                        <input type="checkbox" checked={r.updateSellingPrice} onChange={e => setRow(i, { updateSellingPrice: e.target.checked })} disabled={actionRunning} />
-                        Set sell price <span className="num">{r.sellingPrice.toLocaleString()}</span>
-                      </label>
-                      <button className="icon-btn !w-8 !h-8" disabled={actionRunning || rows.length === 1} onClick={() => setRows(rs => rs.filter((_, idx) => idx !== i))}><X size={14} /></button>
-                    </div>
-                  ))}
+                <div className="space-y-3">
+                  {rows.map((r, i) => {
+                    const p = state.products.find(x => x.id === r.productId);
+                    const tracked = !!(p?.trackImei || p?.trackSerial);
+                    const sellBelowCost = r.updateSellingPrice && r.sellingPrice < r.cost;
+                    return (
+                      <div key={i} className="rounded-xl border border-line bg-surface p-4 shadow-sm">
+                        <div className="grid grid-cols-1 md:grid-cols-[minmax(260px,1.6fr)_90px_120px_40px] gap-3 items-start">
+                          <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Product / SKU / Barcode</div><ProductSearchSelect value={r.productId} products={state.products} onChange={id => setRow(i, { productId: id })} /></div>
+                          <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Qty</div><input className="input num" type="number" min="1" step="1" value={r.qty || ''} onChange={e => setRow(i, { qty: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Qty" disabled={actionRunning} /></div>
+                          <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Cost</div><input className="input num" type="number" min="0" step="0.01" value={Number.isFinite(r.cost) ? r.cost : ''} onChange={e => setRow(i, { cost: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Cost" disabled={actionRunning} /></div>
+                          <button className="icon-btn !w-9 !h-9 mt-5" disabled={actionRunning || rows.length === 1} onClick={() => setRows(rs => rs.filter((_, idx) => idx !== i))} title="Remove line"><X size={14} /></button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                          <div className="rounded-lg border border-line bg-raised p-3">
+                            <div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-2">IMEI / Serial</div>
+                            {tracked ? <textarea className="input min-h-24 text-xs" rows={4} value={r.unitText} onChange={e => setRow(i, { unitText: e.target.value })} placeholder={p?.trackImei && p?.trackSerial ? 'IMEI,SERIAL — one pair per line' : p?.trackImei ? 'IMEI — one per line' : 'SERIAL — one per line'} disabled={actionRunning} /> : <div className="text-xs text-faint py-4">This product is not IMEI / Serial tracked.</div>}
+                            {tracked && <div className="text-[11px] text-sub mt-1">Expected: {r.qty > 0 ? r.qty : 0} line{r.qty === 1 ? '' : 's'}</div>}
+                          </div>
+                          <div className="rounded-lg border border-line bg-raised p-3">
+                            <label className="flex items-center gap-2 text-sm font-semibold text-sub"><input type="checkbox" checked={r.updateSellingPrice} onChange={e => setRow(i, { updateSellingPrice: e.target.checked })} disabled={actionRunning} /> Update sell price</label>
+                            {r.updateSellingPrice && <input className="input num mt-3" type="number" min="0" step="0.01" value={r.sellingPrice || ''} onChange={e => setRow(i, { sellingPrice: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Sell price" disabled={actionRunning} />}
+                            {sellBelowCost && <div className="text-xs text-amber-600 mt-2">Sell price is below cost.</div>}
+                            <div className="flex justify-between mt-4 text-xs text-sub"><span>Line total</span><span className="num font-bold text-ink">{fmtRs(Math.max(0, r.qty) * Math.max(0, r.cost))}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
