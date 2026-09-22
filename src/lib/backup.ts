@@ -140,7 +140,12 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     } catch { /* metadata must not claim local success */ }
   }
   if (wantCloud && typeof navigator !== 'undefined' && navigator.onLine) {
-    try { cloud = await backupStateToGoogle(payload, kind); } catch (error) {
+    try {
+      const result = await backupStateToGoogle(payload, kind);
+      cloud = result.ok;
+      if (!result.ok) errorMessage = result.error || 'Google Drive backup failed';
+      if (!result.ok) console.error('[Google Backup] cloud backup failed:', errorMessage);
+    } catch (error) {
       errorMessage = error instanceof Error ? error.message : 'Google Drive backup failed';
       console.error('[Google Backup] cloud backup failed:', errorMessage);
       cloud = false;
