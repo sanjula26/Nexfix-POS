@@ -172,14 +172,23 @@ function checkBackupRateLimit(shopId, backupId, format) {
   var current = null;
   try { current = raw ? JSON.parse(raw) : null; } catch (ignore) { current = null; }
 
-  // Multipart uploads contain many parts but represent one logical backup.
-  // Allow all parts for the same backupId while keeping the per-shop rate limit
-  // for new logical backups.
+  var safeBackupId = String(backupId || '');
+  // A multipart backup is one logical operation. Once its first request has
+  // passed the shop-level limit, subsequent parts are allowed for a short
+  // upload window without moving the original rate-limit timestamp.
   if (format === 'encrypted-part' && current
-      && current.backupId === String(backupId || '')
+      && current.backupId === safeBackupId
       && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    cache.put(key, JSON.stringify({ startedAt: now, backupId: String(backupId || '') }), BACKUP_RATE_WINDOW_SECONDS);
     return;
+  }
+
+  // If the normal 60s rate entry expired, an in-flight multipart upload still
+  // needs a separate short-lived lease so later parts do not become "new"
+  // logical backups and get blocked by the shop-level limiter.
+  if (format === 'encrypted-part' && safeBackupId) {
+    var multipartKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
+    var multipartLease = cache.get(multipartKey);
+    if (multipartLease === '1') return;
   }
 
   if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
@@ -188,8 +197,17 @@ function checkBackupRateLimit(shopId, backupId, format) {
 
   cache.put(key, JSON.stringify({
     startedAt: now,
-    backupId: String(backupId || '')
+    backupId: safeBackupId
   }), BACKUP_RATE_WINDOW_SECONDS);
+
+  if (format === 'encrypted-part' && safeBackupId) {
+    var leaseKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
+    cache.put(leaseKey, '1', 600);
+  }
+}
+
+function requestPayloadFingerprint(contents) {
+  return sha256HexText(JSON.stringify(contents));
 }
 
 function sha256HexText(value) {
@@ -686,29 +704,47 @@ function doPost(e) {
 
     var requestCache = CacheService.getScriptCache();
     var cacheKey = 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
+    var requestFingerprint = requestPayloadFingerprint(contents);
     var cached = requestCache.get(cacheKey);
     if (cached) {
-      try { return json(JSON.parse(cached)); } catch (ignoreCached) {}
+      try {
+        var cachedRecord = JSON.parse(cached);
+        // Idempotency is bound to the complete validated payload, not only the
+        // requestId. Reusing a requestId with changed contents must never replay
+        // the previous success/failure.
+        if (cachedRecord && cachedRecord.fingerprint) {
+          if (cachedRecord.fingerprint !== requestFingerprint) {
+            return json(fail('requestId has already been used with different backup contents'));
+          }
+          return json(cachedRecord.result || cachedRecord);
+        }
+        // Backward compatibility with older cache entries created before
+        // fingerprint binding was added.
+        return json(cachedRecord);
+      } catch (ignoreCached) {}
     }
 
     try {
-      requestCache.put(cacheKey, JSON.stringify({ ok: false, status: 'pending', version: VERSION, pending: true }), 120);
+      requestCache.put(cacheKey, JSON.stringify({
+        fingerprint: requestFingerprint,
+        result: { ok: false, status: 'pending', version: VERSION, pending: true }
+      }), 120);
     } catch (ignorePendingCacheWrite) {}
 
     var result;
     try { checkBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (rateError) {
       var rateFailure = fail(rateError);
-      try { requestCache.put(cacheKey, JSON.stringify(rateFailure), 120); } catch (ignoreRateCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: rateFailure }), 120); } catch (ignoreRateCacheWrite) {}
       return json(rateFailure);
     }
 
     try {
       result = ok(backupStateToDrive(contents, shopId));
-      try { requestCache.put(cacheKey, JSON.stringify(result), 21600); } catch (ignoreCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600); } catch (ignoreCacheWrite) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
-      try { requestCache.put(cacheKey, JSON.stringify(backupFailure), 120); } catch (ignoreFailureCacheWrite) {}
+      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: backupFailure }), 120); } catch (ignoreFailureCacheWrite) {}
       return json(backupFailure);
     }
   } catch (err) {
@@ -728,7 +764,8 @@ function getCachedBackupStatus(requestId, shopId) {
   if (!cached) return { ok: false, status: 'pending', version: VERSION, pending: true };
 
   try {
-    var result = JSON.parse(cached);
+    var record = JSON.parse(cached);
+    var result = record && record.result ? record.result : record;
     if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
     return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
   } catch (err) {
