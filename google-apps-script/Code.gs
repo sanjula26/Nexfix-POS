@@ -10,8 +10,8 @@ var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
 var MAX_BACKUP_BYTES = 9 * 1024 * 1024; // Keep below DriveApp File.setContent() 10 MB limit.
-var BACKUP_RATE_LIMIT = 30;
-var BACKUP_RATE_WINDOW_SECONDS = 60;
+var BACKUP_RATE_LIMIT = 5;
+var BACKUP_RATE_WINDOW_SECONDS = 5;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
 // Default Nexfix master Drive folder supplied for this deployment.
@@ -45,7 +45,9 @@ function ok(extra) {
 }
 
 function fail(err) {
-  return { ok: false, status: 'error', version: VERSION, message: String(err) };
+  var out = { ok: false, status: 'error', version: VERSION, message: String(err) };
+  if (err && err.retryAfterSeconds) out.retryAfterSeconds = Number(err.retryAfterSeconds);
+  return out;
 }
 
 function unauthorized(message) {
@@ -191,36 +193,32 @@ function checkBackupRateLimit(shopId, backupId, format) {
   try { current = raw ? JSON.parse(raw) : null; } catch (ignore) { current = null; }
 
   var safeBackupId = String(backupId || '');
-  // A multipart backup is one logical operation. Once its first request has
-  // passed the shop-level limit, subsequent parts are allowed for a short
-  // upload window without moving the original rate-limit timestamp.
-  if (format === 'encrypted-part' && current
-      && current.backupId === safeBackupId
-      && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    return;
-  }
-
-  // If the normal 60s rate entry expired, an in-flight multipart upload still
-  // needs a separate short-lived lease so later parts do not become "new"
-  // logical backups and get blocked by the shop-level limiter.
+  // Multipart parts belong to one logical backup. A successful first part
+  // establishes a short lease; retries of the same backup remain allowed.
   if (format === 'encrypted-part' && safeBackupId) {
+    if (current && current.backupId === safeBackupId
+        && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) return;
     var multipartKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
-    var multipartLease = cache.get(multipartKey);
-    if (multipartLease === '1') return;
+    if (cache.get(multipartKey) === '1') return;
   }
 
   if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    throw new Error('Backup rate limit reached. Please wait about 60 seconds between Google backups.');
+    var elapsed = Math.max(0, now - Number(current.startedAt));
+    var retryAfter = Math.max(1, Math.ceil((BACKUP_RATE_WINDOW_SECONDS * 1000 - elapsed) / 1000));
+    var rateError = new Error('Backup is temporarily busy. Please retry in about ' + retryAfter + ' seconds.');
+    rateError.retryAfterSeconds = retryAfter;
+    throw rateError;
   }
+}
 
-  cache.put(key, JSON.stringify({
-    startedAt: now,
-    backupId: safeBackupId
-  }), BACKUP_RATE_WINDOW_SECONDS);
-
-  if (format === 'encrypted-part' && safeBackupId) {
-    var leaseKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
-    cache.put(leaseKey, '1', 600);
+function recordBackupRateLimit(shopId, backupId, format) {
+  var cache = CacheService.getScriptCache();
+  var partition = shopPartitionKey(shopId);
+  var key = 'nexfix_rate_' + partition;
+  var now = Date.now();
+  cache.put(key, JSON.stringify({ startedAt: now, backupId: String(backupId || '') }), BACKUP_RATE_WINDOW_SECONDS);
+  if (format === 'encrypted-part' && backupId) {
+    cache.put('nexfix_multipart_' + partition + '_' + String(backupId), '1', 600);
   }
 }
 
@@ -943,7 +941,7 @@ function doPost(e) {
       requestCache.put(cacheKey, JSON.stringify({
         fingerprint: requestFingerprint,
         result: { ok: false, status: 'pending', version: VERSION, pending: true }
-      }), 120);
+      }), 600);
     } catch (ignorePendingCacheWrite) {}
 
     var result;
@@ -955,7 +953,10 @@ function doPost(e) {
 
     try {
       result = ok(backupStateToDrive(contents, shopId));
-      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600); } catch (ignoreCacheWrite) {}
+      try {
+        recordBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim());
+        requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600);
+      } catch (ignoreCacheWrite) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
