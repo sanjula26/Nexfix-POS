@@ -625,7 +625,7 @@ function backupStateToDrive(contents, shopId) {
   var legacySerialized = JSON.stringify(legacyEnvelope);
   assertDailyBackupIsFresh(backupFolder, shopId, dayKey, legacyEnvelope._meta.exportedAt, legacyEnvelope._meta.backupId);
   var legacyFile = upsertDailyFile(backupFolder, legacyName, legacySerialized);
-  writeShopInfoText(backupFolder, shopId, contents);
+  writeShopInfoText(shopFolder, shopId, contents);
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
   return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
 }
