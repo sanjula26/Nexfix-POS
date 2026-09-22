@@ -125,10 +125,10 @@ interface StoreCtx {
   deleteHold: (id: string) => void;
   // purchases
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
-  saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => Purchase | null;
-  updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => boolean;
-  receivePurchase: (id: string, processorName?: string) => boolean;
-  processGRN: (id: string, processorName: string) => boolean;
+  saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => { ok: boolean; purchase?: Purchase; error?: string };
+  updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
+  receivePurchase: (id: string, processorName?: string) => { ok: boolean; error?: string };
+  processGRN: (id: string, processorName: string) => { ok: boolean; error?: string };
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
   // expenses
@@ -1578,92 +1578,125 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit, user, can]);
 
-  const receivePurchase = useCallback((id: string, processorName?: string): boolean => {
-    if (purchaseReceiveLockRef.current) return false;
+  const receivePurchase = useCallback((id: string, processorName?: string): { ok: boolean; error?: string } => {
+    if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
-      return false;
+      return { ok: false, error: 'You do not have permission to manage purchases.' };
     }
-    const po = state.purchases.find(x => x.id === id);
-    if (!po || po.status !== 'pending') return false;
-    const plan = buildPurchaseReceivePlan(po, state.products);
-    if (!plan || !validatePurchaseUnitIdentifiers(po, state.products, state.units || [])) return false;
-    purchaseReceiveLockRef.current = true;
-    setStateWithInventoryLedger('PURCHASE_RECEIVE', s => {
-      const currentPo = s.purchases.find(x => x.id === id);
-      if (!currentPo || currentPo.status !== 'pending') return s;
-      const currentPlan = buildPurchaseReceivePlan(currentPo, s.products);
-      if (!currentPlan || !validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || [])) return s;
-      const now = new Date().toISOString();
-      const newUnits: InventoryUnit[] = [];
-      const products = s.products.map(p => {
-        const delta = currentPlan.productStockDelta.get(p.id);
-        if (delta === undefined) return p;
-        const cost = currentPlan.productCost.get(p.id);
-        const trackedQty = currentPlan.trackedUnitCount.get(p.id) || 0;
-        if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
-          const purchaseItem = currentPo.items.find(item => item.productId === p.id);
-          for (const identifier of purchaseItem?.unitIdentifiers || []) {
-            newUnits.push({
-              id: uid(),
-              productId: p.id,
-              imei: p.trackImei ? identifier.imei?.trim() : undefined,
-              serial: p.trackSerial ? identifier.serial?.trim() : undefined,
-              status: 'in_stock',
-              purchaseId: currentPo.id,
-              cost,
-              expiryDate: purchaseItem?.expiryDate,
-              note: `From ${currentPo.poNo}`,
-              createdAt: now,
-            } as InventoryUnit);
-          }
-        }
-        const purchaseItem = currentPo.items.find(item => item.productId === p.id);
-        const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
-        if (sellingPrice !== undefined && (!Number.isFinite(sellingPrice) || sellingPrice < 0)) return p;
-        return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
-      });
-      return {
-        ...s,
-        purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
-        products,
-        units: [...newUnits, ...(s.units || [])],
-      };
-    });
-    purchaseReceiveLockRef.current = false;
-    pushAudit('RECEIVE', 'Purchase', `Received ${po.poNo} from ${po.supplierName} · recorded IMEI/Serial units`);
-    return true;
-  }, [state.purchases, state.products, state.units, pushAudit, user, can]);
+    const po = stateRef.current.purchases.find(x => x.id === id);
+    if (!po) return { ok: false, error: 'GRN draft was not found.' };
+    if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
 
-  const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
+    const planResult = buildPurchaseReceivePlan(po, stateRef.current.products);
+    if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
+    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || []);
+    if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
+
+    purchaseReceiveLockRef.current = true;
+    try {
+      let applied = false;
+      let applyError = '';
+      setStateWithInventoryLedger('PURCHASE_RECEIVE', s => {
+        const currentPo = s.purchases.find(x => x.id === id);
+        if (!currentPo || currentPo.status !== 'pending') {
+          applyError = 'This GRN is no longer a pending draft.';
+          return s;
+        }
+        const currentPlanResult = buildPurchaseReceivePlan(currentPo, s.products);
+        if (!currentPlanResult.ok || !currentPlanResult.plan) {
+          applyError = currentPlanResult.error || 'GRN validation failed before processing.';
+          return s;
+        }
+        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || []);
+        if (!currentUnitResult.ok) {
+          applyError = currentUnitResult.error || 'IMEI/Serial validation failed before processing.';
+          return s;
+        }
+        const now = new Date().toISOString();
+        const newUnits: InventoryUnit[] = [];
+        const products = s.products.map(p => {
+          const delta = currentPlanResult.plan!.productStockDelta.get(p.id);
+          if (delta === undefined) return p;
+          const cost = currentPlanResult.plan!.productCost.get(p.id);
+          const trackedQty = currentPlanResult.plan!.trackedUnitCount.get(p.id) || 0;
+          const purchaseItem = currentPo.items.find(item => item.productId === p.id);
+          if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
+            for (const identifier of purchaseItem?.unitIdentifiers || []) {
+              newUnits.push({
+                id: uid(),
+                productId: p.id,
+                imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                serial: p.trackSerial ? identifier.serial?.trim() : undefined,
+                status: 'in_stock',
+                purchaseId: currentPo.id,
+                cost,
+                expiryDate: purchaseItem?.expiryDate,
+                note: 'From ' + currentPo.poNo,
+                createdAt: now,
+              } as InventoryUnit);
+            }
+          }
+          const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
+          return {
+            ...p,
+            stock: p.stock + delta,
+            ...(cost !== undefined ? { cost } : {}),
+            ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}),
+          };
+        });
+        const next = {
+          ...s,
+          purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
+          products,
+          units: [...newUnits, ...(s.units || [])],
+        };
+        applied = true;
+        return next;
+      });
+      if (!applied) return { ok: false, error: applyError || 'Unable to process this GRN. No stock was changed.' };
+      pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units');
+      return { ok: true };
+    } finally {
+      purchaseReceiveLockRef.current = false;
+    }
+  }, [pushAudit, user, can, setStateWithInventoryLedger]);
+
+  const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>): { ok: boolean; purchase?: Purchase; error?: string } => {
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation without purchase access');
-      return null;
+      return { ok: false, error: 'You do not have permission to manage purchases.' };
     }
-    if (!p.supplierId || !p.items.length) return null;
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
-    if (!buildPurchaseReceivePlan(validation, state.products) || !validatePurchaseUnitIdentifiers(validation, state.products, state.units || [])) return null;
-    const created: Purchase = { ...p, id: uid(), poNo: `GRN-${String((state.counters.grn ?? 0) + 1).padStart(4, '0')}`, date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
+    const planResult = buildPurchaseReceivePlan(validation, stateRef.current.products);
+    if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
+    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || []);
+    if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
+    const created: Purchase = { ...p, id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
-    pushAudit('CREATE', 'GRN', `Draft ${created.poNo} for ${created.supplierName} · Rs. ${created.total.toLocaleString()}`);
-    return created;
-  }, [state.products, state.counters.grn, user, pushAudit, can]);
+    pushAudit('CREATE', 'GRN', 'Draft ' + created.poNo + ' for ' + created.supplierName + ' · Rs. ' + created.total.toLocaleString());
+    return { ok: true, purchase: created };
+  }, [state.counters.grn, pushAudit, user, can]);
 
-  const updateGRNDraft = useCallback((id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => {
+  const updateGRNDraft = useCallback((id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>): { ok: boolean; error?: string } => {
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'GRN', 'Blocked GRN draft update without purchase access');
-      return false;
+      return { ok: false, error: 'You do not have permission to manage purchases.' };
     }
-    const current = state.purchases.find(x => x.id === id);
-    if (!current || current.status !== 'pending') return false;
+    const current = stateRef.current.purchases.find(x => x.id === id);
+    if (!current) return { ok: false, error: 'GRN draft was not found.' };
+    if (current.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be edited.' };
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
-    if (!buildPurchaseReceivePlan(next, state.products) || !validatePurchaseUnitIdentifiers(next, state.products, state.units || [])) return false;
+    const planResult = buildPurchaseReceivePlan(next, stateRef.current.products);
+    if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
+    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || []);
+    if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
-    pushAudit('EDIT', 'GRN', `Updated draft ${current.poNo}`);
-    return true;
-  }, [state.purchases, state.products, pushAudit, user, can]);
+    pushAudit('EDIT', 'GRN', 'Updated draft ' + current.poNo);
+    return { ok: true };
+  }, [pushAudit, user, can]);
 
-  const processGRN = useCallback((id: string, processorName: string): boolean => receivePurchase(id, processorName), [receivePurchase]);
+  const processGRN = useCallback((id: string, processorName: string): { ok: boolean; error?: string } => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
   if (purchaseReturnLockRef.current) return null;
