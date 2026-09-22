@@ -6,7 +6,6 @@ import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBrid
 import { signOutFromCloud } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
-import Signup from './pages/Signup';
 import ChangePassword from './pages/ChangePassword';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -150,7 +149,6 @@ function AppRoutes() {
     <Suspense fallback={<RouteFallback />}>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
         <Route element={<Protected />}>
           <Route path="/change-password" element={<ChangePassword />} />
         </Route>
