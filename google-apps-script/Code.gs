@@ -157,14 +157,31 @@ function validateDayKey(dayKey) {
   return value;
 }
 
-function checkBackupRateLimit(shopId) {
+function checkBackupRateLimit(shopId, backupId, format) {
   var cache = CacheService.getScriptCache();
   var key = 'nexfix_rate_' + shopPartitionKey(shopId);
-  var current = Number(cache.get(key) || 0);
-  if (current >= BACKUP_RATE_LIMIT) {
+  var raw = cache.get(key);
+  var now = Date.now();
+  var current = null;
+  try { current = raw ? JSON.parse(raw) : null; } catch (ignore) { current = null; }
+
+  // Multipart uploads contain many parts but represent one logical backup.
+  // Allow all parts for the same backupId while keeping the per-shop rate limit
+  // for new logical backups.
+  if (format === 'encrypted-part' && current
+      && current.backupId === String(backupId || '')
+      && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
+    return;
+  }
+
+  if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
     throw new Error('Backup rate limit reached. Please retry shortly.');
   }
-  cache.put(key, String(current + 1), BACKUP_RATE_WINDOW_SECONDS);
+
+  cache.put(key, JSON.stringify({
+    startedAt: now,
+    backupId: String(backupId || '')
+  }), BACKUP_RATE_WINDOW_SECONDS);
 }
 
 /**
@@ -573,7 +590,7 @@ function doPost(e) {
     } catch (ignorePendingCacheWrite) {}
 
     var result;
-    try { checkBackupRateLimit(shopId); } catch (rateError) {
+    try { checkBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (rateError) {
       var rateFailure = fail(rateError);
       try { requestCache.put(cacheKey, JSON.stringify(rateFailure), 120); } catch (ignoreRateCacheWrite) {}
       return json(rateFailure);
