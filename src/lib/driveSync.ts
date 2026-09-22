@@ -164,9 +164,13 @@ function splitUtf8Chunks(value: string, maxBytes: number): string[] {
   return chunks;
 }
 
-async function postGoogleBackup(body: Record<string, unknown>, shopId: string): Promise<boolean> {
+interface GoogleBackupPostResult { ok: boolean; error?: string; }
+
+async function postGoogleBackup(body: Record<string, unknown>, shopId: string): Promise<GoogleBackupPostResult> {
   const baseUrl = getGoogleScriptUrl();
-  if (!baseUrl) return false;
+  if (!baseUrl) return { ok: false, error: 'Central Google Drive backup is not configured.' };
+  if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   const requestId = makeRequestId();
   const payload = { action: 'backupState', shopId, requestId, ...body };
 
@@ -197,19 +201,28 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string): 
     while (Date.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
       const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
-      if (status === true) return true;
-      if (status === false) return false;
+      if (status === true) return { ok: true };
+      if (status && typeof status === 'object' && 'ok' in status && status.ok === false) return { ok: false, error: status.error };
+      if (status === false) return { ok: false, error: 'Google Drive backup request failed.' };
       pollDelay = Math.min(1000, Math.round(pollDelay * 1.5));
     }
-    console.error('[Google Backup] confirmation timed out');
-    return false;
+    // One final status read handles a successful Apps Script request that completed
+    // just after the normal polling deadline. Never convert a late success into a failure.
+    const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
+    if (finalStatus === true) return { ok: true };
+    if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
+      return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.' };
+    }
+    console.error('[Google Backup] confirmation timed out', { requestId });
+    return { ok: false, error: 'Google Drive backup confirmation timed out. Please check Google Drive and try again.' };
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Google Drive backup request failed.';
     console.error('[Google Backup] direct request failed', error);
-    return false;
+    return { ok: false, error: message };
   }
 }
 
-async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string): Promise<boolean | null> {
+async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string): Promise<boolean | { ok: false; error: string } | null> {
   return new Promise((resolve) => {
     const callbackName = `__nexfixGoogleBackupStatus_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
@@ -225,10 +238,10 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     const timer = window.setTimeout(() => finish(null), 2000);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
-      const data = result as { ok?: boolean; pending?: boolean; status?: string };
-      if (data.ok === true && data.status === 'success') return finish(true);
-      if (data.status === 'pending') return finish(null);
-      finish(false);
+      const data = result as { ok?: boolean; pending?: boolean; status?: string; message?: string; action?: string };
+      if (data.ok === true && data.status === 'success' && data.action === 'backupState') return finish(true);
+      if (data.status === 'pending' || data.pending === true) return finish(null);
+      finish({ ok: false, error: data.message || 'Google Drive backup request failed.' });
     };
     const url = new URL(baseUrl);
     url.searchParams.set('action', 'backupStatus');
@@ -242,11 +255,11 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
   });
 }
 
-export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<boolean> {
-  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return false;
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
+export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
+  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   const shopId = getLocalShopId();
-  if (!shopId) return false;
+  if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
 
   try {
     const source = state && typeof state === 'object' && !Array.isArray(state)
@@ -319,9 +332,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         ...shopMetadata,
         recoveryKey,
       }, shopId);
-      if (!ok) {
-        console.error('[Google Backup] multipart upload failed at part', index + 1);
-        return false;
+      if (!ok.ok) {
+        console.error('[Google Backup] multipart upload failed at part', index + 1, ok.error);
+        return ok;
       }
     }
 
@@ -341,8 +354,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       recoveryKey,
     }, shopId);
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Google Drive encryption/upload failed.';
     console.error('[Google Backup] encryption/upload failed', error);
-    throw error;
+    return { ok: false, error: message };
   }
 }
 
