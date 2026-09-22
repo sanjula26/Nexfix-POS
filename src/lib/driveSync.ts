@@ -18,7 +18,7 @@ const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
 const DRIVE_SHOP_OVERRIDE_KEY = 'nexfix_drive_shop_id_override';
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
 const SINGLE_LIMIT_BYTES = 8.5 * 1024 * 1024;
-const PART_SIZE_CHARS = 6 * 1024 * 1024;
+const PART_SIZE_BYTES = 6 * 1024 * 1024;
 
 function isAllowedScriptUrl(value: string): boolean {
   try {
@@ -269,7 +269,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       }, shopId);
     }
 
-    const chunks = splitUtf8Chunks(serialized, PART_SIZE_CHARS);
+    const chunks = splitUtf8Chunks(serialized, PART_SIZE_BYTES);
     const totalParts = chunks.length;
     const sha256 = await sha256Hex(serialized);
     const partition = (await sha256Hex(shopId)).slice(0, 24);
@@ -305,7 +305,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       backupId,
       totalParts,
       totalBytes,
-      partSize: PART_SIZE_CHARS,
+      partSize: PART_SIZE_BYTES,
       partNames,
       sha256,
       exportedAt,
