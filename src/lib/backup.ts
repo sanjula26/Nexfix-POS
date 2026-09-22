@@ -201,9 +201,21 @@ export function scheduleGoogleBackup(
 
   scheduledGoogleBackupTimer = window.setTimeout(async () => {
     scheduledGoogleBackupTimer = undefined;
-    if (scheduledGoogleBackupRunning) return;
+    // A large encrypted/multipart upload can outlive the debounce window. Keep the
+    // latest settings snapshot queued instead of dropping it when an upload is active.
+    if (scheduledGoogleBackupRunning) {
+      scheduledGoogleBackupTimer = window.setTimeout(() => {
+        scheduledGoogleBackupTimer = undefined;
+        if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
+      }, 1000);
+      return;
+    }
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      // Keep the latest request pending; the normal auto-backup/online path can retry.
+      // Keep the latest request pending; retry shortly and also on the browser online event.
+      scheduledGoogleBackupTimer = window.setTimeout(() => {
+        scheduledGoogleBackupTimer = undefined;
+        if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
+      }, 15_000);
       return;
     }
     const getter = scheduledGoogleBackupGetter;
@@ -212,7 +224,15 @@ export function scheduleGoogleBackup(
     scheduledGoogleBackupRunning = true;
     try {
       scheduledGoogleBackupLastRunAt = Date.now();
-      await downloadBackup(getter(), 'auto', { download: false, cloud: true });
+      const result = await downloadBackup(getter(), 'auto', { download: false, cloud: true });
+      if (!result.cloud) {
+        // Event-driven settings/sale backups must not be lost when the endpoint is
+        // temporarily rate-limited or a transient network/server error occurs.
+        scheduledGoogleBackupTimer = window.setTimeout(() => {
+          scheduledGoogleBackupTimer = undefined;
+          if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
+        }, RATE_LIMIT_MS);
+      }
     } finally {
       scheduledGoogleBackupRunning = false;
     }
