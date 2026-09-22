@@ -718,9 +718,10 @@ function doPost(e) {
           }
           return json(cachedRecord.result || cachedRecord);
         }
-        // Backward compatibility with older cache entries created before
-        // fingerprint binding was added.
-        return json(cachedRecord);
+        // An older cache entry has no payload binding. Do not replay it,
+        // because doing so would let a reused requestId bypass idempotency
+        // validation after a deployment/cache rollover.
+        return json(fail('Request idempotency record is not bound to backup contents; retry with a new requestId'));
       } catch (ignoreCached) {}
     }
 
