@@ -335,7 +335,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     }, shopId);
   } catch (error) {
     console.error('[Google Backup] encryption/upload failed', error);
-    return false;
+    throw error;
   }
 }
 
