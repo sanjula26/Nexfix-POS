@@ -316,17 +316,41 @@ function getShopBackupFolder(shopId, shopName, renameNow) {
   return root.createFolder(desiredName);
 }
 
-function writeShopMetadata(folder, shopId, shopName, encrypted) {
-  var metadata = {
+function writeShopMetadata(folder, shopId, shopName, encrypted, metadata) {
+  metadata = metadata || {};
+  var partition = shopPartitionKey(shopId);
+  var record = {
     app: 'Nexfix POS',
     version: VERSION,
-    shopPartition: shopPartitionKey(shopId),
+    shopPartition: partition,
     shopName: sanitizeDriveName(shopName || 'Shop'),
+    tagline: metadataText(metadata.shopTagline, 200),
+    phone: metadataText(metadata.shopPhone, 80),
+    email: metadataText(metadata.shopEmail, 160),
+    address: metadataText(metadata.shopAddress, 300),
+    taxRegistrationNo: metadataText(metadata.taxRegistrationNo, 100),
+    invoicePlaceOfSupply: metadataText(metadata.invoicePlaceOfSupply, 160),
+    invoiceTitle: metadataText(metadata.invoiceTitle, 160),
+    invoiceSubtitle: metadataText(metadata.invoiceSubtitle, 200),
+    invoiceCurrency: metadataText(metadata.invoiceCurrency, 30),
+    invoiceTaxLabel: metadataText(metadata.invoiceTaxLabel, 80),
+    invoiceTerms: metadataText(metadata.invoiceTerms, 500),
+    invoiceFooter: metadataText(metadata.invoiceFooter, 500),
+    receiptFooter: metadataText(metadata.receiptFooter, 500),
+    taxDefault: Number(metadata.taxDefault) || 0,
+    lowStockDefault: Number(metadata.lowStockDefault) || 0,
+    exchangeDays: Number(metadata.exchangeDays) || 0,
+    openingFloat: Number(metadata.openingFloat) || 0,
+    whatsappReceipts: metadata.whatsappReceipts === true,
+    shopBackupId: shopId,
+    backupType: metadata.kind === 'auto' ? 'auto' : 'manual',
+    backupId: metadata.backupId ? String(metadata.backupId) : '',
+    exportedAt: metadata.exportedAt ? String(metadata.exportedAt) : '',
     updatedAt: new Date().toISOString(),
     encrypted: encrypted === true
   };
   var files = folder.getFilesByName(DRIVE_METADATA_FILENAME);
-  var blob = Utilities.newBlob(JSON.stringify(metadata, null, 2), 'application/json', DRIVE_METADATA_FILENAME);
+  var blob = Utilities.newBlob(JSON.stringify(record, null, 2), 'application/json', DRIVE_METADATA_FILENAME);
   if (files.hasNext()) files.next().setContent(blob.getDataAsString());
   else folder.createFile(blob);
 }
@@ -350,6 +374,18 @@ function writeShopInfoText(folder, shopId, metadata) {
     'Tagline: ' + metadataText(metadata.shopTagline, 200),
     'Tax Registration No: ' + metadataText(metadata.taxRegistrationNo, 100),
     'Invoice Place of Supply: ' + metadataText(metadata.invoicePlaceOfSupply, 160),
+    'Invoice Title: ' + metadataText(metadata.invoiceTitle, 160),
+    'Invoice Subtitle: ' + metadataText(metadata.invoiceSubtitle, 200),
+    'Invoice Currency: ' + metadataText(metadata.invoiceCurrency, 30),
+    'Invoice Tax Label: ' + metadataText(metadata.invoiceTaxLabel, 80),
+    'Invoice Terms: ' + metadataText(metadata.invoiceTerms, 500),
+    'Invoice Footer: ' + metadataText(metadata.invoiceFooter, 500),
+    'Receipt Footer: ' + metadataText(metadata.receiptFooter, 500),
+    'Tax Default: ' + metadataText(metadata.taxDefault, 40),
+    'Low Stock Default: ' + metadataText(metadata.lowStockDefault, 40),
+    'Exchange Days: ' + metadataText(metadata.exchangeDays, 40),
+    'Opening Float: ' + metadataText(metadata.openingFloat, 40),
+    'WhatsApp Receipts: ' + (metadata.whatsappReceipts === true ? 'true' : 'false'),
     '',
     'Shop Backup ID: ' + metadataText(shopId, SHOP_ID_MAX_LENGTH),
     'Shop Partition: ' + partition,
@@ -396,8 +432,31 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     '=========================',
     '',
     'Shop Name: ' + metadataText(metadata.shopName || 'Shop', 120),
+    'Phone: ' + metadataText(metadata.shopPhone, 80),
+    'Email: ' + metadataText(metadata.shopEmail, 160),
+    'Address: ' + metadataText(metadata.shopAddress, 300),
+    'Tagline: ' + metadataText(metadata.shopTagline, 200),
+    'Tax Registration No: ' + metadataText(metadata.taxRegistrationNo, 100),
+    'Invoice Place of Supply: ' + metadataText(metadata.invoicePlaceOfSupply, 160),
+    'Invoice Title: ' + metadataText(metadata.invoiceTitle, 160),
+    'Invoice Subtitle: ' + metadataText(metadata.invoiceSubtitle, 200),
+    'Invoice Currency: ' + metadataText(metadata.invoiceCurrency, 30),
+    'Invoice Tax Label: ' + metadataText(metadata.invoiceTaxLabel, 80),
+    'Invoice Terms: ' + metadataText(metadata.invoiceTerms, 500),
+    'Invoice Footer: ' + metadataText(metadata.invoiceFooter, 500),
+    'Receipt Footer: ' + metadataText(metadata.receiptFooter, 500),
+    'Tax Default: ' + metadataText(metadata.taxDefault, 40),
+    'Low Stock Default: ' + metadataText(metadata.lowStockDefault, 40),
+    'Exchange Days: ' + metadataText(metadata.exchangeDays, 40),
+    'Opening Float: ' + metadataText(metadata.openingFloat, 40),
+    'WhatsApp Receipts: ' + (metadata.whatsappReceipts === true ? 'true' : 'false'),
+    '',
     'Shop Backup ID: ' + metadataText(metadata.shopId, SHOP_ID_MAX_LENGTH),
     'Shop Partition: ' + metadataText(metadata.shopPartition, 40),
+    'Backup Type: ' + metadataText(metadata.kind || 'unknown', 20),
+    'Backup ID: ' + metadataText(metadata.backupId, 100),
+    'Last Backup Exported At: ' + metadataText(metadata.exportedAt || new Date().toISOString(), 80),
+    'Apps Script Version: ' + VERSION,
     '',
     'Recovery Key: ' + key,
     '',
@@ -407,13 +466,13 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     'Anyone who has access to both this key and the encrypted backup can decrypt the backup.',
     'Do not edit this file manually. Nexfix POS regenerates it during backup.'
   ];
-  var content = lines.join('\n') + '\n';
+  var content = lines.join('\\n') + '\\n';
   var fileName = 'RECOVERY_KEY.txt';
   var files = folder.getFilesByName(fileName);
   if (files.hasNext()) {
     var file = files.next();
     var existing = String(file.getBlob().getDataAsString() || '');
-    var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+    var match = existing.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
     if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
     if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
     file.setContent(content);
@@ -422,6 +481,7 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
   }
 }
+
 function trashDailyBackupSet(backupFolder, shopId, dayKey, keepNames, keepBackupId) {
   var prefix = getBackupFilePrefix(shopId, dayKey);
   var keepDescription = keepBackupId ? backupPartDescription(keepBackupId) : '';
