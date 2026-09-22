@@ -1598,22 +1598,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const cost = currentPlan.productCost.get(p.id);
         const trackedQty = currentPlan.trackedUnitCount.get(p.id) || 0;
         if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
-          for (let i = 0; i < trackedQty; i++) {
-            const purchaseItem = currentPo.items.find(item => item.productId === p.id);
-            for (const identifier of purchaseItem?.unitIdentifiers || []) {
-              newUnits.push({
-                id: uid(),
-                productId: p.id,
-                imei: p.trackImei ? identifier.imei?.trim() : undefined,
-                serial: p.trackSerial ? identifier.serial?.trim() : undefined,
-                status: 'in_stock',
-                purchaseId: currentPo.id,
-                cost,
-                expiryDate: purchaseItem?.expiryDate,
-                note: `From ${currentPo.poNo}`,
-                createdAt: now,
-              } as InventoryUnit);
-            }
+          const purchaseItem = currentPo.items.find(item => item.productId === p.id);
+          for (const identifier of purchaseItem?.unitIdentifiers || []) {
+            newUnits.push({
+              id: uid(),
+              productId: p.id,
+              imei: p.trackImei ? identifier.imei?.trim() : undefined,
+              serial: p.trackSerial ? identifier.serial?.trim() : undefined,
+              status: 'in_stock',
+              purchaseId: currentPo.id,
+              cost,
+              expiryDate: purchaseItem?.expiryDate,
+              note: `From ${currentPo.poNo}`,
+              createdAt: now,
+            } as InventoryUnit);
           }
         }
         const purchaseItem = currentPo.items.find(item => item.productId === p.id);
