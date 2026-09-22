@@ -276,6 +276,8 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       shopTagline: String(settings.tagline || ''),
       taxRegistrationNo: String(settings.taxRegistrationNo || ''),
       invoicePlaceOfSupply: String(settings.invoicePlaceOfSupply || ''),
+      shopBackupId: shopId,
+      shopPartition: (await sha256Hex(shopId)).slice(0, 24),
     };
 
     if (totalBytes <= SINGLE_LIMIT_BYTES) {
