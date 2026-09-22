@@ -195,7 +195,7 @@ function checkBackupRateLimit(shopId, backupId, format) {
   }
 
   if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    throw new Error('Backup rate limit reached. Please retry shortly.');
+    throw new Error('Backup rate limit reached. Please wait about 60 seconds between Google backups.');
   }
 
   cache.put(key, JSON.stringify({
@@ -861,7 +861,7 @@ function getCachedBackupStatus(requestId, shopId) {
     var record = JSON.parse(cached);
     var result = record && record.result ? record.result : record;
     if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
-    return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
+    return { ok: false, status: 'error', version: VERSION, message: (result && result.message) || 'Backup request failed' };
   } catch (err) {
     return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
   }
