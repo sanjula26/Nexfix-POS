@@ -192,6 +192,17 @@ function checkBackupRateLimit(shopId, backupId, format) {
   }), BACKUP_RATE_WINDOW_SECONDS);
 }
 
+function sha256HexText(value) {
+  var digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    Utilities.newBlob(String(value), 'text/plain').getBytes()
+  );
+  return digest.map(function(byte) {
+    var n = byte < 0 ? byte + 256 : byte;
+    return ('0' + n.toString(16)).slice(-2);
+  }).join('');
+}
+
 function shopPartitionKey(shopId) {
   var normalized = normalizeShopId(shopId);
   var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, normalized, Utilities.Charset.UTF_8);
@@ -459,6 +470,15 @@ function backupStateToDrive(contents, shopId) {
       totalFoundBytes += partFile.getSize();
     }
     if (totalFoundBytes !== totalBytes) throw new Error('Multipart byte count does not match stored parts');
+    var combinedParts = '';
+    for (var hi = 0; hi < partNames.length; hi++) {
+      var hashPart = findMultipartPart(backupFolder, partNames[hi], contents.backupId);
+      if (!hashPart) throw new Error('Multipart part is missing during integrity verification');
+      combinedParts += hashPart.getBlob().getDataAsString();
+    }
+    if (sha256HexText(combinedParts) !== String(contents.sha256)) {
+      throw new Error('Multipart SHA-256 integrity verification failed');
+    }
     var manifest = {
       version: 1,
       app: 'Nexfix POS',
