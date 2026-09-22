@@ -9,8 +9,6 @@ import {
   isEncryptedBackupEnvelope,
   sha256Hex,
   ensureRecoveryKey,
-  getRecoveryKey,
-  setRecoveryKey,
 } from './backupCrypto';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
@@ -338,6 +336,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       kind,
       encrypted: true,
       ...shopMetadata,
+      recoveryKey,
     }, shopId);
   } catch (error) {
     console.error('[Google Backup] encryption/upload failed', error);
