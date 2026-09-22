@@ -171,6 +171,7 @@ function checkBackupRateLimit(shopId, backupId, format) {
   if (format === 'encrypted-part' && current
       && current.backupId === String(backupId || '')
       && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
+    cache.put(key, JSON.stringify({ startedAt: now, backupId: String(backupId || '') }), BACKUP_RATE_WINDOW_SECONDS);
     return;
   }
 
