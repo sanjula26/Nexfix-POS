@@ -90,6 +90,8 @@ export default function Inventory() {
       const lines = newUnitText.split(/\r?\n/);
       const newUnits: InventoryUnit[] = [];
       const parseErrors: string[] = [];
+      const seenImei = new Set(state.units.map(u => (u.imei || '').trim().toLowerCase()).filter(Boolean));
+      const seenSerial = new Set(state.units.map(u => (u.serial || '').trim().toLowerCase()).filter(Boolean));
       for (let i = 0; i < lines.length; i++) {
         const raw = lines[i].trim();
         if (!raw) continue;
@@ -114,6 +116,12 @@ export default function Inventory() {
           }
           serial = parts[0];
         }
+        const imeiKey = imei.toLowerCase();
+        const serialKey = serial.toLowerCase();
+        if (imei && seenImei.has(imeiKey)) { parseErrors.push('Line ' + (i + 1) + ': IMEI ' + imei + ' already exists.'); continue; }
+        if (serial && seenSerial.has(serialKey)) { parseErrors.push('Line ' + (i + 1) + ': Serial ' + serial + ' already exists.'); continue; }
+        if (imei) seenImei.add(imeiKey);
+        if (serial) seenSerial.add(serialKey);
         newUnits.push({
           id: uid(),
           productId: editing.id,
@@ -127,13 +135,20 @@ export default function Inventory() {
         alert(parseErrors.join('\n'));
         return;
       }
-      saveProduct(editing);
+      const savedProduct = saveProduct({ ...editing, stock: 0 });
+      if (!savedProduct) {
+        alert('The product could not be saved. Check the SKU/barcode and try again.');
+        return;
+      }
       const result = saveUnitsBulk(newUnits);
       if (!result.ok || result.errors.length) {
         alert(result.errors.length ? result.errors.join('\n') : 'The product was saved, but the unit identifiers could not be added.');
       }
     } else {
-      saveProduct(editing);
+      if (!saveProduct(editing)) {
+        alert('The product could not be saved. Check the SKU/barcode and try again.');
+        return;
+      }
     }
     setEditing(null);
     setNewUnitText('');
@@ -294,9 +309,9 @@ export default function Inventory() {
             </div>
             {currentTracked && !tracked && inStockUnits > 0 && <p className="text-xs font-medium text-rose-600">Tracking cannot be disabled while in-stock units remain. Reconcile those units first.</p>}
             {isNew && tracked && (
-              <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 space-y-3">
+              <div className="rounded-xl border-2 border-violet-300 bg-violet-50/70 p-4 space-y-3 shadow-sm">
                 <div>
-                  <div className="text-sm font-bold text-ink">Initial IMEI / Serial numbers</div>
+                  <div className="flex items-center gap-2"><ClipboardCheck size={16} className="text-violet-600" /><div className="text-sm font-bold text-ink">Initial IMEI / Serial numbers</div></div>
                   <p className="text-xs text-sub mt-0.5">
                     Add one unit per line. {editing.trackImei && editing.trackSerial
                       ? 'For both, use IMEI,SERIAL on each line.'
@@ -314,7 +329,7 @@ export default function Inventory() {
                       : 'SN-ABC123\nSN-ABC124'}
                   aria-label="Initial IMEI or serial numbers"
                 />
-                <p className="text-[11px] text-sub">Blank lines are ignored. Duplicate identifiers are rejected.</p>
+                <p className="text-[11px] text-sub">Optional — you can add identifiers now or later from the Units / IMEI & Serial page or GRN. Blank lines are ignored; duplicate identifiers are rejected.</p>
               </div>
             )}
             <Field label="Warranty (months)" hint="Printed on receipt for this product"><input className="input num" value={editing.warrantyMonths || ''} onChange={e => setEditing({ ...editing, warrantyMonths: Math.round(num(e.target.value)) || undefined })} placeholder="e.g. 12" /></Field>
