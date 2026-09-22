@@ -350,7 +350,7 @@ export default function Settings() {
           </div>
         </section>
       )}
-      <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.1`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
+      <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.2`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
         <div className="card p-6">
