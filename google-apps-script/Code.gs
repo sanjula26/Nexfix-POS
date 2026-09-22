@@ -383,7 +383,7 @@ function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
   if (!files.hasNext()) return;
   var file = files.next();
   var existing = String(file.getBlob().getDataAsString() || '');
-  var match = existing.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+  var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
   if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
   if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
 }
