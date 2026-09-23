@@ -352,9 +352,8 @@ function loadState(): POSState {
 
 /** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
 async function persistState(state: POSState): Promise<void> {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
-  } catch { /* quota */ }
+  // IndexedDB is the authoritative full-state store. Do not mirror the full
+  // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
     const saved = await idbSaveState(state);
     // Keep the cloud-sale idempotency marker until the authoritative sale is
