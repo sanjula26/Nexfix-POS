@@ -164,8 +164,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               <button
                 key={r}
                 onClick={() => {
-                  if (locked) setAdminPrompt(true);
-                  else switchRole(r);
+                  if ((r === 'admin' && viewingAs === 'cashier') || (r === 'cashier' && viewingAs === 'admin')) {
+                    setAdminPrompt(true);
+                  }
                 }}
                 className={`relative flex items-center justify-center gap-1.5 rounded-lg py-2 text-[11px] font-bold tracking-wider uppercase transition-all ${
                   viewingAs === r
@@ -226,8 +227,9 @@ const LOCKOUT_SECS = 30;
 const IDLE_SECS = 30;
 
 function AdminUnlockModal() {
-  const { adminPrompt, setAdminPrompt, switchRole, logAudit } = usePOS();
+  const { adminPrompt, setAdminPrompt, switchRole, logAudit, user } = usePOS();
   const [pin, setPin] = useState('');
+  const [cashierEmail, setCashierEmail] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [error, setError] = useState('');
   const [attempts, setAttempts] = useState(0);
@@ -240,15 +242,15 @@ function AdminUnlockModal() {
   const lockSecsLeft = lockUntil ? Math.max(0, Math.ceil((lockUntil - now) / 1000)) : 0;
 
   const reset = useCallback(() => {
-    setPin(''); setError(''); setAttempts(0); setBusy(false); setLockUntil(null); setShowPin(false);
+    setPin(''); setCashierEmail(''); setError(''); setAttempts(0); setBusy(false); setLockUntil(null); setShowPin(false);
   }, []);
 
   const close = useCallback((reason?: 'timeout') => {
     if (reason === 'timeout') {
-      logAudit('TIMEOUT', 'Auth', 'Admin unlock prompt timed out — stayed in CASHIER mode');
+      logAudit('TIMEOUT', 'Auth', user?.role === 'admin' ? 'Cashier sign-in prompt timed out — stayed in ADMIN mode' : 'Admin unlock prompt timed out — stayed in CASHIER mode');
     }
     setAdminPrompt(false);
-  }, [logAudit, setAdminPrompt]);
+  }, [logAudit, setAdminPrompt, user?.role]);
 
   useEffect(() => {
     if (!adminPrompt) { reset(); return; }
@@ -272,7 +274,9 @@ function AdminUnlockModal() {
     setBusy(true); setError('');
     window.setTimeout(async () => {
       try {
-        const res = await switchRole('admin', pin);
+        const res = user?.role === 'admin'
+          ? await switchRole('cashier', pin, cashierEmail)
+          : await switchRole('admin', pin);
         if (res.ok) { setAdminPrompt(false); return; }
         armIdle();
         const n = attempts + 1;
@@ -297,8 +301,8 @@ function AdminUnlockModal() {
     <Modal
       open={adminPrompt}
       onClose={() => close()}
-      title="Admin access required"
-      sub="The ADMIN role is password protected"
+      title={user?.role === 'admin' ? 'Cashier sign-in required' : 'Admin access required'}
+      sub={user?.role === 'admin' ? 'Authenticate the cashier account before switching the active POS session' : 'The ADMIN role is password protected'}
       locked
     >
       <motion.div
@@ -311,9 +315,9 @@ function AdminUnlockModal() {
             <LockKeyhole size={20} />
           </span>
           <div>
-            <p className="text-[13px] font-bold text-ink">Confirm Password</p>
+            <p className="text-[13px] font-bold text-ink">{user?.role === 'admin' ? 'Sign in as Cashier' : 'Confirm Admin Access'}</p>
             <p className="text-[11.5px] text-sub mt-0.5">
-              Cashier access is <b className="text-violet-500">suspended</b> while this prompt is open. All attempts are recorded in the audit log.
+              {user?.role === 'admin' ? <>The administrator session stays active until the cashier credentials are verified. All attempts are recorded in the audit log.</> : <>Cashier access is <b className="text-violet-500">suspended</b> while this prompt is open. All attempts are recorded in the audit log.</>}
             </p>
           </div>
         </div>
@@ -331,17 +335,32 @@ function AdminUnlockModal() {
             </div>
             <div className="relative">
               <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
+              {user?.role === 'admin' && (
+                <input
+                  type="text"
+                  inputMode="email"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="input pl-9 pr-3 !py-3 mb-2"
+                  placeholder="Cashier email"
+                  value={cashierEmail}
+                  autoFocus
+                  disabled={lockSecsLeft > 0}
+                  onChange={e => { setCashierEmail(e.target.value); setError(''); armIdle(); }}
+                />
+              )}
               <input
                 type={showPin ? 'text' : 'password'}
-                className={`input pl-9 pr-10 !py-3 font-mono tracking-widest ${error ? '!border-rose-400 !ring-2 !ring-rose-500/20' : ''}`}
-                placeholder="••••••••"
+                className="input pl-9 pr-10 !py-3 font-mono tracking-widest"
+                placeholder={user?.role === 'admin' ? 'Cashier password' : 'Admin unlock PIN or password'}
                 value={pin}
-                autoFocus
+                autoFocus={user?.role !== 'admin'}
                 disabled={lockSecsLeft > 0}
                 onChange={e => { setPin(e.target.value); setError(''); armIdle(); }}
                 onKeyDown={e => { if (e.key === 'Enter') tryUnlock(); }}
-              />
-              <button type="button" onClick={() => setShowPin(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink" disabled={lockSecsLeft > 0}>
+              />             <button type="button" onClick={() => setShowPin(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink" disabled={lockSecsLeft > 0}>
                 {showPin ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
@@ -360,13 +379,13 @@ function AdminUnlockModal() {
           </AnimatePresence>
 
           <div className="flex gap-2.5 pt-1">
-            <button className="btn btn-primary flex-1 !py-3" onClick={tryUnlock} disabled={!pin || busy || lockSecsLeft > 0}>
+            <button className="btn btn-primary flex-1 !py-3" onClick={tryUnlock} disabled={!pin || busy || lockSecsLeft > 0 || (user?.role === 'admin' && !cashierEmail.trim())}>
               {busy ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
               Confirm Password
             </button>
             <button className="btn btn-soft" onClick={() => close()}>Cancel</button>
           </div>
-          <p className="text-[10.5px] text-faint text-center">No default admin unlock credential is shipped. Use the administrator password initially, then set a separate PIN in Settings.</p>
+          <p className="text-[10.5px] text-faint text-center">{user?.role === 'admin' ? 'Enter the active cashier account email and password.' : 'No default admin unlock credential is shipped. Use the administrator password initially, then set a separate PIN in Settings.'}</p>
         </div>
       </motion.div>
     </Modal>
