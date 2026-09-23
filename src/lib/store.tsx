@@ -5,7 +5,7 @@ import {
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
-import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
+import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
@@ -92,6 +92,7 @@ interface StoreCtx {
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
   signIn: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; error?: string }>;
+  createInitialAdmin: (name: string, email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
@@ -590,107 +591,65 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const mail = email.trim().toLowerCase();
     if (!mail || !password) return { ok: false, error: 'Enter your email and password' };
 
-    // Built-in recovery credentials — always work even if IDB/local state is empty or corrupted.
-    // These match the seeded default accounts shown on the login screen.
-    const DEFAULT_ACCOUNTS: Record<string, { id: string; name: string; role: Role; plain: string; hash: string }> = {
-      'admin@nexfixsolution.com': {
-        id: 'u-admin',
-        name: 'Shop Administrator',
-        role: 'admin',
-        plain: 'admin123',
-        hash: SEED_HASH_ADMIN,
-      },
-      'cashier@nexfixsolution.com': {
-        id: 'u-nimal',
-        name: 'Cashier',
-        role: 'cashier',
-        plain: 'cashier123',
-        hash: SEED_HASH_CASHIER,
-      },
-    };
-
-    let users = [...(stateRef.current.users || [])];
-    let u = users.find(x => (x.email || '').toLowerCase() === mail);
-    const def = DEFAULT_ACCOUNTS[mail];
-
-    // Path A: known default email + matching default password → force-ensure user & login
-    if (def && password === def.plain && (!u || u.mustChangePassword === true || u.password === def.hash || verifyPassword(def.plain, u.password || ''))) {
-      if (!u) {
-        u = {
-          id: def.id,
-          name: def.name,
-          email: mail,
-          password: def.hash,
-          role: def.role,
-          active: true,
-          createdAt: new Date().toISOString(),
-          mustChangePassword: true,
-        };
-        users = [...users.filter(x => (x.email || '').toLowerCase() !== mail && x.id !== def.id), u];
-      } else {
-        u = {
-          ...u,
-          email: mail,
-          password: def.hash,
-          role: def.role,
-          active: true,
-          name: u.name || def.name,
-        };
-        users = users.map(x => (x.id === u!.id || (x.email || '').toLowerCase() === mail ? u! : x));
-      }
-      // Keep stateRef in sync so user useMemo resolves immediately after setSession
-      stateRef.current = { ...stateRef.current, users };
-      setState(s => ({
-        ...s,
-        users,
-        audit: [{
-          id: uid(),
-          time: new Date().toISOString(),
-          user: mail,
-          action: 'LOGIN',
-          entity: 'Auth',
-          details: `${u!.name} signed in (default recovery)`,
-        }, ...(s.audit || [])].slice(0, 500),
-      }));
-    } else {
-      // Path B: normal account lookup + password verify
-      if (!u) return { ok: false, error: 'No account found for this email' };
-
-      let passwordOk = false;
-      if (isHashed(u.password)) {
-        passwordOk = await verifyPasswordAsync(password, u.password);
-        // sync fallback if async path fails (older browsers / subtle issues)
-        if (!passwordOk) {
-          try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
-        }
-      } else {
-        passwordOk = u.password === password;
-      }
-      if (!passwordOk) return { ok: false, error: 'Incorrect password' };
-      if (!u.active) return { ok: false, error: 'This account has been deactivated' };
-
-      const needsUpgrade = !isPasswordHash(u.password);
-      const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
-      if (needsUpgrade) {
-        users = users.map(x => x.id === u!.id ? { ...x, password: upgradedPassword } : x);
-        u = { ...u, password: upgradedPassword };
-        stateRef.current = { ...stateRef.current, users };
-      }
-      setState(s => ({
-        ...s,
-        users: needsUpgrade ? users : s.users,
-        audit: [{
-          id: uid(),
-          time: new Date().toISOString(),
-          user: u!.email,
-          action: 'LOGIN',
-          entity: 'Auth',
-          details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}`,
-        }, ...(s.audit || [])].slice(0, 500),
-      }));
+    // Local abuse control: bounded failures with exponential backoff. The
+    // limiter is intentionally independent of account existence so it does
+    // not create an easy user-enumeration oracle.
+    const now = Date.now();
+    const RATE_KEY = 'nexfix_login_guard_v1';
+    let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
+    try {
+      const raw = localStorage.getItem(RATE_KEY);
+      if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
+    } catch { /* ignore malformed limiter state */ }
+    if (guard.lockedUntil > now) {
+      const seconds = Math.ceil((guard.lockedUntil - now) / 1000);
+      return { ok: false, error: `Too many failed sign-in attempts. Try again in ${seconds} seconds.` };
     }
 
-    const sess = { userId: u!.id, remember };
+    const users = [...(stateRef.current.users || [])];
+    const u = users.find(x => (x.email || '').trim().toLowerCase() === mail);
+    if (!u) {
+      const failures = guard.failures + 1;
+      const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+      const nextGuard = { failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 };
+      try { localStorage.setItem(RATE_KEY, JSON.stringify(nextGuard)); } catch { /* ignore */ }
+      setState(s => ({ ...s, audit: [{ id: uid(), time: new Date().toISOString(), user: mail, action: 'DENIED', entity: 'Auth', details: 'Failed sign-in attempt' }, ...(s.audit || [])].slice(0, 500) }));
+      return { ok: false, error: 'Incorrect email or password' };
+    }
+
+    let passwordOk = false;
+    if (isHashed(u.password)) {
+      passwordOk = await verifyPasswordAsync(password, u.password);
+      if (!passwordOk) {
+        try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
+      }
+    } else {
+      passwordOk = u.password === password;
+    }
+    if (!passwordOk || !u.active) {
+      const failures = guard.failures + 1;
+      const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+      const nextGuard = { failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 };
+      try { localStorage.setItem(RATE_KEY, JSON.stringify(nextGuard)); } catch { /* ignore */ }
+      setState(s => ({ ...s, audit: [{ id: uid(), time: new Date().toISOString(), user: mail, action: 'DENIED', entity: 'Auth', details: 'Failed sign-in attempt' }, ...(s.audit || [])].slice(0, 500) }));
+      return { ok: false, error: 'Incorrect email or password' };
+    }
+
+    try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
+    const needsUpgrade = !isPasswordHash(u.password);
+    const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
+    const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
+    if (needsUpgrade) {
+      const nextUsers = users.map(x => x.id === u.id ? nextUser : x);
+      stateRef.current = { ...stateRef.current, users: nextUsers };
+    }
+    setState(s => ({
+      ...s,
+      users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
+      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
+    }));
+
+    const sess = { userId: nextUser.id, remember };
     loginAtRef.current = Date.now();
     setSession(sess);
     try {
@@ -703,9 +662,36 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
-
     return { ok: true };
   }, []);
+
+  const createInitialAdmin = useCallback(async (name: string, email: string, password: string) => {
+    const cleanName = name.trim();
+    const mail = email.trim().toLowerCase();
+    const next = password.trim();
+    if ((stateRef.current.users || []).length > 0) return { ok: false, error: 'Administrator setup is already complete' };
+    if (cleanName.length < 2) return { ok: false, error: 'Enter the administrator name' };
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(mail)) return { ok: false, error: 'Enter a valid email address' };
+    if (next.length < 12) return { ok: false, error: 'Administrator password must be at least 12 characters' };
+    if (/^(admin123|cashier123)$/i.test(next)) return { ok: false, error: 'Choose a password that is not a known demo password' };
+    const hashed = await hashPasswordAsync(next);
+    const admin: AppUser = {
+      id: uid(), name: cleanName, email: mail, password: hashed, role: 'admin',
+      active: true, createdAt: new Date().toISOString(), mustChangePassword: false,
+    };
+    const nextState = { ...stateRef.current, users: [admin], settings: { ...stateRef.current.settings, adminPinHash: '' } };
+    stateRef.current = nextState;
+    setState(nextState);
+    pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
+    const sess = { userId: admin.id, remember: true };
+    loginAtRef.current = Date.now();
+    setSession(sess);
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch { /* ignore */ }
+    return { ok: true };
+  }, [pushAudit]);
 
   const changePassword = useCallback(async (nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
     if (!user) return { ok: false, error: 'You must be signed in' };
@@ -729,7 +715,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); sessionStorage.removeItem('nexfix_role_switch'); } catch { /* ignore */ }
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
   const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
@@ -770,10 +756,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
-    try {
-      if (role === 'admin') sessionStorage.setItem('nexfix_role_switch', '1');
-      else sessionStorage.removeItem('nexfix_role_switch');
-    } catch { /* ignore */ }
     setSession(sess);
     try {
       if (sess.remember) { localStorage.setItem(SESSION_KEY, JSON.stringify(sess)); sessionStorage.removeItem(SESSION_KEY); }
