@@ -16,17 +16,18 @@ This direct backup path does **not** require Supabase, and the backup Google She
 4. Save it.
 5. The repository already contains the master Drive folder ID:
    `1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK`
-6. Optionally set Script Property `ROOT_BACKUP_FOLDER_ID` to that folder ID. If the property is absent, the code uses the configured default ID.
-7. Deploy as **Web app**:
+6. Set Script Property `NEXFIX_BACKUP_API_KEY` to a long random value and keep it private in Apps Script. The released POS build must use the same value as `VITE_GOOGLE_BACKUP_API_KEY`.
+7. Optionally set Script Property `ROOT_BACKUP_FOLDER_ID` to that folder ID. If the property is absent, the code uses the configured default ID.
+8. Deploy as **Web app**:
    - **Execute as:** Me
    - **Who has access:** choose an access setting that allows the POS browser to reach the deployment. For a direct browser deployment this is commonly **Anyone**, subject to the Google account's deployment policy.
-8. Copy the deployed **`/macros/s/.../exec`** URL.
+9. Copy the deployed **`/macros/s/.../exec`** URL.
 
 After changing `Code.gs`, update/create the deployment version. Editing the GitHub file alone does not update an already deployed Apps Script Web App.
 
 ## 2. Nexfix POS endpoint configuration
 
-The released POS build contains the central `/exec` endpoint. Shop users do **not** enter, save, or toggle a Google Apps Script URL in Settings.
+The released POS build contains the central `/exec` endpoint and the matching transport API key. Shop users do **not** enter, save, or toggle the Apps Script URL or API key in Settings.
 
 The `/exec` URL is only updated in the application source when the central Apps Script deployment changes. After changing the deployment, the released POS build must be rebuilt/redeployed with the new endpoint.
 
