@@ -14,6 +14,10 @@ import {
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
+// This is a transport credential, not a frontend secret. Any value compiled
+// into an Electron/Vite bundle can be extracted; Apps Script still rejects
+// requests that do not present the configured Script Property value.
+const BACKUP_API_KEY = (import.meta.env.VITE_GOOGLE_BACKUP_API_KEY || '').trim();
 const SHOP_KEY = 'nexfix_cloud_shop_id';
 const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
 const DRIVE_SHOP_OVERRIDE_KEY = 'nexfix_drive_shop_id_override';
@@ -170,9 +174,10 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
   const baseUrl = getGoogleScriptUrl();
   if (!baseUrl) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
+  if (!BACKUP_API_KEY) return { ok: false, error: 'Google Drive backup API key is not configured in this build.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   const requestId = makeRequestId();
-  const payload = { action: 'backupState', shopId, requestId, ...body };
+  const payload = { action: 'backupState', shopId, requestId, apiKey: BACKUP_API_KEY, ...body };
 
   try {
     const iframeName = 'nexfixGoogleBackupFrame_' + Date.now() + '_' + Math.random().toString(36).slice(2);
@@ -261,6 +266,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     url.searchParams.set('action', 'backupStatus');
     url.searchParams.set('shopId', shopId);
     url.searchParams.set('requestId', requestId);
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
     url.searchParams.set('callback', callbackName);
     script.async = true;
     script.src = url.toString();
@@ -444,6 +450,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
     const url = new URL(getGoogleScriptUrl());
     url.searchParams.set('action', 'getLatestBackup');
     url.searchParams.set('shopId', shopId);
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
     const result = await getJsonp<{
       ok?: boolean;
       backup?: {
@@ -474,6 +481,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
         const partUrl = new URL(getGoogleScriptUrl());
         partUrl.searchParams.set('action', 'getBackupPart');
         partUrl.searchParams.set('shopId', shopId);
+        partUrl.searchParams.set('apiKey', BACKUP_API_KEY);
         partUrl.searchParams.set('backupId', manifest.backupId);
         partUrl.searchParams.set('partName', manifest.partNames[index]);
         const part = await getJsonp<{ ok?: boolean; chunk?: unknown }>(partUrl, 30000);
