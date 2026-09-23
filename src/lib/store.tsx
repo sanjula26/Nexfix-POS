@@ -584,6 +584,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
     const mail = email.trim().toLowerCase();
     if (!mail || !password) return { ok: false, error: 'Enter your email and password' };
+    // Known demo passwords are never accepted by production builds, including
+    // on databases upgraded from an older release that still contain a legacy user.
+    if (import.meta.env.VITE_SEED_DEMO !== 'true' && /^(admin123|cashier123)$/i.test(password)) {
+      return { ok: false, error: 'This password is a retired demo credential. Use the password created during administrator setup.' };
+    }
 
     // Local abuse control: bounded failures with exponential backoff. The
     // limiter is intentionally independent of account existence so it does
