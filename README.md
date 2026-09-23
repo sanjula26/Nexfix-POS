@@ -11,8 +11,9 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Cloud returns: server-side atomic sale-return processing with idempotent return IDs
 - Cloud state sync: authenticated multi-PC snapshot revisioning with durable conflict-safe queueing
 - Multi-shop isolation: every cloud device and snapshot is scoped to an explicit `shop_id`
-- Web deployment: Netlify-compatible Vite build; GitHub Pages preview workflow is also configured
-- Desktop target: Windows Electron wrapper (build separately)
+- Production delivery: Windows Electron installer/portable EXE (`desktop:build` / `desktop:dir`)
+- GitHub Pages: development/preview only; the installed EXE has no runtime dependency on GitHub
+- Netlify is not used for shop production
 - Google backup: direct Nexfix POS → Google Apps Script → dedicated Google Drive folder; Supabase is not required for this backup transport
 - Google backup storage: the supplied master Drive folder is separate from the operator's Google Sheet; each shop receives a deterministic partitioned Drive folder
 
