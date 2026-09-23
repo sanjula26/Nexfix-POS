@@ -50,5 +50,3 @@ export const verifyPin=(plain:string,storedHash:string):boolean=>verifyLegacyPas
 export const isPasswordHash=(value:string):boolean=>{const parts=(value||'').split(':');if(parts.length!==2)return false;try{return base64ToBytes(parts[0]).length===PBKDF2_SALT_BYTES&&base64ToBytes(parts[1]).length===PBKDF2_KEY_BYTES;}catch{return false;}};
 export const isLegacyPasswordHash=(value:string):boolean=>/^[0-9a-f]{64}$/i.test(value||'');
 export const isHashed=(value:string):boolean=>isPasswordHash(value)||isLegacyPasswordHash(value);
-export const SEED_HASH_ADMIN='bxtT1f+IFBcI2EcnpZUdPQ==:McqhcFEWJmmo3oNmx+yG9oc9AZqBU3RJYqvUnbplmiI=';
-export const SEED_HASH_CASHIER='FM8XqQxYxKMLhNVXgNzU7A==:IpYBaqTjiSwXtvse+UnqoqLxWK/cZPub/JhXmXm6beE=';
