@@ -638,9 +638,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const nextUsers = users.map(x => x.id === u.id ? nextUser : x);
       stateRef.current = { ...stateRef.current, users: nextUsers };
     }
+    const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
+      settings: pinWasUnset ? { ...s.settings, adminPinHash: hashPin(password) } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
@@ -674,7 +676,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       id: uid(), name: cleanName, email: mail, password: hashed, role: 'admin',
       active: true, createdAt: new Date().toISOString(), mustChangePassword: false,
     };
-    const nextState = { ...stateRef.current, users: [admin], settings: { ...stateRef.current.settings, adminPinHash: '' } };
+    const nextState = { ...stateRef.current, users: [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
