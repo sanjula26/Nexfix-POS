@@ -91,7 +91,7 @@ const emptyState = (): POSState => {
       mustChangePassword: true,
       createdAt: now,
     },
-  ];
+  ] : [];
   const cashierPerms: Record<string, boolean> = {
     'page:pos': true,
     'page:customers': true,
