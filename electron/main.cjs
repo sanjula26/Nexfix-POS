@@ -40,6 +40,9 @@ function createWindow() {
   win.webContents.on('will-navigate', (event, url) => {
     if (!isAllowedNavigation(url)) event.preventDefault();
   });
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!isAllowedNavigation(url)) event.preventDefault();
+  });
 
   win.once('ready-to-show', () => win.show());
 
