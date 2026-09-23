@@ -135,7 +135,7 @@ export const buildSeed = (): POSState => {
   const users: AppUser[] = [
     { id: 'u-admin', name: 'Shop Administrator', email: 'admin@nexfixsolution.com', password: hashPassword('admin123'), role: 'admin', active: true, mustChangePassword: true, createdAt: iso(daysAgo(400)) },
     { id: 'u-nimal', name: 'Nimal Perera', email: 'cashier@nexfixsolution.com', password: hashPassword('cashier123'), role: 'cashier', active: true, mustChangePassword: true, createdAt: iso(daysAgo(300)) },
-    { id: 'u-sithum', name: 'Sithum Eranga', email: 'sithum@nexfixsolution.com', password: SEED_HASH_CASHIER, role: 'cashier', active: true, createdAt: iso(daysAgo(120)) },
+    { id: 'u-sithum', name: 'Sithum Eranga', email: 'sithum@nexfixsolution.com', password: hashPassword('cashier123'), role: 'cashier', active: true, createdAt: iso(daysAgo(120)) },
   ];
 
   const suppliers: Supplier[] = [
