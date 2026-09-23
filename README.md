@@ -27,3 +27,17 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - The direct Apps Script endpoint is not a substitute for application authentication; a public Web App endpoint must be treated as a transport boundary, not as a private API.
 
 See `google-apps-script/README.md` and `docs/google-apps-script.md` for the direct Drive deployment flow.
+
+## Production distribution
+
+Shops receive the Windows Electron installer/EXE only. The installed POS does not depend on the GitHub repository being public; making the repository private does not affect a built EXE.
+
+For multi-PC shops or any privileged cloud operation, configure Supabase Auth + RLS/RPC enforcement. A pure offline single-device deployment remains exposed to physical access and local storage tampering.
+
+## Google Drive backup transport
+
+Set the same high-entropy value in both places before release:
+- Apps Script **Script Property**: `NEXFIX_BACKUP_API_KEY`
+- Released POS build environment: `VITE_GOOGLE_BACKUP_API_KEY`
+
+The value is embedded in the Electron renderer bundle and therefore is **not a true secret**. It prevents requests to an unkeyed Apps Script endpoint but must not be treated as a substitute for POS authentication. Rotate it by changing the Script Property and rebuilding/releasing the POS.
