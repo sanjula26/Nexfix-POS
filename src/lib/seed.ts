@@ -3,7 +3,7 @@ import {
   Exchange, AuditEntry, Settings, Permissions, DaySession, PaymentMethod,
   InventoryUnit, RepairJob,
 } from './types';
-import { mulberry32, uid, dkey, hashPin } from './utils';
+import { mulberry32, uid, dkey, hashPin, hashPassword } from './utils';
 
 const SEED_DEMO = import.meta.env.VITE_SEED_DEMO === 'true';
 
