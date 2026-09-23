@@ -34,7 +34,7 @@ export default function Login() {
     e?.preventDefault();
     if (loading) return;
     const normalizedEmail = setupEmail.trim().toLowerCase();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail)) { setError('Enter a valid email address'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) { setError('Enter a valid email address'); return; }
     if (setupPassword !== setupConfirm) { setError('Passwords do not match'); return; }
     setLoading(true);
     setError('');
