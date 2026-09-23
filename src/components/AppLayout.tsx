@@ -285,11 +285,11 @@ function AdminUnlockModal() {
         if (n >= MAX_ATTEMPTS) {
           setAttempts(0);
           setLockUntil(Date.now() + LOCKOUT_SECS * 1000);
-          logAudit('LOCKOUT', 'Auth', `ADMIN unlock locked ${LOCKOUT_SECS}s after ${MAX_ATTEMPTS} failed attempts`);
+          logAudit('LOCKOUT', 'Auth', `${user?.role === 'admin' ? 'CASHIER sign-in' : 'ADMIN unlock'} locked ${LOCKOUT_SECS}s after ${MAX_ATTEMPTS} failed attempts`);
           setError('Too many failed attempts');
         } else {
           setAttempts(n);
-          setError(res.error || 'Incorrect admin unlock credential');
+          setError(res.error || (user?.role === 'admin' ? 'Incorrect cashier email or password' : 'Incorrect admin unlock credential'));
         }
       } finally {
         setBusy(false);
@@ -325,7 +325,7 @@ function AdminUnlockModal() {
         <div className="space-y-3.5">
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-bold tracking-wider uppercase text-sub">Admin unlock PIN or admin login password</span>
+              <span className="text-[11px] font-bold tracking-wider uppercase text-sub">{user?.role === 'admin' ? 'Cashier email and password' : 'Admin unlock PIN or admin login password'}</span>
               <span className="flex items-center gap-1" title={`${MAX_ATTEMPTS} attempts before a ${LOCKOUT_SECS}s lockout`}>
                 {[0, 1, 2].map(i => (
                   <span key={i} className={`w-2 h-2 rounded-full transition-colors ${i < attempts ? 'bg-rose-500' : 'bg-line'}`} />
