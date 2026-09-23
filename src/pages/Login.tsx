@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Loader2, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -30,7 +30,7 @@ export default function Login() {
     navigate(nextPath || (user.role === 'admin' || user.role === 'manager' ? '/dashboard' : '/pos'), { replace: true });
   }, [user, navigate, nextPath]);
 
-  const setupAdmin = async (e?: React.FormEvent) => {
+  const setupAdmin = async (e?: FormEvent) => {
     e?.preventDefault();
     if (loading) return;
     if (setupPassword !== setupConfirm) { setError('Passwords do not match'); return; }
