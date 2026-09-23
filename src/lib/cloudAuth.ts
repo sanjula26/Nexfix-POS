@@ -2,7 +2,6 @@ import { supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop } from './cloudSync';
 
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
-  void fullName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
@@ -18,6 +17,7 @@ export async function ensureCloudSession(
   password: string,
   fullName: string,
 ): Promise<{ ok: boolean; error?: string; needsEmailConfirmation?: boolean }> {
+  void fullName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
