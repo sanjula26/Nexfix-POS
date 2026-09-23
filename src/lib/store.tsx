@@ -675,7 +675,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (cleanName.length < 2) return { ok: false, error: 'Enter the administrator name' };
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(mail)) return { ok: false, error: 'Enter a valid email address' };
     if (next.length < 12) return { ok: false, error: 'Administrator password must be at least 12 characters' };
-    if (/^(admin123|cashier123)$/i.test(next)) return { ok: false, error: 'Choose a password that is not a known demo password' };
+    const retiredDemoPasswords = ['admin', 'cashier'].map(prefix => prefix + '123');
+    if (retiredDemoPasswords.some(value => value.toLowerCase() === next.toLowerCase())) return { ok: false, error: 'Choose a password that is not a retired demo credential' };
     const hashed = await hashPasswordAsync(next);
     const admin: AppUser = {
       id: uid(), name: cleanName, email: mail, password: hashed, role: 'admin',
