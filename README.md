@@ -25,7 +25,7 @@ Nexfix POS is a React + TypeScript + Vite POS for electronics retail, inventory,
 - Cloud backup payloads intentionally omit local POS authentication secrets; restore preserves the current device's local authentication state.
 - Google backup confirmation is server-side: the POS reports cloud success only after Apps Script reports a successful Drive write.
 - Google backup is an optional backup transport. Supabase/cloud state and the local offline store remain separate reliability mechanisms.
-- The direct Apps Script endpoint is not a substitute for application authentication; a public Web App endpoint must be treated as a transport boundary, not as a private API.
+- The direct Apps Script endpoint requires a Script Property API key for backup writes and sensitive reads. The compiled client key is still a transport credential, not POS authentication.
 
 See `google-apps-script/README.md` and `docs/google-apps-script.md` for the direct Drive deployment flow.
 
