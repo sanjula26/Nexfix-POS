@@ -366,9 +366,7 @@ function AdminUnlockModal() {
             </button>
             <button className="btn btn-soft" onClick={() => close()}>Cancel</button>
           </div>
-          <p className="text-[10.5px] text-faint text-center">
-            This is NOT the cashier password. Default PIN is <b className="text-sub font-mono">admin123</b> until changed in Settings.
-          </p>
+          <p className="text-[10.5px] text-faint text-center">No default admin unlock credential is shipped. Use the administrator password initially, then set a separate PIN in Settings.</p>
         </div>
       </motion.div>
     </Modal>
