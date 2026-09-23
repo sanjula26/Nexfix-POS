@@ -68,12 +68,14 @@ const emptyState = (): POSState => {
   const adminPermissions: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
   const now = new Date().toISOString();
+  const demoAdminHash = SEED_DEMO ? hashPassword('admin123') : '';
+  const demoCashierHash = SEED_DEMO ? hashPassword('cashier123') : '';
   const defaultUsers: AppUser[] = SEED_DEMO ? [
     {
       id: 'u-admin',
       name: 'Shop Administrator',
       email: 'admin@nexfixsolution.com',
-      password: SEED_HASH_ADMIN,
+      password: demoAdminHash,
       role: 'admin',
       active: true,
       mustChangePassword: true,
@@ -83,7 +85,7 @@ const emptyState = (): POSState => {
       id: 'u-nimal',
       name: 'Cashier',
       email: 'cashier@nexfixsolution.com',
-      password: SEED_HASH_CASHIER,
+      password: demoCashierHash,
       role: 'cashier',
       active: true,
       mustChangePassword: true,
