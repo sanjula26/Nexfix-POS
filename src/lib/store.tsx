@@ -96,7 +96,7 @@ interface StoreCtx {
   changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
   /** cashier → admin requires the admin switch password (pin). admin → cashier is free. */
-  switchRole: (role: Role, pin?: string) => Promise<{ ok: boolean; error?: string }>;
+  switchRole: (role: Role, credential?: string, email?: string) => Promise<{ ok: boolean; error?: string }>;
   changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
   /** verify the admin password without switching role (used for price overrides etc.) */
   verifyAdminPin: (pin: string, reason?: string) => boolean;
@@ -721,59 +721,73 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
-  const switchRole = useCallback(async (role: Role, pin?: string): Promise<{ ok: boolean; error?: string }> => {
-    // Role switching is an authenticated session operation. Never allow an
-    // unauthenticated caller to manufacture a new session by selecting a role.
+  const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
+    // Switching changes the authenticated POS identity. It is never a cosmetic
+    // "view" switch and must always authenticate the target account.
     if (!user) return { ok: false, error: 'You must be signed in' };
-    // Prefer restoring the previous user when switching back to cashier
-    let target = state.users.find(u => u.role === role && u.active);
-    if (role === 'cashier' && user?.role === 'admin') {
-      try {
-        const prevId = sessionStorage.getItem('nexfix_prev_user');
-        if (prevId) {
-          const prevUser = state.users.find(u => u.id === prevId && u.role === 'cashier' && u.active);
-          if (prevUser) target = prevUser;
-        }
-      } catch { /* ignore */ }
-    }
-    if (!target) return { ok: false, error: `No active ${role} account exists` };
+    if (role === user.role) return { ok: true };
+    if (!['admin', 'cashier'].includes(role)) return { ok: false, error: 'Unsupported role switch' };
 
-    // cashier → admin accepts either the dedicated unlock PIN or the real admin
-    // account's current login password. Both are verified against hashes.
-    if (role === 'admin' && user?.role === 'cashier') {
-      const pinOk = verifyPassword(pin || '', state.settings.adminPinHash);
-      const adminUser = state.users.find(u => u.role === 'admin' && u.active);
-      const passwordOk = adminUser && isHashed(adminUser.password)
-        ? await verifyPasswordAsync(pin || '', adminUser.password)
-        : !!adminUser && verifyPassword(pin || '', adminUser.password || '');
-      if (!pinOk && !passwordOk) {
-        setState(s => ({ ...s, audit: [{
-          id: uid(), time: new Date().toISOString(), user: user?.email || 'unknown',
+    let target: AppUser | undefined;
+    const secret = credential || '';
+
+    if (role === 'cashier' && user.role === 'admin') {
+      const mail = (email || '').trim().toLowerCase();
+      if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
+      target = state.users.find(u => u.role === 'cashier' && u.active && u.email.trim().toLowerCase() === mail);
+      if (!target) return { ok: false, error: 'Incorrect cashier email or password' };
+      const passwordOk = isHashed(target.password)
+        ? await verifyPasswordAsync(secret, target.password)
+        : verifyPassword(secret, target.password || '');
+      if (!passwordOk) {
+        setState(st => ({ ...st, audit: [{
+          id: uid(), time: new Date().toISOString(), user: user.email,
           action: 'DENIED', entity: 'Auth',
-          details: `Failed ADMIN unlock attempt by ${user?.name || 'unknown'}`,
-        }, ...s.audit].slice(0, 500) }));
+          details: 'Failed CASHIER switch authentication by ' + user.name,
+        }, ...st.audit].slice(0, 500) }));
+        return { ok: false, error: 'Incorrect cashier email or password' };
+      }
+    } else if (role === 'admin' && user.role === 'cashier') {
+      target = state.users.find(u => u.role === 'admin' && u.active);
+      if (!target) return { ok: false, error: 'No active administrator account exists' };
+      const pinOk = verifyPassword(secret, state.settings.adminPinHash);
+      const passwordOk = isHashed(target.password)
+        ? await verifyPasswordAsync(secret, target.password)
+        : verifyPassword(secret, target.password || '');
+      if (!pinOk && !passwordOk) {
+        setState(st => ({ ...st, audit: [{
+          id: uid(), time: new Date().toISOString(), user: user.email,
+          action: 'DENIED', entity: 'Auth',
+          details: 'Failed ADMIN unlock attempt by ' + user.name,
+        }, ...st.audit].slice(0, 500) }));
         return { ok: false, error: 'Incorrect admin unlock PIN or admin login password' };
       }
-      try { sessionStorage.setItem('nexfix_prev_user', user.id); } catch { /* ignore */ }
     }
+
+    if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
     setSession(sess);
     try {
-      if (sess.remember) { localStorage.setItem(SESSION_KEY, JSON.stringify(sess)); sessionStorage.removeItem(SESSION_KEY); }
-      else { sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess)); localStorage.removeItem(SESSION_KEY); }
+      if (sess.remember) {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        sessionStorage.removeItem(SESSION_KEY);
+      } else {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        localStorage.removeItem(SESSION_KEY);
+      }
+      localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
-    setState(s => ({
-      ...s,
+    setState(st => ({
+      ...st,
       audit: [{
         id: uid(), time: new Date().toISOString(), user: target!.email, action: 'SWITCH', entity: 'Auth',
-        details: `Switched view to ${role.toUpperCase()} (${target!.name})${role === 'admin' && user?.role === 'cashier' ? ' · password verified' : ''}`,
-      }, ...s.audit].slice(0, 500),
+        details: 'Authenticated switch to ' + role.toUpperCase() + ' (' + target!.name + ')',
+      }, ...st.audit].slice(0, 500),
     }));
     return { ok: true };
   }, [state.users, state.settings.adminPinHash, session, user]);
-
   const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     if (!verifyPassword(current, state.settings.adminPinHash)) return { ok: false, error: 'Current password is incorrect' };
