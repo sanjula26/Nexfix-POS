@@ -273,22 +273,17 @@ function applyInventoryLedger(
 
 
 function migrate(s: POSState): POSState {
-  // Upgrade plaintext passwords → SHA-256 hashes (one-time migration)
-  const users = (s.users || []).map(u => {
-    const email = (u.email || '').toLowerCase();
-    const defaultPassword = email === 'admin@nexfixsolution.com' ? 'admin123' : email === 'cashier@nexfixsolution.com' ? 'cashier123' : '';
-    const isDefaultRecovery = !!defaultPassword && (u.password === (email === 'admin@nexfixsolution.com' ? SEED_HASH_ADMIN : SEED_HASH_CASHIER) || verifyPassword(defaultPassword, u.password || ''));
-    return {
-      ...u,
-      password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
-      mustChangePassword: u.mustChangePassword ?? isDefaultRecovery,
-    };
-  });
-  // Upgrade weak FNV admin PIN hash if it still looks like the old format (8 hex + . + base36)
-  let adminPinHash = s.settings?.adminPinHash || hashPin('admin123');
-  if (adminPinHash.includes('.') || adminPinHash.length < 32) {
-    adminPinHash = hashPin('admin123');
-  }
+  // Upgrade legacy/plaintext passwords without restoring any known default credential.
+  const users = (s.users || []).map(u => ({
+    ...u,
+    password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
+    mustChangePassword: u.mustChangePassword ?? true,
+  }));
+  // Never recreate the historical admin123 PIN. Existing known-default PINs are
+  // invalidated so admin unlock can fall back to the authenticated admin password.
+  let adminPinHash = String(s.settings?.adminPinHash || '');
+  if (adminPinHash && verifyPassword('admin123', adminPinHash)) adminPinHash = '';
+  if (adminPinHash && (adminPinHash.includes('.') || adminPinHash.length < 32)) adminPinHash = '';
   const defaultAdminPermissions: Record<string, boolean> = Object.fromEntries(PERMISSION_KEYS.map(k => [k.key, true]));
   const permissions: Permissions = {
     admin: { ...defaultAdminPermissions, ...(s.permissions?.admin || {}) },
