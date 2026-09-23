@@ -54,7 +54,7 @@ function fail(err) {
 function unauthorized(message) {
   return { ok: false, status: 'unauthorized', version: VERSION, message: message || 'Unauthorized' };
 }
-\nfunction getBackupApiKey() {
+function getBackupApiKey() {
   var key = String(PropertiesService.getScriptProperties().getProperty(BACKUP_API_KEY_PROPERTY) || '').trim();
   if (!key) throw new Error('NEXFIX_BACKUP_API_KEY is not configured in Script Properties');
   return key;
