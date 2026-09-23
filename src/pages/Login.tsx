@@ -74,12 +74,6 @@ export default function Login() {
     }
   };
 
-  const quickFill = (em: string, pw: string) => {
-    setEmail(em);
-    setPassword(pw);
-    setError('');
-  };
-
   if (!ready) {
     return (
       <div className="min-h-screen grid place-items-center bg-[#f5f6fb]">
