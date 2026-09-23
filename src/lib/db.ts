@@ -1,17 +1,12 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
 import { buildSeed } from './seed';
-import { SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
 const STORE_STATE = 'app_state';
 const STORE_QUEUE = 'sync_queue';
 const STORE_META = 'meta';
-const DEFAULT_ADMIN_EMAIL = 'admin@nexfixsolution.com';
-const DEFAULT_CASHIER_EMAIL = 'cashier@nexfixsolution.com';
-const LEGACY_DEFAULT_ADMIN_EMAIL = 'admin@nexfix.lk';
-const SEED_DEMO = import.meta.env.VITE_SEED_DEMO === 'true';
 const LOCAL_STORE_KEY = 'nexfix_pos_v2';
 const LEGACY_LOCAL_STORE_KEY = 'nexfix_pos_v1';
 
@@ -46,51 +41,15 @@ function getDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-/** Repair only missing recovery accounts. Existing account credentials, roles,
- * activation state, and password-change flags are preserved. */
-export function repairDefaultAccounts(state: POSState): POSState {
-  // Production builds must never recreate known demo/recovery credentials.
-  if (!SEED_DEMO) return state;
-  const users = [...(state.users || [])];
-  let changed = false;
-  const now = new Date().toISOString();
-
-  const adminIdx = users.findIndex(u => {
-    const email = (u.email || '').trim().toLowerCase();
-    return email === DEFAULT_ADMIN_EMAIL || email === LEGACY_DEFAULT_ADMIN_EMAIL;
-  });
-  if (adminIdx < 0) {
-    users.unshift({ id:'u-admin', name:'Shop Administrator', email:DEFAULT_ADMIN_EMAIL, password:SEED_HASH_ADMIN, role:'admin', active:true, createdAt:now });
-    changed = true;
-  } else {
-    const u = users[adminIdx];
-    const email = (u.email || '').trim().toLowerCase();
-    // Normalize only the old recovery email. Never reset a password that the
-    // user has changed, and never silently reactivate or re-role an account.
-    if (email === LEGACY_DEFAULT_ADMIN_EMAIL && u.email !== DEFAULT_ADMIN_EMAIL) {
-      users[adminIdx] = { ...u, email:DEFAULT_ADMIN_EMAIL };
-      changed = true;
-    }
-  }
-
-  const cashierIdx = users.findIndex(u => (u.email || '').trim().toLowerCase() === DEFAULT_CASHIER_EMAIL);
-  if (cashierIdx < 0) {
-    users.push({ id:'u-nimal', name:'Cashier', email:DEFAULT_CASHIER_EMAIL, password:SEED_HASH_CASHIER, role:'cashier', active:true, createdAt:now });
-    changed = true;
-  }
-
-  return changed ? { ...state, users } : state;
-}
-
 function loadLocalFallback(): POSState {
   try {
     const raw = localStorage.getItem(LOCAL_STORE_KEY) || localStorage.getItem(LEGACY_LOCAL_STORE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as POSState;
-      if (parsed && Array.isArray(parsed.products) && Array.isArray(parsed.users)) return repairDefaultAccounts(parsed);
+      if (parsed && Array.isArray(parsed.products) && Array.isArray(parsed.users)) return parsed;
     }
   } catch { /* restricted or malformed localStorage */ }
-  return repairDefaultAccounts(buildSeed());
+  return buildSeed();
 }
 
 export async function idbLoadState():Promise<POSState|null>{
@@ -98,9 +57,9 @@ export async function idbLoadState():Promise<POSState|null>{
     const db=await getDB();
     const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
     const source=row?.value ?? buildSeed();
-    const repaired=repairDefaultAccounts(source);
-    if (!row?.value || repaired !== row.value) await idbSaveState(repaired);
-    return repaired;
+    const sourceState = source;
+    if (!row?.value) await idbSaveState(sourceState);
+    return sourceState;
   } catch {
     return loadLocalFallback();
   }
