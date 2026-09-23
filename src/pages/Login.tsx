@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
 
 export default function Login() {
-  const { signIn, user, ready } = usePOS();
+  const { signIn, createInitialAdmin, user, ready, state } = usePOS();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
@@ -14,6 +14,10 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [setupName, setSetupName] = useState('');
+  const [setupEmail, setSetupEmail] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupConfirm, setSetupConfirm] = useState('');
 
   const nextPath = (() => {
     const next = new URLSearchParams(location.search).get('next') || '';
@@ -25,6 +29,18 @@ export default function Login() {
     setLoading(false);
     navigate(nextPath || (user.role === 'admin' || user.role === 'manager' ? '/dashboard' : '/pos'), { replace: true });
   }, [user, navigate, nextPath]);
+
+  const setupAdmin = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (loading) return;
+    if (setupPassword !== setupConfirm) { setError('Passwords do not match'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const result = await createInitialAdmin(setupName, setupEmail, setupPassword);
+      if (!result.ok) { setError(result.error || 'Administrator setup failed'); setLoading(false); return; }
+    } catch { setError('Administrator setup failed. Please try again.'); setLoading(false); }
+  };
 
   const submit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -80,6 +96,29 @@ export default function Login() {
     );
   }
 
+  if (state.users.length === 0) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#eceef6] overflow-hidden">
+          <div className="h-1.5 bg-gradient-to-r from-violet-600 via-indigo-500 to-sky-400" />
+          <div className="p-7 sm:p-9">
+            <div className="inline-flex w-11 h-11 rounded-xl bg-violet-600 text-white items-center justify-center mb-4"><ShieldCheck size={21} /></div>
+            <h1 className="text-2xl font-extrabold text-[#17133c]">Set up your administrator</h1>
+            <p className="text-sm text-[#5b5f7e] mt-2">This is the first-run setup for this POS device. No default password is created.</p>
+            <form onSubmit={setupAdmin} className="mt-7 space-y-4">
+              <input required value={setupName} onChange={e=>setSetupName(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Administrator name" autoComplete="name" />
+              <input required type="email" value={setupEmail} onChange={e=>setSetupEmail(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Administrator email" autoComplete="username" />
+              <input required type="password" minLength={12} value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
+              <input required type="password" minLength={12} value={setupConfirm} onChange={e=>setSetupConfirm(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Confirm password" autoComplete="new-password" />
+              {error && <div className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</div>}
+              <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={18} className="animate-spin" /> : <>Create administrator <ArrowRight size={17} /></>}</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-[#eceef6] overflow-hidden">
@@ -109,17 +148,6 @@ export default function Login() {
             {error && <div className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</div>}
             <button type="submit" disabled={loading} className="btn btn-primary w-full !py-3.5 !text-[15px] !rounded-xl">{loading ? <Loader2 size={18} className="animate-spin" /> : <>Sign in <ArrowRight size={17} /></>}</button>
           </form>
-          <div className="flex items-center gap-3 my-5"><span className="flex-1 h-px bg-[#e7e9f2]" /><span className="text-[10px] font-bold tracking-[0.14em] text-[#9a9ebf]">OR QUICK FILL</span><span className="flex-1 h-px bg-[#e7e9f2]" /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => quickFill('admin@nexfixsolution.com', 'admin123')} className="rounded-xl border border-violet-200 bg-violet-50/60 hover:bg-violet-100/70 transition-colors p-3 text-left">
-              <span className="inline-flex w-8 h-8 rounded-lg bg-violet-600 text-white items-center justify-center mb-2"><ShieldCheck size={15} /></span>
-              <div className="text-[13px] font-bold text-[#17133c]">Admin</div><div className="text-[10.5px] text-[#7f83ad] truncate">admin@nexfixsolution.com</div>
-            </button>
-            <button type="button" onClick={() => quickFill('cashier@nexfixsolution.com', 'cashier123')} className="rounded-xl border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100/70 transition-colors p-3 text-left">
-              <span className="inline-flex w-8 h-8 rounded-lg bg-emerald-500 text-white items-center justify-center mb-2"><UserRound size={15} /></span>
-              <div className="text-[13px] font-bold text-[#17133c]">Cashier</div><div className="text-[10.5px] text-[#7f83ad] truncate">cashier@nexfixsolution.com</div>
-            </button>
-          </div>
         </div>
       </div>
     </div>
