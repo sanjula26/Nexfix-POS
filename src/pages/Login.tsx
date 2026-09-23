@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Loader2, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff, ShieldCheck, UserRound } from 'lucide-react';
+import { Loader2, Lock, Mail, ArrowRight, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
 
