@@ -42,7 +42,7 @@ export function setGoogleScriptUrl(_url: string): void {
 }
 
 export function isGoogleSyncEnabled(): boolean {
-  return isAllowedScriptUrl(BUILT_IN_SCRIPT_URL);
+  return isAllowedScriptUrl(BUILT_IN_SCRIPT_URL) && !!BACKUP_API_KEY;
 }
 
 export function setGoogleSyncEnabled(_on: boolean): void {
