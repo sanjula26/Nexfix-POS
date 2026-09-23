@@ -51,9 +51,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     // Camera is needed for barcode/QR workflows; deny all other permissions.
-    callback(permission === 'camera');
+    // Only the packaged/dev POS renderer may request it.
+    callback(permission === 'camera' && isAllowedNavigation(webContents.getURL()));
   });
 
   createWindow();
