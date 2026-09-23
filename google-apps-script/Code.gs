@@ -14,6 +14,7 @@ var BACKUP_RATE_LIMIT = 5;
 var BACKUP_RATE_WINDOW_SECONDS = 5;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
+var BACKUP_API_KEY_PROPERTY = 'NEXFIX_BACKUP_API_KEY';
 // Default Nexfix master Drive folder supplied for this deployment.
 // Script Properties can override this value without changing the code.
 var DEFAULT_ROOT_BACKUP_FOLDER_ID = '1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK';
@@ -53,6 +54,26 @@ function fail(err) {
 function unauthorized(message) {
   return { ok: false, status: 'unauthorized', version: VERSION, message: message || 'Unauthorized' };
 }
+\nfunction getBackupApiKey() {
+  var key = String(PropertiesService.getScriptProperties().getProperty(BACKUP_API_KEY_PROPERTY) || '').trim();
+  if (!key) throw new Error('NEXFIX_BACKUP_API_KEY is not configured in Script Properties');
+  return key;
+}
+
+function constantTimeApiKeyEqual(provided, expected) {
+  var a = String(provided || '');
+  var b = String(expected || '');
+  var max = Math.max(a.length, b.length);
+  var diff = a.length ^ b.length;
+  for (var i = 0; i < max; i++) diff |= (a.charCodeAt(i % Math.max(1, a.length)) || 0) ^ (b.charCodeAt(i % Math.max(1, b.length)) || 0);
+  return diff === 0;
+}
+
+function requireBackupApiKey(provided) {
+  var expected = getBackupApiKey();
+  if (!constantTimeApiKeyEqual(provided, expected)) throw new Error('Unauthorized');
+}
+
 
 function value(v) {
   if (v === undefined || v === null) return '';
@@ -908,6 +929,7 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var contents = parsePostBody(e);
+    try { requireBackupApiKey(contents.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var shopId;
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId;
@@ -1008,6 +1030,7 @@ function doGet(e) {
   if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Direct Google Backup API is running' }));
 
   if (p.action === 'backupStatus') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     try { normalizeShopId(p.shopId); } catch (err) {
       return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' });
     }
@@ -1020,6 +1043,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getLatestBackup') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var shopId;
     try { shopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
     var result = ok({ action: 'getLatestBackup', backup: latestBackup(null, shopId) });
@@ -1031,6 +1055,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getBackupPart') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var partShopId;
     try { partShopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
     var partResult = getBackupPart(partShopId, p.backupId, p.partName);
