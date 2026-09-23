@@ -82,11 +82,11 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     return { ok: true, shopId: membership.shop_id };
   }
 
-  const { data: created, error: createError } = await supabase.rpc('bootstrap_first_shop', { shop_name: shopName.trim().slice(0, 120) || 'Nexfix Shop' });
-  if (createError) return { ok: false, error: createError.message };
-  if (!created) return { ok: false, error: 'Cloud shop bootstrap returned no shop id' };
-  setCloudShopId(String(created));
-  return { ok: true, shopId: String(created) };
+  // Do not auto-bootstrap a shop from a background sync/login path. Any
+  // authenticated user without an existing membership must be explicitly
+  // provisioned by an owner/admin; otherwise a local cashier could become the
+  // first cloud shop administrator simply by signing in.
+  return { ok: false, error: 'Cloud shop membership is not provisioned for this user' };
 }
 
 /**
