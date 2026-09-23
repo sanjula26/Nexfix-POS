@@ -11,6 +11,7 @@ const STORE_META = 'meta';
 const DEFAULT_ADMIN_EMAIL = 'admin@nexfixsolution.com';
 const DEFAULT_CASHIER_EMAIL = 'cashier@nexfixsolution.com';
 const LEGACY_DEFAULT_ADMIN_EMAIL = 'admin@nexfix.lk';
+const SEED_DEMO = import.meta.env.VITE_SEED_DEMO === 'true';
 const LOCAL_STORE_KEY = 'nexfix_pos_v2';
 const LEGACY_LOCAL_STORE_KEY = 'nexfix_pos_v1';
 
@@ -48,6 +49,8 @@ function getDB(): Promise<IDBDatabase> {
 /** Repair only missing recovery accounts. Existing account credentials, roles,
  * activation state, and password-change flags are preserved. */
 export function repairDefaultAccounts(state: POSState): POSState {
+  // Production builds must never recreate known demo/recovery credentials.
+  if (!SEED_DEMO) return state;
   const users = [...(state.users || [])];
   let changed = false;
   const now = new Date().toISOString();
