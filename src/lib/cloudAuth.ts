@@ -8,17 +8,6 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
-export async function signUpToCloud(email: string, password: string, fullName: string) {
-  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
-  const { error, data } = await supabase.auth.signUp({
-    email: email.trim(),
-    password,
-    options: { data: { full_name: fullName.trim() } },
-  });
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, needsEmailConfirmation: !data.session };
-}
-
 /**
  * Local POS authentication is authoritative. Cloud authentication is a
  * background enhancement and must never delay or block entry to the POS.
@@ -40,10 +29,9 @@ export async function ensureCloudSession(
       }
       if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return;
 
-      const created = await signUpToCloud(email, password, fullName);
-      if (created.ok && !created.needsEmailConfirmation) {
-        await ensureCloudShop('Nexfix Shop');
-      }
+      // Never create a new cloud identity from a local POS login. Automatic sign-up
+      // could turn an unprovisioned local cashier into the first cloud shop admin.
+      // Cloud accounts and shop membership must be provisioned explicitly.
     } catch {
       // Local POS login must remain usable when Supabase is unavailable.
     }
