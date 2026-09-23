@@ -10,10 +10,11 @@ var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
 var MAX_BACKUP_BYTES = 9 * 1024 * 1024; // Keep below DriveApp File.setContent() 10 MB limit.
-var BACKUP_RATE_LIMIT = 30;
-var BACKUP_RATE_WINDOW_SECONDS = 60;
+var BACKUP_RATE_LIMIT = 5;
+var BACKUP_RATE_WINDOW_SECONDS = 5;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
+var BACKUP_API_KEY_PROPERTY = 'NEXFIX_BACKUP_API_KEY';
 // Default Nexfix master Drive folder supplied for this deployment.
 // Script Properties can override this value without changing the code.
 var DEFAULT_ROOT_BACKUP_FOLDER_ID = '1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK';
@@ -45,12 +46,34 @@ function ok(extra) {
 }
 
 function fail(err) {
-  return { ok: false, status: 'error', version: VERSION, message: String(err) };
+  var out = { ok: false, status: 'error', version: VERSION, message: String(err) };
+  if (err && err.retryAfterSeconds) out.retryAfterSeconds = Number(err.retryAfterSeconds);
+  return out;
 }
 
 function unauthorized(message) {
   return { ok: false, status: 'unauthorized', version: VERSION, message: message || 'Unauthorized' };
 }
+\nfunction getBackupApiKey() {
+  var key = String(PropertiesService.getScriptProperties().getProperty(BACKUP_API_KEY_PROPERTY) || '').trim();
+  if (!key) throw new Error('NEXFIX_BACKUP_API_KEY is not configured in Script Properties');
+  return key;
+}
+
+function constantTimeApiKeyEqual(provided, expected) {
+  var a = String(provided || '');
+  var b = String(expected || '');
+  var max = Math.max(a.length, b.length);
+  var diff = a.length ^ b.length;
+  for (var i = 0; i < max; i++) diff |= (a.charCodeAt(i % Math.max(1, a.length)) || 0) ^ (b.charCodeAt(i % Math.max(1, b.length)) || 0);
+  return diff === 0;
+}
+
+function requireBackupApiKey(provided) {
+  var expected = getBackupApiKey();
+  if (!constantTimeApiKeyEqual(provided, expected)) throw new Error('Unauthorized');
+}
+
 
 function value(v) {
   if (v === undefined || v === null) return '';
@@ -99,6 +122,8 @@ function validateBackupContents(contents) {
 
   if (format === 'encrypted-single') {
     validateEncryptedEnvelope(contents.state, contents.shopId);
+    validateBackupId(contents.backupId);
+    validateExportedAt(contents.exportedAt);
     return;
   }
 
@@ -113,7 +138,7 @@ function validateBackupContents(contents) {
     if (!Number.isInteger(partIndex) || partIndex < 1 || !Number.isInteger(totalParts) || totalParts < 1 || partIndex > totalParts) {
       throw new Error('Invalid backup part index');
     }
-    if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
+    validateBackupId(contents.backupId);
     if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.partName || ''))) throw new Error('Invalid backup part name');
     if (String(contents.partName).indexOf(expectedPartPrefix) !== 0 || String(contents.partName).indexOf('.part') < 0) throw new Error('Backup part does not belong to the requested shop/day');
     return;
@@ -139,7 +164,8 @@ function validateBackupContents(contents) {
       if (seenPartNames[name]) throw new Error('Duplicate multipart part name');
       seenPartNames[name] = true;
     });
-    if (!/^[A-Za-z0-9._:-]+$/.test(String(contents.backupId || ''))) throw new Error('Invalid backup id');
+    validateBackupId(contents.backupId);
+    validateExportedAt(contents.exportedAt);
     return;
   }
 
@@ -167,6 +193,18 @@ function validateDayKey(dayKey) {
   return value;
 }
 
+function validateBackupId(value) {
+  var id = String(value || '').trim();
+  if (!id || id.length > 100 || !/^[A-Za-z0-9._:-]+$/.test(id)) throw new Error('Valid backup id is required');
+  return id;
+}
+
+function validateExportedAt(value) {
+  var text = String(value || '').trim();
+  if (!text || isNaN(Date.parse(text))) throw new Error('Valid backup exportedAt is required');
+  return text;
+}
+
 function checkBackupRateLimit(shopId, backupId, format) {
   var cache = CacheService.getScriptCache();
   var key = 'nexfix_rate_' + shopPartitionKey(shopId);
@@ -176,36 +214,32 @@ function checkBackupRateLimit(shopId, backupId, format) {
   try { current = raw ? JSON.parse(raw) : null; } catch (ignore) { current = null; }
 
   var safeBackupId = String(backupId || '');
-  // A multipart backup is one logical operation. Once its first request has
-  // passed the shop-level limit, subsequent parts are allowed for a short
-  // upload window without moving the original rate-limit timestamp.
-  if (format === 'encrypted-part' && current
-      && current.backupId === safeBackupId
-      && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    return;
-  }
-
-  // If the normal 60s rate entry expired, an in-flight multipart upload still
-  // needs a separate short-lived lease so later parts do not become "new"
-  // logical backups and get blocked by the shop-level limiter.
+  // Multipart parts belong to one logical backup. A successful first part
+  // establishes a short lease; retries of the same backup remain allowed.
   if (format === 'encrypted-part' && safeBackupId) {
+    if (current && current.backupId === safeBackupId
+        && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) return;
     var multipartKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
-    var multipartLease = cache.get(multipartKey);
-    if (multipartLease === '1') return;
+    if (cache.get(multipartKey) === '1') return;
   }
 
   if (current && Number(current.startedAt) > now - BACKUP_RATE_WINDOW_SECONDS * 1000) {
-    throw new Error('Backup rate limit reached. Please retry shortly.');
+    var elapsed = Math.max(0, now - Number(current.startedAt));
+    var retryAfter = Math.max(1, Math.ceil((BACKUP_RATE_WINDOW_SECONDS * 1000 - elapsed) / 1000));
+    var rateError = new Error('Backup is temporarily busy. Please retry in about ' + retryAfter + ' seconds.');
+    rateError.retryAfterSeconds = retryAfter;
+    throw rateError;
   }
+}
 
-  cache.put(key, JSON.stringify({
-    startedAt: now,
-    backupId: safeBackupId
-  }), BACKUP_RATE_WINDOW_SECONDS);
-
-  if (format === 'encrypted-part' && safeBackupId) {
-    var leaseKey = 'nexfix_multipart_' + shopPartitionKey(shopId) + '_' + safeBackupId;
-    cache.put(leaseKey, '1', 600);
+function recordBackupRateLimit(shopId, backupId, format) {
+  var cache = CacheService.getScriptCache();
+  var partition = shopPartitionKey(shopId);
+  var key = 'nexfix_rate_' + partition;
+  var now = Date.now();
+  cache.put(key, JSON.stringify({ startedAt: now, backupId: String(backupId || '') }), BACKUP_RATE_WINDOW_SECONDS);
+  if (format === 'encrypted-part' && backupId) {
+    cache.put('nexfix_multipart_' + partition + '_' + String(backupId), '1', 600);
   }
 }
 
@@ -297,7 +331,7 @@ function getRootBackupFolder() {
   }
 }
 
-function getShopBackupFolder(shopId, shopName) {
+function getShopBackupFolder(shopId, shopName, renameNow) {
   var root = getRootBackupFolder();
   var partitionPrefix = 'Shop_' + shopPartitionKey(shopId) + ' - ';
   var desiredName = partitionPrefix + sanitizeDriveName(shopName || 'Shop');
@@ -305,7 +339,9 @@ function getShopBackupFolder(shopId, shopName) {
   while (folders.hasNext()) {
     var folder = folders.next();
     if (folder.getName().indexOf(partitionPrefix) === 0) {
-      if (folder.getName() !== desiredName) {
+      // During backup validation, never rename an existing shop folder from a
+      // stale/failed request. Rename only after the new backup is accepted.
+      if (renameNow !== false && folder.getName() !== desiredName) {
         try { folder.setName(desiredName); } catch (ignore) {}
       }
       return folder;
@@ -314,17 +350,41 @@ function getShopBackupFolder(shopId, shopName) {
   return root.createFolder(desiredName);
 }
 
-function writeShopMetadata(folder, shopId, shopName, encrypted) {
-  var metadata = {
+function writeShopMetadata(folder, shopId, shopName, encrypted, metadata) {
+  metadata = metadata || {};
+  var partition = shopPartitionKey(shopId);
+  var record = {
     app: 'Nexfix POS',
     version: VERSION,
-    shopPartition: shopPartitionKey(shopId),
+    shopPartition: partition,
     shopName: sanitizeDriveName(shopName || 'Shop'),
+    tagline: metadataText(metadata.shopTagline, 200),
+    phone: metadataText(metadata.shopPhone, 80),
+    email: metadataText(metadata.shopEmail, 160),
+    address: metadataText(metadata.shopAddress, 300),
+    taxRegistrationNo: metadataText(metadata.taxRegistrationNo, 100),
+    invoicePlaceOfSupply: metadataText(metadata.invoicePlaceOfSupply, 160),
+    invoiceTitle: metadataText(metadata.invoiceTitle, 160),
+    invoiceSubtitle: metadataText(metadata.invoiceSubtitle, 200),
+    invoiceCurrency: metadataText(metadata.invoiceCurrency, 30),
+    invoiceTaxLabel: metadataText(metadata.invoiceTaxLabel, 80),
+    invoiceTerms: metadataText(metadata.invoiceTerms, 500),
+    invoiceFooter: metadataText(metadata.invoiceFooter, 500),
+    receiptFooter: metadataText(metadata.receiptFooter, 500),
+    taxDefault: Number(metadata.taxDefault) || 0,
+    lowStockDefault: Number(metadata.lowStockDefault) || 0,
+    exchangeDays: Number(metadata.exchangeDays) || 0,
+    openingFloat: Number(metadata.openingFloat) || 0,
+    whatsappReceipts: metadata.whatsappReceipts === true,
+    shopBackupId: shopId,
+    backupType: metadata.kind === 'auto' ? 'auto' : 'manual',
+    backupId: metadata.backupId ? String(metadata.backupId) : '',
+    exportedAt: metadata.exportedAt ? String(metadata.exportedAt) : '',
     updatedAt: new Date().toISOString(),
     encrypted: encrypted === true
   };
   var files = folder.getFilesByName(DRIVE_METADATA_FILENAME);
-  var blob = Utilities.newBlob(JSON.stringify(metadata, null, 2), 'application/json', DRIVE_METADATA_FILENAME);
+  var blob = Utilities.newBlob(JSON.stringify(record, null, 2), 'application/json', DRIVE_METADATA_FILENAME);
   if (files.hasNext()) files.next().setContent(blob.getDataAsString());
   else folder.createFile(blob);
 }
@@ -348,6 +408,18 @@ function writeShopInfoText(folder, shopId, metadata) {
     'Tagline: ' + metadataText(metadata.shopTagline, 200),
     'Tax Registration No: ' + metadataText(metadata.taxRegistrationNo, 100),
     'Invoice Place of Supply: ' + metadataText(metadata.invoicePlaceOfSupply, 160),
+    'Invoice Title: ' + metadataText(metadata.invoiceTitle, 160),
+    'Invoice Subtitle: ' + metadataText(metadata.invoiceSubtitle, 200),
+    'Invoice Currency: ' + metadataText(metadata.invoiceCurrency, 30),
+    'Invoice Tax Label: ' + metadataText(metadata.invoiceTaxLabel, 80),
+    'Invoice Terms: ' + metadataText(metadata.invoiceTerms, 500),
+    'Invoice Footer: ' + metadataText(metadata.invoiceFooter, 500),
+    'Receipt Footer: ' + metadataText(metadata.receiptFooter, 500),
+    'Tax Default: ' + metadataText(metadata.taxDefault, 40),
+    'Low Stock Default: ' + metadataText(metadata.lowStockDefault, 40),
+    'Exchange Days: ' + metadataText(metadata.exchangeDays, 40),
+    'Opening Float: ' + metadataText(metadata.openingFloat, 40),
+    'WhatsApp Receipts: ' + (metadata.whatsappReceipts === true ? 'true' : 'false'),
     '',
     'Shop Backup ID: ' + metadataText(shopId, SHOP_ID_MAX_LENGTH),
     'Shop Partition: ' + partition,
@@ -356,13 +428,14 @@ function writeShopInfoText(folder, shopId, metadata) {
     'Last Backup Exported At: ' + metadataText(metadata.exportedAt || new Date().toISOString(), 80),
     'Apps Script Version: ' + VERSION,
     'Recovery Key File: RECOVERY_KEY.txt',
+    'Shop Backup ID Copy: ' + metadataText(shopId, SHOP_ID_MAX_LENGTH),
     '',
     'Recovery note: Use the Shop Backup ID above to reconnect this shop after reinstalling or moving the POS to another PC.',
     'The Recovery Key is stored separately in RECOVERY_KEY.txt. Keep a private copy outside the PC for disaster recovery.',
     'This file contains shop identification/contact metadata only. POS business records remain inside the encrypted backup payload.',
     'Do not edit this file manually; it is regenerated by Nexfix POS during backup.'
   ];
-  var content = lines.join('\\n') + '\\n';
+  var content = lines.join('\n') + '\n';
   var fileName = 'SHOP_INFO.txt';
   var files = folder.getFilesByName(fileName);
   if (files.hasNext()) {
@@ -374,6 +447,17 @@ function writeShopInfoText(folder, shopId, metadata) {
   }
 }
 
+function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
+  var key = validateRecoveryKey(recoveryKey);
+  var files = folder.getFilesByName('RECOVERY_KEY.txt');
+  if (!files.hasNext()) return;
+  var file = files.next();
+  var existing = String(file.getBlob().getDataAsString() || '');
+  var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+  if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
+  if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+}
+
 function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
   var key = validateRecoveryKey(recoveryKey);
   metadata = metadata || {};
@@ -382,8 +466,31 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     '=========================',
     '',
     'Shop Name: ' + metadataText(metadata.shopName || 'Shop', 120),
+    'Phone: ' + metadataText(metadata.shopPhone, 80),
+    'Email: ' + metadataText(metadata.shopEmail, 160),
+    'Address: ' + metadataText(metadata.shopAddress, 300),
+    'Tagline: ' + metadataText(metadata.shopTagline, 200),
+    'Tax Registration No: ' + metadataText(metadata.taxRegistrationNo, 100),
+    'Invoice Place of Supply: ' + metadataText(metadata.invoicePlaceOfSupply, 160),
+    'Invoice Title: ' + metadataText(metadata.invoiceTitle, 160),
+    'Invoice Subtitle: ' + metadataText(metadata.invoiceSubtitle, 200),
+    'Invoice Currency: ' + metadataText(metadata.invoiceCurrency, 30),
+    'Invoice Tax Label: ' + metadataText(metadata.invoiceTaxLabel, 80),
+    'Invoice Terms: ' + metadataText(metadata.invoiceTerms, 500),
+    'Invoice Footer: ' + metadataText(metadata.invoiceFooter, 500),
+    'Receipt Footer: ' + metadataText(metadata.receiptFooter, 500),
+    'Tax Default: ' + metadataText(metadata.taxDefault, 40),
+    'Low Stock Default: ' + metadataText(metadata.lowStockDefault, 40),
+    'Exchange Days: ' + metadataText(metadata.exchangeDays, 40),
+    'Opening Float: ' + metadataText(metadata.openingFloat, 40),
+    'WhatsApp Receipts: ' + (metadata.whatsappReceipts === true ? 'true' : 'false'),
+    '',
     'Shop Backup ID: ' + metadataText(metadata.shopId, SHOP_ID_MAX_LENGTH),
     'Shop Partition: ' + metadataText(metadata.shopPartition, 40),
+    'Backup Type: ' + metadataText(metadata.kind || 'unknown', 20),
+    'Backup ID: ' + metadataText(metadata.backupId, 100),
+    'Last Backup Exported At: ' + metadataText(metadata.exportedAt || new Date().toISOString(), 80),
+    'Apps Script Version: ' + VERSION,
     '',
     'Recovery Key: ' + key,
     '',
@@ -393,13 +500,13 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     'Anyone who has access to both this key and the encrypted backup can decrypt the backup.',
     'Do not edit this file manually. Nexfix POS regenerates it during backup.'
   ];
-  var content = lines.join('\\n') + '\\n';
+  var content = lines.join('\n') + '\n';
   var fileName = 'RECOVERY_KEY.txt';
   var files = folder.getFilesByName(fileName);
   if (files.hasNext()) {
     var file = files.next();
     var existing = String(file.getBlob().getDataAsString() || '');
-    var match = existing.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+    var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
     if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
     if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
     file.setContent(content);
@@ -408,6 +515,7 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
     folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
   }
 }
+
 function trashDailyBackupSet(backupFolder, shopId, dayKey, keepNames, keepBackupId) {
   var prefix = getBackupFilePrefix(shopId, dayKey);
   var keepDescription = keepBackupId ? backupPartDescription(keepBackupId) : '';
@@ -517,21 +625,45 @@ function findMultipartPart(folder, fileName, backupId) {
   return null;
 }
 
+function commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey) {
+  var warnings = [];
+  try { writeShopMetadata(shopFolder, shopId, shopName, encrypted, contents); }
+  catch (err) { warnings.push('shop.json update failed: ' + String(err)); }
+  if (recoveryKey) {
+    try { writeRecoveryKeyFile(shopFolder, recoveryKey, Object.assign({}, contents, { shopId: shopId, shopPartition: shopPartitionKey(shopId), shopName: shopName })); }
+    catch (err) { warnings.push('RECOVERY_KEY.txt update failed: ' + String(err)); }
+  }
+  try { writeShopInfoText(shopFolder, shopId, contents); }
+  catch (err) { warnings.push('SHOP_INFO.txt update failed: ' + String(err)); }
+  return warnings;
+}
+
+function backupResultWithWarnings(result, warnings) {
+  if (warnings && warnings.length) result.metadataWarnings = warnings;
+  return result;
+}
+
 function backupStateToDrive(contents, shopId) {
   var format = String(contents.format || 'legacy').trim();
   var state = format === 'legacy' ? (contents.state || {}) : null;
   var shopName = String(contents.shopName || (state && state.settings && state.settings.shopName) || 'Shop');
-  var shopFolder = getShopBackupFolder(shopId, shopName);
+  // Do not rename/update shop metadata from an uncommitted or stale backup.
+  // The stable partition identifies the shop; display details are committed only
+  // after the backup itself passes freshness/integrity checks.
+  var shopFolder = getShopBackupFolder(shopId, shopName, false);
   var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
   var encrypted = format.indexOf('encrypted-') === 0;
-  writeShopMetadata(shopFolder, shopId, shopName, encrypted);
 
   var now = new Date();
   var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
   var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
   var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
-  if (recoveryKey) writeRecoveryKeyFile(shopFolder, recoveryKey, { shopId: shopId, shopPartition: partition, shopName: shopName });
+  // Preflight the recovery-key invariant before touching any backup payload.
+  // Otherwise an old implementation could write the new daily backup first,
+  // then fail while updating RECOVERY_KEY.txt, leaving the client reporting
+  // "Backup request failed" while SHOP_INFO.txt stayed stale.
+  if (recoveryKey) assertRecoveryKeyMatchesExisting(shopFolder, recoveryKey);
 
   if (format === 'encrypted-single') {
     var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -553,10 +685,12 @@ function backupStateToDrive(contents, shopId) {
     var serialized = JSON.stringify(envelope);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, envelope._meta.exportedAt, envelope._meta.backupId);
     var file = upsertDailyFile(backupFolder, fileName, serialized);
-    writeShopInfoText(backupFolder, shopId, contents);
-    writeShopInfoText(shopFolder, shopId, contents);
+    if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
+      try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+    }
+    var singleWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey);
     trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[fileName]=true; return keep; })());
-    return { action: 'backupState', backupType: envelope._meta.kind, timestamp: now.toISOString(), driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false };
+    return backupResultWithWarnings({ action: 'backupState', backupType: envelope._meta.kind, timestamp: envelope._meta.exportedAt, driveFileId: file.getId(), driveFileName: file.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: false, backupId: envelope._meta.backupId }, singleWarnings);
   }
 
   if (format === 'encrypted-part') {
@@ -608,13 +742,16 @@ function backupStateToDrive(contents, shopId) {
     var manifestText = JSON.stringify(manifest);
     assertDailyBackupIsFresh(backupFolder, shopId, dayKey, manifest.exportedAt, manifest.backupId);
     var manifestFile = upsertDailyFile(backupFolder, manifestName, manifestText);
-    writeShopInfoText(backupFolder, shopId, contents);
+    if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
+      try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+    }
+    var manifestWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, recoveryKey);
     manifestFile.setDescription(backupPartDescription(contents.backupId));
     var keep = {};
     keep[manifestName] = true;
     partNames.forEach(function(name){ keep[name] = true; });
     trashDailyBackupSet(backupFolder, shopId, dayKey, keep, contents.backupId);
-    return { action: 'backupState', backupType: manifest.kind, timestamp: now.toISOString(), driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts };
+    return backupResultWithWarnings({ action: 'backupState', backupType: manifest.kind, timestamp: manifest.exportedAt, driveFileId: manifestFile.getId(), driveFileName: manifestFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: true, multipart: true, backupId: manifest.backupId, totalParts: totalParts }, manifestWarnings);
   }
 
   var legacyName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -625,9 +762,12 @@ function backupStateToDrive(contents, shopId) {
   var legacySerialized = JSON.stringify(legacyEnvelope);
   assertDailyBackupIsFresh(backupFolder, shopId, dayKey, legacyEnvelope._meta.exportedAt, legacyEnvelope._meta.backupId);
   var legacyFile = upsertDailyFile(backupFolder, legacyName, legacySerialized);
-  writeShopInfoText(backupFolder, shopId, contents);
+  if (shopFolder.getName() !== 'Shop_' + partition + ' - ' + sanitizeDriveName(shopName)) {
+    try { shopFolder.setName('Shop_' + partition + ' - ' + sanitizeDriveName(shopName)); } catch (ignore) {}
+  }
+  var legacyWarnings = commitShopMetadata(shopFolder, shopId, shopName, encrypted, contents, '');
   trashDailyBackupSet(backupFolder, shopId, dayKey, (function(){ var keep={}; keep[legacyName]=true; return keep; })());
-  return { action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: now.toISOString(), driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false };
+  return backupResultWithWarnings({ action: 'backupState', backupType: legacyEnvelope._meta.kind, timestamp: legacyEnvelope._meta.exportedAt, driveFileId: legacyFile.getId(), driveFileName: legacyFile.getName(), shopFolder: shopFolder.getName(), backupFolder: backupFolder.getName(), shopPartition: partition, encrypted: false, multipart: false, backupId: legacyEnvelope._meta.backupId }, legacyWarnings);
 }
 
 function backupState(ss, contents, shopId) {
@@ -789,6 +929,7 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var contents = parsePostBody(e);
+    try { requireBackupApiKey(contents.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var shopId;
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId;
@@ -822,7 +963,7 @@ function doPost(e) {
       requestCache.put(cacheKey, JSON.stringify({
         fingerprint: requestFingerprint,
         result: { ok: false, status: 'pending', version: VERSION, pending: true }
-      }), 120);
+      }), 600);
     } catch (ignorePendingCacheWrite) {}
 
     var result;
@@ -834,7 +975,10 @@ function doPost(e) {
 
     try {
       result = ok(backupStateToDrive(contents, shopId));
-      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600); } catch (ignoreCacheWrite) {}
+      try {
+        recordBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim());
+        requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600);
+      } catch (ignoreCacheWrite) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
@@ -861,7 +1005,7 @@ function getCachedBackupStatus(requestId, shopId) {
     var record = JSON.parse(cached);
     var result = record && record.result ? record.result : record;
     if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
-    return { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
+    return { ok: false, status: 'error', version: VERSION, message: (result && result.message) || 'Backup request failed' };
   } catch (err) {
     return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
   }
@@ -886,6 +1030,7 @@ function doGet(e) {
   if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Direct Google Backup API is running' }));
 
   if (p.action === 'backupStatus') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     try { normalizeShopId(p.shopId); } catch (err) {
       return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' });
     }
@@ -898,6 +1043,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getLatestBackup') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var shopId;
     try { shopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
     var result = ok({ action: 'getLatestBackup', backup: latestBackup(null, shopId) });
@@ -909,6 +1055,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getBackupPart') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var partShopId;
     try { partShopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
     var partResult = getBackupPart(partShopId, p.backupId, p.partName);
