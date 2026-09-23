@@ -139,8 +139,7 @@ function Protected() {
   const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) return <Navigate to="/login" replace />;
-  const roleSwitchBypass = sessionStorage.getItem('nexfix_role_switch') === '1' && user.role === 'admin';
-  if (user.mustChangePassword && location.pathname !== '/change-password' && !roleSwitchBypass) return <Navigate to="/change-password" replace />;
+  if (user.mustChangePassword && location.pathname !== '/change-password') return <Navigate to="/change-password" replace />;
   return <AppLayout />;
 }
 
