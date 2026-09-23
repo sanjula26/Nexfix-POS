@@ -33,11 +33,13 @@ export default function Login() {
   const setupAdmin = async (e?: FormEvent) => {
     e?.preventDefault();
     if (loading) return;
+    const normalizedEmail = setupEmail.trim().toLowerCase();
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail)) { setError('Enter a valid email address'); return; }
     if (setupPassword !== setupConfirm) { setError('Passwords do not match'); return; }
     setLoading(true);
     setError('');
     try {
-      const result = await createInitialAdmin(setupName, setupEmail, setupPassword);
+      const result = await createInitialAdmin(setupName, normalizedEmail, setupPassword);
       if (!result.ok) { setError(result.error || 'Administrator setup failed'); setLoading(false); return; }
     } catch { setError('Administrator setup failed. Please try again.'); setLoading(false); }
   };
@@ -101,7 +103,7 @@ export default function Login() {
             <p className="text-sm text-[#5b5f7e] mt-2">This is the first-run setup for this POS device. No default password is created.</p>
             <form onSubmit={setupAdmin} className="mt-7 space-y-4">
               <input required value={setupName} onChange={e=>setSetupName(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Administrator name" autoComplete="name" />
-              <input required type="email" value={setupEmail} onChange={e=>setSetupEmail(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Administrator email" autoComplete="username" />
+              <input required type="text" inputMode="email" value={setupEmail} onChange={e=>setSetupEmail(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
               <input required type="password" minLength={12} value={setupPassword} onChange={e=>setSetupPassword(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
               <input required type="password" minLength={12} value={setupConfirm} onChange={e=>setSetupConfirm(e.target.value)} className="input !bg-[#f5f6fb] w-full !py-3" placeholder="Confirm password" autoComplete="new-password" />
               {error && <div className="flex items-center gap-2 text-[13px] font-medium text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-3.5 py-2.5"><AlertCircle size={15} /> {error}</div>}
