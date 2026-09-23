@@ -76,6 +76,6 @@ The browser POST uses a CORS-safe request. Because the browser cannot read a `no
 
 ## Security note
 
-The Web App endpoint must be reachable by the POS browser. A credential embedded in the Vite frontend would not be a real secret. Therefore this endpoint should be treated as a backup transport, while POS authentication/authorization remains handled by the application. Do not place service-account keys, private OAuth secrets, or other private credentials in the frontend.
+The Web App endpoint must be reachable by the POS browser. Every write and sensitive read now requires the `NEXFIX_BACKUP_API_KEY` Script Property. The matching `VITE_GOOGLE_BACKUP_API_KEY` is compiled into the released Electron bundle, so it is a transport credential rather than a true secret. It must not be treated as POS authentication. Rotate it by changing the Script Property and rebuilding the EXE. Do not place service-account keys, private OAuth secrets, or other private credentials in the frontend.
 
 Before relying on live business data, perform a real backup and restore test for at least two separate shops and verify that each shop can only retrieve its own snapshot.
