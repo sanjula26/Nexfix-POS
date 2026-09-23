@@ -2379,6 +2379,7 @@ const deletePurchase = useCallback((id: string) => {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
     signIn, changePassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
+    createInitialAdmin,
     saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
     completeSale, completeSaleCloud, refundSale, requestBillReverse, approveBillReverse, rejectBillReverse, holdSale, resumeHold, deleteHold,
