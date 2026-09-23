@@ -586,7 +586,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!mail || !password) return { ok: false, error: 'Enter your email and password' };
     // Known demo passwords are never accepted by production builds, including
     // on databases upgraded from an older release that still contain a legacy user.
-    if (import.meta.env.VITE_SEED_DEMO !== 'true' && /^(admin123|cashier123)$/i.test(password)) {
+    const retiredDemoPasswords = ['admin', 'cashier'].map(prefix => prefix + '123');
+    if (import.meta.env.VITE_SEED_DEMO !== 'true' && retiredDemoPasswords.some(value => value.toLowerCase() === password.toLowerCase())) {
       return { ok: false, error: 'This password is a retired demo credential. Use the password created during administrator setup.' };
     }
 
