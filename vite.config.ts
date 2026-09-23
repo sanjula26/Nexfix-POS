@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
   const isGitHubPages = mode === 'github-pages'
 
   return {
-    // Keep root hosting for normal/Netlify builds; GitHub Pages project sites
+    // Keep root hosting for normal Electron/static builds; GitHub Pages project sites
     // are served from /Nexfix-POS/.
     base: isGitHubPages ? '/Nexfix-POS/' : '/',
     plugins: [react(), tailwindcss()],
