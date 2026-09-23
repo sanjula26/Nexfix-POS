@@ -177,7 +177,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
   if (!BACKUP_API_KEY) return { ok: false, error: 'Google Drive backup API key is not configured in this build.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   const requestId = makeRequestId();
-  const payload = { action: 'backupState', shopId, requestId, apiKey: BACKUP_API_KEY, ...body };
+  const payload = { action: 'backupState', shopId, requestId, ...body, apiKey: BACKUP_API_KEY };
 
   try {
     const iframeName = 'nexfixGoogleBackupFrame_' + Date.now() + '_' + Math.random().toString(36).slice(2);
