@@ -92,3 +92,28 @@ The historical `nexfix_role_switch` sessionStorage bypass is removed. Role switc
 
 ### Cloud privilege boundary
 The local role is UX state only for cloud-backed transaction boundaries. Existing cloud sale/return/device/snapshot RPCs enforce authenticated shop membership, device ownership and transactional integrity in PostgreSQL. Remaining privileged local-only operations are protected by local authorization but cannot be considered tamper-proof on a physically accessible offline device.
+
+
+## Security audit disposition
+
+- **High — demo credentials:** fixed. Production seed is opt-in only; fresh production installs require first-run administrator setup. Legacy default-account recreation was removed.
+- **High — backup endpoint authentication:** fixed in source. Google Apps Script backup writes and sensitive reads require `NEXFIX_BACKUP_API_KEY`; deploy the new Apps Script version before production use.
+- **High — cloud snapshot privilege escalation:** fixed in source. Snapshot publishing now requires an active shop-admin membership and a registered device. Sale/return transactions continue through server RPCs.
+- **Medium — login abuse:** mitigated with persistent failed-login backoff, temporary lockout, generic errors, and audit entries.
+- **Medium — client storage:** full POS state is IndexedDB-first; localStorage is reserved for small settings/session/identity values.
+- **Medium — service worker:** security cache version was bumped.
+- **Medium — Netlify:** removed as a production path; Windows Electron installer/EXE is the shop delivery channel.
+- **Low — Electron navigation:** context isolation, sandbox, disabled Node integration, web security, and navigation/window-open allowlists are enabled.
+
+### Release verification
+
+1. Build production without `VITE_SEED_DEMO`; a fresh device must show administrator setup and no known account.
+2. Verify a migrated production device rejects retired demo passwords.
+3. Verify `nexfix_role_switch` in sessionStorage cannot bypass `mustChangePassword`.
+4. Call Google backup `backupStatus`, `getLatestBackup`, or `getBackupPart` without `apiKey` and with a wrong key; the deployed Apps Script must return `status=unauthorized`.
+5. Authenticate as a non-admin shop member and call `upsert_pos_snapshot`; the deployed migration must reject snapshot publishing.
+6. Verify sales and returns use authenticated server RPCs and private implementations are not executable by API roles.
+7. Run `npm run desktop:dir` and `npm run desktop:build`; the EXE must work without GitHub or Netlify access.
+8. After the release artifact is built, making GitHub private must not affect the installed EXE because it loads packaged local `dist/index.html`.
+
+**Deployment gate:** source fixes do not retroactively secure an already-deployed Apps Script endpoint or Supabase database. Deploy all pending Supabase migrations and the secured Apps Script version, configure `NEXFIX_BACKUP_API_KEY`, and build the EXE with matching `VITE_GOOGLE_BACKUP_API_KEY` before shop release.
