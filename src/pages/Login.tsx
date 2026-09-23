@@ -52,6 +52,10 @@ export default function Login() {
       setError('Enter your email and password');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) {
+      setError('Enter a valid email address');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -127,7 +131,7 @@ export default function Login() {
               <span className="block text-[11px] font-bold tracking-wider text-[#5b5f7e] mb-1.5">EMAIL</span>
               <div className="relative">
                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#9a9ebf]" />
-                <input required type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-10 !py-3 w-full" placeholder="you@shop.lk" />
+                <input required type="text" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={e => setEmail(e.target.value)} className="input !bg-[#f5f6fb] !border-[#e7e9f2] pl-10 !py-3 w-full" placeholder="you@shop.lk" />
               </div>
             </label>
             <label className="block">
