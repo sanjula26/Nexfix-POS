@@ -1699,7 +1699,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const returnedByItem = new Map<number, number>();
   for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
   const requested = new Map<number, number>();
-  for (const line of input.lines) { if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue; if (!Number.isFinite(line.qty) || line.qty <= 0) continue; requested.set(line.itemIdx, (requested.get(line.itemIdx) || 0) + Math.floor(line.qty)); }
+  for (const line of input.lines) { if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue; if (!Number.isInteger(line.qty) || line.qty <= 0) continue; requested.set(line.itemIdx, (requested.get(line.itemIdx) || 0) + line.qty); }
   if (requested.size === 0) return null;
   const items: PurchaseReturnItem[] = [];
   const returnedUnitIds = new Set<string>();
