@@ -42,10 +42,11 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 - Release build `v3.0.0-build.227` contains the verified Windows installer/portable release artifacts.
 - Physical printer, barcode scanner, and cash drawer compatibility still requires hardware testing.
 
-### Web deployment
-- `netlify.toml` builds `dist`, provides SPA fallback/security headers, and uses Node.js 22 to match CI.
-- GitHub Pages preview deployment is configured and the latest checked deployment succeeded.
-- Actual Netlify production environment configuration/deployment remains an external acceptance gate.
+### Production deployment
+- Windows Electron installer/portable EXE is the shop delivery channel (`desktop:build` / `desktop:dir`).
+- Electron uses context isolation, sandboxing, disabled Node integration, web security, and restricted navigation.
+- GitHub Pages is preview/development only. The POS EXE has no runtime dependency on GitHub and continues to work if the repository is made private.
+- Netlify is not used for shop production and `netlify.toml` has been removed.
 
 ### Demo/seed data
 - Demo seed data is opt-in through `VITE_SEED_DEMO=true`; the normal production build does not enable it.
@@ -59,7 +60,7 @@ This document reflects the current Nexfix POS implementation on `main`. It is an
 3. Configure Netlify public environment variables and verify the live production site.
 4. Test the actual receipt printer, barcode scanner, and cash drawer hardware.
 5. Perform a complete disaster-recovery restore drill using a known-good backup before storing live business data.
-6. Keep the repository private for production source distribution when the operator is ready; GitHub repository visibility must be changed through GitHub settings because the connected integration does not expose that visibility mutation.
+6. Keep the repository private for production source distribution when the operator is ready. Repository visibility does not affect already-built Electron EXEs.
 
 These are intentionally not marked green by source/CI checks because they require real external accounts, devices, deployment configuration, or physical hardware.
 
@@ -74,3 +75,20 @@ The repository CI pipeline checks dependency installation, TypeScript typechecki
 - Do not treat Google Drive backups as the primary transaction database.
 - Keep cloud snapshots free of local authentication secrets.
 - Preserve idempotency keys and server-side transaction boundaries when changing sale, return, inventory, or synchronization code.
+
+## Current security gates
+
+### First-run authentication
+Production builds must leave `VITE_SEED_DEMO` unset/false. A fresh device starts without known users and shows a first-run administrator setup requiring a 12+ character password. Demo accounts/data are available only with explicit `VITE_SEED_DEMO=true` for development.
+
+### Google Drive API key
+Apps Script requires Script Property `NEXFIX_BACKUP_API_KEY` for every backup POST and every sensitive GET (`backupStatus`, `getLatestBackup`, `getBackupPart`). The POS build must define `VITE_GOOGLE_BACKUP_API_KEY`. Missing keys fail closed. Rotate both sides together and rebuild the EXE. The compiled client value is not a true secret.
+
+### Local login abuse protection
+Failed local logins use a persistent per-device backoff/lockout and are written to the local audit log. Errors are intentionally generic to reduce account enumeration.
+
+### mustChangePassword boundary
+The historical `nexfix_role_switch` sessionStorage bypass is removed. Role switching cannot bypass a user's mandatory password-change route.
+
+### Cloud privilege boundary
+The local role is UX state only for cloud-backed transaction boundaries. Existing cloud sale/return/device/snapshot RPCs enforce authenticated shop membership, device ownership and transactional integrity in PostgreSQL. Remaining privileged local-only operations are protected by local authorization but cannot be considered tamper-proof on a physically accessible offline device.
