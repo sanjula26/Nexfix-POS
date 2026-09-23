@@ -5,6 +5,8 @@ import {
 } from './types';
 import { mulberry32, uid, dkey, hashPin, SEED_HASH_ADMIN, SEED_HASH_CASHIER } from './utils';
 
+const SEED_DEMO = import.meta.env.VITE_SEED_DEMO === 'true';
+
 export const PERMISSION_KEYS: { key: string; label: string; group: string }[] = [
   { key: 'page:dashboard', label: 'Dashboard', group: 'Pages' },
   { key: 'page:pos', label: 'POS / Sales', group: 'Pages' },
@@ -65,12 +67,8 @@ export const DEFAULT_BRANDS = [
 const emptyState = (): POSState => {
   const adminPermissions: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
-  // Always ship a known recovery admin + cashier so fresh installs can sign in
-  // without waiting for IndexedDB repair. Passwords are the public defaults:
-  // admin@nexfixsolution.com / admin123
-  // cashier@nexfixsolution.com / cashier123
   const now = new Date().toISOString();
-  const defaultUsers: AppUser[] = [
+  const defaultUsers: AppUser[] = SEED_DEMO ? [
     {
       id: 'u-admin',
       name: 'Shop Administrator',
@@ -104,7 +102,7 @@ const emptyState = (): POSState => {
     settings: {
       shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
       taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20, promotions: [],
-      adminPinHash: hashPin('admin123'), whatsappReceipts: false,
+      adminPinHash: SEED_DEMO ? hashPin('admin123') : '', whatsappReceipts: false,
       categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
       invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
       invoiceTerms: 'Warranty and return conditions are subject to the shop policy.\nKeep this invoice for warranty and future reference.',
@@ -119,6 +117,9 @@ const emptyState = (): POSState => {
 const sell = (p: number) => Math.round(p * 100) / 100;
 
 export const buildSeed = (): POSState => {
+  // Production/offline builds start empty and require first-run administrator setup.
+  // Demo fixtures (including demo accounts) exist only when explicitly enabled.
+  if (!SEED_DEMO) return emptyState();
   const rng = mulberry32(20260813);
   const now = new Date();
   const iso = (d: Date) => d.toISOString();
