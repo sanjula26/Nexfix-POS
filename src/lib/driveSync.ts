@@ -170,6 +170,8 @@ function splitUtf8Chunks(value: string, maxBytes: number): string[] {
 
 interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSeconds?: number; }
 
+export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
+
 async function postGoogleBackup(body: Record<string, unknown>, shopId: string, attempt = 0): Promise<GoogleBackupPostResult> {
   const baseUrl = getGoogleScriptUrl();
   if (!baseUrl) return { ok: false, error: 'Central Google Drive backup is not configured.' };
@@ -202,17 +204,22 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     // The POST is fire-and-forget, so confirmation gets a generous window.
     // Slow Apps Script/Drive writes are expected; pending/unknown status is not
     // treated as a failure while the confirmation window is still open.
-    const confirmationWindowMs = 90000;
+    // Front-load confirmation: warm Apps Script/Drive writes should settle in a few seconds.
+    // Pending/network misses are inconclusive until the bounded window expires.
+    const confirmationWindowMs = 30000;
     const deadline = Date.now() + confirmationWindowMs;
-    let pollDelay = 750;
+    let pollDelay = 350;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
       await new Promise((resolve) => window.setTimeout(resolve, Math.min(pollDelay, Math.max(100, remaining))));
       if (Date.now() > deadline) break;
-      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
+      const status = await getGoogleBackupRequestStatus(
+        baseUrl, shopId, requestId, String(body.shopProof || ''),
+        String(body.backupId || ''), String(body.exportedAt || ''), String(body.dayKey || ''),
+      );
       if (status === true) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
-        const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
+        const rateMatch = /retry in about (\\d+) seconds/i.exec(status.error || '');
         const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
         if (retryAfterSeconds && attempt < 1) {
           await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
@@ -220,13 +227,14 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         }
         return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
-      // null/pending/network timeout is inconclusive: keep polling with backoff.
-      pollDelay = Math.min(4000, Math.round(pollDelay * 1.45));
+      pollDelay = Math.min(2500, Math.round(pollDelay * 1.55));
     }
 
-    // Final status read: a Drive write can finish immediately after the polling
-    // window. Never turn a late success into a timeout.
-    const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
+    // One final authenticated status read closes the small completion race at the deadline.
+    const finalStatus = await getGoogleBackupRequestStatus(
+      baseUrl, shopId, requestId, String(body.shopProof || ''),
+      String(body.backupId || ''), String(body.exportedAt || ''), String(body.dayKey || ''),
+    );
     if (finalStatus === true) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
       const rateMatch = /retry in about (\d+) seconds/i.exec(finalStatus.error || '');
@@ -264,7 +272,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
   }
 }
 
-async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string): Promise<boolean | { ok: false; error: string } | null> {
+async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string, backupId = '', exportedAt = '', dayKey = ''): Promise<boolean | { ok: false; error: string } | null> {
   return new Promise((resolve) => {
     const callbackName = `__nexfixGoogleBackupStatus_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
@@ -290,6 +298,9 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     url.searchParams.set('shopId', shopId);
     url.searchParams.set('requestId', requestId);
     url.searchParams.set('shopProof', shopProof);
+    if (backupId) url.searchParams.set('backupId', backupId);
+    if (exportedAt) url.searchParams.set('exportedAt', exportedAt);
+    if (dayKey) url.searchParams.set('dayKey', dayKey);
     url.searchParams.set('apiKey', BACKUP_API_KEY);
     url.searchParams.set('callback', callbackName);
     script.async = true;
@@ -297,6 +308,16 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     script.onerror = () => finish(null);
     document.head.appendChild(script);
   });
+}
+
+export async function getGoogleScriptHealth(): Promise<GoogleScriptHealth | null> {
+  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
+  try {
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'ping');
+    const result = await getJsonp<GoogleScriptHealth>(url, 8000);
+    return result?.ok === true ? result : null;
+  } catch { return null; }
 }
 
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
