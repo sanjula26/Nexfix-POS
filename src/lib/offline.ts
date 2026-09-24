@@ -46,6 +46,7 @@ export async function queueWrite(note?:string):Promise<void>{
   }
 }
 
+export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
 export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
@@ -82,6 +83,23 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:parsed.input.salesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
+      if(op.type==='purchase_receive'){
+        try{
+          const parsed=JSON.parse(op.payload) as {purchaseId:string;input:{deviceId:string;purchase:Purchase}};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const catalogState=state || undefined;
+          if(catalogState){
+            const catalog=await syncNormalizedCatalog(catalogState,shop.shopId);
+            if(!catalog.ok) break;
+          }
+          const result=await receivePurchaseAtomic({shopId:shop.shopId,purchaseId:parsed.purchaseId,deviceId:parsed.input.deviceId,purchase:parsed.input.purchase});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
