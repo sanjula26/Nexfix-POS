@@ -10,14 +10,14 @@ import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
 
@@ -130,7 +130,7 @@ interface StoreCtx {
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
   saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => { ok: boolean; purchase?: Purchase; error?: string };
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
-  receivePurchase: (id: string, processorName?: string) => { ok: boolean; error?: string };
+  receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
   processGRN: (id: string, processorName: string) => { ok: boolean; error?: string };
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
@@ -1798,7 +1798,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit, user, can]);
 
-  const receivePurchase = useCallback((id: string, processorName?: string): { ok: boolean; error?: string } => {
+  const receivePurchase = useCallback(async (id: string, processorName?: string): Promise<{ ok: boolean; error?: string }> => {
     if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
@@ -1815,6 +1815,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     purchaseReceiveLockRef.current = true;
     try {
+      const online = getConnectivity() === 'online';
+      const cloudEnabled = supabaseConfigured;
+      const shop = cloudEnabled && online ? await ensureCloudShop('Nexfix Shop') : { ok: false as const };
+
+      if (cloudEnabled && online) {
+        if (!shop.ok || !shop.shopId) return { ok: false, error: shop.error || 'Cloud shop is not available for GRN receive.' };
+        if (user.role === 'admin' || user.role === 'manager') {
+          const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
+          if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
+        }
+        const cloudResult = await receivePurchaseAtomic({
+          shopId: shop.shopId,
+          purchaseId: po.id,
+          deviceId: getMachineIdentity().id,
+          purchase: po,
+        });
+        if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
+      } else if (cloudEnabled && !online) {
+        await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: po });
+      }
+
       let applied = false;
       let applyError = '';
       setStateWithInventoryLedger('PURCHASE_RECEIVE', s => {
@@ -1844,38 +1865,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
             for (const identifier of purchaseItem?.unitIdentifiers || []) {
               newUnits.push({
-                id: uid(),
-                productId: p.id,
-                imei: p.trackImei ? identifier.imei?.trim() : undefined,
-                serial: p.trackSerial ? identifier.serial?.trim() : undefined,
-                status: 'in_stock',
-                purchaseId: currentPo.id,
-                cost,
-                expiryDate: purchaseItem?.expiryDate,
-                note: 'From ' + currentPo.poNo,
-                createdAt: now,
+                id: uid(), productId: p.id, imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                serial: p.trackSerial ? identifier.serial?.trim() : undefined, status: 'in_stock',
+                purchaseId: currentPo.id, cost, expiryDate: purchaseItem?.expiryDate, note: 'From ' + currentPo.poNo, createdAt: now,
               } as InventoryUnit);
             }
           }
           const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
-          return {
-            ...p,
-            stock: p.stock + delta,
-            ...(cost !== undefined ? { cost } : {}),
-            ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}),
-          };
+          return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
         });
         const next = {
-          ...s,
-          purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
-          products,
-          units: [...newUnits, ...(s.units || [])],
+          ...s, purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
+          products, units: [...newUnits, ...(s.units || [])],
         };
         applied = true;
         return next;
       });
       if (!applied) return { ok: false, error: applyError || 'Unable to process this GRN. No stock was changed.' };
-      pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units');
+      pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units' + (cloudEnabled ? ' · cloud-authoritative receive' : ''));
       return { ok: true };
     } finally {
       purchaseReceiveLockRef.current = false;
@@ -1916,7 +1923,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   }, [pushAudit, user, can]);
 
-  const processGRN = useCallback((id: string, processorName: string): { ok: boolean; error?: string } => receivePurchase(id, processorName), [receivePurchase]);
+  const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
   if (purchaseReturnLockRef.current) return null;
