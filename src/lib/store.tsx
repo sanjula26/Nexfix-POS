@@ -273,7 +273,7 @@ function applyInventoryLedger(
 }
 
 
-const RETIRED_DEMO_PASSWORDS = ['admin', 'cashier'].map(prefix => prefix + '123');
+const RETIRED_DEMO_PASSWORDS = ['admin', 'cashier'].map(prefix => prefix + '123'); // Retired defaults are never provisioned in production.
 const RETIRED_DEMO_EMAILS = ['admin', 'cashier'].map(prefix => prefix + '@nexfixsolution.com');
 
 function migrate(s: POSState): POSState {
