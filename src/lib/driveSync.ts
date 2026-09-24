@@ -245,11 +245,11 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     if (latest && latest.shopId === shopId) {
       const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
       const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
-      const latestBackupId = latest.manifest?.backupId || '';
+      const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
       const attemptBackupId = String(body.backupId || '');
       const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
         && latestAt >= attemptAt - 5000
-        && latestAt <= Date.now() + 30000;
+        && latestAt <= attemptAt + 90000;
       if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) {
         return { ok: true };
       }
@@ -434,6 +434,7 @@ interface LatestGoogleBackup {
   shopId?: string;
   shopPartition?: string;
   shopName?: string;
+  backupId?: string;
   encrypted?: boolean;
   multipart?: boolean;
   manifest?: {
@@ -491,6 +492,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
         shopId?: unknown;
         shopPartition?: unknown;
         shopName?: unknown;
+        backupId?: unknown;
         encrypted?: unknown;
         multipart?: unknown;
         manifest?: LatestGoogleBackup['manifest'];
@@ -544,6 +546,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
         shopId,
         shopPartition: backup.shopPartition,
         shopName: typeof backup.shopName === 'string' ? backup.shopName : undefined,
+        backupId: typeof backup.backupId === 'string' ? backup.backupId : undefined,
         encrypted: true,
         multipart: !!backup.multipart,
         manifest: backup.manifest,
@@ -560,6 +563,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
       shopId,
       shopPartition: backup.shopPartition,
       shopName: typeof backup.shopName === 'string' ? backup.shopName : undefined,
+      backupId: typeof backup.backupId === 'string' ? backup.backupId : undefined,
       encrypted: false,
       multipart: false,
     };
