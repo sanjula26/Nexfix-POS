@@ -1511,9 +1511,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
+      const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
+      let returnId = '';
+      try {
+        returnId = localStorage.getItem(pendingRefundKey)?.trim() || '';
+        if (!returnId) {
+          returnId = crypto.randomUUID();
+          localStorage.setItem(pendingRefundKey, returnId);
+        }
+      } catch {
+        returnId = crypto.randomUUID();
+      }
+
       const cloud = await processSaleReturnAtomic({
         shopId: shop.shopId,
-        returnId: uid(),
+        returnId,
         saleId: sale.id,
         reason: 'Full bill refund',
         mode: 'refund',
@@ -1524,6 +1536,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
         return false;
       }
+      try { localStorage.removeItem(pendingRefundKey); } catch { /* ignore */ }
     }
 
     setStateWithInventoryLedger('REFUND', s => {
