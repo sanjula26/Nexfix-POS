@@ -91,7 +91,7 @@ interface StoreCtx {
   /** true while the ADMIN unlock prompt is visible — the previous user's session is nullified (inert UI, no shortcuts) */
   adminPrompt: boolean;
   setAdminPrompt: (v: boolean) => void;
-  signIn: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; error?: string }>;
+  signIn: (email: string, password: string, remember: boolean, expectedRole?: Extract<Role, 'admin' | 'cashier'>) => Promise<{ ok: boolean; error?: string }>;
   createInitialAdmin: (name: string, email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   signOut: () => void;
