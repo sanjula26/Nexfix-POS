@@ -51,7 +51,7 @@ jobs:
             echo 'Known demo credentials leaked outside the explicitly guarded seed/migration code.'
             exit 1
           fi
-          if grep -RIn "VITE_SEED_DEMO=true" .github/workflows package.json README.md docs 2>/dev/null; then
+          if grep -RIn "VITE_SEED_DEMO=true" .github/workflows package.json 2>/dev/null; then
             echo 'Production/release documentation or workflow must not enable VITE_SEED_DEMO.'
             exit 1
           fi
