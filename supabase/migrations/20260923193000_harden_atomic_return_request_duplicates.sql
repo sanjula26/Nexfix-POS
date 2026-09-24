@@ -36,16 +36,8 @@ declare
   end if;
 $ins$;
 begin
-  select pg_get_functiondef(p.oid)
-    into d
-  from pg_proc p
-  join pg_namespace n on n.oid=p.pronamespace
-  where n.nspname='private'
-    and p.proname='process_sale_return_atomic'
-    and pg_get_function_identity_arguments(p.oid) =
-      'uuid, uuid, uuid, text, text, text, jsonb'
-  order by p.oid desc
-  limit 1;
+  select pg_get_functiondef('private.process_sale_return_atomic(uuid,uuid,uuid,text,text,text,jsonb)'::regprocedure)
+    into d;
 
   if d is null then
     raise exception 'private.process_sale_return_atomic not found';
