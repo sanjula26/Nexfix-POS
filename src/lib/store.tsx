@@ -1486,14 +1486,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
     let returnId = '';
-    try {
-      returnId = localStorage.getItem(pendingRefundKey)?.trim() || '';
-      if (!returnId) {
+    if (supabaseConfigured) {
+      try {
+        returnId = localStorage.getItem(pendingRefundKey)?.trim() || '';
+        if (!returnId) {
+          returnId = crypto.randomUUID();
+          localStorage.setItem(pendingRefundKey, returnId);
+        }
+      } catch {
         returnId = crypto.randomUUID();
-        localStorage.setItem(pendingRefundKey, returnId);
       }
-    } catch {
-      returnId = crypto.randomUUID();
     }
 
     const returnLines = remainingItems.map(({ it, qty }) => {
@@ -1551,7 +1553,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           paymentMethod: 'cash',
           lines: returnLines,
         });
-      } catch (error) {
+      } catch {
         pushAudit('DENIED', 'Sale', 'Offline refund blocked: return could not be queued safely');
         return false;
       }
