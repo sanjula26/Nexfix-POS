@@ -205,7 +205,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     let pollDelay = 300;
     while (Date.now() < deadline) {
       await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
-      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
+      const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
       if (status === true) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
         const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
@@ -221,7 +221,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     }
     // One final status read handles a successful Apps Script request that completed
     // just after the normal polling deadline. Never convert a late success into a failure.
-    const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId);
+    const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
     if (finalStatus === true) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
       const rateMatch = /retry in about (\d+) seconds/i.exec(finalStatus.error || '');
@@ -241,7 +241,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
   }
 }
 
-async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string): Promise<boolean | { ok: false; error: string } | null> {
+async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string): Promise<boolean | { ok: false; error: string } | null> {
   return new Promise((resolve) => {
     const callbackName = `__nexfixGoogleBackupStatus_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
@@ -266,6 +266,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
     url.searchParams.set('action', 'backupStatus');
     url.searchParams.set('shopId', shopId);
     url.searchParams.set('requestId', requestId);
+    url.searchParams.set('shopProof', shopProof);
     url.searchParams.set('apiKey', BACKUP_API_KEY);
     url.searchParams.set('callback', callbackName);
     script.async = true;
@@ -291,6 +292,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     const safeState = sanitizeCloudState(businessState);
     const exportedAt = new Date().toISOString();
     const recoveryKey = ensureRecoveryKey();
+    const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
     const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
     const serialized = JSON.stringify(envelope);
     const totalBytes = utf8Bytes(serialized);
@@ -334,6 +336,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         kind,
         ...shopMetadata,
         recoveryKey,
+        shopProof,
         backupId,
       }, shopId);
     }
@@ -363,6 +366,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
         kind,
         ...shopMetadata,
         recoveryKey,
+        shopProof,
       }, shopId);
       if (!ok.ok) {
         console.error('[Google Backup] multipart upload failed at part', index + 1, ok.error);
@@ -447,9 +451,13 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
   if (!shopId) return null;
 
   try {
+    const recoveryKey = ensureRecoveryKey();
+    const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
     const url = new URL(getGoogleScriptUrl());
     url.searchParams.set('action', 'getLatestBackup');
     url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', makeRequestId());
+    url.searchParams.set('shopProof', shopProof);
     url.searchParams.set('apiKey', BACKUP_API_KEY);
     const result = await getJsonp<{
       ok?: boolean;
@@ -481,6 +489,8 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
         const partUrl = new URL(getGoogleScriptUrl());
         partUrl.searchParams.set('action', 'getBackupPart');
         partUrl.searchParams.set('shopId', shopId);
+        partUrl.searchParams.set('requestId', makeRequestId());
+        partUrl.searchParams.set('shopProof', shopProof);
         partUrl.searchParams.set('apiKey', BACKUP_API_KEY);
         partUrl.searchParams.set('backupId', manifest.backupId);
         partUrl.searchParams.set('partName', manifest.partNames[index]);
