@@ -17,7 +17,7 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
 
@@ -119,9 +119,9 @@ interface StoreCtx {
   completeSale: (input: NewSaleInput) => Sale | null;
   completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
   refundSale: (saleId: string) => Promise<boolean>;
-  requestBillReverse: (saleId: string, reason: string) => boolean;
-  approveBillReverse: (requestId: string) => boolean;
-  rejectBillReverse: (requestId: string, note?: string) => boolean;
+  requestBillReverse: (saleId: string, reason: string) => Promise<boolean>;
+  approveBillReverse: (requestId: string) => Promise<boolean>;
+  rejectBillReverse: (requestId: string, note?: string) => Promise<boolean>;
   // held
   holdSale: (h: Omit<HeldSale, 'id' | 'heldAt'>) => void;
   resumeHold: (id: string) => HeldSale | undefined;
@@ -517,6 +517,30 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
   }, [state, ready]);
+
+  // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
+  useEffect(() => {
+    if (!ready || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
+    let cancelled = false;
+    (async () => {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) return;
+      const remote = await listSaleReversalRequests(shop.shopId);
+      if (!remote.ok || !remote.requests || cancelled) return;
+      setState(s => {
+        const localById = new Map((s.reverseRequests || []).map(r => [r.id, r]));
+        for (const r of remote.requests || []) {
+          localById.set(r.id, {
+            id: r.id, saleId: r.saleId, billNo: r.billNo, reason: r.reason,
+            requestedBy: r.requestedBy, requestedAt: r.requestedAt, status: r.status,
+            reviewedBy: r.reviewedBy, reviewedAt: r.reviewedAt, reviewNote: r.reviewNote,
+          });
+        }
+        return { ...s, reverseRequests: [...localById.values()].sort((a,b) => +new Date(b.requestedAt) - +new Date(a.requestedAt)) };
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [ready, user?.id, user?.role, connectivity]);
 
   // Connectivity listeners + auto-flush queue when back online
   useEffect(() => {
@@ -1602,33 +1626,76 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.sales, state.exchanges, state.units, pushAudit, user, can]);
 
   /* ---------------- admin-approved bill reversal ---------------- */
-  const requestBillReverse = useCallback((saleId: string, reason: string): boolean => {
+  const requestBillReverse = useCallback(async (saleId: string, reason: string): Promise<boolean> => {
     if (!user || !can('page:sales')) {
       pushAudit('DENIED', 'Sale', 'Blocked bill-reversal request without sales-history access');
       return false;
     }
-    const sale = state.sales.find(x => x.id === saleId);
+    const sale = stateRef.current.sales.find(x => x.id === saleId);
     const note = reason.trim();
     if (!sale || sale.status !== 'completed' || !note) return false;
-    // A sale with an existing exchange cannot be fully reversed safely: the
-    // exchange may already have restored stock/tracked units. Requiring the
-    // exchange workflow to settle first prevents double-restocking on reversal.
-    if ((state.exchanges || []).some(x => x.billNo === sale.billNo)) {
+    if ((stateRef.current.exchanges || []).some(x => x.billNo === sale.billNo)) {
       pushAudit('DENIED', 'Sale', 'Blocked bill reversal after an exchange exists for the bill');
       return false;
     }
-    if (state.reverseRequests?.some(r => r.saleId === saleId && r.status === 'pending')) return false;
-    const req: ReverseRequest = { id: uid(), saleId, billNo: sale.billNo, reason: note, requestedBy: user.name, requestedAt: new Date().toISOString(), status: 'pending' };
-    setState(s => ({ ...s, reverseRequests: [req, ...(s.reverseRequests || [])] }));
-    pushAudit('REVERSE-REQUEST', 'Sale', `Reverse requested for ${sale.billNo} · ${note}`);
-    return true;
-  }, [state.sales, state.reverseRequests, user, pushAudit, can]);
+    if (stateRef.current.reverseRequests?.some(r => r.saleId === saleId && r.status === 'pending')) return false;
 
-  const approveBillReverse = useCallback((requestId: string): boolean => {
+    const req: ReverseRequest = {
+      id: uid(), saleId, billNo: sale.billNo, reason: note,
+      requestedBy: user.name, requestedAt: new Date().toISOString(), status: 'pending',
+    };
+
+    if (supabaseConfigured && typeof navigator !== 'undefined' && navigator.onLine) {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (shop.error || 'Cloud shop unavailable'));
+        return false;
+      }
+      const cloud = await requestSaleReversal({ shopId: shop.shopId, requestId: req.id, saleId, reason: note });
+      if (!cloud.ok) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (cloud.error || 'Request was not committed'));
+        return false;
+      }
+    } else if (supabaseConfigured) {
+      try {
+        await queueSaleReversalRequest(req.id, { saleId, reason: note });
+      } catch {
+        pushAudit('DENIED', 'Sale', 'Offline reversal request blocked: request could not be queued safely');
+        return false;
+      }
+    }
+
+    setState(s => ({ ...s, reverseRequests: [req, ...(s.reverseRequests || []).filter(r => r.id !== req.id)] }));
+    pushAudit('REVERSE-REQUEST', 'Sale', 'Reverse requested for ' + sale.billNo + ' · ' + note);
+    return true;
+  }, [user, pushAudit, can]);
+
+  const approveBillReverse = useCallback(async (requestId: string): Promise<boolean> => {
     if (user?.role !== 'admin') return false;
-    const req = (state.reverseRequests || []).find(r => r.id === requestId);
-    const sale = req ? state.sales.find(x => x.id === req.saleId) : undefined;
+    const req = stateRef.current.reverseRequests?.find(r => r.id === requestId);
+    const sale = req ? stateRef.current.sales.find(x => x.id === req.saleId) : undefined;
     if (!req || req.status !== 'pending' || !sale || sale.status !== 'completed') return false;
+
+    if (supabaseConfigured && typeof navigator !== 'undefined' && navigator.onLine) {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (shop.error || 'Cloud shop unavailable'));
+        return false;
+      }
+      const cloud = await approveSaleReversal({ shopId: shop.shopId, requestId });
+      if (!cloud.ok) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (cloud.error || 'Approval was not committed'));
+        return false;
+      }
+    } else if (supabaseConfigured) {
+      try {
+        await queueSaleReversalApproval(requestId);
+      } catch {
+        pushAudit('DENIED', 'Sale', 'Offline reversal approval blocked: approval could not be queued safely');
+        return false;
+      }
+    }
+
     setStateWithInventoryLedger('SALE_REVERSAL', s => {
       const currentReq = (s.reverseRequests || []).find(r => r.id === requestId);
       const currentSale = currentReq ? s.sales.find(x => x.id === currentReq.saleId) : undefined;
@@ -1653,18 +1720,40 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'approved' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString() } : r),
       };
     });
-    pushAudit('REVERSE-APPROVED', 'Sale', `Bill ${sale.billNo} reversed and stock restored · requested by ${req.requestedBy}`);
+    pushAudit('REVERSE-APPROVED', 'Sale', 'Bill ' + sale.billNo + ' reversed and stock restored · requested by ' + req.requestedBy);
     return true;
-  }, [state.reverseRequests, state.sales, user, pushAudit]);
+  }, [user, pushAudit]);
 
-  const rejectBillReverse = useCallback((requestId: string, note?: string): boolean => {
+  const rejectBillReverse = useCallback(async (requestId: string, note?: string): Promise<boolean> => {
     if (user?.role !== 'admin') return false;
-    const req = (state.reverseRequests || []).find(r => r.id === requestId);
+    const req = stateRef.current.reverseRequests?.find(r => r.id === requestId);
     if (!req || req.status !== 'pending') return false;
-    setState(s => ({ ...s, reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'rejected' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString(), reviewNote: note?.trim() || undefined } : r) }));
-    pushAudit('REVERSE-REJECTED', 'Sale', `Reverse request for ${req.billNo} rejected · ${note?.trim() || 'No note'}`);
+    const reviewNote = note?.trim() || undefined;
+
+    if (supabaseConfigured && typeof navigator !== 'undefined' && navigator.onLine) {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (shop.error || 'Cloud shop unavailable'));
+        return false;
+      }
+      const cloud = await rejectSaleReversal({ shopId: shop.shopId, requestId, note: reviewNote });
+      if (!cloud.ok) {
+        pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (cloud.error || 'Rejection was not committed'));
+        return false;
+      }
+    } else if (supabaseConfigured) {
+      try {
+        await queueSaleReversalRejection(requestId, reviewNote);
+      } catch {
+        pushAudit('DENIED', 'Sale', 'Offline reversal rejection blocked: rejection could not be queued safely');
+        return false;
+      }
+    }
+
+    setState(s => ({ ...s, reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'rejected' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString(), reviewNote } : r) }));
+    pushAudit('REVERSE-REJECTED', 'Sale', 'Reverse request for ' + req.billNo + ' rejected · ' + (reviewNote || 'No note'));
     return true;
-  }, [state.reverseRequests, user, pushAudit]);
+  }, [user, pushAudit]);
   /* ---------------- held sales ---------------- */
   const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {
     if (!user || !can('page:pos')) {
