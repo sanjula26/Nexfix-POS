@@ -54,7 +54,7 @@ export function setCloudShopId(id: string): void {
   try { storage()?.setItem(SHOP_KEY, normalized); } catch { /* ignore */ }
 }
 
-/** Resolve the authenticated user's shop, creating the first shop only when none exists. */
+/** Resolve an explicitly provisioned active shop membership for the authenticated user. */
 export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: boolean; shopId?: string; error?: string }> {
   void shopName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
