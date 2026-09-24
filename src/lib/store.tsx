@@ -581,7 +581,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user?.email]);
 
 
-  const signIn = useCallback(async (email: string, password: string, remember: boolean) => {
+  const signIn = useCallback(async (email: string, password: string, remember: boolean, expectedRole?: Extract<Role, 'admin' | 'cashier'>) => {
     const mail = email.trim().toLowerCase();
     if (!mail || !password) return { ok: false, error: 'Enter your email and password' };
     // Known demo passwords are never accepted by production builds, including
@@ -636,6 +636,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
+    if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
+    try { localStorage.removeItem('nexfix_role_switch_v1'); } catch { /* ignore */ }
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
     const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
@@ -667,7 +669,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   }, []);
 
-  const createInitialAdmin = useCallback(async (name: string, email: string, password: string) => {
+  const createInitialAdmin = useCallback(async (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => {
     const cleanName = name.trim();
     const mail = email.trim().toLowerCase();
     const next = password.trim();
@@ -675,17 +677,31 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (cleanName.length < 2) return { ok: false, error: 'Enter the administrator name' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return { ok: false, error: 'Enter a valid email address' };
     if (next.length < 12) return { ok: false, error: 'Administrator password must be at least 12 characters' };
+    const cashierName = cashier?.name.trim() || '';
+    const cashierMail = cashier?.email.trim().toLowerCase() || '';
+    const cashierPassword = cashier?.password.trim() || '';
+    if (cashier && cashierName.length < 2) return { ok: false, error: 'Enter the cashier name' };
+    if (cashier && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cashierMail)) return { ok: false, error: 'Enter a valid cashier email address' };
+    if (cashier && cashierMail === mail) return { ok: false, error: 'Admin and cashier must use different email addresses' };
+    if (cashier && cashierPassword.length < 12) return { ok: false, error: 'Cashier password must be at least 12 characters' };
     const retiredDemoPasswords = ['admin', 'cashier'].map(prefix => prefix + '123');
     if (retiredDemoPasswords.some(value => value.toLowerCase() === next.toLowerCase())) return { ok: false, error: 'Choose a password that is not a retired demo credential' };
     const hashed = await hashPasswordAsync(next);
+    const cashierHashed = cashier ? await hashPasswordAsync(cashierPassword) : '';
+    const nowIso = new Date().toISOString();
     const admin: AppUser = {
       id: uid(), name: cleanName, email: mail, password: hashed, role: 'admin',
-      active: true, createdAt: new Date().toISOString(), mustChangePassword: false,
+      active: true, createdAt: nowIso, mustChangePassword: false,
     };
-    const nextState = { ...stateRef.current, users: [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
+    const cashierUser: AppUser | null = cashier ? {
+      id: uid(), name: cashierName, email: cashierMail, password: cashierHashed, role: 'cashier',
+      active: true, createdAt: nowIso, mustChangePassword: false,
+    } : null;
+    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
+    try { localStorage.removeItem('nexfix_role_switch_v1'); } catch { /* ignore */ }
     const sess = { userId: admin.id, remember: true };
     loginAtRef.current = Date.now();
     setSession(sess);
@@ -711,6 +727,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   }, [user, pushAudit]);
 
+  const changeManagedPassword = useCallback(async (targetUserId: string, nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!user || user.role !== 'admin') return { ok: false, error: 'Only admins can change account passwords' };
+    const next = nextPassword.trim();
+    if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
+    if (next === 'admin123' || next === 'cashier123') return { ok: false, error: 'Choose a password different from the retired demo credentials' };
+    const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier'));
+    if (!target) return { ok: false, error: 'Admin or cashier account not found' };
+    const hashed = await hashPasswordAsync(next);
+    setState(s => ({ ...s, users: s.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) }));
+    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
+    return { ok: true };
+  }, [user, pushAudit]);
   const signOut = useCallback(() => {
     // Ignore spurious signOut calls in the first 8s after login (boot/effect race)
     if (loginAtRef.current && Date.now() - loginAtRef.current < 8000) {
@@ -768,6 +797,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
+    try { localStorage.setItem('nexfix_role_switch_v1', '1'); } catch { /* ignore */ }
     setSession(sess);
     try {
       if (sess.remember) {
@@ -2392,7 +2422,7 @@ const deletePurchase = useCallback((id: string) => {
   const value: StoreCtx = {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
-    signIn, changePassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
+    signIn, changePassword, changeManagedPassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
     createInitialAdmin,
     saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
