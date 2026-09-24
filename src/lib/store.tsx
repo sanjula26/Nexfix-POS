@@ -17,7 +17,8 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines } from './cloudSync';
+import { supabaseConfigured } from './supabase';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -117,7 +118,7 @@ interface StoreCtx {
   // sales
   completeSale: (input: NewSaleInput) => Sale | null;
   completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
-  refundSale: (saleId: string) => void;
+  refundSale: (saleId: string) => Promise<boolean>;
   requestBillReverse: (saleId: string, reason: string) => boolean;
   approveBillReverse: (requestId: string) => boolean;
   rejectBillReverse: (requestId: string, note?: string) => boolean;
@@ -1444,13 +1445,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return sale;
   }, [user, state, pushAudit, completeSale, can]);
 
-  const refundSale = useCallback((saleId: string) => {
+  const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
     if (!user || !can('act:refund')) {
       pushAudit('DENIED', 'Sale', 'Blocked refund without refund permission');
-      return;
+      return false;
     }
     const sale = state.sales.find(x => x.id === saleId);
-    if (!sale || sale.status !== 'completed') return;
+    if (!sale || sale.status !== 'completed') return false;
 
     const priorReturnedByLine = new Map<number, number>();
     for (const ex of state.exchanges.filter(x => x.billNo === sale.billNo)) {
@@ -1482,6 +1483,48 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);
     const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
     const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund - allocatedTradeIn) * 100) / 100);
+
+    // Online cloud refunds are committed by the server-authoritative atomic
+    // return RPC first. Do not silently fall back to local-only mutation when
+    // cloud authorization exists, or the browser could diverge from the shop ledger.
+    if (supabaseConfigured && (typeof navigator === 'undefined' || navigator.onLine)) {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Sale', 'Cloud refund blocked: ' + (shop.error || 'Cloud shop is unavailable'));
+        return false;
+      }
+
+      const returnLines = remainingItems.map(({ it, qty }) => {
+        const soldUnitIds = (it.unitIds || []).filter(id =>
+          state.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id),
+        );
+        return {
+          product_id: it.productId,
+          qty,
+          unit_ids: soldUnitIds.length ? soldUnitIds.slice(0, qty) : undefined,
+        };
+      });
+
+      const resolve = await resolveSaleReturnLines({ shopId: shop.shopId, saleId: sale.id, lines: returnLines });
+      if (!resolve.ok || !resolve.lines) {
+        pushAudit('DENIED', 'Sale', 'Cloud refund blocked: ' + (resolve.error || 'Sale items could not be matched'));
+        return false;
+      }
+
+      const cloud = await processSaleReturnAtomic({
+        shopId: shop.shopId,
+        returnId: uid(),
+        saleId: sale.id,
+        reason: 'Full bill refund',
+        mode: 'refund',
+        paymentMethod: 'cash',
+        lines: resolve.lines,
+      });
+      if (!cloud.ok) {
+        pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
+        return false;
+      }
+    }
 
     setStateWithInventoryLedger('REFUND', s => {
       const currentSale = s.sales.find(x => x.id === saleId);
@@ -1522,6 +1565,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       };
     });
     pushAudit('REFUND', 'Sale', `Refunded bill ${sale.billNo} · Rs. ${refundValue.toLocaleString()}${sale.items.flatMap(it => it.unitIds || []).length ? ` · tracked unit(s) returned` : ''}`);
+    return true;
   }, [state.sales, state.exchanges, state.units, pushAudit, user, can]);
 
   /* ---------------- admin-approved bill reversal ---------------- */
