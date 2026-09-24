@@ -34,6 +34,7 @@ declare
   v_item_id uuid;
   v_unit_id uuid;
   v_existing jsonb;
+  v_existing_purchase boolean := false;
 begin
   if v_uid is null then raise exception 'Authentication required'; end if;
   if p_shop_id is null or p_purchase_id is null or p_purchase is null or jsonb_typeof(p_purchase) <> 'object' then
@@ -60,7 +61,8 @@ begin
   end if;
 
   select * into v_purchase from public.purchases where id=p_purchase_id and shop_id=p_shop_id for update;
-  if found then
+  v_existing_purchase := found;
+  if v_existing_purchase then
     if v_purchase.status='received' then
       return jsonb_build_object('ok',true,'already_committed',true,'purchase_id',p_purchase_id,'status','received');
     end if;
@@ -97,7 +99,7 @@ begin
     end if;
   end loop;
 
-  if not found then
+  if not v_existing_purchase then
     insert into public.purchases(id,shop_id,po_no,supplier_id,supplier_name,status,total,notes,received_at,created_by)
     values (
       p_purchase_id,p_shop_id,
