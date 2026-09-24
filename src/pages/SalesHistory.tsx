@@ -22,6 +22,7 @@ export default function SalesHistory() {
   const [refunding, setRefunding] = useState<Sale | null>(null);
   const [printSale, setPrintSale] = useState<Sale | null>(null);
   const [limit, setLimit] = useState(50);
+  const [refundBusy, setRefundBusy] = useState(false);
 
   const cashiers = useMemo(() => [...new Map(state.sales.map(s => [s.cashierId, s.cashierName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [state.sales]);
   const rows = useMemo(() => {
@@ -249,9 +250,19 @@ export default function SalesHistory() {
         <div className="flex gap-2.5 mt-5">
           <button
             className="btn btn-danger-soft flex-1"
-            onClick={() => { if (refunding) refundSale(refunding.id); setRefunding(null); }}
+            onClick={async () => {
+              if (!refunding || refundBusy) return;
+              setRefundBusy(true);
+              try {
+                const ok = await refundSale(refunding.id);
+                if (ok) setRefunding(null);
+              } finally {
+                setRefundBusy(false);
+              }
+            }}
+            disabled={refundBusy}
           >
-            <RotateCcw size={15} /> Refund bill
+            <RotateCcw size={15} /> {refundBusy ? 'Processing…' : 'Refund bill'}
           </button>
           <button className="btn btn-soft flex-1" onClick={() => setRefunding(null)}>Cancel</button>
         </div>
