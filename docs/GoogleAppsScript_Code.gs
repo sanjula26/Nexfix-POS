@@ -84,9 +84,9 @@ function validateShopProof(value) {
 
 function shopAuthDigest(shopProof) {
   // The proof is derived from the shop recovery key and never sent in plaintext.
-  // Bind the stored digest to the server-side transport key so a Drive copy of
-  // SHOP_AUTH.json is not itself a reusable authorization token.
-  return sha256HexText(String(shopProof) + ':' + getBackupApiKey());
+  // Store only its SHA-256 digest; transport-key rotation must not invalidate
+  // existing shop authorization records.
+  return sha256HexText(String(shopProof));
 }
 
 function findShopBackupFolder(shopId) {
