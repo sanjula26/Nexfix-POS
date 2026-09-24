@@ -15,7 +15,10 @@ export type QueueOp =
   | { id: string; ts: string; type: 'backup'; note?: string }
   | { id: string; ts: string; type: 'custom'; note: string; payload?: string }
   | { id: string; ts: string; type: 'sale_create'; payload: string }
-  | { id: string; ts: string; type: 'return_create'; payload: string };
+  | { id: string; ts: string; type: 'return_create'; payload: string }
+  | { id: string; ts: string; type: 'sale_reversal_request'; payload: string }
+  | { id: string; ts: string; type: 'sale_reversal_approve'; payload: string }
+  | { id: string; ts: string; type: 'sale_reversal_reject'; payload: string };
 export interface BackupMeta {
   lastAutoBackupAt?: string;
   lastManualBackupAt?: string;
