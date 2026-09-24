@@ -1,4 +1,4 @@
-import type { POSState } from './types';
+import type { POSState, Purchase } from './types';
 import { supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 
