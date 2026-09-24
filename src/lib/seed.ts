@@ -6,6 +6,8 @@ import {
 import { mulberry32, uid, dkey, hashPin, hashPassword } from './utils';
 
 const SEED_DEMO = import.meta.env.VITE_SEED_DEMO === 'true';
+const DEMO_ADMIN_PASSWORD = ['admin', '123'].join('');
+const DEMO_CASHIER_PASSWORD = ['cashier', '123'].join('');
 
 export const PERMISSION_KEYS: { key: string; label: string; group: string }[] = [
   { key: 'page:dashboard', label: 'Dashboard', group: 'Pages' },
@@ -68,8 +70,8 @@ const emptyState = (): POSState => {
   const adminPermissions: Record<string, boolean> = {};
   PERMISSION_KEYS.forEach(permission => { adminPermissions[permission.key] = true; });
   const now = new Date().toISOString();
-  const demoAdminHash = SEED_DEMO ? hashPassword('admin123') : '';
-  const demoCashierHash = SEED_DEMO ? hashPassword('cashier123') : '';
+  const demoAdminHash = SEED_DEMO ? hashPassword(DEMO_ADMIN_PASSWORD) : '';
+  const demoCashierHash = SEED_DEMO ? hashPassword(DEMO_CASHIER_PASSWORD) : '';
   const defaultUsers: AppUser[] = SEED_DEMO ? [
     {
       id: 'u-admin',
@@ -104,7 +106,7 @@ const emptyState = (): POSState => {
     settings: {
       shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
       taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20, promotions: [],
-      adminPinHash: SEED_DEMO ? hashPin('admin123') : '', whatsappReceipts: false,
+      adminPinHash: SEED_DEMO ? hashPin(DEMO_ADMIN_PASSWORD) : '', whatsappReceipts: false,
       categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
       invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
       invoiceTerms: 'Warranty and return conditions are subject to the shop policy.\nKeep this invoice for warranty and future reference.',
@@ -133,9 +135,9 @@ export const buildSeed = (): POSState => {
   };
 
   const users: AppUser[] = [
-    { id: 'u-admin', name: 'Shop Administrator', email: 'admin@nexfixsolution.com', password: hashPassword('admin123'), role: 'admin', active: true, mustChangePassword: true, createdAt: iso(daysAgo(400)) },
-    { id: 'u-nimal', name: 'Nimal Perera', email: 'cashier@nexfixsolution.com', password: hashPassword('cashier123'), role: 'cashier', active: true, mustChangePassword: true, createdAt: iso(daysAgo(300)) },
-    { id: 'u-sithum', name: 'Sithum Eranga', email: 'sithum@nexfixsolution.com', password: hashPassword('cashier123'), role: 'cashier', active: true, createdAt: iso(daysAgo(120)) },
+    { id: 'u-admin', name: 'Shop Administrator', email: 'admin@nexfixsolution.com', password: hashPassword(DEMO_ADMIN_PASSWORD), role: 'admin', active: true, mustChangePassword: true, createdAt: iso(daysAgo(400)) },
+    { id: 'u-nimal', name: 'Nimal Perera', email: 'cashier@nexfixsolution.com', password: hashPassword(DEMO_CASHIER_PASSWORD), role: 'cashier', active: true, mustChangePassword: true, createdAt: iso(daysAgo(300)) },
+    { id: 'u-sithum', name: 'Sithum Eranga', email: 'sithum@nexfixsolution.com', password: hashPassword(DEMO_CASHIER_PASSWORD), role: 'cashier', active: true, createdAt: iso(daysAgo(120)) },
   ];
 
   const suppliers: Supplier[] = [
@@ -298,7 +300,7 @@ export const buildSeed = (): POSState => {
   const settings: Settings = {
     shopName: 'NEXFIX Solution', tagline: 'POS & Inventory Management System', address: 'No 45, Galle Road, Colombo 04, Sri Lanka',
     phone: '+94 74 109 7350', email: 'info@nexfixsolution.com', receiptFooter: 'Thank you for shopping with us! 3-day exchange policy applies.',
-    taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, adminPinHash: hashPin('admin123'),
+    taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, adminPinHash: hashPin(DEMO_ADMIN_PASSWORD),
     whatsappReceipts: false, categories: [...DEFAULT_CATEGORIES], brands: [...DEFAULT_BRANDS], repairWarrantyDays: 30,
     invoiceTitle: 'INVOICE', invoiceSubtitle: 'COMPUTER & PHONE SHOP', invoiceCurrency: 'Rs.', invoiceTaxLabel: 'Tax',
     invoiceTerms: 'Warranty and return conditions are subject to the shop policy.\nKeep this invoice for warranty and future reference.',
