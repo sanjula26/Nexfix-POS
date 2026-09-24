@@ -24,3 +24,12 @@ jobs:
         run: npm run lint
       - name: Production build
         run: npm run build
+
+      - name: Verify production bundle has no retired demo passwords
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'admin123|cashier123' dist 2>/dev/null; then
+            echo 'Retired demo password literal found in the production bundle.'
+            exit 1
+          fi
