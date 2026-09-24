@@ -1421,7 +1421,7 @@ export default function POS() {
           </Field>
           <div className="rounded-xl bg-raised border border-line px-3 py-2.5 text-[11px] text-sub">Admin approval will restore stock and mark the bill as <b className="text-ink">REVERSED</b>. No sale history is deleted.</div>
           <div className="flex gap-2.5">
-            <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={() => {
+            <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={async () => {
               if (!reverseSale) return;
               const ok = await requestBillReverse(reverseSale.id, reverseReason);
               if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
