@@ -18,7 +18,7 @@ import { uid } from '../lib/utils';
 export default function Settings() {
   const navigate = useNavigate();
   const {
-    state, user, updateSettings, resetData, can, changeAdminPin,
+    state, user, updateSettings, resetData, can, changeAdminPin, changeManagedPassword,
     connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
@@ -57,6 +57,11 @@ export default function Settings() {
   const [pinConfirm, setPinConfirm] = useState('');
   const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [showPins, setShowPins] = useState(false);
+  const [securityRole, setSecurityRole] = useState<'admin' | 'cashier'>('admin');
+  const [securityUserId, setSecurityUserId] = useState('');
+  const [accountNew, setAccountNew] = useState('');
+  const [accountConfirm, setAccountConfirm] = useState('');
+  const [accountMsg, setAccountMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [recoveryKeyInput, setRecoveryKeyInput] = useState('');
   const [recoveryKeyMsg, setRecoveryKeyMsg] = useState('');
   const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey());
@@ -67,6 +72,11 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
+  const securityAccounts = state.users.filter(u => (u.role === securityRole) && u.active);
+  useEffect(() => {
+    const first = securityAccounts[0]?.id || '';
+    if (!securityAccounts.some(u => u.id === securityUserId)) setSecurityUserId(first);
+  }, [securityRole, state.users, securityUserId]);
   useEffect(() => {
     const s = state.settings;
     if (!s) return;
@@ -133,6 +143,16 @@ export default function Settings() {
     setShopIdMsg('Existing Shop Backup ID saved. This browser will use that shop partition for Google Drive backup and restore.');
   };
 
+  const submitManagedPassword = async () => {
+    setAccountMsg(null);
+    if (!securityUserId) return setAccountMsg({ ok: false, text: 'No active ' + securityRole + ' account is available' });
+    if (accountNew.length < 12) return setAccountMsg({ ok: false, text: 'Password must be at least 12 characters' });
+    if (accountNew !== accountConfirm) return setAccountMsg({ ok: false, text: 'Passwords do not match' });
+    const res = await changeManagedPassword(securityUserId, accountNew);
+    if (!res.ok) return setAccountMsg({ ok: false, text: res.error || 'Failed to update login password' });
+    setAccountMsg({ ok: true, text: (securityRole === 'admin' ? 'Admin' : 'Cashier') + ' login password updated' });
+    setAccountNew(''); setAccountConfirm('');
+  };
   const submitPin = () => {
     setPinMsg(null);
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
@@ -436,12 +456,53 @@ export default function Settings() {
 
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Security</h3>
-            <p className="text-xs text-faint mb-4">This is the separate Admin Unlock PIN used when switching the sidebar role from <Badge tone="emerald" className="!text-[9px]">CASHIER</Badge> to <Badge tone="violet" className="!text-[9px]">ADMIN</Badge>. It is stored as a hash, never in plain text, and is separate from the admin login password.</p>
+            <p className="text-xs text-faint mb-4">Manage the real login passwords for the <b>ADMIN</b> and <b>CASHIER</b> accounts from one place. The selected account's password is always stored as a PBKDF2 hash and is never shown.</p>
+
+            <div className="rounded-xl border border-line bg-raised p-1.5 grid grid-cols-2 gap-1.5 mb-4">
+              {(['admin', 'cashier'] as const).map(role => (
+                <button key={role} type="button" onClick={() => { setSecurityRole(role); setAccountMsg(null); }} className={`rounded-lg py-2.5 text-xs font-bold uppercase tracking-wider transition ${securityRole === role ? (role === 'admin' ? 'bg-violet-600 text-white' : 'bg-emerald-600 text-white') : 'text-sub hover:text-ink'}`}>
+                  {role}
+                </button>
+              ))}
+            </div>
+
             <div className="space-y-3.5">
-              <Field label="Current admin unlock PIN" hint="No default PIN is shipped. Use the administrator password initially, then set a separate unlock PIN."><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder="Current admin unlock PIN" /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
-              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="New admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field><Field label="Confirm new admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field></div>
-              {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
-              <button className="btn btn-primary" onClick={submitPin} disabled={!pinCur || !pinNew || !pinConfirm}><ShieldCheck size={15} /> Update admin unlock PIN</button>
+              {securityAccounts.length === 0 ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-3.5 py-3 text-xs text-sub">
+                  No active {securityRole} account exists. Create the cashier account from <b>Users</b>, then return here.
+                </div>
+              ) : (
+                <>
+                  {securityAccounts.length > 1 && (
+                    <Field label={securityRole === 'admin' ? 'Administrator account' : 'Cashier account'}>
+                      <select className="input" value={securityUserId} onChange={e => { setSecurityUserId(e.target.value); setAccountMsg(null); }}>
+                        {securityAccounts.map(u => <option key={u.id} value={u.id}>{u.name} — {u.email}</option>)}
+                      </select>
+                    </Field>
+                  )}
+                  <div className="rounded-xl border border-line bg-raised px-3.5 py-3 text-xs">
+                    <div className="font-bold text-ink">{securityAccounts.find(u => u.id === securityUserId)?.name || 'Account'}</div>
+                    <div className="text-faint mt-0.5">{securityAccounts.find(u => u.id === securityUserId)?.email || ''}</div>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3.5">
+                    <Field label="New login password"><input type="password" className="input" value={accountNew} onChange={e => { setAccountNew(e.target.value); setAccountMsg(null); }} placeholder="Minimum 12 characters" autoComplete="new-password" /></Field>
+                    <Field label="Confirm login password"><input type="password" className="input" value={accountConfirm} onChange={e => { setAccountConfirm(e.target.value); setAccountMsg(null); }} placeholder="Repeat it" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void submitManagedPassword(); }} /></Field>
+                  </div>
+                  {accountMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${accountMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{accountMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {accountMsg.text}</p>}
+                  <button className="btn btn-primary" onClick={() => void submitManagedPassword()} disabled={!accountNew || !accountConfirm}><ShieldCheck size={15} /> Change {securityRole === 'admin' ? 'Admin' : 'Cashier'} login password</button>
+                </>
+              )}
+            </div>
+
+            <div className="mt-6 pt-5 border-t border-line">
+              <p className="text-xs font-bold text-ink mb-1">Admin unlock password / PIN</p>
+              <p className="text-[11px] text-faint mb-3">This is separate from the Admin login password. It remains available for the cashier → admin switch.</p>
+              <div className="space-y-3.5">
+                <Field label="Current admin unlock PIN" hint="No default PIN is shipped. Use the administrator password initially, then set a separate unlock PIN."><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder="Current admin unlock PIN" /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
+                <div className="grid sm:grid-cols-2 gap-3.5"><Field label="New admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field><Field label="Confirm new admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field></div>
+                {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
+                <button className="btn btn-primary" onClick={submitPin} disabled={!pinCur || !pinNew || !pinConfirm}><ShieldCheck size={15} /> Update admin unlock PIN</button>
+              </div>
             </div>
           </div>
 
