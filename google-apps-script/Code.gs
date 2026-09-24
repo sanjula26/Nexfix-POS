@@ -5,7 +5,7 @@
  * The supplied master Drive folder remains separate from any Google Sheet.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '3.2.0';
+var VERSION = '3.3.0';
 var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
@@ -988,6 +988,24 @@ function parsePostBody(e) {
   return raw ? JSON.parse(raw) : {};
 }
 
+function backupStatusKey(shopId, requestId) {
+  return 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
+}
+
+function writeBackupStatus(statusKey, record, cacheTtlSeconds) {
+  var serialized = JSON.stringify(record);
+  // CacheService is fast but can evict entries. Script Properties provides a
+  // durable status record so a slow client can still confirm a completed write.
+  try { CacheService.getScriptCache().put(statusKey, serialized, cacheTtlSeconds); } catch (ignoreCache) {}
+  try { PropertiesService.getScriptProperties().setProperty(statusKey, serialized); } catch (ignoreProperties) {}
+}
+
+function readBackupStatusRecord(statusKey) {
+  var cached = CacheService.getScriptCache().get(statusKey);
+  if (cached) return cached;
+  try { return PropertiesService.getScriptProperties().getProperty(statusKey); } catch (ignoreProperties) { return null; }
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
@@ -1001,53 +1019,46 @@ function doPost(e) {
     try { validateShopProof(contents.shopProof); } catch (proofError) { return json(unauthorized('Unauthorized')); }
     try { validateBackupContents(contents); } catch (payloadError) { return json(fail(payloadError)); }
 
-    var requestCache = CacheService.getScriptCache();
-    var cacheKey = 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
+    var statusKey = backupStatusKey(shopId, requestId);
     var requestFingerprint = requestPayloadFingerprint(contents);
-    var cached = requestCache.get(cacheKey);
-    if (cached) {
+    var existing = readBackupStatusRecord(statusKey);
+    if (existing) {
       try {
-        var cachedRecord = JSON.parse(cached);
-        // Idempotency is bound to the complete validated payload, not only the
-        // requestId. Reusing a requestId with changed contents must never replay
-        // the previous success/failure.
-        if (cachedRecord && cachedRecord.fingerprint) {
-          if (cachedRecord.fingerprint !== requestFingerprint) {
+        var existingRecord = JSON.parse(existing);
+        if (existingRecord && existingRecord.fingerprint) {
+          if (existingRecord.fingerprint !== requestFingerprint) {
             return json(fail('requestId has already been used with different backup contents'));
           }
-          return json(cachedRecord.result || cachedRecord);
+          return json(existingRecord.result || existingRecord);
         }
-        // An older cache entry has no payload binding. Do not replay it,
-        // because doing so would let a reused requestId bypass idempotency
-        // validation after a deployment/cache rollover.
         return json(fail('Request idempotency record is not bound to backup contents; retry with a new requestId'));
-      } catch (ignoreCached) {}
+      } catch (ignoreExisting) {}
     }
 
-    try {
-      requestCache.put(cacheKey, JSON.stringify({
-        fingerprint: requestFingerprint,
-        result: { ok: false, status: 'pending', version: VERSION, pending: true }
-      }), 600);
-    } catch (ignorePendingCacheWrite) {}
+    var pendingRecord = {
+      fingerprint: requestFingerprint,
+      result: { ok: false, status: 'pending', version: VERSION, pending: true, action: 'backupState' }
+    };
+    // Record pending before any Drive work so status reads have an explicit,
+    // authenticated state instead of depending on a cache miss.
+    writeBackupStatus(statusKey, pendingRecord, 600);
 
-    var result;
     try { checkBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (rateError) {
       var rateFailure = fail(rateError);
-      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: rateFailure }), 120); } catch (ignoreRateCacheWrite) {}
+      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: rateFailure }, 600);
       return json(rateFailure);
     }
 
     try {
-      result = ok(backupStateToDrive(contents, shopId));
-      try {
-        recordBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim());
-        requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: result }), 21600);
-      } catch (ignoreCacheWrite) {}
+      var result = ok(backupStateToDrive(contents, shopId));
+      // Persist success immediately after Drive confirms the write, before
+      // rate-limit bookkeeping. This closes the false-timeout window.
+      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: result }, 21600);
+      try { recordBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (ignoreRateRecord) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
-      try { requestCache.put(cacheKey, JSON.stringify({ fingerprint: requestFingerprint, result: backupFailure }), 120); } catch (ignoreFailureCacheWrite) {}
+      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: backupFailure }, 600);
       return json(backupFailure);
     }
   } catch (err) {
@@ -1062,13 +1073,14 @@ function getCachedBackupStatus(requestId, shopId) {
   if (!id || id.length > REQUEST_ID_MAX_LENGTH || !/^[A-Za-z0-9._:-]+$/.test(id)) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
 
   var shopPartition = shopPartitionKey(shopId);
-  var cacheKey = 'nexfix_req_' + shopPartition + '_' + id;
-  var cached = CacheService.getScriptCache().get(cacheKey);
-  if (!cached) return { ok: false, status: 'pending', version: VERSION, pending: true };
+  var statusKey = backupStatusKey(shopId, id);
+  var raw = readBackupStatusRecord(statusKey);
+  if (!raw) return { ok: false, status: 'pending', version: VERSION, pending: true };
 
   try {
-    var record = JSON.parse(cached);
+    var record = JSON.parse(raw);
     var result = record && record.result ? record.result : record;
+    if (result && result.status === 'pending') return { ok: false, status: 'pending', version: VERSION, pending: true };
     if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
     return { ok: false, status: 'error', version: VERSION, message: (result && result.message) || 'Backup request failed' };
   } catch (err) {
