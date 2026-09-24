@@ -208,7 +208,7 @@ create table public.purchase_items (
 -- ============================================================
 -- 10. SALES
 -- ============================================================
-create type sale_status as enum ('completed', 'refunded', 'partial_refund', 'exchanged', 'void');
+create type sale_status as enum ('completed', 'refunded', 'partial_refund', 'exchanged', 'void', 'reversed');
 create type payment_method as enum ('cash', 'card', 'bank', 'mobile', 'credit', 'points');
 
 create table public.sales (
@@ -255,6 +255,28 @@ create table public.sale_payments (
   method payment_method not null,
   amount numeric(12,2) not null
 );
+
+-- ============================================================
+-- 11. BILL REVERSAL REQUESTS
+-- ============================================================
+create table public.sale_reversal_requests (
+  id uuid primary key,
+  shop_id uuid not null references public.shops(id) on delete cascade,
+  sale_id uuid not null references public.sales(id) on delete restrict,
+  bill_no text not null,
+  reason text not null,
+  requested_by uuid not null references auth.users(id) on delete restrict,
+  requested_at timestamptz not null default now(),
+  status text not null default 'pending' check (status in ('pending','approved','rejected')),
+  reviewed_by uuid references auth.users(id) on delete restrict,
+  reviewed_at timestamptz,
+  review_note text
+);
+
+create index idx_sale_reversal_requests_shop_status
+  on public.sale_reversal_requests(shop_id,status,requested_at desc);
+create index idx_sale_reversal_requests_sale
+  on public.sale_reversal_requests(shop_id,sale_id,status);
 
 -- ============================================================
 -- 11. QUOTATIONS / ESTIMATES
