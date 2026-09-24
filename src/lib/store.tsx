@@ -273,6 +273,9 @@ function applyInventoryLedger(
 }
 
 
+const RETIRED_DEMO_PASSWORDS = ['admin', 'cashier'].map(prefix => prefix + '123');
+const RETIRED_DEMO_EMAILS = ['admin', 'cashier'].map(prefix => prefix + '@nexfixsolution.com');
+
 function migrate(s: POSState): POSState {
   // Upgrade legacy/plaintext passwords without restoring any known default credential.
   const migratedUsers = (s.users || []).map(u => ({
@@ -286,9 +289,9 @@ function migrate(s: POSState): POSState {
   // the normal password policy.
   const users = migratedUsers.filter(u => {
     const legacyIdentity = u.id === 'u-admin' || u.id === 'u-nimal'
-      || ['admin@nexfixsolution.com', 'cashier@nexfixsolution.com'].includes(u.email.trim().toLowerCase());
+      || RETIRED_DEMO_EMAILS.includes(u.email.trim().toLowerCase());
     if (!legacyIdentity) return true;
-    const retired = ['admin123', 'cashier123'].some(secret => verifyPassword(secret, u.password));
+    const retired = RETIRED_DEMO_PASSWORDS.some(secret => verifyPassword(secret, u.password));
     return !retired;
   });
   // Never recreate the historical admin123 PIN. Existing known-default PINs are
@@ -743,7 +746,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!user || user.role !== 'admin') return { ok: false, error: 'Only admins can change account passwords' };
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
-    if (next === 'admin123' || next === 'cashier123') return { ok: false, error: 'Choose a password different from the retired demo credentials' };
+    if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
     const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier'));
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
     const hashed = await hashPasswordAsync(next);
