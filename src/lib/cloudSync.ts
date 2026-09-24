@@ -83,6 +83,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     return { ok: true, shopId: membership.shop_id };
   }
 
+  // Security boundary: shop membership is the cloud authorization source of truth.
   // Do not auto-bootstrap a shop from a background sync/login path. Any
   // authenticated user without an existing membership must be explicitly
   // provisioned by an owner/admin; otherwise a local cashier could become the
