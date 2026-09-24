@@ -1852,8 +1852,8 @@ const deletePurchase = useCallback((id: string) => {
     const requested = new Map<number, number>();
     for (const item of returns) {
       if (!Number.isInteger(item.itemIdx) || item.itemIdx < 0 || item.itemIdx >= sale.items.length) continue;
-      if (!Number.isFinite(item.qty) || item.qty <= 0) continue;
-      requested.set(item.itemIdx, Math.floor(item.qty));
+      if (!Number.isInteger(item.qty) || item.qty <= 0) return;
+      requested.set(item.itemIdx, (requested.get(item.itemIdx) || 0) + item.qty);
     }
     if (requested.size === 0) return;
 
@@ -1879,7 +1879,9 @@ const deletePurchase = useCallback((id: string) => {
           : (priorReturnedByProduct.get(it.productId) || 0);
         const availableQty = Math.max(0, it.qty - alreadyReturned);
         const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).length;
-        const qty = Math.min(requestedQty, availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : requestedQty);
+        const maxReturnable = Math.min(availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : availableQty);
+        if (requestedQty > maxReturnable) return s;
+        const qty = requestedQty;
         if (qty <= 0) continue;
 
         const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
