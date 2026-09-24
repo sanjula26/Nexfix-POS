@@ -275,11 +275,22 @@ function applyInventoryLedger(
 
 function migrate(s: POSState): POSState {
   // Upgrade legacy/plaintext passwords without restoring any known default credential.
-  const users = (s.users || []).map(u => ({
+  const migratedUsers = (s.users || []).map(u => ({
     ...u,
     password: isHashed(u.password) ? u.password : hashPassword(u.password || ''),
     mustChangePassword: u.mustChangePassword ?? true,
   }));
+  // Remove only the historical seeded identities while their retired default
+  // credentials are still intact. A real shop account that happens to reuse the
+  // old email after changing its password is preserved but remains subject to
+  // the normal password policy.
+  const users = migratedUsers.filter(u => {
+    const legacyIdentity = u.id === 'u-admin' || u.id === 'u-nimal'
+      || ['admin@nexfixsolution.com', 'cashier@nexfixsolution.com'].includes(u.email.trim().toLowerCase());
+    if (!legacyIdentity) return true;
+    const retired = ['admin123', 'cashier123'].some(secret => verifyPassword(secret, u.password));
+    return !retired;
+  });
   // Never recreate the historical admin123 PIN. Existing known-default PINs are
   // invalidated so admin unlock can fall back to the authenticated admin password.
   let adminPinHash = String(s.settings?.adminPinHash || '');
@@ -638,7 +649,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
     if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
-    try { localStorage.removeItem('nexfix_role_switch_v1'); } catch { /* ignore */ }
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
     const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
@@ -717,7 +727,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const changePassword = useCallback(async (nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
     if (!user) return { ok: false, error: 'You must be signed in' };
     const next = nextPassword.trim();
-    if (next.length < 8) return { ok: false, error: 'New password must be at least 8 characters' };
+    if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (next === 'admin123' || next === 'cashier123') return { ok: false, error: 'Choose a password different from the default recovery password' };
     const hashed = await hashPasswordAsync(next);
     setState(s => ({
