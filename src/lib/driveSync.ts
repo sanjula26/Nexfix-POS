@@ -13,7 +13,7 @@ import {
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
-const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
+const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxnw_0ADWQEKVFN5JF1nwu2ly11mgP2tOiyP0A0EGKvIhNLZfblm_AoPAOpT8Se9RvB/exec';
 // This is a transport credential, not a frontend secret. Any value compiled
 // into an Electron/Vite bundle can be extracted; Apps Script still rejects
 // requests that do not present the configured Script Property value.
