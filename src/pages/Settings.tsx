@@ -72,10 +72,11 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
-  const securityAccounts = state.users.filter(u => (u.role === securityRole) && u.active);
+  const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
-    const first = securityAccounts[0]?.id || '';
-    if (!securityAccounts.some(u => u.id === securityUserId)) setSecurityUserId(first);
+    const accounts = state.users.filter(u => u.role === securityRole && u.active);
+    const first = accounts[0]?.id || '';
+    if (!accounts.some(u => u.id === securityUserId)) setSecurityUserId(first);
   }, [securityRole, state.users, securityUserId]);
   useEffect(() => {
     const s = state.settings;
