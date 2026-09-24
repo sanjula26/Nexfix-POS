@@ -208,7 +208,9 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     // Pending/network misses are inconclusive until the bounded window expires.
     const confirmationWindowMs = 30000;
     const deadline = Date.now() + confirmationWindowMs;
-    let pollDelay = 350;
+    // The status endpoint is intentionally lightweight; poll aggressively so
+    // a warm Apps Script/Drive write is normally confirmed within a few seconds.
+    let pollDelay = 250;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
       await new Promise((resolve) => window.setTimeout(resolve, Math.min(pollDelay, Math.max(100, remaining))));
@@ -249,7 +251,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     // Last-resort verification is read-only and still authenticated with the
     // same shopProof/apiKey. Accept a recent latest backup for this shop only
     // when its timestamp/backupId corresponds closely to this upload attempt.
-    const latest = await fetchLatestGoogleBackup();
+    const latest = await fetchLatestGoogleBackup(5000);
     if (latest && latest.shopId === shopId) {
       const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
       const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
@@ -285,7 +287,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
       script.remove();
       resolve(value);
     };
-    const timer = window.setTimeout(() => finish(null), 8000);
+    const timer = window.setTimeout(() => finish(null), 2500);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
       const data = result as { ok?: boolean; pending?: boolean; status?: string; message?: string; action?: string };
@@ -490,7 +492,7 @@ function getJsonp<T>(url: URL, timeoutMs = 30000): Promise<T | null> {
   });
 }
 
-export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | null> {
+export async function fetchLatestGoogleBackup(timeoutMs = 30000): Promise<LatestGoogleBackup | null> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
   const shopId = getLocalShopId();
   if (!shopId) return null;
@@ -518,7 +520,7 @@ export async function fetchLatestGoogleBackup(): Promise<LatestGoogleBackup | nu
         multipart?: unknown;
         manifest?: LatestGoogleBackup['manifest'];
       };
-    }>(url);
+    }>(url, timeoutMs);
     if (!result?.ok || !result.backup) return null;
     const backup = result.backup;
     if (typeof backup.shopId !== 'string' || typeof backup.shopPartition !== 'string') return null;
