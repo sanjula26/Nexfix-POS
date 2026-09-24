@@ -294,7 +294,7 @@ function migrate(s: POSState): POSState {
     const retired = RETIRED_DEMO_PASSWORDS.some(secret => verifyPassword(secret, u.password));
     return !retired;
   });
-  // Never recreate the historical admin123 PIN. Existing known-default PINs are
+  // Never recreate a historical demo PIN. Existing known-default PINs are
   // invalidated so admin unlock can fall back to the authenticated admin password.
   let adminPinHash = String(s.settings?.adminPinHash || '');
   if (adminPinHash && verifyPassword(RETIRED_DEMO_PASSWORDS[0], adminPinHash)) adminPinHash = '';
@@ -716,7 +716,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
-    try { localStorage.removeItem('nexfix_role_switch_v1'); } catch { /* ignore */ }
     const sess = { userId: admin.id, remember: true };
     loginAtRef.current = Date.now();
     setSession(sess);
@@ -762,7 +761,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem('nexfix_role_switch_v1'); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
@@ -812,7 +811,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
-    try { localStorage.setItem('nexfix_role_switch_v1', '1'); } catch { /* ignore */ }
     setSession(sess);
     try {
       if (sess.remember) {
