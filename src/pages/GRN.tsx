@@ -172,7 +172,7 @@ export default function GRN() {
     }
   };
 
-  const process = () => {
+  const process = async () => {
     if (!confirmId || actionRunning) return;
     const purchase = state.purchases.find(p => p.id === confirmId);
     if (!purchase || purchase.status !== 'pending') {
@@ -189,7 +189,7 @@ export default function GRN() {
     }
     setActionRunning(true);
     try {
-      const result = processGRN(confirmId, user?.name || 'Unknown');
+      const result = await processGRN(confirmId, user?.name || 'Unknown');
       if (!result.ok) {
         setFormError(result.error || 'Unable to process this GRN. No stock was changed.');
         setConfirmId(null); setPriceChanges([]);
