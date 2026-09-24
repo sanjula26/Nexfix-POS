@@ -1533,6 +1533,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sale = state.sales.find(x => x.id === saleId);
     const note = reason.trim();
     if (!sale || sale.status !== 'completed' || !note) return false;
+    // A sale with an existing exchange cannot be fully reversed safely: the
+    // exchange may already have restored stock/tracked units. Requiring the
+    // exchange workflow to settle first prevents double-restocking on reversal.
+    if ((state.exchanges || []).some(x => x.billNo === sale.billNo)) {
+      pushAudit('DENIED', 'Sale', 'Blocked bill reversal after an exchange exists for the bill');
+      return false;
+    }
     if (state.reverseRequests?.some(r => r.saleId === saleId && r.status === 'pending')) return false;
     const req: ReverseRequest = { id: uid(), saleId, billNo: sale.billNo, reason: note, requestedBy: user.name, requestedAt: new Date().toISOString(), status: 'pending' };
     setState(s => ({ ...s, reverseRequests: [req, ...(s.reverseRequests || [])] }));
