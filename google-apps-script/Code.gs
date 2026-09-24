@@ -885,7 +885,7 @@ function latestDriveBackup(shopId) {
             if (!manifest.sha256 || sha256HexText(manifestPayload) !== String(manifest.sha256)) continue;
             if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
               latest = file;
-              latestPayload = { multipart: true, manifest: manifest, shopName: manifest.shopName, timestamp: manifest.exportedAt, kind: manifest.kind, shopId: manifest.shopId, shopPartition: manifest.shopPartition };
+              latestPayload = { multipart: true, manifest: manifest, backupId: String(manifest.backupId || ''), shopName: manifest.shopName, timestamp: manifest.exportedAt, kind: manifest.kind, shopId: manifest.shopId, shopPartition: manifest.shopPartition };
             }
             continue;
           }
@@ -902,7 +902,7 @@ function latestDriveBackup(shopId) {
           if (meta.encrypted === true && parsed.payload) {
             if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
               latest = file;
-              latestPayload = { state: JSON.stringify(parsed.payload), timestamp: meta.exportedAt || '', kind: meta.kind || '', shopId: meta.shopId || shopId, shopPartition: meta.shopPartition || shopPartitionKey(shopId), shopName: meta.shopName || 'Shop', encrypted: true, multipart: false };
+              latestPayload = { state: JSON.stringify(parsed.payload), backupId: String(meta.backupId || ''), timestamp: meta.exportedAt || '', kind: meta.kind || '', shopId: meta.shopId || shopId, shopPartition: meta.shopPartition || shopPartitionKey(shopId), shopName: meta.shopName || 'Shop', encrypted: true, multipart: false };
             }
             continue;
           }
@@ -911,7 +911,7 @@ function latestDriveBackup(shopId) {
           if (meta.version !== undefined && Number(meta.version) !== 2) continue;
           if (!latest || file.getLastUpdated().getTime() > latest.getLastUpdated().getTime()) {
             latest = file;
-            latestPayload = { state: JSON.stringify(parsed.state), timestamp: meta.exportedAt || '', kind: meta.kind || '', shopId: meta.shopId || shopId, shopPartition: meta.shopPartition || shopPartitionKey(shopId), shopName: meta.shopName || (parsed.state.settings && parsed.state.settings.shopName ? String(parsed.state.settings.shopName) : 'Shop'), encrypted: false, multipart: false };
+            latestPayload = { state: JSON.stringify(parsed.state), backupId: String(meta.backupId || ''), timestamp: meta.exportedAt || '', kind: meta.kind || '', shopId: meta.shopId || shopId, shopPartition: meta.shopPartition || shopPartitionKey(shopId), shopName: meta.shopName || (parsed.state.settings && parsed.state.settings.shopName ? String(parsed.state.settings.shopName) : 'Shop'), encrypted: false, multipart: false };
           }
         } catch (ignore) {}
       }
@@ -930,6 +930,7 @@ function latestBackup(ss, shopId) {
       shopId: driveBackup.shopId || shopId,
       shopPartition: driveBackup.shopPartition || shopPartitionKey(shopId),
       shopName: driveBackup.shopName || 'Shop',
+      backupId: driveBackup.backupId || '',
       encrypted: driveBackup.encrypted === true,
       multipart: driveBackup.multipart === true,
       state: driveBackup.state || '',
