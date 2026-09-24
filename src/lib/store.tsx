@@ -131,7 +131,7 @@ interface StoreCtx {
   saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => { ok: boolean; purchase?: Purchase; error?: string };
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
   receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
-  processGRN: (id: string, processorName: string) => { ok: boolean; error?: string };
+  processGRN: (id: string, processorName: string) => Promise<{ ok: boolean; error?: string }>;
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
   // expenses
