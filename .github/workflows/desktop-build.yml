@@ -48,6 +48,8 @@ jobs:
         run: npm run lint
 
       - name: Build web app
+        env:
+          VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
         run: npm run build
 
       - name: Build Windows installer and portable app
