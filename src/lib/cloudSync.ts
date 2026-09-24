@@ -344,6 +344,27 @@ export async function processSaleReturnAtomic(input: {
   return { ok: true, alreadyCommitted: row.already_committed === true, returnId: row.return_id, returnNo: row.return_no, refundAmount: Number(row.refund_amount), additionalPayment: Number(row.additional_payment), saleId: row.sale_id };
 }
 
+export async function receivePurchaseAtomic(input: {
+  shopId: string; purchaseId: string; deviceId: string; purchase: Purchase;
+}): Promise<{ok:boolean; alreadyCommitted?:boolean; purchaseId?:string; total?:number; error?:string}> {
+  if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok:false, error:sessionError.message };
+  if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
+  if (!input.shopId || !input.purchaseId || !input.deviceId) return { ok:false, error:'Missing GRN identifiers' };
+  const { data, error } = await supabase.rpc('receive_purchase_atomic', {
+    p_shop_id: input.shopId,
+    p_purchase_id: input.purchaseId,
+    p_device_id: input.deviceId,
+    p_purchase: input.purchase,
+  });
+  if (error) return { ok:false, error:error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok:false, error:'Cloud GRN receive was not committed' };
+  return { ok:true, alreadyCommitted:row.already_committed === true, purchaseId:row.purchase_id, total:Number(row.total || 0) };
+}
+
 export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResult> {
   if (!supabaseConfigured || !supabase) return { status: 'disabled' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { status: 'offline' };
