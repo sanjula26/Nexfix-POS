@@ -1038,6 +1038,8 @@ function doPost(e) {
 
     var pendingRecord = {
       fingerprint: requestFingerprint,
+      shopPartition: shopPartitionKey(shopId),
+      proofDigest: shopAuthDigest(contents.shopProof),
       result: { ok: false, status: 'pending', version: VERSION, pending: true, action: 'backupState' }
     };
     // Record pending before any Drive work so status reads have an explicit,
@@ -1046,7 +1048,12 @@ function doPost(e) {
 
     try { checkBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (rateError) {
       var rateFailure = fail(rateError);
-      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: rateFailure }, 600);
+      writeBackupStatus(statusKey, {
+        fingerprint: requestFingerprint,
+        shopPartition: shopPartitionKey(shopId),
+        proofDigest: shopAuthDigest(contents.shopProof),
+        result: rateFailure
+      }, 600);
       return json(rateFailure);
     }
 
@@ -1054,18 +1061,44 @@ function doPost(e) {
       var result = ok(backupStateToDrive(contents, shopId));
       // Persist success immediately after Drive confirms the write, before
       // rate-limit bookkeeping. This closes the false-timeout window.
-      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: result }, 21600);
+      writeBackupStatus(statusKey, {
+        fingerprint: requestFingerprint,
+        shopPartition: shopPartitionKey(shopId),
+        proofDigest: shopAuthDigest(contents.shopProof),
+        result: result
+      }, 21600);
       try { recordBackupRateLimit(shopId, contents.backupId, String(contents.format || 'legacy').trim()); } catch (ignoreRateRecord) {}
       return json(result);
     } catch (backupError) {
       var backupFailure = fail(backupError);
-      writeBackupStatus(statusKey, { fingerprint: requestFingerprint, result: backupFailure }, 600);
+      writeBackupStatus(statusKey, {
+        fingerprint: requestFingerprint,
+        shopPartition: shopPartitionKey(shopId),
+        proofDigest: shopAuthDigest(contents.shopProof),
+        result: backupFailure
+      }, 600);
       return json(backupFailure);
     }
   } catch (err) {
     return json(fail(err));
   } finally {
     try { lock.releaseLock(); } catch (ignore) {}
+  }
+}
+
+function isBackupStatusProofAuthorized(shopId, requestId, shopProof) {
+  var safeShopId = normalizeShopId(shopId);
+  var safeRequestId = validateRequestId(requestId);
+  var proof = validateShopProof(shopProof);
+  var raw = readBackupStatusRecord(backupStatusKey(safeShopId, safeRequestId));
+  if (!raw) return false;
+  try {
+    var record = JSON.parse(raw);
+    return !!record
+      && String(record.shopPartition || '') === shopPartitionKey(safeShopId)
+      && String(record.proofDigest || '') === shopAuthDigest(proof);
+  } catch (ignore) {
+    return false;
   }
 }
 
@@ -1110,7 +1143,14 @@ function doGet(e) {
   if (p.action === 'backupStatus') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var statusShopId;
-    try { statusShopId = normalizeShopId(p.shopId); validateRequestId(p.requestId); validateShopProof(p.shopProof); authorizeShopAccess(statusShopId, p.shopProof, false); } catch (err) {
+    try {
+      statusShopId = normalizeShopId(p.shopId);
+      validateRequestId(p.requestId);
+      validateShopProof(p.shopProof);
+      // Do not scan Drive on every polling request. The durable status record
+      // already binds this request to the same shop proof and API key.
+      if (!isBackupStatusProofAuthorized(statusShopId, p.requestId, p.shopProof)) throw new Error('Unauthorized');
+    } catch (err) {
       return json(unauthorized('Unauthorized'));
     }
     var statusResult = getCachedBackupStatus(p.requestId, statusShopId);
