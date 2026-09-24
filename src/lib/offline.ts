@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog } from './cloudSync';
+import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -48,6 +48,9 @@ export async function queueWrite(note?:string):Promise<void>{
 
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
+export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
+export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
+export async function queueSaleReversalRejection(requestId:string,note?:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_reject',id:`sale-reversal-reject:${requestId}`,payload:JSON.stringify({requestId,note})});if(!queued)throw new Error('Local sync storage is unavailable; reversal rejection was not queued safely.');}
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
@@ -79,6 +82,42 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:parsed.input.salesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
+      if(op.type==='sale_reversal_request'){
+        try{
+          const parsed=JSON.parse(op.payload) as {requestId:string;input:{saleId:string;reason:string}};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const result=await requestSaleReversal({shopId:shop.shopId,requestId:parsed.requestId,saleId:parsed.input.saleId,reason:parsed.input.reason});
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
+      if(op.type==='sale_reversal_approve'){
+        try{
+          const parsed=JSON.parse(op.payload) as {requestId:string};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const result=await approveSaleReversal({shopId:shop.shopId,requestId:parsed.requestId});
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
+      if(op.type==='sale_reversal_reject'){
+        try{
+          const parsed=JSON.parse(op.payload) as {requestId:string;note?:string};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const result=await rejectSaleReversal({shopId:shop.shopId,requestId:parsed.requestId,note:parsed.note});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
