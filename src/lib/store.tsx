@@ -297,7 +297,7 @@ function migrate(s: POSState): POSState {
   // Never recreate the historical admin123 PIN. Existing known-default PINs are
   // invalidated so admin unlock can fall back to the authenticated admin password.
   let adminPinHash = String(s.settings?.adminPinHash || '');
-  if (adminPinHash && verifyPassword('admin123', adminPinHash)) adminPinHash = '';
+  if (adminPinHash && verifyPassword(RETIRED_DEMO_PASSWORDS[0], adminPinHash)) adminPinHash = '';
   if (adminPinHash && (adminPinHash.includes('.') || adminPinHash.length < 32)) adminPinHash = '';
   const defaultAdminPermissions: Record<string, boolean> = Object.fromEntries(PERMISSION_KEYS.map(k => [k.key, true]));
   const permissions: Permissions = {
@@ -731,7 +731,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!user) return { ok: false, error: 'You must be signed in' };
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
-    if (next === 'admin123' || next === 'cashier123') return { ok: false, error: 'Choose a password different from the default recovery password' };
+    if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
     const hashed = await hashPasswordAsync(next);
     setState(s => ({
       ...s,
