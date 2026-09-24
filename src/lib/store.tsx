@@ -747,7 +747,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
+    try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem('nexfix_role_switch_v1'); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
