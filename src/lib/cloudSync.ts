@@ -261,6 +261,66 @@ export async function resolveSaleReturnLines(input: {
   return { ok: true, lines: rows as Array<{ sale_item_id: string; qty: number; unit_ids?: string[] }> };
 }
 
+export async function requestSaleReversal(input: {
+  shopId: string; requestId: string; saleId: string; reason: string;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; requestId?: string; saleId?: string; status?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase.rpc('request_sale_reversal', {
+    p_shop_id: input.shopId, p_request_id: input.requestId, p_sale_id: input.saleId, p_reason: input.reason.trim().slice(0, 500),
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: 'Cloud reversal request was not committed' };
+  return { ok: true, alreadyCommitted: row.already_committed === true, requestId: row.request_id, saleId: row.sale_id, status: row.status };
+}
+
+export async function approveSaleReversal(input: {
+  shopId: string; requestId: string;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; requestId?: string; saleId?: string; billNo?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase.rpc('approve_sale_reversal', { p_shop_id: input.shopId, p_request_id: input.requestId });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: 'Cloud reversal approval was not committed' };
+  return { ok: true, alreadyCommitted: row.already_committed === true, requestId: row.request_id, saleId: row.sale_id, billNo: row.bill_no };
+}
+
+export async function rejectSaleReversal(input: {
+  shopId: string; requestId: string; note?: string;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; requestId?: string; status?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase.rpc('reject_sale_reversal', { p_shop_id: input.shopId, p_request_id: input.requestId, p_note: input.note?.trim().slice(0, 500) || null });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: 'Cloud reversal rejection was not committed' };
+  return { ok: true, alreadyCommitted: row.already_committed === true, requestId: row.request_id, status: row.status };
+}
+
+export async function listSaleReversalRequests(shopId: string): Promise<{ ok: boolean; requests?: Array<{
+  id:string; saleId:string; billNo:string; reason:string; requestedBy:string; requestedAt:string; status:'pending'|'approved'|'rejected'; reviewedBy?:string; reviewedAt?:string; reviewNote?:string;
+}>; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase.rpc('list_sale_reversal_requests', { p_shop_id: shopId });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, requests: (Array.isArray(data) ? data : []) as any };
+}
+
 export async function processSaleReturnAtomic(input: {
   shopId: string;
   returnId: string;
