@@ -199,12 +199,16 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     form.submit();
     window.setTimeout(() => { form.remove(); iframe.remove(); }, 60000);
 
-    // The POST itself is fire-and-forget; poll the short-lived server status
-    // cache without adding a long delay between multipart parts.
-    const deadline = Date.now() + 20000;
-    let pollDelay = 300;
+    // The POST is fire-and-forget, so confirmation gets a generous window.
+    // Slow Apps Script/Drive writes are expected; pending/unknown status is not
+    // treated as a failure while the confirmation window is still open.
+    const confirmationWindowMs = 90000;
+    const deadline = Date.now() + confirmationWindowMs;
+    let pollDelay = 750;
     while (Date.now() < deadline) {
-      await new Promise((resolve) => window.setTimeout(resolve, pollDelay));
+      const remaining = deadline - Date.now();
+      await new Promise((resolve) => window.setTimeout(resolve, Math.min(pollDelay, Math.max(100, remaining))));
+      if (Date.now() > deadline) break;
       const status = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
       if (status === true) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
@@ -216,11 +220,12 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         }
         return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
-      if (status === false) return { ok: false, error: 'Google Drive backup request failed.' };
-      pollDelay = Math.min(1000, Math.round(pollDelay * 1.5));
+      // null/pending/network timeout is inconclusive: keep polling with backoff.
+      pollDelay = Math.min(4000, Math.round(pollDelay * 1.45));
     }
-    // One final status read handles a successful Apps Script request that completed
-    // just after the normal polling deadline. Never convert a late success into a failure.
+
+    // Final status read: a Drive write can finish immediately after the polling
+    // window. Never turn a late success into a timeout.
     const finalStatus = await getGoogleBackupRequestStatus(baseUrl, shopId, requestId, String(body.shopProof || ''));
     if (finalStatus === true) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
@@ -232,7 +237,25 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       }
       return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.', ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
-    console.error('[Google Backup] confirmation timed out', { requestId });
+
+    // Last-resort verification is read-only and still authenticated with the
+    // same shopProof/apiKey. Accept a recent latest backup for this shop only
+    // when its timestamp/backupId corresponds closely to this upload attempt.
+    const latest = await fetchLatestGoogleBackup();
+    if (latest && latest.shopId === shopId) {
+      const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
+      const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
+      const latestBackupId = latest.manifest?.backupId || '';
+      const attemptBackupId = String(body.backupId || '');
+      const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
+        && latestAt >= attemptAt - 5000
+        && latestAt <= Date.now() + 30000;
+      if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) {
+        return { ok: true };
+      }
+    }
+
+    console.error('[Google Backup] confirmation could not be verified', { requestId });
     return { ok: false, error: 'Google Drive backup confirmation timed out. Please check Google Drive and try again.' };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Drive backup request failed.';
@@ -254,7 +277,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
       script.remove();
       resolve(value);
     };
-    const timer = window.setTimeout(() => finish(null), 2000);
+    const timer = window.setTimeout(() => finish(null), 8000);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
       const data = result as { ok?: boolean; pending?: boolean; status?: string; message?: string; action?: string };
