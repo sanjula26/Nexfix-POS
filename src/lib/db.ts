@@ -18,7 +18,7 @@ export type QueueOp =
   | { id: string; ts: string; type: 'return_create'; payload: string }
   | { id: string; ts: string; type: 'sale_reversal_request'; payload: string }
   | { id: string; ts: string; type: 'sale_reversal_approve'; payload: string }
-  | { id: string; ts: string; type: 'sale_reversal_reject'; payload: string };
+  | { id: string; ts: string; type: 'sale_reversal_reject'; payload: string }
   | { id: string; ts: string; type: 'purchase_receive'; payload: string };
 export interface BackupMeta {
   lastAutoBackupAt?: string;
