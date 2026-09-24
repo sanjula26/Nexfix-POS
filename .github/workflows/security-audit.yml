@@ -80,7 +80,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --check google-apps-script/Code.gs
+          cp google-apps-script/Code.gs /tmp/nexfix-backup-code.js
+          node --check /tmp/nexfix-backup-code.js
           cmp -s google-apps-script/Code.gs docs/GoogleAppsScript_Code.gs
 
       - name: Check client backup proof boundary
