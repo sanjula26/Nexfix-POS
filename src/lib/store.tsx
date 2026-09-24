@@ -10,7 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
@@ -1484,6 +1484,29 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
     const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund - allocatedTradeIn) * 100) / 100);
 
+    const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
+    let returnId = '';
+    try {
+      returnId = localStorage.getItem(pendingRefundKey)?.trim() || '';
+      if (!returnId) {
+        returnId = crypto.randomUUID();
+        localStorage.setItem(pendingRefundKey, returnId);
+      }
+    } catch {
+      returnId = crypto.randomUUID();
+    }
+
+    const returnLines = remainingItems.map(({ it, qty }) => {
+      const soldUnitIds = (it.unitIds || []).filter(id =>
+        state.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id),
+      );
+      return {
+        product_id: it.productId,
+        qty,
+        unit_ids: soldUnitIds.length ? soldUnitIds.slice(0, qty) : undefined,
+      };
+    });
+
     // Online cloud refunds are committed by the server-authoritative atomic
     // return RPC first. Do not silently fall back to local-only mutation when
     // cloud authorization exists, or the browser could diverge from the shop ledger.
@@ -1494,33 +1517,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      const returnLines = remainingItems.map(({ it, qty }) => {
-        const soldUnitIds = (it.unitIds || []).filter(id =>
-          state.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id),
-        );
-        return {
-          product_id: it.productId,
-          qty,
-          unit_ids: soldUnitIds.length ? soldUnitIds.slice(0, qty) : undefined,
-        };
-      });
-
       const resolve = await resolveSaleReturnLines({ shopId: shop.shopId, saleId: sale.id, lines: returnLines });
       if (!resolve.ok || !resolve.lines) {
         pushAudit('DENIED', 'Sale', 'Cloud refund blocked: ' + (resolve.error || 'Sale items could not be matched'));
         return false;
-      }
-
-      const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
-      let returnId = '';
-      try {
-        returnId = localStorage.getItem(pendingRefundKey)?.trim() || '';
-        if (!returnId) {
-          returnId = crypto.randomUUID();
-          localStorage.setItem(pendingRefundKey, returnId);
-        }
-      } catch {
-        returnId = crypto.randomUUID();
       }
 
       const cloud = await processSaleReturnAtomic({
@@ -1537,6 +1537,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
       try { localStorage.removeItem(pendingRefundKey); } catch { /* ignore */ }
+    }
+
+    // Offline cloud-enabled refunds are queued as a normalized atomic return
+    // before the local mutation. This prevents a cashier's offline refund from
+    // depending on the admin-only full-state snapshot to reach the cloud later.
+    if (supabaseConfigured && (typeof navigator === 'undefined' || !navigator.onLine)) {
+      try {
+        await queueReturnCreate(returnId, {
+          saleId: sale.id,
+          reason: 'Full bill refund',
+          mode: 'refund',
+          paymentMethod: 'cash',
+          lines: returnLines,
+        });
+      } catch (error) {
+        pushAudit('DENIED', 'Sale', 'Offline refund blocked: return could not be queued safely');
+        return false;
+      }
     }
 
     setStateWithInventoryLedger('REFUND', s => {
