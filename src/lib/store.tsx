@@ -1769,7 +1769,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const stock = product?.stock || 0;
     const tracked = !!(product?.trackImei || product?.trackSerial);
     const availableUnits = tracked ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock') : [];
-    const qty = Math.min(qtyRequested, remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
+    const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
+    if (qtyRequested > maxReturnable) return null;
+    const qty = qtyRequested;
     if (qty <= 0) continue;
     if (tracked) for (const unit of availableUnits.slice(0, qty)) returnedUnitIds.add(unit.id);
     items.push({ itemIdx, productId: source.productId, name: source.name, qty, cost: source.cost, total: qty * source.cost });
