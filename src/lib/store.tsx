@@ -1460,7 +1460,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     }
     const remainingItems = sale.items.map((it, idx) => ({ it, idx, qty: Math.max(0, it.qty - (priorReturnedByLine.get(idx) || 0)) })).filter(x => x.qty > 0);
-    if (remainingItems.length === 0) return;
+    if (remainingItems.length === 0) return false;
 
     const refundQtyByProduct = new Map<string, number>();
     for (const { it, qty } of remainingItems) refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + qty);
