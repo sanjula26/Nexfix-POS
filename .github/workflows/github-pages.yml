@@ -39,7 +39,14 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Build GitHub Pages preview
-        run: npm run build -- --mode github-pages
+        env:
+          VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
+        run: |
+          if [ -z "${VITE_GOOGLE_BACKUP_API_KEY}" ]; then
+            echo "VITE_GOOGLE_BACKUP_API_KEY secret is empty."
+            exit 1
+          fi
+          npm run build -- --mode github-pages
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
