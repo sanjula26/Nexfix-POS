@@ -764,6 +764,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
   }, [user, pushAudit]);
 
+  // Role switches create a real authenticated session; App.tsx enforces mustChangePassword on the target user.
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
     // Switching changes the authenticated POS identity. It is never a cosmetic
     // "view" switch and must always authenticate the target account.
