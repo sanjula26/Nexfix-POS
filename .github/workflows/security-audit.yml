@@ -76,6 +76,25 @@ jobs:
           grep -q "A sale item can appear only once" "$ret"
           grep -RInE "revoke all on function private\.(complete_sale_atomic|process_sale_return_atomic|register_trade_in_atomic).*authenticated" supabase/migrations >/dev/null
 
+      - name: Syntax-check Google Apps Script source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check google-apps-script/Code.gs
+          cmp -s google-apps-script/Code.gs docs/GoogleAppsScript_Code.gs
+
+      - name: Check client backup proof boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          file='src/lib/driveSync.ts'
+          grep -q 'const shopProof = await sha256Hex' "$file"
+          grep -q "url.searchParams.set('shopProof', shopProof)" "$file"
+          grep -q "url.searchParams.set('requestId', makeRequestId())" "$file"
+          grep -q "format: 'encrypted-single'" "$file"
+          grep -q "format: 'encrypted-part'" "$file"
+          grep -q "format: 'encrypted-manifest'" "$file"
+
       - name: Check Supabase migrations exist
         shell: bash
         run: |
