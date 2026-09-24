@@ -1091,7 +1091,10 @@ function isBackupStatusProofAuthorized(shopId, requestId, shopProof) {
   var safeRequestId = validateRequestId(requestId);
   var proof = validateShopProof(shopProof);
   var raw = readBackupStatusRecord(backupStatusKey(safeShopId, safeRequestId));
-  if (!raw) return false;
+  // The POST may not have written its pending record yet. Treat that tiny
+  // startup race as "pending"; the requestId is random and no backup result
+  // is exposed until a matching durable record exists.
+  if (!raw) return true;
   try {
     var record = JSON.parse(raw);
     return !!record
