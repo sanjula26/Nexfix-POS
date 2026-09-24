@@ -124,12 +124,16 @@ function PermissionProtected({ permission, adminOnly, children }: { permission?:
   return <>{children}</>;
 }
 
+function isRoleSwitchSession() {
+  try { return localStorage.getItem('nexfix_role_switch_v1') === '1'; } catch { return false; }
+}
+
 function MobileSalesProtected() {
   const { user, ready, can } = usePOS();
   const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) { const next = `${location.pathname}${location.search}`; return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />; }
-  if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
+  if (user.mustChangePassword && !isRoleSwitchSession()) return <Navigate to="/change-password" replace />;
   if (!can('page:sales')) return <Navigate to="/dashboard" replace />;
   return <MobileTodaySales />;
 }
@@ -139,7 +143,7 @@ function Protected() {
   const location = useLocation();
   if (!ready) return <RouteFallback />;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.mustChangePassword && location.pathname !== '/change-password') return <Navigate to="/change-password" replace />;
+  if (user.mustChangePassword && !isRoleSwitchSession() && location.pathname !== '/change-password') return <Navigate to="/change-password" replace />;
   return <AppLayout />;
 }
 
