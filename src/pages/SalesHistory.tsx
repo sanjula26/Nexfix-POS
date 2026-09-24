@@ -23,6 +23,7 @@ export default function SalesHistory() {
   const [printSale, setPrintSale] = useState<Sale | null>(null);
   const [limit, setLimit] = useState(50);
   const [refundBusy, setRefundBusy] = useState(false);
+  const [reverseBusy, setReverseBusy] = useState<string | null>(null);
 
   const cashiers = useMemo(() => [...new Map(state.sales.map(s => [s.cashierId, s.cashierName])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [state.sales]);
   const rows = useMemo(() => {
