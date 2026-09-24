@@ -1423,7 +1423,7 @@ export default function POS() {
           <div className="flex gap-2.5">
             <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={() => {
               if (!reverseSale) return;
-              const ok = requestBillReverse(reverseSale.id, reverseReason);
+              const ok = await requestBillReverse(reverseSale.id, reverseReason);
               if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
               else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
             }}><ShieldCheck size={15} /> Request approval</button>
