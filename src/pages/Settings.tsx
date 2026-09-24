@@ -5,7 +5,7 @@ import {
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
-import { Modal, Field, PageHeading, Toggle } from '../components/ui';
+import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId,
 } from '../lib/driveSync';
