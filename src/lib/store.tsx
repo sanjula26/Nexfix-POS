@@ -687,6 +687,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (cashier && cashierPassword.length < 12) return { ok: false, error: 'Cashier password must be at least 12 characters' };
     const retiredDemoPasswords = ['admin', 'cashier'].map(prefix => prefix + '123');
     if (retiredDemoPasswords.some(value => value.toLowerCase() === next.toLowerCase())) return { ok: false, error: 'Choose a password that is not a retired demo credential' };
+    if (cashier && retiredDemoPasswords.some(value => value.toLowerCase() === cashierPassword.toLowerCase())) return { ok: false, error: 'Choose a cashier password that is not a retired demo credential' };
     const hashed = await hashPasswordAsync(next);
     const cashierHashed = cashier ? await hashPasswordAsync(cashierPassword) : '';
     const nowIso = new Date().toISOString();
