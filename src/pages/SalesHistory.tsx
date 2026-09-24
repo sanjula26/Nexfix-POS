@@ -94,8 +94,25 @@ export default function SalesHistory() {
                 <div key={req.id} className="p-4 flex flex-col lg:flex-row lg:items-center gap-3">
                   <div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-bold text-violet-500">{req.billNo}</span><span className="text-xs text-sub">{sale.customerName}</span><span className="num text-xs font-bold text-ink">{fmtRs(sale.total)}</span></div><div className="text-[11px] text-faint mt-1">Requested by {req.requestedBy} · {req.reason}</div></div>
                   <div className="flex gap-2 shrink-0">
-                    <button className="btn btn-outline-emerald !py-2 !px-3" onClick={() => approveBillReverse(req.id)}><CheckCircle2 size={14} /> Approve</button>
-                    <button className="btn btn-danger-soft !py-2 !px-3" onClick={() => { const note = window.prompt('Optional rejection note:', ''); rejectBillReverse(req.id, note || undefined); }}><X size={14} /> Reject</button>
+                    <button
+                      className="btn btn-outline-emerald !py-2 !px-3"
+                      onClick={async () => {
+                        if (reverseBusy) return;
+                        setReverseBusy(req.id);
+                        try { await approveBillReverse(req.id); } finally { setReverseBusy(null); }
+                      }}
+                      disabled={reverseBusy !== null}
+                    ><CheckCircle2 size={14} /> {reverseBusy === req.id ? 'Processing…' : 'Approve'}</button>
+                    <button
+                      className="btn btn-danger-soft !py-2 !px-3"
+                      onClick={async () => {
+                        if (reverseBusy) return;
+                        const note = window.prompt('Optional rejection note:', '');
+                        setReverseBusy(req.id);
+                        try { await rejectBillReverse(req.id, note || undefined); } finally { setReverseBusy(null); }
+                      }}
+                      disabled={reverseBusy !== null}
+                    ><X size={14} /> {reverseBusy === req.id ? 'Processing…' : 'Reject'}</button>
                   </div>
                 </div>
               );
