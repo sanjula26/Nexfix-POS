@@ -15,6 +15,7 @@ var BACKUP_RATE_WINDOW_SECONDS = 5;
 var ROOT_BACKUP_FOLDER_NAME = 'Nexfix POS Backup';
 var ROOT_BACKUP_FOLDER_ID_PROPERTY = 'ROOT_BACKUP_FOLDER_ID';
 var BACKUP_API_KEY_PROPERTY = 'NEXFIX_BACKUP_API_KEY';
+var SHOP_AUTH_FILENAME = 'SHOP_AUTH.json';
 // Default Nexfix master Drive folder supplied for this deployment.
 // Script Properties can override this value without changing the code.
 var DEFAULT_ROOT_BACKUP_FOLDER_ID = '1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK';
@@ -46,7 +47,7 @@ function ok(extra) {
 }
 
 function fail(err) {
-  var out = { ok: false, status: 'error', version: VERSION, message: String(err) };
+  var out = { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
   if (err && err.retryAfterSeconds) out.retryAfterSeconds = Number(err.retryAfterSeconds);
   return out;
 }
@@ -74,6 +75,65 @@ function requireBackupApiKey(provided) {
   if (!constantTimeApiKeyEqual(provided, expected)) throw new Error('Unauthorized');
 }
 
+
+function validateShopProof(value) {
+  var proof = String(value || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(proof)) throw new Error('Valid shop proof is required');
+  return proof;
+}
+
+function shopAuthDigest(shopProof) {
+  // The proof is derived from the shop recovery key and never sent in plaintext.
+  // Bind the stored digest to the server-side transport key so a Drive copy of
+  // SHOP_AUTH.json is not itself a reusable authorization token.
+  return sha256HexText(String(shopProof) + ':' + getBackupApiKey());
+}
+
+function findShopBackupFolder(shopId) {
+  var root = getRootBackupFolder();
+  var prefix = 'Shop_' + shopPartitionKey(shopId) + ' - ';
+  var folders = root.getFolders();
+  while (folders.hasNext()) {
+    var folder = folders.next();
+    if (folder.getName().indexOf(prefix) === 0) return folder;
+  }
+  return null;
+}
+
+function authorizeShopAccess(shopId, shopProof, allowInitialize) {
+  var proof = validateShopProof(shopProof);
+  var folder = findShopBackupFolder(shopId);
+  if (!folder) {
+    if (!allowInitialize) throw new Error('Shop backup authorization not initialized');
+    folder = getShopBackupFolder(shopId, 'Shop', false);
+  }
+
+  var files = folder.getFilesByName(SHOP_AUTH_FILENAME);
+  var expectedDigest = shopAuthDigest(proof);
+  if (!files.hasNext()) {
+    if (!allowInitialize) throw new Error('Shop backup authorization not initialized');
+    var record = {
+      app: 'Nexfix POS',
+      version: VERSION,
+      shopId: shopId,
+      shopPartition: shopPartitionKey(shopId),
+      proofDigest: expectedDigest,
+      createdAt: new Date().toISOString()
+    };
+    folder.createFile(Utilities.newBlob(JSON.stringify(record, null, 2), 'application/json', SHOP_AUTH_FILENAME));
+    return folder;
+  }
+
+  var raw = files.next().getBlob().getDataAsString();
+  var record;
+  try { record = JSON.parse(raw); } catch (ignore) { throw new Error('Shop backup authorization record is invalid'); }
+  if (String(record.shopId || '') !== String(shopId)
+      || String(record.shopPartition || '') !== shopPartitionKey(shopId)
+      || !constantTimeApiKeyEqual(String(record.proofDigest || ''), expectedDigest)) {
+    throw new Error('Shop backup authorization failed');
+  }
+  return folder;
+}
 
 function value(v) {
   if (v === undefined || v === null) return '';
@@ -119,6 +179,8 @@ function validateBackupContents(contents) {
   if (!contents || typeof contents !== 'object' || Array.isArray(contents)) throw new Error('Invalid backup payload');
   if (contents.action !== 'backupState') throw new Error('Only backupState is supported by the direct Drive backup endpoint');
   var format = String(contents.format || 'legacy').trim();
+  if (!['encrypted-single', 'encrypted-part', 'encrypted-manifest'].includes(format)) throw new Error('Encrypted backup uploads are required');
+  validateShopProof(contents.shopProof);
 
   if (format === 'encrypted-single') {
     validateEncryptedEnvelope(contents.state, contents.shopId);
@@ -650,7 +712,9 @@ function backupStateToDrive(contents, shopId) {
   // Do not rename/update shop metadata from an uncommitted or stale backup.
   // The stable partition identifies the shop; display details are committed only
   // after the backup itself passes freshness/integrity checks.
-  var shopFolder = getShopBackupFolder(shopId, shopName, false);
+  var shopProof = validateShopProof(contents.shopProof);
+  var shopFolder = authorizeShopAccess(shopId, shopProof, true);
+  if (!shopFolder) throw new Error('Shop backup authorization failed');
   var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
   var encrypted = format.indexOf('encrypted-') === 0;
 
@@ -934,6 +998,7 @@ function doPost(e) {
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId;
     try { requestId = validateRequestId(contents.requestId); } catch (requestError) { return json(fail(requestError)); }
+    try { validateShopProof(contents.shopProof); } catch (proofError) { return json(unauthorized('Unauthorized')); }
     try { validateBackupContents(contents); } catch (payloadError) { return json(fail(payloadError)); }
 
     var requestCache = CacheService.getScriptCache();
@@ -1031,10 +1096,11 @@ function doGet(e) {
 
   if (p.action === 'backupStatus') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
-    try { normalizeShopId(p.shopId); } catch (err) {
-      return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' });
+    var statusShopId;
+    try { statusShopId = normalizeShopId(p.shopId); validateRequestId(p.requestId); validateShopProof(p.shopProof); authorizeShopAccess(statusShopId, p.shopProof, false); } catch (err) {
+      return json(unauthorized('Unauthorized'));
     }
-    var statusResult = getCachedBackupStatus(p.requestId, p.shopId);
+    var statusResult = getCachedBackupStatus(p.requestId, statusShopId);
     var statusCallback = String(p.callback || '').trim();
     if (statusCallback && /^__nexfixGoogleBackupStatus_[0-9]+_[A-Za-z0-9]+$/.test(statusCallback)) {
       return ContentService.createTextOutput(statusCallback + '(' + JSON.stringify(statusResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
@@ -1045,7 +1111,12 @@ function doGet(e) {
   if (p.action === 'getLatestBackup') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var shopId;
-    try { shopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
+    try {
+      shopId = normalizeShopId(p.shopId);
+      validateRequestId(p.requestId);
+      validateShopProof(p.shopProof);
+      authorizeShopAccess(shopId, p.shopProof, false);
+    } catch (err) { return json(unauthorized('Unauthorized')); }
     var result = ok({ action: 'getLatestBackup', backup: latestBackup(null, shopId) });
     var callback = String(p.callback || '').trim();
     if (callback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(callback)) {
@@ -1057,7 +1128,12 @@ function doGet(e) {
   if (p.action === 'getBackupPart') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
     var partShopId;
-    try { partShopId = normalizeShopId(p.shopId); } catch (err) { return json({ ok: false, status: 'error', version: VERSION, message: 'A valid shopId is required' }); }
+    try {
+      partShopId = normalizeShopId(p.shopId);
+      validateRequestId(p.requestId);
+      validateShopProof(p.shopProof);
+      authorizeShopAccess(partShopId, p.shopProof, false);
+    } catch (err) { return json(unauthorized('Unauthorized')); }
     var partResult = getBackupPart(partShopId, p.backupId, p.partName);
     var partResponse = partResult ? ok({ action: 'getBackupPart', chunk: partResult.chunk, shopPartition: partResult.shopPartition, backupId: partResult.backupId, partName: partResult.partName }) : { ok: false, status: 'error', version: VERSION, message: 'Backup part not found' };
     var partCallback = String(p.callback || '').trim();
