@@ -47,7 +47,13 @@ function ok(extra) {
 }
 
 function fail(err) {
-  var out = { ok: false, status: 'error', version: VERSION, message: 'Backup request failed' };
+  var msg = 'Backup request failed';
+  if (err && typeof err.message === 'string' && err.message.length > 0 && err.message.length < 240) {
+    msg = err.message;
+  } else if (typeof err === 'string' && err.length > 0 && err.length < 240) {
+    msg = err;
+  }
+  var out = { ok: false, status: 'error', version: VERSION, message: msg };
   if (err && err.retryAfterSeconds) out.retryAfterSeconds = Number(err.retryAfterSeconds);
   return out;
 }
