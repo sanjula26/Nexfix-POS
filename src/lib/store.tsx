@@ -2271,16 +2271,35 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const refreshPOS = useCallback(async () => {
+    // Refresh must never roll the authenticated user back to a stale IndexedDB
+    // snapshot. State writes are intentionally debounced, so the refresh button
+    // can otherwise read IDB before the latest state (including users) is saved.
+    // Persist the current authoritative in-memory state first, then reload.
+    const current = stateRef.current;
     try {
+      if (ready) await persistState(current);
       const fromIdb = idbAvailable() ? await idbLoadState() : null;
-      const refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
+      let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
+
+      // Keep the currently authenticated account intact even if an old/corrupt
+      // snapshot does not contain it. Do not change or expose its password here.
+      const activeSession = loadSession();
+      if (activeSession) {
+        const currentUser = current.users.find(u => u.id === activeSession.userId && u.active);
+        const refreshedUser = refreshed.users.find(u => u.id === activeSession.userId && u.active);
+        if (currentUser && !refreshedUser) {
+          refreshed = { ...refreshed, users: [currentUser, ...refreshed.users.filter(u => u.id !== currentUser.id)] };
+        }
+      }
+
       setState(refreshed);
       // Deliberately do not touch session/sessionStorage/localStorage auth keys.
     } catch {
-      const fallback = loadStateFromLocalStorage();
-      if (fallback) setState(fallback);
+      // If reload fails, keep the current in-memory authenticated state rather
+      // than replacing it with an older fallback snapshot.
+      setState(current);
     }
-  }, []);
+  }, [ready]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit): boolean => {
