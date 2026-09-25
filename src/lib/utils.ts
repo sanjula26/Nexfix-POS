@@ -23,7 +23,18 @@ export const salePayments=(s:Sale):PaymentLeg[]=>s.payments&&s.payments.length>0
 export const salePaymentLabel=(s:Sale):string=>s.payments&&s.payments.length>1?'SPLIT':PAYMENT_LABEL[s.payment];
 export function mulberry32(seed:number){return function(){let t=(seed+=0x6d2b79f5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
 export const downloadFile=(name:string,content:string,type='text/plain')=>{const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);};
-export const waLink=(phone:string,text:string):string=>{let digits=phone.replace(/\D/g,'');if(digits.startsWith('0'))digits='94'+digits.slice(1);if(digits.length===9)digits='94'+digits;return`https://wa.me/${digits}?text=${encodeURIComponent(text)}`;};
+/** Canonical WhatsApp phone digits used for customer matching and WhatsApp links. */
+export const normalizeWhatsAppPhone=(phone:string):string=>{
+  let digits=String(phone||'').replace(/\D/g,'');
+  if(digits.startsWith('0094')) digits=digits.slice(2);
+  if(digits.startsWith('0')) digits='94'+digits.slice(1);
+  if(digits.length===9) digits='94'+digits;
+  return digits;
+};
+export const waLink=(phone:string,text:string):string=>{
+  const digits=normalizeWhatsAppPhone(phone);
+  return`https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+};
 
 const AUTH_SALT='nexfix::v2::auth::';
 // PBKDF2-HMAC-SHA256. 600,000 iterations is the current OWASP recommendation for PBKDF2-SHA256.
