@@ -696,13 +696,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     loginAtRef.current = Date.now();
     setSession(sess);
     try {
-      if (remember) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-        sessionStorage.removeItem(SESSION_KEY);
-      } else {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-        localStorage.removeItem(SESSION_KEY);
-      }
+      // Keep the authenticated POS session durable across a normal browser refresh.
+      // "Remember me" is retained in the session metadata for compatibility, but
+      // refresh must never force an already-authenticated cashier/admin back to Login.
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
     return { ok: true };
@@ -746,7 +744,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setSession(sess);
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
     } catch { /* ignore */ }
     return { ok: true };
   }, [pushAudit]);
@@ -839,13 +837,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sess = { userId: target.id, remember: prev?.remember ?? true };
     setSession(sess);
     try {
-      if (sess.remember) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-        sessionStorage.removeItem(SESSION_KEY);
-      } else {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-        localStorage.removeItem(SESSION_KEY);
-      }
+      // Keep the authenticated POS session durable across a normal browser refresh.
+      // "Remember me" is retained in the session metadata for compatibility, but
+      // refresh must never force an already-authenticated cashier/admin back to Login.
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
     setState(st => ({
