@@ -136,7 +136,7 @@ export default function Login() {
       <div className="w-full max-w-md bg-white dark:bg-[#111827] rounded-3xl shadow-xl border border-[#eceef6] dark:border-slate-700 overflow-hidden">
         <div className="h-1.5 bg-gradient-to-r from-violet-600 via-indigo-500 to-sky-400" />
         <div className="p-7 sm:p-9">
-          <h1 className="text-3xl font-extrabold text-[#17133c]">NEXFIX SOLUTION</h1>
+          <h1 className="text-3xl font-extrabold text-[#17133c] dark:text-white">NEXFIX SOLUTION</h1>
           <p className="text-sm text-[#5b5f7e] dark:text-slate-400 mt-2">Sign in to your POS account</p>
           <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-xl bg-[#f5f6fb] dark:bg-slate-900 border border-[#e7e9f2] dark:border-slate-700 mb-5"><button type="button" onClick={() => { setLoginRole('admin'); setError(''); }} className={`rounded-lg py-2.5 text-xs font-bold transition ${loginRole === 'admin' ? 'bg-violet-600 text-white shadow' : 'text-[#5b5f7e] dark:text-slate-400 hover:text-[#17133c] dark:hover:text-white'}`}>ADMIN</button><button type="button" onClick={() => { setLoginRole('cashier'); setError(''); }} className={`rounded-lg py-2.5 text-xs font-bold transition ${loginRole === 'cashier' ? 'bg-emerald-600 text-white shadow' : 'text-[#5b5f7e] dark:text-slate-400 hover:text-[#17133c] dark:hover:text-white'}`}>CASHIER</button></div>
           <form onSubmit={submit} className="mt-7 space-y-4">
