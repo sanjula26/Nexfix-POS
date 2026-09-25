@@ -22,7 +22,7 @@ const SHOP_KEY = 'nexfix_cloud_shop_id';
 const DRIVE_SHOP_KEY = 'nexfix_drive_shop_id';
 const DRIVE_SHOP_OVERRIDE_KEY = 'nexfix_drive_shop_id_override';
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
-const SINGLE_LIMIT_BYTES = 8.5 * 1024 * 1024;
+const SINGLE_LIMIT_BYTES = 1.5 * 1024 * 1024; // 1.5 MB — safer for form POST to Apps Script
 const PART_SIZE_BYTES = 6 * 1024 * 1024;
 
 function isAllowedScriptUrl(value: string): boolean {
