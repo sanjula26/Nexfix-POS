@@ -206,11 +206,11 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     // treated as a failure while the confirmation window is still open.
     // Front-load confirmation: warm Apps Script/Drive writes should settle in a few seconds.
     // Pending/network misses are inconclusive until the bounded window expires.
-    const confirmationWindowMs = 30000;
+    const confirmationWindowMs = 120000; // 120 seconds
     const deadline = Date.now() + confirmationWindowMs;
     // The status endpoint is intentionally lightweight; poll aggressively so
     // a warm Apps Script/Drive write is normally confirmed within a few seconds.
-    let pollDelay = 250;
+    let pollDelay = 400;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
       await new Promise((resolve) => window.setTimeout(resolve, Math.min(pollDelay, Math.max(100, remaining))));
@@ -229,7 +229,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         }
         return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
-      pollDelay = Math.min(2500, Math.round(pollDelay * 1.55));
+      pollDelay = Math.min(4000, Math.round(pollDelay * 1.4));
     }
 
     // One final authenticated status read closes the small completion race at the deadline.
@@ -258,8 +258,8 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
       const attemptBackupId = String(body.backupId || '');
       const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
-        && latestAt >= attemptAt - 5000
-        && latestAt <= attemptAt + 90000;
+        && latestAt >= attemptAt - 10000
+        && latestAt <= attemptAt + 180000;
       if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) {
         return { ok: true };
       }
@@ -287,7 +287,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
       script.remove();
       resolve(value);
     };
-    const timer = window.setTimeout(() => finish(null), 2500);
+    const timer = window.setTimeout(() => finish(null), 6000);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
       const data = result as { ok?: boolean; pending?: boolean; status?: string; message?: string; action?: string };
