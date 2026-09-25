@@ -435,7 +435,7 @@ export default function POS() {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
-    const whatsappDigits = customer?.phone ? normalizeWhatsAppPhone(customer.phone) : '';
+    const whatsappDigits = normalizeWhatsAppPhone(customer?.phone || custQuery);
     const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
     if (whatsappWindow) {
@@ -749,7 +749,7 @@ export default function POS() {
                     <button
                       className="btn btn-soft !border-emerald-300/60 !text-emerald-600 dark:!text-emerald-400 hover:!bg-emerald-500/10 shrink-0"
                       onClick={() => {
-                        const digits = normalizeCustomerPhone(custQuery);
+                        const digits = normalizeWhatsAppPhone(custQuery);
                         setNewCust(nc => ({
                           ...nc,
                           phone: digits.length >= 9 ? custQuery.trim() : nc.phone,
@@ -806,7 +806,7 @@ export default function POS() {
                               <button
                                 className="btn btn-soft !text-xs mt-2.5"
                                 onClick={() => {
-                                  const digits = normalizeCustomerPhone(custQuery);
+                                  const digits = normalizeWhatsAppPhone(custQuery);
                                   setNewCust(nc => ({
                                     ...nc,
                                     name: digits ? 'Walk-in Customer' : custQuery.trim(),
