@@ -436,6 +436,10 @@ export default function POS() {
     } else if (!hasCredit && paidNum < total) {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
+    /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
+    const autoWhatsApp = !!customer?.phone && (waReceipt || state.settings.whatsappReceipts);
+    const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank', 'noopener') : null;
+
     const sale = await completeSaleCloud({
       lines: lines.map(l => {
         const p = products.find(x => x.id === l.productId)!;
@@ -459,14 +463,14 @@ export default function POS() {
     });
     if (sale) {
       setDoneSale(sale);
-      /* WhatsApp receipt — only when the customer opted in (or shop-wide auto is on) */
-      if (customer?.phone && (waReceipt || state.settings.whatsappReceipts)) {
-        try {
-          window.open(waLink(customer.phone, buildWhatsAppText(sale, state.settings)), '_blank', 'noopener');
-        } catch { /* popup blocked — the button in the receipt modal still works */ }
+      /* WhatsApp receipt — navigate the user-approved tab after the sale is confirmed. */
+      if (whatsappWindow && customer?.phone) {
+        whatsappWindow.location.href = waLink(customer.phone, buildWhatsAppText(sale, state.settings));
       }
       reset();
       setTimeout(focusSearch, 150);
+    } else if (whatsappWindow) {
+      whatsappWindow.close();
     }
   };
 
