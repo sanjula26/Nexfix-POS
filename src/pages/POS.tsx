@@ -12,7 +12,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
-import { fmtRs, dkey, timeAgo, uid, salePayments, waLink } from '../lib/utils';
+import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
 
@@ -271,21 +271,19 @@ export default function POS() {
   useEffect(() => { const t = setTimeout(focusSearch, 120); return () => clearTimeout(t); }, []);
 
   /* ---------- customers ---------- */
-  const normalizeCustomerPhone = (value: string) => value.replace(/\D/g, '');
-
-  const customerPhoneQuery = normalizeCustomerPhone(custQuery);
+  const customerPhoneQuery = normalizeWhatsAppPhone(custQuery);
   const exactPhoneCustomer = useMemo(() => {
     if (customerPhoneQuery.length < 9) return undefined;
-    return state.customers.find(c => normalizeCustomerPhone(c.phone) === customerPhoneQuery);
+    return state.customers.find(c => normalizeWhatsAppPhone(c.phone) === customerPhoneQuery);
   }, [state.customers, customerPhoneQuery]);
 
   const custResults = useMemo(() => {
     const q = custQuery.trim().toLowerCase();
     if (!q) return state.customers.slice(0, 6);
-    const digits = normalizeCustomerPhone(q);
+    const digits = normalizeWhatsAppPhone(q);
     return state.customers.filter(c =>
       c.name.toLowerCase().includes(q) ||
-      (digits && normalizeCustomerPhone(c.phone).includes(digits)) ||
+      (digits.length >= 3 && normalizeWhatsAppPhone(c.phone).includes(digits)) ||
       (c.nic || '').toLowerCase().includes(q),
     ).slice(0, 8);
   }, [state.customers, custQuery]);
@@ -438,7 +436,10 @@ export default function POS() {
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
     const autoWhatsApp = !!customer?.phone && (waReceipt || state.settings.whatsappReceipts);
-    const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank', 'noopener') : null;
+    const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
+    if (whatsappWindow) {
+      try { whatsappWindow.opener = null; } catch { /* browser may make opener read-only */ }
+    }
 
     const sale = await completeSaleCloud({
       lines: lines.map(l => {
@@ -499,10 +500,25 @@ export default function POS() {
 
   /* ---------- quick add customer ---------- */
   const quickAddCustomer = () => {
-    if (!newCust.name.trim() || !newCust.phone.trim()) return;
-    const c = { id: uid(), name: newCust.name.trim(), phone: newCust.phone.trim(), nic: newCust.nic.trim() || undefined, createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 };
+    const name = newCust.name.trim();
+    const phone = newCust.phone.trim();
+    if (!name || !phone) return;
+    const normalized = normalizeWhatsAppPhone(phone);
+    const existing = normalized.length >= 9
+      ? state.customers.find(c => normalizeWhatsAppPhone(c.phone) === normalized)
+      : undefined;
+    if (existing) {
+      setCustomerId(existing.id);
+      setCustQuery(existing.phone);
+      setAddCustOpen(false);
+      setNewCust({ name: '', phone: '', nic: '' });
+      toast('Existing customer selected — this WhatsApp number is already saved', 'amber');
+      return;
+    }
+    const c = { id: uid(), name, phone, nic: newCust.nic.trim() || undefined, createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 };
     saveCustomer(c);
     setCustomerId(c.id);
+    setCustQuery(phone);
     setAddCustOpen(false);
     setNewCust({ name: '', phone: '', nic: '' });
   };
