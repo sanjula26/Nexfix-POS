@@ -271,15 +271,32 @@ export default function POS() {
   useEffect(() => { const t = setTimeout(focusSearch, 120); return () => clearTimeout(t); }, []);
 
   /* ---------- customers ---------- */
+  const normalizeCustomerPhone = (value: string) => value.replace(/\D/g, '');
+
+  const customerPhoneQuery = normalizeCustomerPhone(custQuery);
+  const exactPhoneCustomer = useMemo(() => {
+    if (customerPhoneQuery.length < 9) return undefined;
+    return state.customers.find(c => normalizeCustomerPhone(c.phone) === customerPhoneQuery);
+  }, [state.customers, customerPhoneQuery]);
+
   const custResults = useMemo(() => {
     const q = custQuery.trim().toLowerCase();
     if (!q) return state.customers.slice(0, 6);
+    const digits = normalizeCustomerPhone(q);
     return state.customers.filter(c =>
       c.name.toLowerCase().includes(q) ||
-      c.phone.replace(/\D/g, '').includes(q.replace(/\D/g, '')) ||
+      (digits && normalizeCustomerPhone(c.phone).includes(digits)) ||
       (c.nic || '').toLowerCase().includes(q),
     ).slice(0, 8);
   }, [state.customers, custQuery]);
+
+  /* A complete phone number should select the existing customer automatically. */
+  useEffect(() => {
+    if (exactPhoneCustomer && customerId !== exactPhoneCustomer.id) {
+      setCustomerId(exactPhoneCustomer.id);
+      setCustOpen(false);
+    }
+  }, [exactPhoneCustomer, customerId]);
 
   const recentCustomers = useMemo(() => {
     const seen = new Map<string, Customer>();
@@ -697,6 +714,8 @@ export default function POS() {
                       <input
                         ref={custInputRef}
                         className="input pl-9 pr-8 !py-2.5"
+                        inputMode="tel"
+                        autoComplete="off"
                         placeholder="Search customer by name or phone... (F2)"
                         value={custQuery}
                         onFocus={() => setCustOpen(true)}
@@ -706,7 +725,15 @@ export default function POS() {
                     </div>
                     <button
                       className="btn btn-soft !border-emerald-300/60 !text-emerald-600 dark:!text-emerald-400 hover:!bg-emerald-500/10 shrink-0"
-                      onClick={() => setAddCustOpen(true)}
+                      onClick={() => {
+                        const digits = normalizeCustomerPhone(custQuery);
+                        setNewCust(nc => ({
+                          ...nc,
+                          phone: digits.length >= 9 ? custQuery.trim() : nc.phone,
+                          name: nc.name || '',
+                        }));
+                        setAddCustOpen(true);
+                      }}
                     >
                       <UserPlus size={15} /> <span className="hidden sm:inline">Add New Customer</span>
                     </button>
@@ -752,9 +779,21 @@ export default function POS() {
                           ))}
                           {custResults.length === 0 && (
                             <div className="px-4 py-4 text-center">
-                              <p className="text-xs text-faint">No match for “{custQuery}”</p>
-                              <button className="btn btn-soft !text-xs mt-2.5" onClick={() => { setNewCust(nc => ({ ...nc, name: custQuery })); setAddCustOpen(true); setCustOpen(false); }}>
-                                <UserPlus size={13} /> Add “{custQuery}” as customer
+                              <p className="text-xs text-faint">No customer found for “{custQuery}”</p>
+                              <button
+                                className="btn btn-soft !text-xs mt-2.5"
+                                onClick={() => {
+                                  const digits = normalizeCustomerPhone(custQuery);
+                                  setNewCust(nc => ({
+                                    ...nc,
+                                    name: digits ? 'Walk-in Customer' : custQuery.trim(),
+                                    phone: digits ? custQuery.trim() : nc.phone,
+                                  }));
+                                  setAddCustOpen(true);
+                                  setCustOpen(false);
+                                }}
+                              >
+                                <UserPlus size={13} /> Add this number as customer
                               </button>
                             </div>
                           )}
@@ -1480,8 +1519,8 @@ export default function POS() {
             <input className="input" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} placeholder="Customer name" autoFocus />
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Phone">
-              <input className="input num" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="+94 77 000 0000" />
+            <Field label="Phone / WhatsApp number">
+              <input className="input num" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="+94 77 000 0000" inputMode="tel" autoComplete="tel" />
             </Field>
             <Field label="NIC (optional)">
               <input className="input num" value={newCust.nic} onChange={e => setNewCust(c => ({ ...c, nic: e.target.value }))} placeholder="ID / NIC" />
