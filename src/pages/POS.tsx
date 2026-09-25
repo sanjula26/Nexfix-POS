@@ -435,7 +435,8 @@ export default function POS() {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
-    const autoWhatsApp = !!customer?.phone && (waReceipt || state.settings.whatsappReceipts);
+    const whatsappDigits = customer?.phone ? normalizeWhatsAppPhone(customer.phone) : '';
+    const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
     if (whatsappWindow) {
       try { whatsappWindow.opener = null; } catch { /* browser may make opener read-only */ }
@@ -465,8 +466,8 @@ export default function POS() {
     if (sale) {
       setDoneSale(sale);
       /* WhatsApp receipt — navigate the user-approved tab after the sale is confirmed. */
-      if (whatsappWindow && customer?.phone) {
-        whatsappWindow.location.href = waLink(customer.phone, buildWhatsAppText(sale, state.settings));
+      if (whatsappWindow && whatsappDigits.length >= 9) {
+        whatsappWindow.location.href = waLink(whatsappDigits, buildWhatsAppText(sale, state.settings));
       }
       reset();
       setTimeout(focusSearch, 150);
@@ -504,9 +505,11 @@ export default function POS() {
     const phone = newCust.phone.trim();
     if (!name || !phone) return;
     const normalized = normalizeWhatsAppPhone(phone);
-    const existing = normalized.length >= 9
-      ? state.customers.find(c => normalizeWhatsAppPhone(c.phone) === normalized)
-      : undefined;
+    if (normalized.length < 9) {
+      toast('Enter a valid WhatsApp phone number', 'rose');
+      return;
+    }
+    const existing = state.customers.find(c => normalizeWhatsAppPhone(c.phone) === normalized);
     if (existing) {
       setCustomerId(existing.id);
       setCustQuery(existing.phone);
