@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
 
 export default function Login() {
-  const { signIn, createInitialAdmin, user, ready, state, dark } = usePOS();
+  const { signIn, createInitialAdmin, user, ready, state } = usePOS();
   const navigate = useNavigate();
   const location = useLocation();
   const [loginRole, setLoginRole] = useState<'admin' | 'cashier'>('admin');
