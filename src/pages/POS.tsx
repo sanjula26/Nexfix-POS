@@ -442,7 +442,9 @@ export default function POS() {
       try { whatsappWindow.opener = null; } catch { /* browser may make opener read-only */ }
     }
 
-    const sale = await completeSaleCloud({
+    let sale: Sale | null = null;
+    try {
+      sale = await completeSaleCloud({
       lines: lines.map(l => {
         const p = products.find(x => x.id === l.productId)!;
         const base: { productId: string; qty: number; discount: number; price?: number; unitIds?: string[] } = {
@@ -463,6 +465,11 @@ export default function POS() {
       note: note.trim() || undefined,
       salesmanId: salesmanId || undefined,
     });
+    } catch {
+      if (whatsappWindow) whatsappWindow.close();
+      setError('Sale could not be completed. Please try again.');
+      return;
+    }
     if (sale) {
       setDoneSale(sale);
       /* WhatsApp receipt — navigate the user-approved tab after the sale is confirmed. */
