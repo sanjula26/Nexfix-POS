@@ -70,7 +70,8 @@ export default function POS() {
   const [custQuery, setCustQuery] = useState('');
   const [custOpen, setCustOpen] = useState(false);
   const [addCustOpen, setAddCustOpen] = useState(false);
-  const [newCust, setNewCust] = useState({ name: '', phone: '', nic: '' });
+  const [newCust, setNewCust] = useState({ name: '', phone: '', nic: '', address: '' });
+  const [billingWhatsApp, setBillingWhatsApp] = useState('');
   const custBoxRef = useRef<HTMLDivElement>(null);
   const custInputRef = useRef<HTMLInputElement>(null);
 
@@ -239,6 +240,21 @@ export default function POS() {
   const tax = (taxable * (parseFloat(taxPct) || 0)) / 100;
   const shipAmt = shipOpen ? Math.max(0, parseFloat(shipping) || 0) : 0;
   const customer = state.customers.find(c => c.id === customerId);
+  const billingWhatsAppDigits = normalizeWhatsAppPhone(billingWhatsApp);
+  const billingWhatsAppCustomer = useMemo(() => {
+    if (billingWhatsAppDigits.length < 9) return undefined;
+    return state.customers.find(c => normalizeWhatsAppPhone(c.phone) === billingWhatsAppDigits);
+  }, [state.customers, billingWhatsAppDigits]);
+  useEffect(() => {
+    if (customer?.phone) setBillingWhatsApp(customer.phone);
+    else if (!customerId && !billingWhatsAppDigits) setBillingWhatsApp('');
+  }, [customer?.phone, customerId, billingWhatsAppDigits]);
+  useEffect(() => {
+    if (billingWhatsAppCustomer && billingWhatsAppCustomer.id !== customerId) {
+      setCustomerId(billingWhatsAppCustomer.id);
+      setCustQuery(billingWhatsAppCustomer.phone);
+    }
+  }, [billingWhatsAppCustomer, customerId]);
   const maxRedeem = customer?.loyaltyPoints || 0;
   const redeemedPts = redeemOn ? Math.min(Math.max(0, Math.floor(parseFloat(points) || 0)), maxRedeem) : 0;
   const preTotal = taxable + tax + shipAmt;
@@ -394,7 +410,7 @@ export default function POS() {
   };
 
   const reset = () => {
-    setLines([]); setCustomerId(''); setCustQuery(''); setDiscount(''); setDiscMode('rs');
+    setLines([]); setCustomerId(''); setCustQuery(''); setBillingWhatsApp(''); setDiscount(''); setDiscMode('rs');
     setTaxPct(String(state.settings.taxDefault || '')); setShipOpen(false); setShipping('');
     setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
     setRedeemOn(false); setPoints(''); setPayment('cash'); setPaid(''); setPaidAuto(false);
@@ -435,7 +451,7 @@ export default function POS() {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
-    const whatsappDigits = normalizeWhatsAppPhone(customer?.phone || custQuery);
+    const whatsappDigits = normalizeWhatsAppPhone(customer?.phone || billingWhatsApp || custQuery);
     const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
     if (whatsappWindow) {
@@ -521,16 +537,18 @@ export default function POS() {
       setCustomerId(existing.id);
       setCustQuery(existing.phone);
       setAddCustOpen(false);
-      setNewCust({ name: '', phone: '', nic: '' });
+      setNewCust({ name: '', phone: '', nic: '', address: '' });
+      setBillingWhatsApp(existing.phone);
       toast('Existing customer selected — this WhatsApp number is already saved', 'amber');
       return;
     }
-    const c = { id: uid(), name, phone, nic: newCust.nic.trim() || undefined, createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 };
+    const c = { id: uid(), name, phone, nic: newCust.nic.trim() || undefined, address: newCust.address.trim() || undefined, createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 };
     saveCustomer(c);
     setCustomerId(c.id);
     setCustQuery(phone);
+    setBillingWhatsApp(phone);
     setAddCustOpen(false);
-    setNewCust({ name: '', phone: '', nic: '' });
+    setNewCust({ name: '', phone: '', nic: '', address: '' });
   };
 
   /* ---------- admin gate (price override) ---------- */
@@ -1254,6 +1272,43 @@ export default function POS() {
               </div>
             )}
 
+            {/* billing WhatsApp number — available at checkout near the payment amount */}
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <span className="text-[10px] font-bold tracking-wider uppercase text-faint">WhatsApp number</span>
+                {billingWhatsAppCustomer && (
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    Customer matched
+                  </span>
+                )}
+              </div>
+              <input
+                className="input num !py-2.5"
+                value={billingWhatsApp}
+                onChange={e => {
+                  const value = e.target.value;
+                  setBillingWhatsApp(value);
+                  const digits = normalizeWhatsAppPhone(value);
+                  const match = digits.length >= 9
+                    ? state.customers.find(c => normalizeWhatsAppPhone(c.phone) === digits)
+                    : undefined;
+                  if (match) {
+                    setCustomerId(match.id);
+                    setCustQuery(match.phone);
+                  } else if (customerId) {
+                    setCustomerId('');
+                    setCustQuery('');
+                  }
+                }}
+                placeholder="+94 77 000 0000"
+                inputMode="tel"
+                autoComplete="tel"
+              />
+              <div className="text-[10px] text-faint mt-1">
+                Enter the customer's WhatsApp number here for the receipt. Existing customers are matched automatically.
+              </div>
+            </div>
+
             {/* change / balance due */}
             <AnimatePresence mode="wait">
               {total > 0 && (
@@ -1556,6 +1611,15 @@ export default function POS() {
               <input className="input num" value={newCust.nic} onChange={e => setNewCust(c => ({ ...c, nic: e.target.value }))} placeholder="ID / NIC" />
             </Field>
           </div>
+          <Field label="Address (optional)">
+            <textarea
+              className="input min-h-[72px] resize-none"
+              value={newCust.address}
+              onChange={e => setNewCust(c => ({ ...c, address: e.target.value }))}
+              placeholder="Customer address"
+              maxLength={240}
+            />
+          </Field>
           <p className="text-[11px] text-faint">New members start with 0 loyalty points and earn 1 pt per Rs. 1,000 spent.</p>
           <div className="flex gap-2.5">
             <button className="btn btn-primary flex-1" onClick={quickAddCustomer} disabled={!newCust.name.trim() || !newCust.phone.trim()}>
