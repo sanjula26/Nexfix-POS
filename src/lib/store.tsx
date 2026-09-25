@@ -5,7 +5,7 @@ import {
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
-import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash } from './utils';
+import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
@@ -988,8 +988,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const existing = state.customers.find(x => x.id === c.id);
   let duplicate = false;
   setState(s => {
-    const normalizedPhone = phone.replace(/[\s()-]/g, '');
-    const duplicatePhone = s.customers.some(x => x.id !== c.id && x.phone.replace(/[\s()-]/g, '') === normalizedPhone);
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+    const duplicatePhone = normalizedPhone.length >= 9 && s.customers.some(
+      x => x.id !== c.id && normalizeWhatsAppPhone(x.phone) === normalizedPhone,
+    );
     const duplicateNic = !!nic && s.customers.some(x => x.id !== c.id && (x.nic || '').trim().toLowerCase() === nic.toLowerCase());
     if (duplicatePhone || duplicateNic) { duplicate = true; return s; }
     const updated: Customer = existing
