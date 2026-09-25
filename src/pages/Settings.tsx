@@ -430,7 +430,10 @@ export default function Settings() {
               <Field label="Loyalty points per Rs. 1" hint="Example: 0.001 = 1 point per Rs. 1,000"><input type="number" min="0" max="10" step="0.001" className="input num" value={form.loyaltyPointsPerRs || ''} onChange={num('loyaltyPointsPerRs')} /></Field>
               <Field label="Value of 1 loyalty point (Rs.)" hint="Used when redeeming points at POS"><input type="number" min="0" step="0.01" className="input num" value={form.loyaltyPointValue || ''} onChange={num('loyaltyPointValue')} /></Field>
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => setForm(f => ({ ...f, whatsappReceipts: v }))} /></label>
+            <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 mt-4 cursor-pointer"><span className="flex items-center gap-2.5 text-sm font-medium text-ink"><MessageCircle size={15} className="text-emerald-500" /> WhatsApp auto-receipt <span className="text-[11px] text-faint font-normal">Auto-open after every checkout. Off = cashier chooses per bill</span></span><Toggle checked={form.whatsappReceipts !== false} onChange={v => {
+              setForm(f => ({ ...f, whatsappReceipts: v }));
+              updateSettings({ whatsappReceipts: v });
+            }} /></label>
           </div>
 
           <div className="card p-6">
