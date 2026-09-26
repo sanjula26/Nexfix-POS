@@ -15,6 +15,8 @@ on:
       - 'package-lock.json'
       - 'vite.config.*'
       - 'eslint.config.js'
+      - 'assets/**'
+      - 'build/**'
       - '.github/workflows/desktop-build.yml'
 
 concurrency:
@@ -41,6 +43,36 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Generate Nexfix Windows icon assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command magick -ErrorAction SilentlyContinue)) { throw "ImageMagick (magick) is required on windows-latest." }
+          $source = "assets/nexfix-logo-source.jpeg"
+          if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          magick $source -auto-orient -resize "900x900" -gravity center -background white -extent 1024x1024 "build/icon.png"
+          magick "build/icon.png" -define icon:auto-resize=16,32,48,64,128,256 "build/icon.ico"
+          $identify = magick identify -format "%m %wx%h" "build/icon.png"
+          if ($identify -notmatch "PNG 1024x1024") { throw "Unexpected icon.png output: $identify" }
+          if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico was not generated." }
+          Write-Host "Generated: $identify"
+
+      - name: Commit generated Windows icon assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build/icon.png build/icon.ico
+          if (git diff --cached --quiet) {
+            Write-Host "Windows icon assets already committed."
+          } else {
+            git commit -m "chore(desktop): commit generated Nexfix Windows icon assets"
+            git push origin HEAD:main
+          }
       - name: Typecheck
         run: npm run typecheck
 
