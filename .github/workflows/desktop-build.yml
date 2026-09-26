@@ -108,7 +108,11 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw "GH_TOKEN is empty." }
-          npx electron-builder --win --publish always -c.extraMetadata.version=$env:BUILD_VERSION
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $package.version = $env:BUILD_VERSION
+          $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
+          Write-Host "Packaging Windows EXE as version $env:BUILD_VERSION"
+          npx electron-builder --win --publish always
 
       - name: Verify Windows artifacts and updater metadata
         shell: pwsh
