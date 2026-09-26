@@ -158,6 +158,23 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
+      - name: Upload all Windows release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          if (-not (gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null)) {
+            gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Nexfix POS $version" --notes "Nexfix POS Windows release $version"
+            if ($LASTEXITCODE -ne 0) { throw "Could not create release $tag." }
+          }
+          gh release upload $tag release/* --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw "Could not upload Windows release assets to $tag." }
+          Write-Host "All Windows release assets uploaded to $tag"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+
       - name: Verify published GitHub Release assets
         shell: pwsh
         env:
