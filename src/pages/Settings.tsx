@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy,
+  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -13,6 +13,8 @@ import { decryptBackupEnvelope, getBackupSecurityMessage, getRecoveryKey, hasRec
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
+import { getCloudShopId } from '../lib/cloudSync';
+import { getMachineIdentity } from '../lib/machine';
 import { uid } from '../lib/utils';
 
 export default function Settings() {
@@ -22,6 +24,7 @@ export default function Settings() {
     connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
+  const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const gEnabled = isGoogleSyncEnabled();
   const [gMsg, setGMsg] = useState('');
@@ -38,6 +41,22 @@ export default function Settings() {
   const [existingDriveShopId, setExistingDriveShopId] = useState('');
   const [shopIdMsg, setShopIdMsg] = useState('');
   const [shopIdCopied, setShopIdCopied] = useState(false);
+  const phoneSalesMachine = getMachineIdentity();
+  const phoneSalesShopId = getCloudShopId();
+  const phoneSalesLink = typeof window !== 'undefined'
+    ? `${window.location.origin}${window.location.pathname}#/today?${phoneSalesShopId ? `shop=${encodeURIComponent(phoneSalesShopId)}&` : ''}machine=${encodeURIComponent(phoneSalesMachine.id)}`
+    : '';
+  const copyPhoneSalesLink = async () => {
+    if (!phoneSalesLink) return;
+    try {
+      await navigator.clipboard.writeText(phoneSalesLink);
+      setPhoneLinkMsg('Phone sales link copied.');
+      window.setTimeout(() => setPhoneLinkMsg(''), 1800);
+    } catch {
+      setPhoneLinkMsg('Copy failed. Select the link and copy it manually.');
+    }
+  };
+
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
@@ -401,13 +420,19 @@ export default function Settings() {
   return (
     <div>
       {user?.role === 'admin' && (
-        <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="text-sm font-black text-ink">Phone Sales Links</div>
-              <p className="mt-1 text-xs leading-relaxed text-sub">View and copy the phone sales link for this POS machine. Other machine links are not shown here.</p>
+        <section className="mb-5 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-black text-ink">Phone Sales Link</div>
+              <p className="mt-1 text-xs leading-relaxed text-sub">This link opens this POS machine's read-only sales page. On the phone, choose <b>Today</b> or <b>Past Sales</b> and select a previous date when needed.</p>
+              <div className="mt-3 rounded-xl border border-line bg-raised px-3 py-2.5 text-[11px] font-mono text-ink break-all">{phoneSalesLink || 'Link will be available after the page loads.'}</div>
+              {phoneLinkMsg && <p className="mt-2 text-[12px] font-semibold text-emerald-600">{phoneLinkMsg}</p>}
             </div>
-            <button type="button" onClick={() => navigate('/today-links')} className="btn btn-primary min-h-11 px-4 text-xs">Manage machine links</button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button type="button" onClick={() => void copyPhoneSalesLink()} disabled={!phoneSalesLink} className="btn btn-primary min-h-11"><Copy size={15} /> Copy link</button>
+              {phoneSalesLink && <a href={phoneSalesLink.replace(window.location.origin + window.location.pathname, '')} target="_blank" rel="noreferrer" className="btn btn-soft min-h-11"><ExternalLink size={15} /> Open</a>}
+              <button type="button" onClick={() => navigate('/today-links')} className="btn btn-soft min-h-11">Machine details</button>
+            </div>
           </div>
         </section>
       )}
@@ -427,7 +452,7 @@ export default function Settings() {
       )}
 
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch content-start">
         <div className="card p-6">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-5"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><Store size={15} /></span>Shop Profile</h3>
           <div className="space-y-4">
