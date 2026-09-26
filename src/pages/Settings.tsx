@@ -15,6 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getMachineIdentity } from '../lib/machine';
+import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
 
 export default function Settings() {
@@ -43,18 +44,17 @@ export default function Settings() {
   const [shopIdCopied, setShopIdCopied] = useState(false);
   const phoneSalesMachine = getMachineIdentity();
   const phoneSalesShopId = getCloudShopId();
-  const phoneSalesLink = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}#/today?${phoneSalesShopId ? `shop=${encodeURIComponent(phoneSalesShopId)}&` : ''}machine=${encodeURIComponent(phoneSalesMachine.id)}`
-    : '';
+  const phoneSalesLink = buildPhoneSalesLink(phoneSalesShopId, phoneSalesMachine.id);
   const copyPhoneSalesLink = async () => {
     if (!phoneSalesLink) return;
-    try {
-      await navigator.clipboard.writeText(phoneSalesLink);
-      setPhoneLinkMsg('Phone sales link copied.');
-      window.setTimeout(() => setPhoneLinkMsg(''), 1800);
-    } catch {
-      setPhoneLinkMsg('Copy failed. Select the link and copy it manually.');
-    }
+    const copied = await copyText(phoneSalesLink);
+    setPhoneLinkMsg(copied ? 'Phone sales link copied.' : 'Copy failed. Use the link field below to select and copy.');
+    if (copied) window.setTimeout(() => setPhoneLinkMsg(''), 1800);
+  };
+  const openPhoneSalesLink = async () => {
+    if (!phoneSalesLink) return;
+    const opened = await openExternalUrl(phoneSalesLink);
+    if (!opened) setPhoneLinkMsg('Could not open the phone sales page. Copy the link and open it in Chrome.');
   };
 
   const [form, setForm] = useState(() => {
@@ -91,7 +91,7 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
   const [appVersion, setAppVersion] = useState('3.0.6');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -425,12 +425,12 @@ export default function Settings() {
             <div className="min-w-0">
               <div className="text-sm font-black text-ink">Phone Sales Link</div>
               <p className="mt-1 text-xs leading-relaxed text-sub">This link opens this POS machine's read-only sales page. On the phone, choose <b>Today</b> or <b>Past Sales</b> and select a previous date when needed.</p>
-              <div className="mt-3 rounded-xl border border-line bg-raised px-3 py-2.5 text-[11px] font-mono text-ink break-all">{phoneSalesLink || 'Link will be available after the page loads.'}</div>
+              <input aria-label="Phone sales link" readOnly value={phoneSalesLink} onFocus={e => e.currentTarget.select()} className="mt-3 w-full rounded-xl border border-line bg-raised px-3 py-2.5 text-[11px] font-mono text-ink outline-none focus:border-violet-500" />
               {phoneLinkMsg && <p className="mt-2 text-[12px] font-semibold text-emerald-600">{phoneLinkMsg}</p>}
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
               <button type="button" onClick={() => void copyPhoneSalesLink()} disabled={!phoneSalesLink} className="btn btn-primary min-h-11"><Copy size={15} /> Copy link</button>
-              {phoneSalesLink && <a href={phoneSalesLink.replace(window.location.origin + window.location.pathname, '')} target="_blank" rel="noreferrer" className="btn btn-soft min-h-11"><ExternalLink size={15} /> Open</a>}
+              {phoneSalesLink && <button type="button" onClick={() => void openPhoneSalesLink()} className="btn btn-soft min-h-11"><ExternalLink size={15} /> Open in browser</button>}
               <button type="button" onClick={() => navigate('/today-links')} className="btn btn-soft min-h-11">Machine details</button>
             </div>
           </div>
