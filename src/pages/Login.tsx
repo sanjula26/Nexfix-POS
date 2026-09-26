@@ -339,8 +339,7 @@ export default function Login() {
           <AuthCard>
             <div className="p-7 sm:p-9 lg:p-10">
               <div>
-                <p className="text-[10px] font-bold tracking-[0.22em] text-cyan-300/80">NEXFIX SOLUTION</p>
-                <h2 className="mt-2 text-3xl font-black tracking-tight text-white">Welcome back</h2>
+                <h2 className="text-3xl font-black tracking-tight text-white">NEXFIX SOLUTION</h2>
                 <p className="mt-2 text-sm text-slate-400">Sign in to your POS account</p>
               </div>
 
