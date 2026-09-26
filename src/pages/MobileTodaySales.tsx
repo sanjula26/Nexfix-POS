@@ -7,6 +7,42 @@ import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cl
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import type { POSState, Sale } from '../lib/types';
 import { getMachineIdentity } from '../lib/machine';
+import { buildPhoneSalesLink, copyText } from '../lib/publicApp';
+
+function dateKeyInTimeZone(date: Date, timeZone: string): string {
+  if (!timeZone) return dkey(date);
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const year = parts.find(p => p.type === 'year')?.value || '';
+    const month = parts.find(p => p.type === 'month')?.value || '';
+    const day = parts.find(p => p.type === 'day')?.value || '';
+    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(`${year}-${month}-${day}`)) return `${year}-${month}-${day}`;
+  } catch {
+    // Fall back to the phone's local timezone when the shared timezone is invalid.
+  }
+  return dkey(date);
+}
+
+function shiftDateKey(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+async function waitForCloudSession(client: NonNullable<typeof supabase>): Promise<boolean> {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    const { data } = await client.auth.getSession();
+    if (data.session) return true;
+    await new Promise(resolve => window.setTimeout(resolve, 250));
+  }
+  return false;
+}
 
 export default function MobileTodaySales() {
   const { state, signOut, verifyAdminPin } = usePOS();
@@ -15,6 +51,7 @@ export default function MobileTodaySales() {
   const query = new URLSearchParams(location.search);
   const requestedShopId = query.get('shop')?.trim() || '';
   const requestedMachineId = query.get('machine')?.trim() || '';
+  const requestedTimeZone = query.get('tz')?.trim() || '';
   const [activeShopId, setActiveShopId] = useState(getCloudShopId());
   const [shopReady, setShopReady] = useState(!requestedMachineId && (!requestedShopId || requestedShopId === getCloudShopId()));
   const [shopError, setShopError] = useState('');
@@ -26,7 +63,7 @@ export default function MobileTodaySales() {
   const [pinError, setPinError] = useState('');
   const [pinVerified, setPinVerified] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
-  const today = dkey(new Date());
+  const today = dateKeyInTimeZone(new Date(), requestedTimeZone);
   const requestedDate = query.get('date')?.trim() || '';
   const validRequestedDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && requestedDate <= today ? requestedDate : today;
   const initialView: 'today' | 'past' = query.get('view') === 'past' || validRequestedDate !== today ? 'past' : 'today';
@@ -35,9 +72,7 @@ export default function MobileTodaySales() {
   const [machineLinkCopied, setMachineLinkCopied] = useState(false);
 
   const previousDate = () => {
-    const date = new Date();
-    date.setDate(date.getDate() - 1);
-    return dkey(date);
+    return shiftDateKey(today, -1);
   };
 
   const selectToday = () => {
@@ -65,6 +100,15 @@ export default function MobileTodaySales() {
       const client = supabase;
       if (!client) {
         if (!cancelled) { setShopError('Cloud connection is required to resolve this shop.'); setShopReady(false); }
+        return;
+      }
+      if (!(await waitForCloudSession(client))) {
+        if (!cancelled) { setShopError('Cloud login is still starting. Please wait a moment and refresh.'); setShopReady(false); }
+        return;
+      }
+      if (!(await waitForCloudSession(client))) {
+        setShopError('Cloud login is still starting. Please wait a moment and refresh.');
+        setShopReady(false);
         return;
       }
       const { data: authData } = await client.auth.getUser();
@@ -143,9 +187,7 @@ export default function MobileTodaySales() {
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
   const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
-  const phoneLink = typeof window !== 'undefined'
-    ? `${window.location.origin}${window.location.pathname}#/today?${shopId ? `shop=${encodeURIComponent(shopId)}&` : ''}machine=${encodeURIComponent(machineId)}`
-    : '';
+  const phoneLink = buildPhoneSalesLink(shopId, machineId, requestedTimeZone || (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })());
 
   const submitPin = () => {
     const value = pin.trim();
@@ -228,18 +270,18 @@ export default function MobileTodaySales() {
   const copyMachineLink = async () => {
     if (!phoneLink) return;
     try {
-      await navigator.clipboard.writeText(phoneLink);
-      setMachineLinkCopied(true);
-      window.setTimeout(() => setMachineLinkCopied(false), 1800);
+      const copied = await copyText(phoneLink);
+      setMachineLinkCopied(copied);
+      if (copied) window.setTimeout(() => setMachineLinkCopied(false), 1800);
     } catch { setMachineLinkCopied(false); }
   };
 
   const copyPhoneLink = async () => {
     if (!phoneLink) return;
     try {
-      await navigator.clipboard.writeText(phoneLink);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
+      const copied = await copyText(phoneLink);
+      setCopied(copied);
+      if (copied) window.setTimeout(() => setCopied(false), 1800);
     } catch { setCopied(false); }
   };
 
@@ -248,7 +290,7 @@ export default function MobileTodaySales() {
   const cloudUnavailable = cloudMode && !remoteState;
   const sales = useMemo(
     () => (cloudMode ? (remoteState?.sales || []) : state.sales)
-      .filter(s => dkey(new Date(s.date)) === selectedDate && s.machineId === machineId)
+      .filter(s => dateKeyInTimeZone(new Date(s.date), requestedTimeZone) === selectedDate && s.machineId === machineId)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
     [cloudMode, remoteState?.sales, state.sales, selectedDate, machineId],
   );
