@@ -26,6 +26,7 @@ function setupAutoUpdater(){
       if(!updateInstallScheduled){updateInstallScheduled=true;setTimeout(()=>{try{autoUpdater.quitAndInstall(false,true);}catch(error){updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});}},600);}
     });
     autoUpdater.on('error',error=>{updateDownloadActive=false;updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});});
+    ipcMain.handle('update:status',()=>({supported:true,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
       try{const result=await autoUpdater.checkForUpdates();return{supported:true,available:Boolean(result?.isUpdateAvailable),version:result?.updateInfo?.version||null};}
@@ -39,13 +40,16 @@ function setupAutoUpdater(){
         updateDownloadActive=true;sendUpdateEvent('progress',{percent:0});await autoUpdater.downloadUpdate();return{supported:true,started:true};
       }catch(error){updateDownloadActive=false;sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,started:false,error:error?.message||String(error)};}
     });
-    setTimeout(()=>{void autoUpdater.checkForUpdates().catch(()=>{});},5000);
+    const checkNow=()=>{void autoUpdater.checkForUpdates().catch(()=>{});};
+    setTimeout(checkNow,5000);
+    setInterval(checkNow,10*60*1000);
+    app.on('browser-window-focus',checkNow);
   }catch(error){console.warn('[Nexfix updater] unavailable:',error?.message||error);}
 }
 
 function isAllowedNavigation(url){try{const parsed=new URL(url);if(isDev)return parsed.origin===new URL(DEV_URL).origin;return parsed.protocol==='file:';}catch{return false;}}
 function createWindow(){
-  const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+  const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(({url})=>isAllowedNavigation(url)?{action:'allow'}:{action:'deny'});
   win.webContents.on('will-navigate',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
   win.webContents.on('will-redirect',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
@@ -60,7 +64,7 @@ function createWindow(){
     });
     win.webContents.on('dom-ready',()=>{if(!win.isDestroyed())win.webContents.openDevTools({mode:'detach'});});
   }
-  win.once('ready-to-show',()=>{ win.maximize(); win.show(); });
+  win.once('ready-to-show',()=>{ win.setFullScreen(true); win.setKiosk(true); win.show(); });
   if(isDev){
     win.loadURL(DEV_URL).catch(error=>console.error('[Nexfix] Failed to load development URL:',error));
   }else{
