@@ -70,7 +70,7 @@ export default function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState('');
-  const [appVersion, setAppVersion] = useState('3.0.1');
+  const [appVersion, setAppVersion] = useState('3.0.3');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
   const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
