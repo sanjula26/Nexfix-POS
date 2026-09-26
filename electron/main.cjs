@@ -49,8 +49,31 @@ function createWindow(){
   win.webContents.setWindowOpenHandler(({url})=>isAllowedNavigation(url)?{action:'allow'}:{action:'deny'});
   win.webContents.on('will-navigate',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
   win.webContents.on('will-redirect',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
+  const debugPackaged=app.isPackaged && process.env.NEXFIX_DEBUG==='1';
+  win.webContents.on('did-fail-load',(_event,errorCode,errorDescription,validatedURL)=>{
+    console.error(`[Nexfix renderer load failed] ${errorCode}: ${errorDescription} ${validatedURL}`);
+    if(debugPackaged && !win.isDestroyed()) win.webContents.openDevTools({mode:'detach'});
+  });
+  if(debugPackaged){
+    win.webContents.on('console-message',(_event,level,message,line,sourceId)=>{
+      console.error(`[Nexfix renderer console] level=${level} ${message} (${sourceId}:${line})`);
+    });
+    win.webContents.on('dom-ready',()=>{if(!win.isDestroyed())win.webContents.openDevTools({mode:'detach'});});
+  }
   win.once('ready-to-show',()=>win.show());
-  if(isDev)win.loadURL(DEV_URL);else win.loadFile(path.join(__dirname,'..','dist','index.html'));
+  if(isDev){
+    win.loadURL(DEV_URL).catch(error=>console.error('[Nexfix] Failed to load development URL:',error));
+  }else{
+    const indexPath=path.join(__dirname,'..','dist','index.html');
+    const fs=require('fs');
+    if(!fs.existsSync(indexPath)){
+      console.error(`[Nexfix] Packaged renderer entry is missing: ${indexPath}`);
+      win.show();
+      return;
+    }
+    console.log(`[Nexfix] Loading packaged renderer: ${indexPath}`);
+    win.loadFile(indexPath).catch(error=>console.error('[Nexfix] Failed to load packaged renderer:',error));
+  }
 }
 ipcMain.handle('app:version',()=>app.getVersion());
 app.whenReady().then(()=>{
