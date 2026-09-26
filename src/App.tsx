@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
@@ -95,6 +96,98 @@ function CloudSyncStateBridge() {
 
 function RouteFallback() {
   return <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] font-semibold">Loading…</div>;
+}
+
+function DesktopUpdateNotice() {
+  const { user } = usePOS();
+  const [update, setUpdate] = useState<{status:'hidden'|'available'|'downloading'|'downloaded'|'error';version?:string;percent?:number;message?:string}>({status:'hidden'});
+  const desktopApi = (window as Window & {
+    nexfixDesktop?: {
+      isPackaged?: boolean;
+      isPortable?: boolean;
+      getUpdateStatus?: () => Promise<{supported?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;
+      checkForUpdates?: () => Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;
+      downloadAndInstallUpdate?: () => Promise<{supported?:boolean;started?:boolean;error?:string}>;
+      onUpdateEvent?: (listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>()=>void;
+    };
+  }).nexfixDesktop;
+
+  useEffect(() => {
+    if (!user || !desktopApi?.isPackaged) {
+      setUpdate({status:'hidden'});
+      return;
+    }
+    let alive = true;
+    const apply = (event:{type:string;version?:string;percent?:number;message?:string}) => {
+      if (!alive) return;
+      if (event.type === 'available') setUpdate({status:'available',version:event.version});
+      else if (event.type === 'progress') setUpdate({status:'downloading',percent:Math.max(0,Math.min(100,Number(event.percent||0)))});
+      else if (event.type === 'downloaded') setUpdate({status:'downloaded',version:event.version});
+      else if (event.type === 'error') setUpdate({status:'error',message:event.message || 'The update service could not be reached.'});
+      else if (event.type === 'not-available') setUpdate({status:'hidden'});
+    };
+    const unsubscribe = desktopApi.onUpdateEvent?.(apply);
+    void desktopApi.getUpdateStatus?.().then(status => {
+      if (!alive || !status?.available) return;
+      setUpdate({status:'available',version:status.version || undefined});
+    }).catch(() => {});
+    return () => {
+      alive = false;
+      unsubscribe?.();
+    };
+  }, [user, desktopApi]);
+
+  if (!user || !desktopApi?.isPackaged || update.status === 'hidden') return null;
+
+  const updateNow = async () => {
+    if (desktopApi.isPortable) {
+      setUpdate({status:'error',message:'Updates require the installed Setup edition.'});
+      return;
+    }
+    setUpdate(current => ({...current,status:'downloading',percent:0}));
+    const result = await desktopApi.downloadAndInstallUpdate?.();
+    if (result?.error) setUpdate({status:'error',message:result.error});
+  };
+
+  return (
+    <div className="fixed right-4 top-4 z-[200] w-[min(420px,calc(100vw-2rem))]">
+      <div className="overflow-hidden rounded-2xl border border-cyan-400/35 bg-white/95 shadow-[0_18px_60px_rgba(2,8,23,0.20)] backdrop-blur-xl dark:border-cyan-300/25 dark:bg-[#071225]/95 dark:shadow-[0_18px_60px_rgba(2,8,23,0.60)]">
+        <div className="h-1 bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-500" />
+        <div className="p-4">
+          {update.status === 'available' && (
+            <>
+              <div className="flex items-start gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"><Sparkles size={18} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-[#17133c] dark:text-white">New Nexfix POS update available</p>
+                  <p className="mt-1 text-xs text-[#6f7391] dark:text-slate-400">Version {update.version || 'new'} is ready. Update now to keep this POS current.</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => void updateNow()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-500 py-2.5 text-xs font-extrabold text-white shadow-[0_10px_24px_rgba(14,165,233,0.22)] transition hover:brightness-110">
+                <Download size={15} /> Update now
+              </button>
+            </>
+          )}
+          {update.status === 'downloading' && (
+            <div>
+              <div className="flex items-center gap-2 text-sm font-black text-[#17133c] dark:text-white"><Loader2 size={16} className="animate-spin text-cyan-500" /> Updating Nexfix POS…</div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-500 transition-all" style={{width:`${update.percent || 0}%`}} /></div>
+              <p className="mt-1 text-right text-[11px] font-bold text-slate-500 dark:text-slate-400">{Math.round(update.percent || 0)}%</p>
+            </div>
+          )}
+          {update.status === 'downloaded' && (
+            <div className="flex items-center gap-2 text-sm font-black text-[#17133c] dark:text-white"><Loader2 size={16} className="animate-spin text-cyan-500" /> Update downloaded. Restarting…</div>
+          )}
+          {update.status === 'error' && (
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-500" />
+              <div><p className="text-sm font-bold text-[#17133c] dark:text-white">Update check needs attention</p><p className="mt-1 text-xs text-[#6f7391] dark:text-slate-400">{update.message}</p></div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PermissionDenied() {
@@ -198,6 +291,7 @@ export default function App() {
         <CloudAuthLifecycle />
         <SessionSecurity />
         <CloudSyncStateBridge />
+        <DesktopUpdateNotice />
         <AppRoutes />
       </HashRouter>
     </POSProvider>
