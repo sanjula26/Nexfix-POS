@@ -86,6 +86,24 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
           npm run build
 
+      - name: Ensure version tag exists for GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
+          if ([string]::IsNullOrWhiteSpace($remoteTag)) {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag $tag
+            git push origin $tag
+            Write-Host "Created release tag $tag"
+          } else {
+            Write-Host "Release tag $tag already exists."
+          }
+
       - name: Build Windows installer and portable app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
