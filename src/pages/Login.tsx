@@ -227,11 +227,19 @@ export default function Login() {
   const [setupCashierEmail, setSetupCashierEmail] = useState('');
   const [setupCashierPassword, setSetupCashierPassword] = useState('');
   const [setupCashierConfirm, setSetupCashierConfirm] = useState('');
+  const [appVersion, setAppVersion] = useState(() => String(import.meta.env.VITE_APP_VERSION || ''));
 
   const nextPath = (() => {
     const next = new URLSearchParams(location.search).get('next') || '';
     return next.startsWith('/') && !next.startsWith('//') ? next : '';
   })();
+
+  useEffect(() => {
+    const desktopApi = (window as Window & { nexfixDesktop?: { getVersion?: () => Promise<string> } }).nexfixDesktop;
+    void desktopApi?.getVersion?.().then(version => {
+      if (version) setAppVersion(version);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!ready || user) return;
@@ -419,6 +427,7 @@ export default function Login() {
               <p className="mt-7 text-center text-[11px] leading-5 text-[#8a8eaa] dark:text-slate-500">
                 Your password is never stored in Remember me data.
               </p>
+              {appVersion && <p className="mt-2 text-center text-[10px] font-semibold tracking-[0.16em] text-[#a0a3bd] dark:text-slate-600">NEXFIX POS v{appVersion}</p>}
             </div>
           </AuthCard>
         )}
