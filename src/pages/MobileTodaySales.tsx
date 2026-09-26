@@ -299,8 +299,8 @@ export default function MobileTodaySales() {
         <section className="mb-4 rounded-2xl card p-4">
           <label className="block text-xs font-bold uppercase tracking-wide text-sub" htmlFor="today-sales-date">Sales date</label>
           <div className="mt-2 flex gap-2">
-            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-ink outline-none focus:border-violet-500" />
-            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-bold text-ink">Today</button>}
+            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-line bg-raised px-3 text-sm font-bold text-ink outline-none focus:border-violet-500" />
+            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink">Today</button>}
           </div>
           <p className="mt-2 text-[11px] text-sub">You can view sales for today or a previous date. Future dates are not allowed.</p>
           <div className="mt-4 flex items-center justify-between gap-3">
@@ -308,7 +308,7 @@ export default function MobileTodaySales() {
               <div className="text-xs font-bold uppercase tracking-wide text-sub">Data source</div>
               <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
             </div>
-            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-ink disabled:opacity-50">
+            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink disabled:opacity-50">
               <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
@@ -335,13 +335,13 @@ export default function MobileTodaySales() {
         <section className="mt-5">
           <div className="mb-3 flex items-center gap-2 text-base font-extrabold"><ReceiptText size={18} /> {selectedDate === today ? 'Today’s bills' : 'Sales for selected date'}</div>
           {sales.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-sub">No sales recorded for the selected date.</div>
+            <div className="rounded-2xl border border-dashed border-line bg-raised p-8 text-center text-sm text-sub">No sales recorded for the selected date.</div>
           ) : (
             <div className="space-y-3">
               {sales.map(sale => {
                 const open = openId === sale.id;
                 return (
-                  <button key={sale.id} type="button" onClick={() => setOpenId(open ? null : sale.id)} className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm active:scale-[.99]">
+                  <button key={sale.id} type="button" onClick={() => setOpenId(open ? null : sale.id)} className="w-full card p-4 text-left active:scale-[.99]">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-base font-extrabold">{sale.billNo}</div>
