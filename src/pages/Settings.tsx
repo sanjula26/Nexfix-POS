@@ -44,7 +44,8 @@ export default function Settings() {
   const [shopIdCopied, setShopIdCopied] = useState(false);
   const phoneSalesMachine = getMachineIdentity();
   const phoneSalesShopId = getCloudShopId();
-  const phoneSalesLink = buildPhoneSalesLink(phoneSalesShopId, phoneSalesMachine.id);
+  const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
+  const phoneSalesLink = buildPhoneSalesLink(phoneSalesShopId, phoneSalesMachine.id, phoneSalesTimeZone);
   const copyPhoneSalesLink = async () => {
     if (!phoneSalesLink) return;
     const copied = await copyText(phoneSalesLink);
