@@ -51,17 +51,24 @@ jobs:
           $source = "assets/nexfix-pos-icon.svg"
           if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
           New-Item -ItemType Directory -Force -Path build | Out-Null
-          # Preserve the supplied Nexfix artwork. Do not trim/flood-fill the white
-          # canvas: Windows shortcuts and the installed EXE must use the complete
-          # supplied logo composition, including its rounded border and white field.
-          magick $source -auto-orient -background white -alpha remove -alpha off -resize "1024x1024" -gravity center -extent 1024x1024 "build/icon.png"
+          # The logo source is an SVG wrapper around the supplied artwork. ImageMagick's
+          # SVG delegate can ignore embedded data-URI images, so extract the actual
+          # embedded JPEG bytes first, then build every Windows icon size from those
+          # original artwork pixels. Never trim the white field or crop the border.
+          $svgText = Get-Content $source -Raw
+          $match = [regex]::Match($svgText, 'data:image/(?<type>jpeg|jpg|png);base64,(?<data>[^"]+)')
+          if (-not $match.Success) { throw "Logo SVG does not contain an embedded PNG/JPEG artwork image." }
+          $extension = if ($match.Groups['type'].Value -eq 'png') { 'png' } else { 'jpg' }
+          $embedded = "build/icon-source.$extension"
+          [IO.File]::WriteAllBytes($embedded, [Convert]::FromBase64String($match.Groups['data'].Value))
+          magick $embedded -auto-orient -background white -alpha remove -alpha off -resize "1024x1024" -gravity center -extent 1024x1024 "build/icon.png"
           magick "build/icon.png" -define icon:auto-resize=16,24,32,48,64,128,256 "build/icon.ico"
           $identify = magick identify -format "%m %wx%h %[fx:standard_deviation]" "build/icon.png"
           if ($identify -notmatch "PNG 1024x1024") { throw "Unexpected icon.png output: $identify" }
           if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico was not generated." }
           $variance = [double](magick identify -format "%[fx:standard_deviation]" "build/icon.png")
           if ($variance -lt 0.01) { throw "Generated Windows icon appears blank/flat: standard deviation $variance" }
-          Write-Host "Generated Nexfix Windows icon: $identify"
+          Write-Host "Generated Nexfix Windows icon from original artwork: $identify"
 
       - name: Typecheck
         run: npm run typecheck
