@@ -70,8 +70,26 @@ export default function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState('');
+  const [appVersion, setAppVersion] = useState('3.0.1');
+  const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
+  useEffect(() => {
+    if (!desktopApi) return;
+    void desktopApi.getVersion?.().then(v=>{if(v)setAppVersion(v);}).catch(()=>{});
+    const unsubscribe=desktopApi.onUpdateEvent?.((event)=>{
+      if(event.type==='checking')setUpdateState({status:'checking'});
+      else if(event.type==='available')setUpdateState({status:'available',version:event.version});
+      else if(event.type==='not-available')setUpdateState({status:'not-available'});
+      else if(event.type==='progress')setUpdateState({status:'downloading',percent:Math.max(0,Math.min(100,Number(event.percent||0)))});
+      else if(event.type==='downloaded')setUpdateState({status:'downloaded',version:event.version});
+      else if(event.type==='error')setUpdateState({status:'error',message:event.message||'The update service could not be reached.'});
+    });
+    return unsubscribe;
+  }, []);
+  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
+  const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
     const accounts = state.users.filter(u => u.role === securityRole && u.active);
@@ -394,6 +412,20 @@ export default function Settings() {
         </section>
       )}
       <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.2`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
+      {user?.role === 'admin' && (
+        <div className="card p-6 border border-sky-500/20">
+          <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
+          <p className="text-xs text-faint mb-4">Update inside the app without leaving the POS.</p>
+          <div className="flex flex-wrap items-center gap-2"><span className="badge bg-raised text-ink">Current version: {appVersion}</span>{updateState.status==='available'&&<span className="badge bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">New version: {updateState.version}</span>}</div>
+          {desktopApi?.isPortable&&<p className="text-[11px] text-amber-600 dark:text-amber-400 mt-3">Portable edition detected. Automatic updates require the installed Setup edition.</p>}
+          {updateState.status==='downloading'&&<div className="mt-4"><div className="flex justify-between text-[11px] font-semibold text-sub mb-1.5"><span>Downloading update…</span><span>{Math.round(updateState.percent||0)}%</span></div><div className="h-2 rounded-full bg-raised overflow-hidden"><div className="h-full rounded-full bg-sky-500 transition-all" style={{width:(Math.max(0,Math.min(100,updateState.percent||0)))+'%'}} /></div></div>}
+          {updateState.status==='downloaded'&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">Update downloaded. Restarting…</p>}
+          {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
+          {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
+          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
+        </div>
+      )}
+
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
         <div className="card p-6">
