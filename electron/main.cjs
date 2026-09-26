@@ -60,7 +60,7 @@ function createWindow(){
     });
     win.webContents.on('dom-ready',()=>{if(!win.isDestroyed())win.webContents.openDevTools({mode:'detach'});});
   }
-  win.once('ready-to-show',()=>win.show());
+  win.once('ready-to-show',()=>{ win.maximize(); win.show(); });
   if(isDev){
     win.loadURL(DEV_URL).catch(error=>console.error('[Nexfix] Failed to load development URL:',error));
   }else{
