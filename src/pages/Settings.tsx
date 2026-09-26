@@ -70,7 +70,7 @@ export default function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState('');
-  const [appVersion, setAppVersion] = useState('3.0.4');
+  const [appVersion, setAppVersion] = useState('3.0.5');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
   const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
@@ -411,7 +411,7 @@ export default function Settings() {
           </div>
         </section>
       )}
-      <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v3.2`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
+      <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v${appVersion}`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
       {user?.role === 'admin' && (
         <div className="card p-6 border border-sky-500/20">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
@@ -438,19 +438,6 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="space-y-5">
-          <div className="card p-6 border border-sky-500/20">
-            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><ReceiptText size={15} /></span>A4 Invoice Design</h3>
-            <p className="text-xs text-faint mb-4">This controls the professional A4 invoice. Each shop can use its own business identity; no product photos are printed in the item table.</p>
-            <div className="space-y-3.5">
-              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Invoice title"><input className="input" value={form.invoiceTitle ?? ''} onChange={set('invoiceTitle')} placeholder="INVOICE / TAX INVOICE" /></Field><Field label="Invoice subtitle"><input className="input" value={form.invoiceSubtitle ?? ''} onChange={set('invoiceSubtitle')} placeholder="COMPUTER & PHONE SHOP" /></Field></div>
-              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Currency label"><input className="input" value={form.invoiceCurrency ?? ''} onChange={set('invoiceCurrency')} placeholder="Rs." /></Field><Field label="Tax label"><input className="input" value={form.invoiceTaxLabel ?? ''} onChange={set('invoiceTaxLabel')} placeholder="VAT" /></Field></div>
-              <div className="grid sm:grid-cols-2 gap-3.5"><Field label="Tax registration / TIN" hint="Leave blank when not applicable"><input className="input" value={form.taxRegistrationNo ?? ''} onChange={set('taxRegistrationNo')} /></Field><Field label="Place of supply"><input className="input" value={form.invoicePlaceOfSupply ?? ''} onChange={set('invoicePlaceOfSupply')} /></Field></div>
-              <Field label="Invoice terms & conditions" hint="One line per condition"><textarea className="input min-h-[90px] resize-y" value={form.invoiceTerms ?? ''} onChange={set('invoiceTerms')} /></Field>
-              <Field label="Invoice footer"><textarea className="input min-h-[65px] resize-y" value={form.invoiceFooter ?? ''} onChange={set('invoiceFooter')} /></Field>
-              <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 cursor-pointer"><span className="text-sm font-medium text-ink">Show tax line on A4 invoice</span><Toggle checked={form.invoiceShowTax !== false} onChange={v => setForm(f => ({ ...f, invoiceShowTax: v }))} /></label>
-            </div>
-          </div>
 
           <div className="card p-6">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-5"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><SlidersHorizontal size={15} /></span>POS Preferences</h3>
@@ -617,7 +604,6 @@ export default function Settings() {
           <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center"><Cloud size={15} /></span>Google Drive Backup</h3><p className="text-xs text-faint mb-3">Automatic Google Drive backup is centrally managed. The POS sends each shop's backup to its own isolated folder; shop users do not need to configure a Google URL.</p><div className="flex items-center gap-2 text-[12px] font-semibold text-emerald-600 mb-3"><CheckCircle2 size={15} /> Automatic backup is enabled</div>{!recoveryKeyReady && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-3 text-[12px] font-semibold text-amber-700 dark:text-amber-300 mb-3">The first encrypted Google backup will generate the Recovery Key automatically. On a replacement PC, paste the saved Recovery Key before restoring.</div>}<div className="flex flex-wrap gap-2 mt-3">{user?.role === 'admin' && <><button type="button" className="btn btn-primary" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={runGoogleBackupNow}><Cloud size={15} /> {gRestoreBusy ? 'Uploading / confirming…' : 'Backup now to Google Drive'}</button><button type="button" className="btn btn-soft" disabled={!gEnabled || connectivity !== 'online' || gRestoreBusy} onClick={requestGoogleRestore}><RotateCcw size={15} /> {gRestoreBusy ? 'Working…' : 'Restore latest Google backup'}</button></>}</div>{gMsg && <p className={`text-[13px] font-medium mt-3 ${gMsg.includes('Failed') || gMsg.includes('failed') || gMsg.includes('disabled') || gMsg.includes('requires') || gMsg.includes('No valid') || gMsg.includes('Invalid') || gMsg.includes('Could not') || gMsg.includes('Set the Backup Passphrase') || gMsg.includes('No backup was uploaded') || gMsg.includes('timed out') || gMsg.includes('could not be verified') ? 'text-rose-500' : 'text-emerald-500'}`}>{gMsg}</p>}<p className="text-[11px] text-faint mt-3">If Windows is damaged or this POS is moved to a new PC, first use the existing Shop Backup ID above to reconnect to the same shop, then paste the Recovery Key from RECOVERY_KEY.txt and restore the latest encrypted backup.</p></div>
 
           <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3><div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div><p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p></div>
-        </div>
       </div>
 
       <Modal
