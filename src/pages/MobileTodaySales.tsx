@@ -21,7 +21,7 @@ function dateKeyInTimeZone(date: Date, timeZone: string): string {
     const year = parts.find(p => p.type === 'year')?.value || '';
     const month = parts.find(p => p.type === 'month')?.value || '';
     const day = parts.find(p => p.type === 'day')?.value || '';
-    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(`${year}-${month}-${day}`)) return `${year}-${month}-${day}`;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(`${year}-${month}-${day}`)) return `${year}-${month}-${day}`;
   } catch {
     // Fall back to the phone's local timezone when the shared timezone is invalid.
   }
