@@ -81,7 +81,7 @@ export default function TodaySalesLinks() {
             <h1 className="text-xl font-black">Phone Sales Link</h1>
             <p className="mt-1 text-xs text-sub">This POS machine has its own permanent read-only phone sales link.</p>
           </div>
-          <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold disabled:opacity-50">
+          <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink disabled:opacity-50">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
         </header>
