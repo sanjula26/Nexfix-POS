@@ -131,6 +131,9 @@ function DesktopUpdateNotice() {
       if (!alive || !status?.available) return;
       setUpdate({status:'available',version:status.version || undefined});
     }).catch(() => {});
+    // Always perform a fresh check when the POS session is opened. This makes
+    // the in-app notification independent of the main-process startup timing.
+    void desktopApi.checkForUpdates?.().catch(() => {});
     return () => {
       alive = false;
       unsubscribe?.();
