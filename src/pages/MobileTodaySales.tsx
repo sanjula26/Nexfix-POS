@@ -218,7 +218,7 @@ export default function MobileTodaySales() {
     } finally {
       setRemoteLoading(false);
     }
-  }, [shopId, requestedShopId, requestedMachineId, setRemoteError]);
+  }, [shopId, requestedShopId, requestedMachineId, setRemoteError, setRemoteLoading, setActiveShopId, setRemoteState]);
 
   useEffect(() => {
     if (!shopReady) return;
