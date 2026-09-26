@@ -383,13 +383,13 @@ export default function Settings() {
   return (
     <div>
       {user?.role === 'admin' && (
-        <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
+        <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="text-sm font-black text-violet-900">Phone Sales Links</div>
-              <p className="mt-1 text-xs leading-relaxed text-violet-700">View and copy the phone sales link for this POS machine. Other machine links are not shown here.</p>
+              <div className="text-sm font-black text-ink">Phone Sales Links</div>
+              <p className="mt-1 text-xs leading-relaxed text-sub">View and copy the phone sales link for this POS machine. Other machine links are not shown here.</p>
             </div>
-            <button type="button" onClick={() => navigate('/today-links')} className="min-h-11 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white">Manage machine links</button>
+            <button type="button" onClick={() => navigate('/today-links')} className="btn btn-primary min-h-11 px-4 text-xs">Manage machine links</button>
           </div>
         </section>
       )}
