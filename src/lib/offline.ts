@@ -203,6 +203,12 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 }
 
 export async function registerServiceWorker():Promise<boolean>{
+  if(typeof window==='undefined' || typeof navigator==='undefined') return false;
+  const isElectronRuntime =
+    window.location.protocol === 'file:' ||
+    navigator.userAgent.toLowerCase().includes('electron') ||
+    Boolean((window as Window & {nexfixDesktop?: unknown}).nexfixDesktop);
+  if(isElectronRuntime) return false;
   if(!('serviceWorker' in navigator)) return false;
   try {
     const baseUrl = import.meta.env.BASE_URL || '/';
