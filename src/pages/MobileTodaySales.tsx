@@ -58,7 +58,6 @@ export default function MobileTodaySales() {
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState('');
-  const [copied, setCopied] = useState(false);
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [pinVerified, setPinVerified] = useState(false);
@@ -262,7 +261,7 @@ export default function MobileTodaySales() {
     } finally {
       setRemoteLoading(false);
     }
-  }, [shopId, requestedShopId, requestedMachineId, setRemoteError, setRemoteLoading, setActiveShopId, setRemoteState]);
+  }, [shopId, requestedShopId, requestedMachineId]);
 
   useEffect(() => {
     if (!shopReady) return;
@@ -278,14 +277,7 @@ export default function MobileTodaySales() {
     } catch { setMachineLinkCopied(false); }
   };
 
-  const copyPhoneLink = async () => {
-    if (!phoneLink) return;
-    try {
-      const copied = await copyText(phoneLink);
-      setCopied(copied);
-      if (copied) window.setTimeout(() => setCopied(false), 1800);
-    } catch { setCopied(false); }
-  };
+
 
   const cloudMode = !!shopId && supabaseConfigured && !!supabase;
   const usingCloud = cloudMode && !!remoteState;
