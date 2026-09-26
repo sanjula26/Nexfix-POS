@@ -138,4 +138,5 @@ jobs:
           if (-not ($assetNames | Where-Object { $_ -like '*.blockmap' })) { throw "Published release $tag is missing an NSIS blockmap." }
           Write-Host "Published updater release verified: $tag"
 
+# In-app updater release metadata is mandatory for packaged POS updates.
 # CI validation marker for the authoritative cloud-sale reconciliation fix.
