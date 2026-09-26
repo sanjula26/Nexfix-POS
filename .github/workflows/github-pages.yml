@@ -41,11 +41,14 @@ jobs:
       - name: Build GitHub Pages preview
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
+          VITE_PUBLIC_APP_URL: https://sanjula26.github.io/Nexfix-POS/
         run: |
           if [ -z "${VITE_GOOGLE_BACKUP_API_KEY}" ]; then
             echo "VITE_GOOGLE_BACKUP_API_KEY secret is empty."
             exit 1
           fi
+          VITE_APP_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("package.json","utf8")).version')
+          export VITE_APP_VERSION
           npm run build -- --mode github-pages
 
       - name: Upload Pages artifact
