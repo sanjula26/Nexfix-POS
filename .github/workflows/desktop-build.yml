@@ -48,7 +48,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not (Get-Command magick -ErrorAction SilentlyContinue)) { throw "ImageMagick (magick) is required on windows-latest." }
-          $source = "assets/nexfix-logo-source.jpeg"
+          $source = "assets/nexfix-pos-icon.svg"
           if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
           New-Item -ItemType Directory -Force -Path build | Out-Null
           magick $source -auto-orient -resize "900x900" -gravity center -background white -extent 1024x1024 "build/icon.png"
