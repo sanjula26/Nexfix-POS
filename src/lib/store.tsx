@@ -2271,35 +2271,51 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const refreshPOS = useCallback(async () => {
-    // Refresh must never roll the authenticated user back to a stale IndexedDB
-    // snapshot. State writes are intentionally debounced, so the refresh button
-    // can otherwise read IDB before the latest state (including users) is saved.
-    // Persist the current authoritative in-memory state first, then reload.
+    // A refresh is a data reload, not an authentication operation. Capture the
+    // React session first and restore that exact session after the data reload.
+    // This prevents a stale IDB snapshot from making user temporarily null and
+    // triggering Protected -> /login.
     const current = stateRef.current;
+    const activeSession = session;
     try {
       if (ready) await persistState(current);
+
       const fromIdb = idbAvailable() ? await idbLoadState() : null;
       let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
 
-      // Keep the currently authenticated account intact even if an old/corrupt
-      // snapshot does not contain it. Do not change or expose its password here.
-      const activeSession = loadSession();
       if (activeSession) {
-        const currentUser = current.users.find(u => u.id === activeSession.userId && u.active);
-        const refreshedUser = refreshed.users.find(u => u.id === activeSession.userId && u.active);
-        if (currentUser && !refreshedUser) {
-          refreshed = { ...refreshed, users: [currentUser, ...refreshed.users.filter(u => u.id !== currentUser.id)] };
+        const currentUser = current.users.find(u => u.id === activeSession.userId);
+        const refreshedUser = refreshed.users.find(u => u.id === activeSession.userId);
+
+        // Always prefer the currently authenticated user's in-memory record.
+        // This is important when the durable snapshot is one write behind.
+        if (currentUser) {
+          refreshed = {
+            ...refreshed,
+            users: [
+              currentUser,
+              ...refreshed.users.filter(u => u.id !== currentUser.id),
+            ],
+          };
+        } else if (!refreshedUser) {
+          // No valid user record is available to preserve; keep the current
+          // state instead of turning a refresh into an unexpected logout.
+          setSession(activeSession);
+          setState(current);
+          return;
         }
       }
 
       setState(refreshed);
-      // Deliberately do not touch session/sessionStorage/localStorage auth keys.
+      // Explicitly restore the React session captured before the reload.
+      // Do not clear or replace localStorage/sessionStorage credentials here.
+      if (activeSession) setSession(activeSession);
     } catch {
-      // If reload fails, keep the current in-memory authenticated state rather
-      // than replacing it with an older fallback snapshot.
+      // A refresh failure must leave the authenticated POS session untouched.
       setState(current);
+      if (activeSession) setSession(activeSession);
     }
-  }, [ready]);
+  }, [ready, session]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit): boolean => {
