@@ -112,7 +112,7 @@ function BrandingHero() {
               <span className="bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">SOLUTION</span>
             </h1>
             <p className="mt-3 text-sm font-medium tracking-wide text-[#5b5f7e] dark:text-slate-300 sm:text-base">
-              POS &amp; Inventory Management System · v3.0.3
+              POS &amp; Inventory Management System · v3.0.4
             </p>
           </div>
         </div>
