@@ -27,8 +27,28 @@ export default function MobileTodaySales() {
   const [pinVerified, setPinVerified] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dkey(new Date());
-  const [selectedDate, setSelectedDate] = useState(today);
+  const requestedDate = query.get('date')?.trim() || '';
+  const validRequestedDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) && requestedDate <= today ? requestedDate : today;
+  const initialView: 'today' | 'past' = query.get('view') === 'past' || validRequestedDate !== today ? 'past' : 'today';
+  const [viewMode, setViewMode] = useState<'today' | 'past'>(initialView);
+  const [selectedDate, setSelectedDate] = useState(validRequestedDate);
   const [machineLinkCopied, setMachineLinkCopied] = useState(false);
+
+  const previousDate = () => {
+    const date = new Date();
+    date.setDate(date.getDate() - 1);
+    return dkey(date);
+  };
+
+  const selectToday = () => {
+    setViewMode('today');
+    setSelectedDate(today);
+  };
+
+  const selectPast = () => {
+    setViewMode('past');
+    setSelectedDate(current => current === today ? previousDate() : current);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -279,7 +299,7 @@ export default function MobileTodaySales() {
             <ArrowLeft size={18} /> Back
           </button>
           <div className="text-center">
-            <div className="text-sm font-extrabold">Today’s sales</div>
+            <div className="text-sm font-extrabold">{viewMode === 'today' ? 'Today’s sales' : 'Past sales'}</div>
             <div className="text-[11px] text-sub">{selectedDate === today ? 'Today' : new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</div>
           </div>
           <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-ink" aria-label="Log out">
@@ -297,12 +317,18 @@ export default function MobileTodaySales() {
         </section>
 
         <section className="mb-4 rounded-2xl card p-4">
-          <label className="block text-xs font-bold uppercase tracking-wide text-sub" htmlFor="today-sales-date">Sales date</label>
-          <div className="mt-2 flex gap-2">
-            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-line bg-raised px-3 text-sm font-bold text-ink outline-none focus:border-violet-500" />
-            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink">Today</button>}
+          <div className="text-xs font-bold uppercase tracking-wide text-sub">Sales period</div>
+          <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl border border-line bg-raised p-1.5">
+            <button type="button" onClick={selectToday} className={`min-h-11 rounded-lg px-3 text-xs font-extrabold transition ${viewMode === 'today' ? 'bg-violet-600 text-white shadow-sm' : 'text-sub hover:text-ink'}`}>Today</button>
+            <button type="button" onClick={selectPast} className={`min-h-11 rounded-lg px-3 text-xs font-extrabold transition ${viewMode === 'past' ? 'bg-violet-600 text-white shadow-sm' : 'text-sub hover:text-ink'}`}>Past Sales</button>
           </div>
-          <p className="mt-2 text-[11px] text-sub">You can view sales for today or a previous date. Future dates are not allowed.</p>
+          {viewMode === 'past' && (
+            <div className="mt-3">
+              <label className="block text-xs font-bold text-sub" htmlFor="today-sales-date">Select past date</label>
+              <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || previousDate())} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-raised px-3 text-sm font-bold text-ink outline-none focus:border-violet-500" />
+            </div>
+          )}
+          <p className="mt-2 text-[11px] text-sub">Choose Today for the current day's sales, or Past Sales to select any previous date. Future dates are not allowed.</p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-sub">Data source</div>
