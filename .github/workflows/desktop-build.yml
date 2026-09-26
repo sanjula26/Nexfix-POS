@@ -51,7 +51,10 @@ jobs:
           $source = "assets/nexfix-pos-icon.svg"
           if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
           New-Item -ItemType Directory -Force -Path build | Out-Null
-          magick $source -auto-orient -resize "900x900" -gravity center -background white -extent 1024x1024 "build/icon.png"
+          # The supplied MX artwork contains a large white canvas around the mark.
+          # Trim that canvas before fitting it into the Windows icon so the desktop
+          # shortcut shows the actual MX mark at a useful size instead of a tiny logo.
+          magick $source -auto-orient -background white -flatten -trim +repage -resize "1024x1024^" -gravity center -extent 1024x1024 "build/icon.png"
           magick "build/icon.png" -define icon:auto-resize=16,32,48,64,128,256 "build/icon.ico"
           $identify = magick identify -format "%m %wx%h" "build/icon.png"
           if ($identify -notmatch "PNG 1024x1024") { throw "Unexpected icon.png output: $identify" }
