@@ -86,6 +86,22 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
           npm run build
 
+      - name: Verify Electron asset paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $html = Get-Content dist/index.html -Raw
+          if ($html -match '(?:src|href)="/assets/') {
+            throw 'Electron build contains absolute /assets/ URLs. Packaged file:// renderer would load from the disk root.'
+          }
+          $assetRefs = [regex]::Matches($html, '(?:src|href)="([^"]*assets/[^"]*)"') | ForEach-Object { $_.Groups[1].Value }
+          if ($assetRefs.Count -eq 0) { throw 'No Vite asset references found in dist/index.html.' }
+          if ($assetRefs | Where-Object { $_ -notmatch '^(?:\./)?assets/' }) {
+            throw "Electron asset references must be relative (./assets/... or assets/...). Found: $($assetRefs -join ', ')"
+          }
+          Write-Host "Electron-safe asset paths verified:"
+          $assetRefs | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
+
       - name: Ensure version tag exists for GitHub release
         shell: pwsh
         env:
