@@ -61,21 +61,6 @@ jobs:
           if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico was not generated." }
           Write-Host "Generated: $identify"
 
-      - name: Commit generated Windows icon assets
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add build/icon.png build/icon.ico
-          if (git diff --cached --quiet) {
-            Write-Host "Windows icon assets already committed."
-          } else {
-            git commit -m "chore(desktop): commit generated Nexfix Windows icon assets"
-            git push origin HEAD:main
-          }
       - name: Typecheck
         run: npm run typecheck
 
@@ -105,24 +90,16 @@ jobs:
           Write-Host "Electron-safe asset paths verified:"
           $assetRefs | Select-Object -Unique | ForEach-Object { Write-Host "  $_" }
 
-      - name: Ensure version tag exists for GitHub release
+      - name: Calculate automatic release version
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tag = "v$version"
-          $remoteTag = git ls-remote --tags origin "refs/tags/$tag"
-          if ([string]::IsNullOrWhiteSpace($remoteTag)) {
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag $tag
-            git push origin $tag
-            Write-Host "Created release tag $tag"
-          } else {
-            Write-Host "Release tag $tag already exists."
-          }
-
+          $ErrorActionPreference = 'Stop'
+          $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $parts = $base.Split('.')
+          if ($parts.Count -lt 3) { throw "package.json version must be MAJOR.MINOR.PATCH" }
+          $buildVersion = "$($parts[0]).$($parts[1]).${{ github.run_number }}"
+          "BUILD_VERSION=$buildVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+          Write-Host "Automatic release version: $buildVersion"
       - name: Build Windows installer and portable app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
@@ -131,7 +108,7 @@ jobs:
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
           if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw "GH_TOKEN is empty." }
-          npx electron-builder --win --publish always
+          npx electron-builder --win --publish always -c.extraMetadata.version=$env:BUILD_VERSION
 
       - name: Verify Windows artifacts and updater metadata
         shell: pwsh
@@ -167,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $version = $env:BUILD_VERSION
           $tag = "v$version"
           if (-not (gh release view $tag --repo $env:GITHUB_REPOSITORY 2>$null)) {
             gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Nexfix POS $version" --notes "Nexfix POS Windows release $version"
@@ -185,7 +162,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $version = $env:BUILD_VERSION
           $tag = "v$version"
           $assetNames = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
           if ($LASTEXITCODE -ne 0) { throw "Published release $tag could not be read." }
