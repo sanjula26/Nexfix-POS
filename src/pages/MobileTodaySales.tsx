@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { ArrowLeft, LogOut, ReceiptText, WalletCards, Banknote, CreditCard, Smartphone, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePOS } from '../lib/store';
@@ -33,6 +33,91 @@ function shiftDateKey(value: string, days: number): string {
   if (Number.isNaN(date.getTime())) return value;
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+type CloudSalesLoaderArgs = {
+  shopId: string;
+  requestedShopId: string;
+  requestedMachineId: string;
+  setRemoteError: Dispatch<SetStateAction<string>>;
+  setRemoteLoading: Dispatch<SetStateAction<boolean>>;
+  setActiveShopId: Dispatch<SetStateAction<string>>;
+  setRemoteState: Dispatch<SetStateAction<POSState | null>>;
+};
+
+async function loadCloudSalesData({
+  shopId,
+  requestedShopId,
+  requestedMachineId,
+  setRemoteError,
+  setRemoteLoading,
+  setActiveShopId,
+  setRemoteState,
+}: CloudSalesLoaderArgs): Promise<void> {
+    if (!supabaseConfigured || !supabase) {
+      setRemoteError('Cloud connection is not configured.');
+      return;
+    }
+
+    setRemoteLoading(true);
+    setRemoteError('');
+
+    try {
+      // Refresh must re-resolve the link's shop instead of relying only on the
+      // previous localStorage value. This makes the Refresh button reliable on
+      // a newly opened/reloaded machine link as well as after the shop ID changes.
+      let resolvedShopId = shopId || requestedShopId;
+
+      if (!resolvedShopId && requestedMachineId) {
+        const { data: device, error: deviceError } = await supabase
+          .from('pos_devices')
+          .select('shop_id')
+          .eq('device_id', requestedMachineId)
+          .maybeSingle();
+
+        if (deviceError || !device?.shop_id) {
+          throw new Error('This machine link is not registered to an accessible shop.');
+        }
+
+        resolvedShopId = String(device.shop_id);
+        const { data: authData } = await supabase.auth.getUser();
+        const uid = authData.user?.id;
+        if (!uid) throw new Error('Login session was not found.');
+
+        const { data: membership, error: membershipError } = await supabase
+          .from('shop_memberships')
+          .select('shop_id')
+          .eq('user_id', uid)
+          .eq('shop_id', resolvedShopId)
+          .eq('active', true)
+          .maybeSingle();
+
+        if (membershipError || !membership) {
+          throw new Error('You do not have access to this shop.');
+        }
+      }
+
+      if (!resolvedShopId) throw new Error('Shop ID could not be resolved.');
+
+      if (!(await waitForCloudSession(supabase))) throw new Error('Cloud login is still starting. Please wait a moment and refresh.');
+
+      if (resolvedShopId !== getCloudShopId()) setCloudShopId(resolvedShopId);
+      setActiveShopId(resolvedShopId);
+
+      const snapshot = await downloadStateSnapshot();
+      if (!snapshot) {
+        setRemoteState(null);
+        setRemoteError('Cloud sales snapshot was not found. Check that the POS PC is online and synced.');
+      } else {
+        setRemoteState(snapshot.state);
+      }
+    } catch (error) {
+      setRemoteState(null);
+      setRemoteError(error instanceof Error ? error.message : 'Unable to load cloud sales data.');
+    } finally {
+      setRemoteLoading(false);
+    }
+
 }
 
 async function waitForCloudSession(client: NonNullable<typeof supabase>): Promise<boolean> {
@@ -197,76 +282,30 @@ export default function MobileTodaySales() {
     setPin('');
   };
 
-  const loadCloudSales = useCallback(async () => {
-    if (!supabaseConfigured || !supabase) {
-      setRemoteError('Cloud connection is not configured.');
-      return;
-    }
 
-    setRemoteLoading(true);
-    setRemoteError('');
 
-    try {
-      // Refresh must re-resolve the link's shop instead of relying only on the
-      // previous localStorage value. This makes the Refresh button reliable on
-      // a newly opened/reloaded machine link as well as after the shop ID changes.
-      let resolvedShopId = shopId || requestedShopId;
-
-      if (!resolvedShopId && requestedMachineId) {
-        const { data: device, error: deviceError } = await supabase
-          .from('pos_devices')
-          .select('shop_id')
-          .eq('device_id', requestedMachineId)
-          .maybeSingle();
-
-        if (deviceError || !device?.shop_id) {
-          throw new Error('This machine link is not registered to an accessible shop.');
-        }
-
-        resolvedShopId = String(device.shop_id);
-        const { data: authData } = await supabase.auth.getUser();
-        const uid = authData.user?.id;
-        if (!uid) throw new Error('Login session was not found.');
-
-        const { data: membership, error: membershipError } = await supabase
-          .from('shop_memberships')
-          .select('shop_id')
-          .eq('user_id', uid)
-          .eq('shop_id', resolvedShopId)
-          .eq('active', true)
-          .maybeSingle();
-
-        if (membershipError || !membership) {
-          throw new Error('You do not have access to this shop.');
-        }
-      }
-
-      if (!resolvedShopId) throw new Error('Shop ID could not be resolved.');
-
-      if (!(await waitForCloudSession(supabase))) throw new Error('Cloud login is still starting. Please wait a moment and refresh.');
-
-      if (resolvedShopId !== getCloudShopId()) setCloudShopId(resolvedShopId);
-      setActiveShopId(resolvedShopId);
-
-      const snapshot = await downloadStateSnapshot();
-      if (!snapshot) {
-        setRemoteState(null);
-        setRemoteError('Cloud sales snapshot was not found. Check that the POS PC is online and synced.');
-      } else {
-        setRemoteState(snapshot.state);
-      }
-    } catch (error) {
-      setRemoteState(null);
-      setRemoteError(error instanceof Error ? error.message : 'Unable to load cloud sales data.');
-    } finally {
-      setRemoteLoading(false);
-    }
-  }, [shopId, requestedShopId, requestedMachineId]);
+  const refreshCloudSales = () => void loadCloudSalesData({
+    shopId,
+    requestedShopId,
+    requestedMachineId,
+    setRemoteError,
+    setRemoteLoading,
+    setActiveShopId,
+    setRemoteState,
+  });
 
   useEffect(() => {
     if (!shopReady) return;
-    void loadCloudSales();
-  }, [shopReady, loadCloudSales]);
+    void loadCloudSalesData({
+      shopId,
+      requestedShopId,
+      requestedMachineId,
+      setRemoteError,
+      setRemoteLoading,
+      setActiveShopId,
+      setRemoteState,
+    });
+  }, [shopReady, shopId, requestedShopId, requestedMachineId]);
 
   const copyMachineLink = async () => {
     if (!phoneLink) return;
@@ -370,7 +409,7 @@ export default function MobileTodaySales() {
               <div className="text-xs font-bold uppercase tracking-wide text-sub">Data source</div>
               <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
             </div>
-            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink disabled:opacity-50">
+            <button type="button" onClick={refreshCloudSales} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink disabled:opacity-50">
               <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
