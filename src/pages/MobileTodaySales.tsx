@@ -137,10 +137,54 @@ export default function MobileTodaySales() {
   };
 
   const loadCloudSales = useCallback(async () => {
-    if (!supabaseConfigured || !supabase || !shopId) return;
+    if (!supabaseConfigured || !supabase) {
+      setRemoteError('Cloud connection is not configured.');
+      return;
+    }
+
     setRemoteLoading(true);
     setRemoteError('');
+
     try {
+      // Refresh must re-resolve the link's shop instead of relying only on the
+      // previous localStorage value. This makes the Refresh button reliable on
+      // a newly opened/reloaded machine link as well as after the shop ID changes.
+      let resolvedShopId = shopId || requestedShopId;
+
+      if (!resolvedShopId && requestedMachineId) {
+        const { data: device, error: deviceError } = await supabase
+          .from('pos_devices')
+          .select('shop_id')
+          .eq('device_id', requestedMachineId)
+          .maybeSingle();
+
+        if (deviceError || !device?.shop_id) {
+          throw new Error('This machine link is not registered to an accessible shop.');
+        }
+
+        resolvedShopId = String(device.shop_id);
+        const { data: authData } = await supabase.auth.getUser();
+        const uid = authData.user?.id;
+        if (!uid) throw new Error('Login session was not found.');
+
+        const { data: membership, error: membershipError } = await supabase
+          .from('shop_memberships')
+          .select('shop_id')
+          .eq('user_id', uid)
+          .eq('shop_id', resolvedShopId)
+          .eq('active', true)
+          .maybeSingle();
+
+        if (membershipError || !membership) {
+          throw new Error('You do not have access to this shop.');
+        }
+      }
+
+      if (!resolvedShopId) throw new Error('Shop ID could not be resolved.');
+
+      if (resolvedShopId !== getCloudShopId()) setCloudShopId(resolvedShopId);
+      setActiveShopId(resolvedShopId);
+
       const snapshot = await downloadStateSnapshot();
       if (!snapshot) {
         setRemoteState(null);
@@ -148,13 +192,13 @@ export default function MobileTodaySales() {
       } else {
         setRemoteState(snapshot.state);
       }
-    } catch {
+    } catch (error) {
       setRemoteState(null);
-      setRemoteError('Unable to load cloud sales data.');
+      setRemoteError(error instanceof Error ? error.message : 'Unable to load cloud sales data.');
     } finally {
       setRemoteLoading(false);
     }
-  }, [shopId]);
+  }, [shopId, requestedShopId, requestedMachineId]);
 
   useEffect(() => {
     if (!shopReady) return;
