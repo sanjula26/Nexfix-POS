@@ -132,7 +132,7 @@ jobs:
           $package.version = $env:BUILD_VERSION
           $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
           Write-Host "Packaging Windows EXE as version $env:BUILD_VERSION"
-          npx electron-builder --win --publish always
+          npx electron-builder --win --publish never
 
       - name: Verify Windows artifacts and updater metadata
         shell: pwsh
