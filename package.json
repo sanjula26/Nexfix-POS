@@ -1,7 +1,7 @@
 {
   "name": "nexfix-pos",
   "private": true,
-  "version": "3.0.3",
+  "version": "3.0.4",
   "type": "module",
   "description": "Nexfix Solution POS & Inventory — production offline-first electronics POS",
   "scripts": {
