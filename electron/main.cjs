@@ -16,7 +16,6 @@ function setupAutoUpdater(){
     ({autoUpdater}=require('electron-updater'));
     autoUpdater.autoDownload=false;
     autoUpdater.autoInstallOnAppQuit=false;
-    autoUpdater.verifyUpdateCodeSignature=false;
     autoUpdater.on('checking-for-update',()=>sendUpdateEvent('checking'));
     autoUpdater.on('update-available',info=>{pendingUpdateInfo=info;sendUpdateEvent('available',{version:info.version});});
     autoUpdater.on('update-not-available',info=>{pendingUpdateInfo=null;sendUpdateEvent('not-available',{version:info?.version||app.getVersion()});});
