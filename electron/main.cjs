@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, clipboard, shell } = require('electron');
 const path = require('path');
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
@@ -80,6 +80,8 @@ function createWindow(){
   }
 }
 ipcMain.handle('app:version',()=>app.getVersion());
+ipcMain.handle('app:copy-text',(_event,text)=>{if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
+ipcMain.handle('app:open-external',async(_event,url)=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
 app.whenReady().then(()=>{
   session.defaultSession.setPermissionRequestHandler((webContents,permission,callback)=>callback(permission==='camera'&&isAllowedNavigation(webContents.getURL())));
   setupAutoUpdater(); createWindow();
