@@ -201,10 +201,10 @@ export default function MobileTodaySales() {
 
   if (!shopReady) {
     return (
-      <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
-        <div className="mx-auto max-w-xl rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+      <main className="min-h-screen bg-base p-5 text-ink">
+        <div className="mx-auto max-w-xl card p-5">
           <h1 className="text-lg font-black">Shop link</h1>
-          <p className="mt-2 text-sm text-slate-600">{shopError || 'Resolving shop…'}</p>
+          <p className="mt-2 text-sm text-sub">{shopError || 'Resolving shop…'}</p>
           <button type="button" onClick={() => navigate('/login')} className="mt-4 min-h-11 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">Login</button>
         </div>
       </main>
@@ -213,63 +213,63 @@ export default function MobileTodaySales() {
 
   if (!pinVerified) {
     return (
-      <main className="min-h-screen bg-[#f5f6fb] p-5 text-[#17133c]">
-        <div className="mx-auto mt-16 max-w-sm rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+      <main className="min-h-screen bg-base p-5 text-ink">
+        <div className="mx-auto mt-16 max-w-sm card p-6">
           <h1 className="text-xl font-black">Today’s Sales</h1>
-          <p className="mt-2 text-sm leading-relaxed text-slate-500">After login, the Admin PIN is required to view this read-only sales page.</p>
-          <label className="mt-5 block text-xs font-bold text-slate-600">Admin PIN</label>
-          <input className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
+          <p className="mt-2 text-sm leading-relaxed text-sub">After login, the Admin PIN is required to view this read-only sales page.</p>
+          <label className="mt-5 block text-xs font-bold text-sub">Admin PIN</label>
+          <input className="mt-2 min-h-12 w-full rounded-xl border border-line bg-raised text-ink px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
           {pinError && <p className="mt-2 text-xs font-bold text-rose-600">{pinError}</p>}
           <button type="button" onClick={submitPin} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">Unlock today’s sales</button>
-          <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="mt-2 min-h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-700">Logout</button>
+          <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-raised px-4 text-sm font-bold text-ink">Logout</button>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f5f6fb] text-[#17133c]">
+    <main className="min-h-screen bg-base text-ink">
       <div className="mx-auto w-full max-w-xl px-4 py-4 sm:px-6">
-        <header className="sticky top-0 z-10 -mx-4 mb-4 flex items-center justify-between border-b border-slate-200 bg-[#f5f6fb]/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
-          <button type="button" onClick={() => navigate('/pos')} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-slate-700">
+        <header className="sticky top-0 z-10 -mx-4 mb-4 flex items-center justify-between border-b border-line bg-base/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+          <button type="button" onClick={() => navigate('/pos')} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-ink">
             <ArrowLeft size={18} /> Back
           </button>
           <div className="text-center">
             <div className="text-sm font-extrabold">Today’s sales</div>
-            <div className="text-[11px] text-slate-500">{selectedDate === today ? 'Today' : new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</div>
+            <div className="text-[11px] text-sub">{selectedDate === today ? 'Today' : new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</div>
           </div>
-          <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-slate-700" aria-label="Log out">
+          <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-ink" aria-label="Log out">
             <LogOut size={17} /> <span className="hidden xs:inline">Logout</span>
           </button>
         </header>
 
-        <section className="mb-4 rounded-2xl border border-violet-100 bg-violet-50 p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-violet-700">This POS machine — {linkMachineName}</div>
-          <div className="mt-1 break-all text-xs font-semibold text-slate-700">{phoneLink || 'Shop ID not configured'}</div>
+        <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
+          <div className="text-xs font-bold uppercase tracking-wide text-violet-500 dark:text-violet-300">This POS machine — {linkMachineName}</div>
+          <div className="mt-1 break-all text-xs font-semibold text-ink">{phoneLink || 'Shop ID not configured'}</div>
           <button type="button" onClick={() => void copyMachineLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
             {machineLinkCopied ? 'Link copied' : 'Copy this POS machine link'}
           </button>
-          <div className="mt-2 text-[11px] leading-relaxed text-slate-500">This link contains the shop and machine IDs, so sales from other POS machines are not mixed.</div>
+          <div className="mt-2 text-[11px] leading-relaxed text-sub">This link contains the shop and machine IDs, so sales from other POS machines are not mixed.</div>
         </section>
 
-        <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <label className="block text-xs font-bold uppercase tracking-wide text-slate-500" htmlFor="today-sales-date">Sales date</label>
+        <section className="mb-4 rounded-2xl card p-4">
+          <label className="block text-xs font-bold uppercase tracking-wide text-sub" htmlFor="today-sales-date">Sales date</label>
           <div className="mt-2 flex gap-2">
-            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-violet-500" />
-            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700">Today</button>}
+            <input id="today-sales-date" type="date" value={selectedDate} max={today} onChange={e => setSelectedDate(e.target.value || today)} className="min-h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-bold text-ink outline-none focus:border-violet-500" />
+            {selectedDate !== today && <button type="button" onClick={() => setSelectedDate(today)} className="min-h-11 rounded-xl border border-slate-200 px-3 text-xs font-bold text-ink">Today</button>}
           </div>
-          <p className="mt-2 text-[11px] text-slate-500">You can view sales for today or a previous date. Future dates are not allowed.</p>
+          <p className="mt-2 text-[11px] text-sub">You can view sales for today or a previous date. Future dates are not allowed.</p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Data source</div>
+              <div className="text-xs font-bold uppercase tracking-wide text-sub">Data source</div>
               <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
             </div>
-            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-slate-700 disabled:opacity-50">
+            <button type="button" onClick={() => void loadCloudSales()} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 px-3 text-xs font-bold text-ink disabled:opacity-50">
               <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
             </button>
           </div>
           {remoteError && <p className="mt-2 text-xs leading-relaxed text-amber-700">{remoteError}</p>}
-          {cloudUnavailable && <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Cloud mode is enabled, so local PC data is not substituted for the shop snapshot.</p>}
+          {cloudUnavailable && <p className="mt-2 text-[11px] leading-relaxed text-sub">Cloud mode is enabled, so local PC data is not substituted for the shop snapshot.</p>}
         </section>
 
         <section className="grid grid-cols-2 gap-3">
@@ -278,12 +278,12 @@ export default function MobileTodaySales() {
             <div className="mt-2 text-3xl font-black tracking-tight">{fmtRs(revenue)}</div>
             <div className="mt-1 text-xs opacity-80">{completed.length} completed bill{completed.length === 1 ? '' : 's'}</div>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Bills</div>
+          <div className="rounded-2xl card p-4">
+            <div className="text-xs font-bold uppercase tracking-wide text-sub">Bills</div>
             <div className="mt-1 text-2xl font-black">{sales.length}</div>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Cash / Card</div>
+          <div className="rounded-2xl card p-4">
+            <div className="text-xs font-bold uppercase tracking-wide text-sub">Cash / Card</div>
             <div className="mt-1 text-base font-extrabold">{fmtRs(cash)} / {fmtRs(card)}</div>
           </div>
         </section>
@@ -291,7 +291,7 @@ export default function MobileTodaySales() {
         <section className="mt-5">
           <div className="mb-3 flex items-center gap-2 text-base font-extrabold"><ReceiptText size={18} /> {selectedDate === today ? 'Today’s bills' : 'Sales for selected date'}</div>
           {sales.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No sales recorded for the selected date.</div>
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-sub">No sales recorded for the selected date.</div>
           ) : (
             <div className="space-y-3">
               {sales.map(sale => {
@@ -301,19 +301,19 @@ export default function MobileTodaySales() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-base font-extrabold">{sale.billNo}</div>
-                        <div className="mt-1 text-xs text-slate-500">{fmtDateTime(sale.date)} · {sale.cashierName}</div>
+                        <div className="mt-1 text-xs text-sub">{fmtDateTime(sale.date)} · {sale.cashierName}</div>
                       </div>
                       <div className="text-right">
                         <div className="text-lg font-black">{fmtRs(sale.total)}</div>
                         <div className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-violet-600">{paymentIcon(sale.payment)} {salePaymentLabel(sale)}</div>
                       </div>
                     </div>
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+                    <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-xs text-sub">
                       <span>{sale.items.reduce((sum, item) => sum + item.qty, 0)} item{sale.items.reduce((sum, item) => sum + item.qty, 0) === 1 ? '' : 's'}</span>
-                      <span className="inline-flex items-center gap-1 font-bold text-slate-700">{open ? 'Hide items' : 'View items'} {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                      <span className="inline-flex items-center gap-1 font-bold text-ink">{open ? 'Hide items' : 'View items'} {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
                     </div>
                     {open && (
-                      <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                      <div className="mt-3 space-y-2 border-t border-line pt-3">
                         {sale.items.map((item, index) => (
                           <div key={index} className="flex justify-between gap-3 text-sm">
                             <span className="min-w-0 truncate">{item.name} × {item.qty}</span>
@@ -330,7 +330,7 @@ export default function MobileTodaySales() {
           )}
         </section>
 
-        <p className="pb-6 pt-5 text-center text-[11px] leading-relaxed text-slate-500">
+        <p className="pb-6 pt-5 text-center text-[11px] leading-relaxed text-sub">
           Read-only view. Billing and inventory remain on the PC POS. Cloud mode reads the shop’s authenticated cloud snapshot; local fallback data is not treated as the PC’s live data.
         </p>
       </div>
