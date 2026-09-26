@@ -77,7 +77,7 @@ function BrandingHero() {
         }}
       />
       <div aria-hidden="true" className="pointer-events-none absolute -left-24 top-1/4 h-72 w-72 rounded-full bg-sky-500/10 blur-3xl dark:bg-cyan-500/15" />
-      <div aria-hidden="true" className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-indigo-500/[0.06] blur-3xl dark:bg-indigo-500/10 blur-3xl dark:bg-indigo-500/15" />
+      <div aria-hidden="true" className="pointer-events-none absolute bottom-0 right-0 h-80 w-80 rounded-full bg-indigo-500/[0.06] blur-3xl dark:bg-indigo-500/15" />
 
       <div className="relative z-10 mx-auto w-full max-w-2xl">
         <div className="mb-5 inline-flex items-center rounded-full border border-sky-500/25 bg-sky-500/[0.07] px-3.5 py-2 text-[11px] font-bold tracking-[0.08em] text-sky-700 dark:border-cyan-400/30 dark:bg-cyan-400/10 dark:text-cyan-200 shadow-[0_0_24px_rgba(34,211,238,0.12)]">
@@ -178,7 +178,7 @@ function AuthCard({
   return (
     <section className="relative flex w-full items-center justify-center px-5 py-8 sm:px-8 lg:min-h-screen lg:px-10">
       <div className="pointer-events-none absolute inset-0 hidden lg:block">
-        <div className="absolute right-[-8rem] top-[12%] h-72 w-72 rounded-full bg-sky-500/[0.06] blur-3xl dark:bg-cyan-500/10 blur-3xl" />
+        <div className="absolute right-[-8rem] top-[12%] h-72 w-72 rounded-full bg-sky-500/[0.06] blur-3xl dark:bg-cyan-500/10" />
         <div className="absolute bottom-[10%] left-[15%] h-64 w-64 rounded-full bg-indigo-500/10 blur-3xl" />
         <div className="absolute right-[18%] top-[24%] h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_18px_5px_rgba(14,165,233,0.22)] dark:bg-cyan-300 dark:shadow-[0_0_18px_5px_rgba(103,232,249,0.35)]" />
         <div className="absolute right-[30%] bottom-[24%] h-1.5 w-1.5 rounded-full bg-sky-400 shadow-[0_0_15px_4px_rgba(14,165,233,0.18)] dark:bg-sky-300 dark:shadow-[0_0_15px_4px_rgba(125,211,252,0.3)]" />
@@ -322,15 +322,15 @@ export default function Login() {
               <form onSubmit={setupAdmin} className="space-y-3.5">
                 <input required value={setupName} onChange={e => setSetupName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-[#8a8eaa] dark:text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator name" autoComplete="name" />
                 <input required type="text" inputMode="email" value={setupEmail} onChange={e => setSetupEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] dark:!border-white/10 dark:!bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-                <input required type="password" minLength={12} value={setupPassword} onChange={e => setSetupPassword(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
-                <input required type="password" minLength={12} value={setupConfirm} onChange={e => setSetupConfirm(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Confirm password" autoComplete="new-password" />
+                <input required type="password" minLength={12} value={setupPassword} onChange={e => setSetupPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
+                <input required type="password" minLength={12} value={setupConfirm} onChange={e => setSetupConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm password" autoComplete="new-password" />
                 <div className="my-2 border-t border-slate-200 pt-3 dark:border-white/10">
                   <p className="mb-2 text-[10px] font-bold tracking-[0.18em] text-sky-600 dark:text-cyan-300/80">CASHIER ACCOUNT</p>
                   <div className="grid gap-3">
-                    <input required value={setupCashierName} onChange={e => setSetupCashierName(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Cashier name" autoComplete="name" />
-                    <input required type="text" inputMode="email" value={setupCashierEmail} onChange={e => setSetupCashierEmail(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Cashier email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-                    <input required type="password" minLength={12} value={setupCashierPassword} onChange={e => setSetupCashierPassword(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Cashier password (12+ characters)" autoComplete="new-password" />
-                    <input required type="password" minLength={12} value={setupCashierConfirm} onChange={e => setSetupCashierConfirm(e.target.value)} className="input w-full !rounded-xl !border-white/10 !bg-[#0b1930] !py-3 !text-white placeholder:!text-slate-500 focus:!border-cyan-400/60" placeholder="Confirm cashier password" autoComplete="new-password" />
+                    <input required value={setupCashierName} onChange={e => setSetupCashierName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier name" autoComplete="name" />
+                    <input required type="text" inputMode="email" value={setupCashierEmail} onChange={e => setSetupCashierEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                    <input required type="password" minLength={12} value={setupCashierPassword} onChange={e => setSetupCashierPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier password (12+ characters)" autoComplete="new-password" />
+                    <input required type="password" minLength={12} value={setupCashierConfirm} onChange={e => setSetupCashierConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm cashier password" autoComplete="new-password" />
                   </div>
                 </div>
                 {error && <ErrorAlert message={error} />}
@@ -344,30 +344,30 @@ export default function Login() {
           <AuthCard>
             <div className="p-7 sm:p-9 lg:p-10">
               <div>
-                <h2 className="text-3xl font-black tracking-tight text-white">NEXFIX SOLUTION</h2>
-                <p className="mt-2 text-sm text-slate-400">Sign in to your POS account</p>
+                <h2 className="text-3xl font-black tracking-tight text-[#17133c] dark:text-white">NEXFIX SOLUTION</h2>
+                <p className="mt-2 text-sm text-[#6f7391] dark:text-slate-400">Sign in to your POS account</p>
               </div>
 
               <div className="mt-7 grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200 bg-[#f0f1f8] p-1.5 dark:border-white/10 dark:bg-[#0b1930]">
                 <button type="button" onClick={() => { setLoginRole('admin'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'admin' ? 'bg-gradient-to-r from-sky-400 to-blue-600 text-white shadow-[0_6px_20px_rgba(59,130,246,0.28)]' : 'text-[#7b7f9c] hover:text-[#17133c] dark:text-slate-400 dark:hover:text-white'}`}>ADMIN</button>
-                <button type="button" onClick={() => { setLoginRole('cashier'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'cashier' ? 'bg-gradient-to-r from-teal-400 to-emerald-600 text-white shadow-[0_6px_20px_rgba(20,184,166,0.25)]' : 'text-slate-400 hover:text-white'}`}>CASHIER</button>
+                <button type="button" onClick={() => { setLoginRole('cashier'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'cashier' ? 'bg-gradient-to-r from-teal-400 to-emerald-600 text-white shadow-[0_6px_20px_rgba(20,184,166,0.25)]' : 'text-[#7b7f9c] hover:text-[#17133c] dark:text-slate-400 dark:hover:text-white'}`}>CASHIER</button>
               </div>
 
               <form onSubmit={submit} className="mt-7 space-y-5">
                 <label className="block">
                   <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-[#7b7f9c] dark:text-slate-400">EMAIL</span>
                   <div className="relative">
-                    <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8a8eaa] dark:text-slate-500" />
                     <input required type="text" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={e => setEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3.5 !pl-10 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="you@shop.lk" />
                   </div>
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-slate-400">PASSWORD</span>
+                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-[#7b7f9c] dark:text-slate-400">PASSWORD</span>
                   <div className="relative">
                     <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
                     <input required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3.5 !pl-10 !pr-11 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="Password" />
-                    <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-cyan-300">
+                    <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8a8eaa] transition hover:text-sky-600 dark:text-slate-500 dark:hover:text-cyan-300">
                       {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
