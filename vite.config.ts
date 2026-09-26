@@ -13,9 +13,9 @@ export default defineConfig(({ mode }) => {
   const isGitHubPages = mode === 'github-pages'
 
   return {
-    // Keep root hosting for normal Electron/static builds; GitHub Pages project sites
-    // are served from /Nexfix-POS/.
-    base: isGitHubPages ? '/Nexfix-POS/' : '/',
+    // Electron loads dist/index.html via file://, so packaged assets must be
+    // relative to that file. GitHub Pages remains rooted at /Nexfix-POS/.
+    base: isGitHubPages ? '/Nexfix-POS/' : './',
     plugins: [react(), tailwindcss()],
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
@@ -32,13 +32,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    server: {
-      port: 5173,
-      host: true,
-    },
-    preview: {
-      port: 4173,
-      host: true,
-    },
+    server: { port: 5173, host: true },
+    preview: { port: 4173, host: true },
   }
 })
