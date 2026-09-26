@@ -18,7 +18,10 @@ import {
 import { usePOS } from '../lib/store';
 import { ensureCloudSession } from '../lib/cloudAuth';
 
-const REMEMBER_KEY = 'nexfix_login_remember';
+const REMEMBER_KEYS: Record<LoginRole, string> = {
+  admin: 'nexfix_login_remember_admin',
+  cashier: 'nexfix_login_remember_cashier',
+};
 type LoginRole = 'admin' | 'cashier';
 interface RememberedLogin {
   email: string;
@@ -26,21 +29,21 @@ interface RememberedLogin {
   remember: true;
 }
 
-function loadRememberedLogin(): RememberedLogin | null {
+function loadRememberedLogin(role: LoginRole): RememberedLogin | null {
   try {
-    const raw = localStorage.getItem(REMEMBER_KEY);
+    const raw = localStorage.getItem(REMEMBER_KEYS[role]);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
     if (
       parsed.remember !== true ||
       typeof parsed.email !== 'string' ||
       !/^\S+@\S+\.\S+$/.test(parsed.email) ||
-      (parsed.role !== 'admin' && parsed.role !== 'cashier')
+      parsed.role !== role
     ) {
-      localStorage.removeItem(REMEMBER_KEY);
+      localStorage.removeItem(REMEMBER_KEYS[role]);
       return null;
     }
-    return { email: parsed.email, role: parsed.role, remember: true };
+    return { email: parsed.email, role, remember: true };
   } catch {
     return null;
   }
@@ -49,17 +52,31 @@ function loadRememberedLogin(): RememberedLogin | null {
 function saveRememberedLogin(email: string, role: LoginRole) {
   try {
     const payload: RememberedLogin = { email, role, remember: true };
-    localStorage.setItem(REMEMBER_KEY, JSON.stringify(payload));
+    localStorage.setItem(REMEMBER_KEYS[role], JSON.stringify(payload));
   } catch {
     // Credential memory is optional; sign-in itself must still work.
   }
 }
 
-function clearRememberedLogin() {
+function clearRememberedLogin(role: LoginRole) {
   try {
-    localStorage.removeItem(REMEMBER_KEY);
+    localStorage.removeItem(REMEMBER_KEYS[role]);
   } catch {
     // Ignore storage failures; never block login.
+  }
+}
+
+function migrateLegacyRememberedLogin() {
+  try {
+    const raw = localStorage.getItem('nexfix_login_remember');
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Partial<RememberedLogin>;
+    if (parsed.remember === true && typeof parsed.email === 'string' && (parsed.role === 'admin' || parsed.role === 'cashier')) {
+      saveRememberedLogin(parsed.email, parsed.role);
+    }
+    localStorage.removeItem('nexfix_login_remember');
+  } catch {
+    // Ignore legacy storage migration failures.
   }
 }
 
@@ -218,12 +235,21 @@ export default function Login() {
 
   useEffect(() => {
     if (!ready || user) return;
-    const saved = loadRememberedLogin();
+    migrateLegacyRememberedLogin();
+    const saved = loadRememberedLogin(loginRole);
     if (!saved) return;
     setEmail(saved.email);
-    setLoginRole(saved.role);
     setRemember(true);
   }, [ready, user]);
+
+  useEffect(() => {
+    if (!ready || user) return;
+    const saved = loadRememberedLogin(loginRole);
+    setEmail(saved?.email || '');
+    setRemember(Boolean(saved));
+    setPassword('');
+    setError('');
+  }, [loginRole, ready, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -267,7 +293,7 @@ export default function Login() {
         return;
       }
       if (remember) saveRememberedLogin(mail, loginRole);
-      else clearRememberedLogin();
+      else clearRememberedLogin(loginRole);
       void ensureCloudSession(mail, password, mail).catch(() => {});
       window.setTimeout(() => {
         setLoading(prev => {
@@ -283,7 +309,7 @@ export default function Login() {
 
   const handleRememberChange = (checked: boolean) => {
     setRemember(checked);
-    if (!checked) clearRememberedLogin();
+    if (!checked) clearRememberedLogin(loginRole);
   };
 
   if (!ready) {
