@@ -80,6 +80,7 @@ async function loadCloudSalesData({
         }
 
         resolvedShopId = String(device.shop_id);
+        if (!(await waitForCloudSession(supabase))) throw new Error('Cloud login is still starting. Please wait a moment and refresh.');
         const { data: authData } = await supabase.auth.getUser();
         const uid = authData.user?.id;
         if (!uid) throw new Error('Login session was not found.');
@@ -325,7 +326,7 @@ export default function MobileTodaySales() {
     () => (cloudMode ? (remoteState?.sales || []) : state.sales)
       .filter(s => dateKeyInTimeZone(new Date(s.date), requestedTimeZone) === selectedDate && s.machineId === machineId)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [cloudMode, remoteState?.sales, state.sales, selectedDate, machineId],
+    [cloudMode, remoteState?.sales, state.sales, selectedDate, machineId, requestedTimeZone],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
