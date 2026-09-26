@@ -51,15 +51,17 @@ jobs:
           $source = "assets/nexfix-pos-icon.svg"
           if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
           New-Item -ItemType Directory -Force -Path build | Out-Null
-          # The supplied MX artwork contains a large white canvas around the mark.
-          # Trim that canvas before fitting it into the Windows icon so the desktop
-          # shortcut shows the actual MX mark at a useful size instead of a tiny logo.
-          magick $source -auto-orient -background white -flatten -trim +repage -resize "1024x1024^" -gravity center -extent 1024x1024 "build/icon.png"
-          magick "build/icon.png" -define icon:auto-resize=16,32,48,64,128,256 "build/icon.ico"
-          $identify = magick identify -format "%m %wx%h" "build/icon.png"
+          # Preserve the supplied Nexfix artwork. Do not trim/flood-fill the white
+          # canvas: Windows shortcuts and the installed EXE must use the complete
+          # supplied logo composition, including its rounded border and white field.
+          magick $source -auto-orient -background white -alpha remove -alpha off -resize "1024x1024" -gravity center -extent 1024x1024 "build/icon.png"
+          magick "build/icon.png" -define icon:auto-resize=16,24,32,48,64,128,256 "build/icon.ico"
+          $identify = magick identify -format "%m %wx%h %[fx:standard_deviation]" "build/icon.png"
           if ($identify -notmatch "PNG 1024x1024") { throw "Unexpected icon.png output: $identify" }
           if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico was not generated." }
-          Write-Host "Generated: $identify"
+          $variance = [double](magick identify -format "%[fx:standard_deviation]" "build/icon.png")
+          if ($variance -lt 0.01) { throw "Generated Windows icon appears blank/flat: standard deviation $variance" }
+          Write-Host "Generated Nexfix Windows icon: $identify"
 
       - name: Typecheck
         run: npm run typecheck
