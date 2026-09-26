@@ -12,7 +12,7 @@ function desktopBridge(): DesktopBridge | undefined {
 
 export function getPublicAppUrl(): string {
   const configured = String(import.meta.env.VITE_PUBLIC_APP_URL || '').trim();
-  if (/^https?:\\/\\//i.test(configured)) return configured.replace(/\\/+$/, '') + '/';
+  if (configured.startsWith('https://') || configured.startsWith('http://')) return configured.replace(/\/+$/, '') + '/';
 
   if (typeof window !== 'undefined' && /^https?:$/.test(window.location.protocol)) {
     const path = window.location.pathname.endsWith('/') ? window.location.pathname : window.location.pathname + '/';
