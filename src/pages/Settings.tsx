@@ -530,7 +530,7 @@ export default function Settings() {
           </div>
 
           <div className="card p-6 border border-emerald-500/20">
-            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup Encryption</h3>
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup</h3>
             <p className="text-xs text-faint mb-4">{getBackupSecurityMessage()}</p>
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3.5 py-3 text-[12px] font-semibold text-emerald-700 dark:text-emerald-300">
               Encryption is automatic. You do not need to enter or unlock a passphrase for normal backups.
