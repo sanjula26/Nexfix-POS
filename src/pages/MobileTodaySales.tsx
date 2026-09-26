@@ -156,6 +156,11 @@ export default function MobileTodaySales() {
       // A machine id is not an authorization grant. Verify the logged-in user
       // is an active member of the shop before accepting the machine link.
       const resolvedShopId = String(data.shop_id);
+      if (!(await waitForCloudSession(client))) {
+        setShopError('Cloud login is still starting. Please wait a moment and refresh.');
+        setShopReady(false);
+        return;
+      }
       const { data: authData } = await client.auth.getUser();
       const uid = authData.user?.id;
       if (!uid) {
