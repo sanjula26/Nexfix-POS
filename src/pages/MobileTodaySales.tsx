@@ -249,6 +249,8 @@ export default function MobileTodaySales() {
 
       if (!resolvedShopId) throw new Error('Shop ID could not be resolved.');
 
+      if (!(await waitForCloudSession(supabase))) throw new Error('Cloud login is still starting. Please wait a moment and refresh.');
+
       if (resolvedShopId !== getCloudShopId()) setCloudShopId(resolvedShopId);
       setActiveShopId(resolvedShopId);
 
