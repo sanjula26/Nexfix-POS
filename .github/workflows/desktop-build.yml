@@ -89,17 +89,28 @@ jobs:
       - name: Build Windows installer and portable app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          EP_GH_IGNORE_TIME: "true"
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
-          npm run desktop:build
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw "GH_TOKEN is empty." }
+          npx electron-builder --win --publish always
 
-      - name: Verify Windows artifacts
+      - name: Verify Windows artifacts and updater metadata
         shell: pwsh
         run: |
           $files = Get-ChildItem -Path release -File
           $exeFiles = $files | Where-Object { $_.Extension -eq '.exe' }
-          if ($files.Count -lt 2) { throw "Expected installer and portable artifacts." }
-          if ($exeFiles.Count -lt 2) { throw "Expected at least two Windows .exe artifacts (installer and portable)." }
+          $installer = $files | Where-Object { $_.Name -match '-installer\.exe$' }
+          $latestYml = $files | Where-Object { $_.Name -eq 'latest.yml' }
+          $blockmaps = $files | Where-Object { $_.Name -like '*.blockmap' }
+          if ($files.Count -lt 2) { throw 'Expected installer and portable artifacts.' }
+          if ($exeFiles.Count -lt 2) { throw 'Expected at least two Windows .exe artifacts.' }
+          if ($installer.Count -lt 1) { throw 'Expected an NSIS installer artifact.' }
+          if ($latestYml.Count -ne 1) { throw 'electron-updater latest.yml is missing.' }
+          if ($blockmaps.Count -lt 1) { throw 'Expected an NSIS blockmap.' }
+          if ((Get-Content $latestYml.FullName -Raw) -notmatch 'version:') { throw 'latest.yml has no version metadata.' }
+          Write-Host "Updater metadata verified: latest.yml + $($blockmaps.Count) blockmap(s)"
 
       - name: Generate release checksums
         shell: pwsh
@@ -113,13 +124,18 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
-      - name: Publish GitHub Release
+      - name: Verify published GitHub Release assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v3.0.0-build.${{ github.run_number }}"
-          $title = "Nexfix POS $tag"
-          gh release create $tag release/*.exe release/SHA256SUMS.txt --repo $env:GITHUB_REPOSITORY --title $title --generate-notes
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $assetNames = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
+          if ($LASTEXITCODE -ne 0) { throw "Published release $tag could not be read." }
+          if ($assetNames -notcontains 'latest.yml') { throw "Published release $tag is missing latest.yml." }
+          if (-not ($assetNames | Where-Object { $_ -match '-installer\.exe$' })) { throw "Published release $tag is missing the NSIS installer." }
+          if (-not ($assetNames | Where-Object { $_ -like '*.blockmap' })) { throw "Published release $tag is missing an NSIS blockmap." }
+          Write-Host "Published updater release verified: $tag"
 
 # CI validation marker for the authoritative cloud-sale reconciliation fix.
