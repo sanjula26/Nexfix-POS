@@ -1,69 +1,62 @@
-const { app, BrowserWindow, session } = require('electron');
+const { app, BrowserWindow, session, ipcMain } = require('electron');
 const path = require('path');
-
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
+let autoUpdater = null;
+let pendingUpdateInfo = null;
+let updateDownloadActive = false;
+let updateInstallScheduled = false;
 
-function isAllowedNavigation(url) {
-  try {
-    const parsed = new URL(url);
-    if (isDev) return parsed.origin === new URL(DEV_URL).origin;
-    return parsed.protocol === 'file:';
-  } catch {
-    return false;
-  }
+function getMainWindow(){ return BrowserWindow.getAllWindows()[0] || null; }
+function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
+
+function setupAutoUpdater(){
+  if(!app.isPackaged || process.platform!=='win32') return;
+  try{
+    ({autoUpdater}=require('electron-updater'));
+    autoUpdater.autoDownload=false;
+    autoUpdater.autoInstallOnAppQuit=false;
+    autoUpdater.verifyUpdateCodeSignature=false;
+    autoUpdater.on('checking-for-update',()=>sendUpdateEvent('checking'));
+    autoUpdater.on('update-available',info=>{pendingUpdateInfo=info;sendUpdateEvent('available',{version:info.version});});
+    autoUpdater.on('update-not-available',info=>{pendingUpdateInfo=null;sendUpdateEvent('not-available',{version:info?.version||app.getVersion()});});
+    autoUpdater.on('download-progress',info=>sendUpdateEvent('progress',{percent:Number(info.percent||0)}));
+    autoUpdater.on('update-downloaded',info=>{
+      pendingUpdateInfo=info; updateDownloadActive=false;
+      sendUpdateEvent('downloaded',{version:info?.version||''});
+      if(!updateInstallScheduled){updateInstallScheduled=true;setTimeout(()=>{try{autoUpdater.quitAndInstall(false,true);}catch(error){updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});}},600);}
+    });
+    autoUpdater.on('error',error=>{updateDownloadActive=false;updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});});
+    ipcMain.handle('update:check',async()=>{
+      if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
+      try{const result=await autoUpdater.checkForUpdates();return{supported:true,available:Boolean(result?.isUpdateAvailable),version:result?.updateInfo?.version||null};}
+      catch(error){sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,available:false,error:error?.message||String(error)};}
+    });
+    ipcMain.handle('update:downloadAndInstall',async()=>{
+      if(!app.isPackaged||!autoUpdater)return{supported:false,started:false};
+      if(updateDownloadActive||updateInstallScheduled)return{supported:true,started:false};
+      try{
+        if(!pendingUpdateInfo){const result=await autoUpdater.checkForUpdates();if(!result?.isUpdateAvailable)return{supported:true,started:false};pendingUpdateInfo=result.updateInfo;}
+        updateDownloadActive=true;sendUpdateEvent('progress',{percent:0});await autoUpdater.downloadUpdate();return{supported:true,started:true};
+      }catch(error){updateDownloadActive=false;sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,started:false,error:error?.message||String(error)};}
+    });
+    setTimeout(()=>{void autoUpdater.checkForUpdates().catch(()=>{});},5000);
+  }catch(error){console.warn('[Nexfix updater] unavailable:',error?.message||error);}
 }
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
-    backgroundColor: '#f5f6fb',
-    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webSecurity: true,
-    },
-  });
-
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    // Never let renderer content spawn arbitrary native windows.
-    if (isAllowedNavigation(url)) return { action: 'allow' };
-    return { action: 'deny' };
-  });
-
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!isAllowedNavigation(url)) event.preventDefault();
-  });
-  win.webContents.on('will-redirect', (event, url) => {
-    if (!isAllowedNavigation(url)) event.preventDefault();
-  });
-
-  win.once('ready-to-show', () => win.show());
-
-  if (isDev) win.loadURL(DEV_URL);
-  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+function isAllowedNavigation(url){try{const parsed=new URL(url);if(isDev)return parsed.origin===new URL(DEV_URL).origin;return parsed.protocol==='file:';}catch{return false;}}
+function createWindow(){
+  const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+  win.webContents.setWindowOpenHandler(({url})=>isAllowedNavigation(url)?{action:'allow'}:{action:'deny'});
+  win.webContents.on('will-navigate',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
+  win.webContents.on('will-redirect',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
+  win.once('ready-to-show',()=>win.show());
+  if(isDev)win.loadURL(DEV_URL);else win.loadFile(path.join(__dirname,'..','dist','index.html'));
 }
-
-app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    // Camera is needed for barcode/QR workflows; deny all other permissions.
-    // Only the packaged/dev POS renderer may request it.
-    callback(permission === 'camera' && isAllowedNavigation(webContents.getURL()));
-  });
-
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+ipcMain.handle('app:version',()=>app.getVersion());
+app.whenReady().then(()=>{
+  session.defaultSession.setPermissionRequestHandler((webContents,permission,callback)=>callback(permission==='camera'&&isAllowedNavigation(webContents.getURL())));
+  setupAutoUpdater(); createWindow();
+  app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});
 });
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
