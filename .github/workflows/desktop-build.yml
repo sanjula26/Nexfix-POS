@@ -170,7 +170,9 @@ jobs:
             gh release create $tag --repo $env:GITHUB_REPOSITORY --title "Nexfix POS $version" --notes "Nexfix POS Windows release $version"
             if ($LASTEXITCODE -ne 0) { throw "Could not create release $tag." }
           }
-          gh release upload $tag release/* --repo $env:GITHUB_REPOSITORY --clobber
+          $releaseFiles = Get-ChildItem -Path release -File | ForEach-Object { $_.FullName }
+          if ($releaseFiles.Count -lt 2) { throw 'No Windows release files were found to upload.' }
+          gh release upload $tag $releaseFiles --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw "Could not upload Windows release assets to $tag." }
           Write-Host "All Windows release assets uploaded to $tag"
           gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq '.assets[].name'
