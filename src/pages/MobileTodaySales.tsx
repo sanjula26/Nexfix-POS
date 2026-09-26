@@ -106,11 +106,6 @@ export default function MobileTodaySales() {
         if (!cancelled) { setShopError('Cloud login is still starting. Please wait a moment and refresh.'); setShopReady(false); }
         return;
       }
-      if (!(await waitForCloudSession(client))) {
-        setShopError('Cloud login is still starting. Please wait a moment and refresh.');
-        setShopReady(false);
-        return;
-      }
       const { data: authData } = await client.auth.getUser();
       const uid = authData.user?.id;
       if (!uid) {
