@@ -22,10 +22,9 @@ export function getPublicAppUrl(): string {
   return DEFAULT_PUBLIC_APP_URL;
 }
 
-export function buildPhoneSalesLink(shopId: string, machineId: string, timeZone?: string): string {
+export function buildPhoneSalesLink(token: string, timeZone?: string): string {
   const params = new URLSearchParams();
-  if (shopId) params.set('shop', shopId);
-  if (machineId) params.set('machine', machineId);
+  if (token) params.set('token', token);
   if (timeZone) params.set('tz', timeZone);
   return `${getPublicAppUrl()}#/today?${params.toString()}`;
 }
