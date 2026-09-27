@@ -14,13 +14,13 @@ Deno.serve(async req=>{
     const {data:u,error:ue}=await admin.auth.getUser(token);
     if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
     const {data:d}=await admin.from("pos_devices").select("shop_id,user_id").eq("device_id",deviceId).maybeSingle();
-    if(!d?.shop_id)return json({ok:false,error:"This POS device is not authorized for updates"},403);
+    if(!d?.shop_id)return json({ok:false,error:"This POS device is not authorized for updates"},403);\n    if(d.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different account"},403);
     const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",d.shop_id).eq("user_id",u.user.id).eq("active",true).maybeSingle();
     if(!m)return json({ok:false,error:"User is not an active member of this shop"},403);
     const requestUrl=new URL(req.url);
     const isManifestRequest=requestUrl.pathname.endsWith("/latest.yml") || requestUrl.pathname.endsWith("/latest.yaml");
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
-    if(wantsDownload && !["admin","manager"].includes(String(m.role))) return json({ok:false,error:"Only an admin or manager can download the Windows installer"},403);
+    if(wantsDownload && String(m.role)!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
     const STREAM_CHUNK_BYTES=40*1024*1024;
