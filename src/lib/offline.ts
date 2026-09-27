@@ -117,7 +117,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const catalogState=state || undefined;
           if(catalogState){
             const catalog=await syncNormalizedCatalog(catalogState,shop.shopId);
-            if(!catalog.ok) break;
+            if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
           }
           const result=await receivePurchaseAtomic({shopId:shop.shopId,purchaseId:parsed.purchaseId,deviceId:parsed.input.deviceId,purchase:parsed.input.purchase});
           if(!result.ok) break;
