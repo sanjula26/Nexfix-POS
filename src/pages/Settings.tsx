@@ -463,7 +463,7 @@ export default function Settings() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-black text-ink">Phone Sales Link</div>
-              <p className="mt-1 text-xs leading-relaxed text-sub">This link opens this POS machine's read-only sales page. On the phone, choose <b>Today</b> or <b>Past Sales</b> and select a previous date when needed.</p>
+              <p className="mt-1 text-xs leading-relaxed text-sub">This is a secure, token-based read-only sales link. Only someone with the link token can read this shop's sales. The link can be revoked from the authorized POS.</p>
               <input aria-label="Phone sales link" readOnly value={phoneSalesLink} onFocus={e => e.currentTarget.select()} className="mt-3 w-full rounded-xl border border-line bg-raised px-3 py-2.5 text-[11px] font-mono text-ink outline-none focus:border-violet-500" />
               {phoneLinkMsg && <p className="mt-2 text-[12px] font-semibold text-emerald-600">{phoneLinkMsg}</p>}
             </div>
