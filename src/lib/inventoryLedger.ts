@@ -7,7 +7,7 @@ export type InventoryTransactionType =
   | 'STOCK_ADJUSTMENT'
   | 'PURCHASE_REVERSAL'
   | 'TRADE_IN'
-  | 'REPAIR_PARTS';
+  | 'REPAIR_PARTS' | 'UNIT_DELETE';
 
 /**
  * Immutable inventory movement record. Quantity is signed from the inventory
