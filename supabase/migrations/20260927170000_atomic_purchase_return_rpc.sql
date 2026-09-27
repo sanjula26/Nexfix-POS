@@ -303,7 +303,7 @@ create or replace function public.process_purchase_return_atomic(
   p_shop_id uuid,p_return_id uuid,p_purchase_id uuid,p_device_id text,p_reason text,p_purchase jsonb,p_lines jsonb
 ) returns jsonb
 language sql security invoker set search_path to ''
-as $ select private.process_purchase_return_atomic($1,$2,$3,$4,$5,$6,$7) $;
+as 'select private.process_purchase_return_atomic($1,$2,$3,$4,$5,$6,$7)';
 
 revoke all on function private.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb,jsonb) from public,anon,authenticated;
 revoke all on function public.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb,jsonb) from public,anon;
