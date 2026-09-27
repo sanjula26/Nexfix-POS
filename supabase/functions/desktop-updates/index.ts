@@ -21,6 +21,8 @@ Deno.serve(async req=>{
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
     const {data:s,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrl(r.installer_path,300,{download:r.installer_name});
     if(se||!s?.signedUrl)return json({ok:false,error:"Could not authorize the update download"},500);
+    const requestUrl=new URL(req.url);
+    if(requestUrl.searchParams.get("download")==="1") return json({ok:true,url:s.signedUrl,version:r.version,name:r.installer_name});
     const yaml="version: "+r.version+"\\nfiles:\\n  - url: "+s.signedUrl+"\\n    sha512: "+r.installer_sha512+"\\n    size: "+r.installer_size+"\\nreleaseDate: "+new Date(r.published_at).toISOString()+"\\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:"Update request failed"},500);}
