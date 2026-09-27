@@ -146,6 +146,20 @@ begin
     );
   end if;
 
+  -- Reject duplicate product/cost pairs in one request so two lines cannot
+  -- each pass the remaining-quantity check and collectively over-return stock.
+  if exists (
+    select 1
+    from (
+      select (x->>'product_id')::uuid as product_id, (x->>'cost')::numeric as cost, count(*) as n
+      from jsonb_array_elements(p_lines) x
+      group by (x->>'product_id')::uuid, (x->>'cost')::numeric
+      having count(*) > 1
+    ) d
+  ) then
+    raise exception 'Duplicate product/cost lines are not allowed in one supplier return';
+  end if;
+
   -- Validate every requested line against normalized received purchase quantities.
   for v_line in select * from jsonb_array_elements(p_lines) loop
     v_item_idx := (v_line->>'item_idx')::integer;
@@ -153,10 +167,7 @@ begin
     v_qty := (v_line->>'qty')::numeric;
     v_cost := (v_line->>'cost')::numeric;
 
-    if v_item_idx < 0 or v_item_idx >= jsonb_array_length(coalesce((select jsonb_agg(x) from jsonb_array_elements('[]'::jsonb) x),'[]'::jsonb)) then
-      -- item_idx is display metadata only; the product/cost pair is authoritative.
-      null;
-    end if;
+    if v_item_idx < 0 then raise exception 'Invalid return item index'; end if;
     if v_qty <= 0 or v_qty <> trunc(v_qty) then raise exception 'Return quantity must be a positive whole number'; end if;
     if v_cost < 0 or v_cost <> v_cost then raise exception 'Invalid return cost'; end if;
 
