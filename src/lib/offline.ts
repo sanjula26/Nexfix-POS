@@ -1,7 +1,7 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic } from './cloudSync';
+import { completeSaleAtomic, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -54,6 +54,7 @@ export async function queueWrite(note?:string):Promise<void>{
   }
 }
 
+export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
 export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
@@ -120,6 +121,18 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
           }
           const result=await receivePurchaseAtomic({shopId:shop.shopId,purchaseId:parsed.purchaseId,deviceId:parsed.input.deviceId,purchase:parsed.input.purchase});
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
+      if(op.type==='repair_delivery'){
+        try{
+          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const result=await processRepairDeliveryAtomic({shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,repair:parsed.repair});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
