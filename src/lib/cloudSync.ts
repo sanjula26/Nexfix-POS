@@ -371,6 +371,7 @@ export async function processPurchaseReturnAtomic(input: {
   purchaseId: string;
   deviceId: string;
   reason: string;
+  purchase: Purchase;
   lines: Array<{ item_idx: number; product_id: string; qty: number; cost: number; unit_ids?: string[] }>;
 }): Promise<{ok:boolean; alreadyCommitted?:boolean; returnId?:string; returnNo?:string; total?:number; purchaseId?:string; error?:string}> {
   if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
@@ -386,6 +387,7 @@ export async function processPurchaseReturnAtomic(input: {
     p_purchase_id: input.purchaseId,
     p_device_id: input.deviceId,
     p_reason: input.reason.trim().slice(0, 500),
+    p_purchase: input.purchase,
     p_lines: input.lines,
   });
   if (error) return { ok:false, error:error.message };
