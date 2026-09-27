@@ -105,7 +105,9 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   const updaterReady = await refreshDesktopUpdaterCredentials();
   if (!updaterReady) {
     // Cloud sign-in can succeed before shop/device provisioning is complete.
-    // Keep local POS login independent; Settings can retry authorization/**
+    // Keep local POS login independent; Settings can retry authorization
+
+/**
  * Local POS authentication is authoritative. Cloud authentication is a
  * background enhancement and must never delay or block entry to the POS.
  */
