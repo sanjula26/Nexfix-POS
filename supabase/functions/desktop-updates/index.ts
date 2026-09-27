@@ -13,8 +13,8 @@ Deno.serve(async req=>{
     if(!token||!deviceId)return json({ok:false,error:"Authorization and device are required"},401);
     const {data:u,error:ue}=await admin.auth.getUser(token);
     if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
-    const {data:d}=await admin.from("pos_devices").select("shop_id,user_id").eq("device_id",deviceId).maybeSingle();
-    if(!d?.shop_id)return json({ok:false,error:"This POS device is not authorized for updates"},403);
+    const {data:d}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
+    if(!d?.shop_id || d.revoked_at)return json({ok:false,error:"This POS device is not authorized for updates"},403);
     if(d.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different account"},403);
     const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",d.shop_id).eq("user_id",u.user.id).eq("active",true).maybeSingle();
     if(!m)return json({ok:false,error:"User is not an active member of this shop"},403);
