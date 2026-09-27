@@ -5,7 +5,14 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+  try {
+    const { data } = await supabase.auth.getSession();
+    const desktop = (window as Window & { nexfixDesktop?: { setUpdateCredentials?: (payload: { token: string; deviceId: string }) => Promise<unknown> } }).nexfixDesktop;
+    const deviceId = (() => { try { return localStorage.getItem('nexfix_machine_id_v1') || ''; } catch { return ''; } })();
+    if (data.session?.access_token && deviceId) await desktop?.setUpdateCredentials?.({ token: data.session.access_token, deviceId });
+  } catch { /* updater authorization is optional until the desktop session is ready */ }
+  return { ok: true };
 }
 
 /**
