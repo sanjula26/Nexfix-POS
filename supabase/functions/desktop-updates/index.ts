@@ -21,7 +21,7 @@ Deno.serve(async req=>{
     const requestUrl=new URL(req.url);
     const isManifestRequest=requestUrl.pathname.endsWith("/latest.yml") || requestUrl.pathname.endsWith("/latest.yaml");
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
-    if(wantsDownload && String(m.role)!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
+    if(!m?.role)return json({ok:false,error:"Your account is not an active member of this shop"},403);\n    if(wantsDownload && String(m.role)!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
     const STREAM_CHUNK_BYTES=40*1024*1024;
