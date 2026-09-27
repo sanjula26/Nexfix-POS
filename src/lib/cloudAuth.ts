@@ -1,5 +1,6 @@
 import { supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop } from './cloudSync';
+import { getMachineIdentity } from './machine';
 
 function getDesktopUpdaterApi() {
   return (window as Window & {
@@ -11,7 +12,7 @@ function getDesktopUpdaterApi() {
 }
 
 function getMachineId(): string {
-  try { return localStorage.getItem('nexfix_machine_id_v1') || ''; } catch { return ''; }
+  try { return getMachineIdentity().id; } catch { return ''; }
 }
 
 function syncDesktopUpdaterCredentials(accessToken?: string): void {
@@ -24,6 +25,27 @@ function syncDesktopUpdaterCredentials(accessToken?: string): void {
   }
 }
 
+export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
+  const desktop = getDesktopUpdaterApi();
+  if (!desktop?.setUpdateCredentials) return false;
+  if (!supabaseConfigured || !supabase) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+  const deviceId = getMachineId();
+  if (!deviceId) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+  const result = await desktop.setUpdateCredentials({ token: data.session.access_token, deviceId });
+  return Boolean((result as { ok?: boolean } | null)?.ok);
+}
+
 if (supabase) {
   supabase.auth.onAuthStateChange((_event, session) => {
     syncDesktopUpdaterCredentials(session?.access_token);
@@ -34,7 +56,10 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    syncDesktopUpdaterCredentials();
+    return { ok: false, error: error.message };
+  }
   try {
     const { data } = await supabase.auth.getSession();
     syncDesktopUpdaterCredentials(data.session?.access_token);
