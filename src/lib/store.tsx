@@ -2108,6 +2108,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           purchaseId: purchase.id,
           deviceId: getMachineIdentity().id,
           reason: input.reason.trim(),
+          purchase,
           lines: items.map(item => ({
             item_idx: item.itemIdx,
             product_id: item.productId,
