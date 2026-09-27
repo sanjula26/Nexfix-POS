@@ -97,7 +97,10 @@ export default function Exchanges() {
           lines: returnLines,
         });
       }
-      processExchange(bill.id, selectedItems, reason, mode);
+      processExchange(bill.id, selectedItems.map(x => ({
+        ...x,
+        unitIds: bill.items[x.itemIdx].unitIds && x.qty === bill.items[x.itemIdx].qty ? bill.items[x.itemIdx].unitIds : undefined,
+      })), reason, mode);
       setBill(null); setQuery(''); setSearched(false); setConfirm(false); setSelected([]); setReturnQty({}); resetPendingReturn();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Return could not be completed');
