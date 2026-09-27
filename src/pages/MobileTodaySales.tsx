@@ -7,7 +7,7 @@ import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cl
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import type { POSState, Sale } from '../lib/types';
 import { getMachineIdentity } from '../lib/machine';
-import { buildPhoneSalesLink, copyText } from '../lib/publicApp';
+import { copyText } from '../lib/publicApp';
 
 function dateKeyInTimeZone(date: Date, timeZone: string): string {
   if (!timeZone) return dkey(date);
@@ -293,8 +293,6 @@ export default function MobileTodaySales() {
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
   const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
-  const phoneLink = buildPhoneSalesLink(shopId, machineId, requestedTimeZone || (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })());
-
   const submitPin = () => {
     const value = pin.trim();
     if (!value) { setPinError('Enter the Admin PIN.'); return; }
@@ -321,16 +319,6 @@ export default function MobileTodaySales() {
       setRemoteState,
     });
   };
-
-  const copyMachineLink = async () => {
-    if (!phoneLink) return;
-    try {
-      const copied = await copyText(phoneLink);
-      setMachineLinkCopied(copied);
-      if (copied) window.setTimeout(() => setMachineLinkCopied(false), 1800);
-    } catch { setMachineLinkCopied(false); }
-  };
-
 
 
   const cloudMode = !requestedToken && !!shopId && supabaseConfigured && !!supabase;
@@ -397,14 +385,7 @@ export default function MobileTodaySales() {
           </button> : <span className="w-16" />}
         </header>
 
-        {!requestedToken && <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
-          <div className="text-xs font-bold uppercase tracking-wide text-violet-500 dark:text-violet-300">This POS machine — {linkMachineName}</div>
-          <div className="mt-1 break-all text-xs font-semibold text-ink">{phoneLink || 'Shop ID not configured'}</div>
-          <button type="button" onClick={() => void copyMachineLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
-            {machineLinkCopied ? 'Link copied' : 'Copy this POS machine link'}
-          </button>
-          <div className="mt-2 text-[11px] leading-relaxed text-sub">This legacy machine link is only available inside an authenticated POS session.</div>
-        </section>}
+
 
         <section className="mb-4 rounded-2xl card p-4">
           <div className="text-xs font-bold uppercase tracking-wide text-sub">Sales period</div>
