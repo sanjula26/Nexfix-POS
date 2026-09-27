@@ -6,9 +6,25 @@ let autoUpdater = null;
 let pendingUpdateInfo = null;
 let updateDownloadActive = false;
 let updateInstallScheduled = false;
+let updateAuthToken = '';
+let updateDeviceId = '';
+const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
 
 function getMainWindow(){ return BrowserWindow.getAllWindows()[0] || null; }
 function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
+
+function configureUpdaterCredentials(){
+  if (!autoUpdater || !updateAuthToken || !updateDeviceId) return false;
+  autoUpdater.setFeedURL({
+    provider: 'generic',
+    url: UPDATE_FEED_URL,
+    requestHeaders: {
+      Authorization: `Bearer ${updateAuthToken}`,
+      'X-Nexfix-Device': updateDeviceId,
+    },
+  });
+  return true;
+}
 
 function setupAutoUpdater(){
   if(!app.isPackaged || process.platform!=='win32') return;
@@ -26,14 +42,24 @@ function setupAutoUpdater(){
       if(!updateInstallScheduled){updateInstallScheduled=true;setTimeout(()=>{try{autoUpdater.quitAndInstall(false,true);}catch(error){updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});}},600);}
     });
     autoUpdater.on('error',error=>{updateDownloadActive=false;updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});});
-    ipcMain.handle('update:status',()=>({supported:true,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
+    ipcMain.handle('update:set-credentials',(_event,payload)=>{
+      const token=typeof payload?.token==='string'?payload.token.trim():'';
+      const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
+      updateAuthToken=token.length>=100?token:'';
+      updateDeviceId=deviceId.length>=1&&deviceId.length<=200?deviceId:'';
+      pendingUpdateInfo=null;
+      return {ok:configureUpdaterCredentials()};
+    });
+    ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
+      if(!configureUpdaterCredentials())return{supported:true,available:false,error:'Update authorization is not ready.'};
       try{const result=await autoUpdater.checkForUpdates();return{supported:true,available:Boolean(result?.isUpdateAvailable),version:result?.updateInfo?.version||null};}
       catch(error){sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,available:false,error:error?.message||String(error)};}
     });
     ipcMain.handle('update:downloadAndInstall',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,started:false};
+      if(!configureUpdaterCredentials())return{supported:true,started:false,error:'Update authorization is not ready.'};
       if(updateDownloadActive||updateInstallScheduled)return{supported:true,started:false};
       try{
         if(!pendingUpdateInfo){const result=await autoUpdater.checkForUpdates();if(!result?.isUpdateAvailable)return{supported:true,started:false};pendingUpdateInfo=result.updateInfo;}
