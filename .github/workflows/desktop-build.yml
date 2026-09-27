@@ -168,7 +168,7 @@ jobs:
           if (-not $installer) { throw 'Installer artifact not found for private GitHub installation release.' }
           if (-not (Test-Path 'release/SHA256SUMS.txt')) { throw 'Release checksum file is missing.' }
           $tag = "v$env:BUILD_VERSION"
-          gh release create $tag $installer.FullName 'release/SHA256SUMS.txt' --title "Nexfix POS $env:BUILD_VERSION" --notes "Private Nexfix POS Windows installation package. Download access follows this private repository's access control." --verify-tag
+          gh release create $tag $installer.FullName 'release/SHA256SUMS.txt' --title "Nexfix POS $env:BUILD_VERSION" --notes "Private Nexfix POS Windows installation package. Download access follows this private repository's access control."
           if ($LASTEXITCODE -ne 0) { throw "Could not create the private GitHub installation release for $tag." }
           Write-Host "Private GitHub installation release published: $tag"
 
