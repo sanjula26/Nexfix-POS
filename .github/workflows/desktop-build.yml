@@ -158,6 +158,20 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
+      - name: Publish private GitHub installation release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
+          if (-not $installer) { throw 'Installer artifact not found for private GitHub installation release.' }
+          if (-not (Test-Path 'release/SHA256SUMS.txt')) { throw 'Release checksum file is missing.' }
+          $tag = "v$env:BUILD_VERSION"
+          gh release create $tag $installer.FullName 'release/SHA256SUMS.txt' --title "Nexfix POS $env:BUILD_VERSION" --notes "Private Nexfix POS Windows installation package. Download access follows this private repository's access control." --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw "Could not create the private GitHub installation release for $tag." }
+          Write-Host "Private GitHub installation release published: $tag"
+
       - name: Publish Windows release to private Supabase Storage
         shell: pwsh
         env:
