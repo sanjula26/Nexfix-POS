@@ -1381,7 +1381,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
       if (duplicate) return null;
     }
-    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     if (user.role === 'admin' || user.role === 'manager') {
       const catalog = await syncNormalizedCatalog(state, shop.shopId);
       if (!catalog.ok) return null;
