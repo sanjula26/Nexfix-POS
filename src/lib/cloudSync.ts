@@ -91,6 +91,27 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: false, error: 'Cloud shop membership is not provisioned for this user' };
 }
 
+/** Register this machine with the currently authenticated cloud shop.
+ * The server remains the source of truth for device ownership and membership.
+ */
+export async function registerDesktopUpdaterDevice(shopId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  const normalizedShopId = shopId.trim();
+  const normalizedDeviceId = deviceId().trim();
+  if (!normalizedShopId) return { ok: false, error: 'Cloud shop is not configured' };
+  if (!normalizedDeviceId) return { ok: false, error: 'This machine does not have a valid device identity' };
+
+  const { data, error } = await supabase.rpc('register_pos_device', {
+    p_shop_id: normalizedShopId,
+    p_device_id: normalizedDeviceId,
+  });
+  if (error) return { ok: false, error: error.message };
+  if (data && typeof data === 'object' && 'ok' in data && (data as { ok?: unknown }).ok !== true) {
+    return { ok: false, error: 'The cloud service did not authorize this POS device' };
+  }
+  return { ok: true };
+}
+
 /**
  * Mirror only catalog records that do not already exist in the cloud.
  * Cloud stock, customer balances/points, and tracked-unit status are authoritative;
