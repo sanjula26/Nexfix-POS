@@ -69,7 +69,7 @@ export default function GRN() {
       const already = returnedByItem.get(itemIdx) || 0;
       const product = state.products.find(x => x.id === item.productId);
       const stock = Math.max(0, product?.stock ?? 0);
-      const tracked = !!(product?.trackImei || product?.trackSerial);
+      const tracked = Array.isArray(item.unitIdentifiers) && item.unitIdentifiers.length > 0;
       const unitStock = tracked
         ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === p.id && u.status === 'in_stock').length
         : Number.MAX_SAFE_INTEGER;
@@ -301,7 +301,7 @@ export default function GRN() {
                   <div className="text-xs font-bold uppercase tracking-wider text-sub mb-2">Items to return</div>
                   {returnPurchase.items.map((item, itemIdx) => {
                     const product = state.products.find(x => x.id === item.productId);
-                    const tracked = !!(product?.trackImei || product?.trackSerial);
+                    const tracked = Array.isArray(item.unitIdentifiers) && item.unitIdentifiers.length > 0;
                     const availableUnits = tracked
                       ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === returnPurchase.id && u.status === 'in_stock')
                       : [];
