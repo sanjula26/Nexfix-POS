@@ -372,6 +372,24 @@ export async function receivePurchaseAtomic(input: {
   return { ok:true, alreadyCommitted:row.already_committed === true, purchaseId:row.purchase_id, total:Number(row.total || 0) };
 }
 
+export async function processRepairDeliveryAtomic(input: {
+  shopId: string; repairId: string; deviceId: string; repair: unknown;
+}): Promise<{ok:boolean; alreadyCommitted?:boolean; repairId?:string; error?:string}> {
+  if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok:false, error:sessionError.message };
+  if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
+  if (!input.shopId || !input.repairId || !input.deviceId) return { ok:false, error:'Missing repair identifiers' };
+  const { data, error } = await supabase.rpc('process_repair_delivery_atomic', {
+    p_shop_id: input.shopId, p_repair_id: input.repairId, p_device_id: input.deviceId, p_repair: input.repair,
+  });
+  if (error) return { ok:false, error:error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok:false, error:'Cloud repair delivery was not committed' };
+  return { ok:true, alreadyCommitted:row.already_committed === true, repairId:row.repair_id };
+}
+
 export async function processPurchaseReturnAtomic(input: {
   shopId: string;
   returnId: string;
