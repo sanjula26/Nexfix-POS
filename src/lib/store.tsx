@@ -1615,7 +1615,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }),
         customers: s.customers.map(c => c.id === currentSale.customerId ? { ...c, creditBalance: Math.max(0, c.creditBalance - creditReduction), loyaltyPoints: Math.max(0, c.loyaltyPoints - pointsEarnedToReverse + pointsToRestore) } : c),
         units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+          ? { ...u, status: 'in_stock' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
           : (tradeInReturn && u.id === currentSale.tradeIn!.unitId ? { ...u, status: 'returned' as const } : u)),
       };
     });
@@ -2099,7 +2099,7 @@ const deletePurchase = useCallback((id: string) => {
           return qty !== undefined ? { ...p, stock: p.stock + qty } : p;
         }),
         units: (s.units || []).map(u => returnedUnitIds.includes(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
+          ? { ...u, status: 'in_stock' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined }
           : u),
       };
     });
