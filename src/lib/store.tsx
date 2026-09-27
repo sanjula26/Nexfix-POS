@@ -255,7 +255,7 @@ function applyInventoryLedger(
   if (operation === 'PURCHASE_REVERSAL') {
     const ids = new Set((prev.purchaseReturns || []).map(x => x.id));
     for (const ret of next.purchaseReturns || []) if (!ids.has(ret.id)) for (const item of ret.items) if (item.qty > 0) {
-      add({ id: 'inv:purchase-return:' + ret.id + ':' + item.itemIdx, type: 'PURCHASE_REVERSAL', productId: item.productId, quantity: -item.qty, referenceId: ret.id, referenceNo: ret.dnNo, reason: ret.reason });
+      add({ id: 'inv:purchase-return:' + ret.id + ':' + item.itemIdx, type: 'PURCHASE_REVERSAL', productId: item.productId, quantity: -item.qty, referenceId: ret.id, referenceNo: ret.dnNo, unitIds: item.unitIds, reason: ret.reason });
     }
   }
 
