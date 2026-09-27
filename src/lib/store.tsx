@@ -2183,7 +2183,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (!applied) return null;
 
       if (cloudEnabled) {
-        try { localStorage.removeItem(returnKey); } catch {}
+        try { localStorage.removeItem(returnKey); } catch (error) { void error; }
       }
       pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
       return ret;
