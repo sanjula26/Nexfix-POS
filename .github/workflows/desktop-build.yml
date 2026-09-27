@@ -203,7 +203,7 @@ jobs:
           const upload = new tus.Upload(file, {
             endpoint,
             headers: {
-              Authorization: `Bearer ${token}`,
+              apikey: token,
               'x-upsert': 'true',
             },
             metadata: {
@@ -240,7 +240,7 @@ jobs:
           node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $portable.FullName "win32/latest/$($portable.Name)"
           if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($portable.Name)." }
 
-          $headers = @{ Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"; apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal' }
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal' }
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
           $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
@@ -253,7 +253,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $headers = @{ Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"; apikey = $env:SUPABASE_SERVICE_ROLE_KEY }
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY }
           $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_size" -Headers $headers
           if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
           if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
