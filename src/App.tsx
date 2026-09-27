@@ -4,7 +4,7 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
-import { signOutFromCloud } from './lib/cloudAuth';
+import { refreshDesktopUpdaterCredentials, signOutFromCloud } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -43,7 +43,11 @@ function CloudAuthLifecycle() {
   const { user } = usePOS();
   const hadLocalSession = useRef(Boolean(user));
   useEffect(() => {
-    if (user) { hadLocalSession.current = true; return; }
+    if (user) {
+      hadLocalSession.current = true;
+      void refreshDesktopUpdaterCredentials().catch(() => {});
+      return;
+    }
     if (!hadLocalSession.current) return;
     hadLocalSession.current = false;
     void signOutFromCloud().catch(() => {});
