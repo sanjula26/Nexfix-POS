@@ -27,6 +27,8 @@ export default function Settings() {
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
+  const [installerDownloadBusy, setInstallerDownloadBusy] = useState(false);
+  const [installerDownloadMsg, setInstallerDownloadMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const gEnabled = isGoogleSyncEnabled();
   const [gMsg, setGMsg] = useState('');
@@ -148,6 +150,32 @@ export default function Settings() {
   }, []);
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
+  const downloadAuthorizedInstaller = async () => {
+    if (!supabase || !supabaseConfigured || !phoneSalesShopId || !phoneSalesMachine.id) {
+      setInstallerDownloadMsg('Cloud authorization is not ready yet.');
+      return;
+    }
+    setInstallerDownloadBusy(true);
+    setInstallerDownloadMsg('');
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) throw new Error('Cloud login is not ready. Please wait and try again.');
+      const response = await fetch('https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates?download=1', {
+        headers: { Authorization: `Bearer ${token}`, 'X-Nexfix-Device': phoneSalesMachine.id, Accept: 'application/json' },
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.ok || typeof data.url !== 'string') throw new Error(data?.error || 'Installer download was not authorized.');
+      const opened = await openExternalUrl(data.url);
+      if (!opened) throw new Error('The authorized installer could not be opened.');
+      setInstallerDownloadMsg(`Authorized installer download started (v${data.version || 'latest'}).`);
+    } catch (error) {
+      setInstallerDownloadMsg(error instanceof Error ? error.message : 'Installer download failed.');
+    } finally {
+      setInstallerDownloadBusy(false);
+    }
+  };
+
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
     const accounts = state.users.filter(u => u.role === securityRole && u.active);
@@ -486,7 +514,8 @@ export default function Settings() {
           {updateState.status==='downloaded'&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">Update downloaded. Restarting…</p>}
           {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
           {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
-          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
+          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}{user?.role==='admin'&&<button type="button" className="btn btn-soft" onClick={()=>void downloadAuthorizedInstaller()} disabled={installerDownloadBusy}>{installerDownloadBusy?'Authorizing…':'Download authorized installer'}</button>}</div>
+          {installerDownloadMsg&&<p className="mt-2 text-[11px] font-semibold text-sub">{installerDownloadMsg}</p>}
         </div>
       )}
 
