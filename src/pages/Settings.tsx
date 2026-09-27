@@ -14,7 +14,7 @@ import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
-import { refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
+import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
@@ -151,6 +151,10 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
   const [appVersion, setAppVersion] = useState('3.0.6');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
+  const [cloudSetupEmail, setCloudSetupEmail] = useState(() => state.users.find(u => u.role === 'admin' && u.active)?.email || '');
+  const [cloudSetupPassword, setCloudSetupPassword] = useState('');
+  const [cloudSetupBusy, setCloudSetupBusy] = useState(false);
+  const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;downloadAuthorizedInstaller?:()=>Promise<{supported?:boolean;ok?:boolean;path?:string;name?:string;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
@@ -168,6 +172,25 @@ export default function Settings() {
     return unsubscribe;
   }, []);
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await refreshDesktopUpdaterCredentials();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. This POS needs a provisioned cloud account, active shop membership, and registered machine.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
+  const provisionCloudUpdater = async () => {
+    if (cloudSetupBusy) return;
+    setCloudSetupBusy(true);
+    setCloudSetupMsg(null);
+    try {
+      const result = await provisionCloudUpdaterAccount(cloudSetupEmail, cloudSetupPassword, form.shopName || state.settings.shopName || 'Nexfix Shop');
+      if (!result.ok) {
+        setCloudSetupMsg({ ok: false, text: result.error || 'Cloud updater setup could not be completed.' });
+        return;
+      }
+      setCloudSetupPassword('');
+      setCloudSetupMsg({ ok: true, text: 'Cloud updater authorization is ready on this machine. You can now check for updates.' });
+      setUpdateState({ status: 'idle' });
+    } catch (error) {
+      setCloudSetupMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud updater setup failed.' });
+    } finally {
+      setCloudSetupBusy(false);
+    }
+  };
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
   const downloadAuthorizedInstaller = async () => {
     setInstallerDownloadBusy(true);
@@ -530,6 +553,23 @@ export default function Settings() {
         </div>
       )}
 
+
+      {user?.role === 'admin' && (
+        <div className="card p-6 border border-emerald-500/20 mt-5">
+          <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Cloud update authorization</h3>
+          <p className="text-xs text-faint mb-4">One-time setup for the private Windows updater. This creates the cloud account and first shop only when you explicitly start this setup; normal local POS login remains unchanged.</p>
+          <div className="grid sm:grid-cols-2 gap-3.5">
+            <Field label="Cloud account email"><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="admin@example.com" autoComplete="email" /></Field>
+            <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 mt-4">
+            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>
+            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
+          </div>
+          {cloudSetupMsg && <p className={`mt-3 text-[12px] font-semibold ${cloudSetupMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{cloudSetupMsg.text}</p>}
+          <p className="text-[11px] text-faint mt-3">If Supabase requires email confirmation, confirm the message sent to the cloud account and then sign in again before retrying this setup.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch content-start">
         <div className="card p-6">
