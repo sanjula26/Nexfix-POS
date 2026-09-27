@@ -2615,9 +2615,15 @@ const deletePurchase = useCallback((id: string) => {
     if(parts.some(pt=>!pt.name||!Number.isInteger(pt.qty)||pt.qty<=0||!Number.isFinite(pt.cost)||pt.cost<0)) return;
     if(jobNo&&repairs.some(x=>x.id!==r.id&&x.jobNo.trim().toLowerCase()===jobNo.toLowerCase())) return;
     const old=repairs.find(x=>x.id===r.id);
-    // Parts are deducted exactly once at delivery, not when the job card is saved.
-    if (old?.partsDeductedAt) return;
-    setState(st=>{let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts,by:r.by||user.name};let counters=st.counters;if(!exists&&(!job.jobNo||job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1;job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`};counters={...st.counters,job:seq};}return {...st,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};});
+    // Parts are deducted exactly once at delivery. Once deducted, keep the
+    // historical parts/partsDeductedAt fields immutable while allowing safe
+    // metadata edits (customer, diagnosis, notes, promised date, etc.).
+    if (old?.partsDeductedAt) {
+      if (!exists || !old) return;
+      if (parts.length !== old.parts.length || parts.some((pt, i) => pt.productId !== old.parts[i]?.productId || pt.qty !== old.parts[i]?.qty || pt.cost !== old.parts[i]?.cost)) return;
+    }
+    if (parts.some(pt => pt.productId && state.products.find(p => p.id === pt.productId)?.trackImei || pt.productId && state.products.find(p => p.id === pt.productId)?.trackSerial)) return;
+    setState(st=>{let job:RepairJob={...r,jobNo:jobNo||r.jobNo,parts:old?.partsDeductedAt?old.parts:parts,partsDeductedAt:old?.partsDeductedAt,by:r.by||user.name};let counters=st.counters;if(!exists&&(!job.jobNo||job.jobNo.startsWith('JOB-TEMP'))){const seq=(st.counters.job||0)+1;job={...job,jobNo:`JOB-${String(seq).padStart(4,'0')}`};counters={...st.counters,job:seq};}return {...st,counters,repairs:exists?(st.repairs||[]).map(x=>x.id===r.id?job:x):[job,...(st.repairs||[])]};});
     pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
   }, [state.repairs,state.products,pushAudit,user,can]);
 
@@ -2630,9 +2636,15 @@ const deletePurchase = useCallback((id: string) => {
     if (!allowed.includes(status)) return;
     const current = (state.repairs || []).find(j => j.id === id);
     if (!current) return;
-    if (current.partsDeductedAt && patch?.parts !== undefined) {
-      pushAudit('DENIED', 'Repair', 'Blocked repair-part changes after stock was deducted');
-      return;
+    if (current.partsDeductedAt) {
+      if (patch?.parts !== undefined) {
+        pushAudit('DENIED', 'Repair', 'Blocked repair-part changes after stock was deducted');
+        return;
+      }
+      if (status !== 'delivered') {
+        pushAudit('DENIED', 'Repair', 'Blocked status change after repair delivery');
+        return;
+      }
     }
     const next = { ...current, ...patch, status };
     const now = new Date().toISOString();
@@ -2645,8 +2657,8 @@ const deletePurchase = useCallback((id: string) => {
       }
       for (const [productId, qty] of required) {
         const product = state.products.find(p => p.id === productId);
-        if (!product || product.stock < qty) {
-          pushAudit('DENIED', 'Repair', 'Cannot deliver ' + current.jobNo + ': insufficient stock for repair part ' + (product?.name || productId));
+        if (!product || product.trackImei || product.trackSerial || !Number.isFinite(product.stock) || product.stock < qty) {
+          pushAudit('DENIED', 'Repair', 'Cannot deliver ' + current.jobNo + ': invalid or insufficient stock for repair part ' + (product?.name || productId));
           return;
         }
       }
