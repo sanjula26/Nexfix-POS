@@ -22,10 +22,26 @@ Deno.serve(async req=>{
     if(wantsDownload && !["admin","manager"].includes(String(m.role))) return json({ok:false,error:"Only an admin or manager can download the Windows installer"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
-    const {data:s,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrl(r.installer_path,300,{download:r.installer_name});
-    if(se||!s?.signedUrl)return json({ok:false,error:"Could not authorize the update download"},500);
-    if(wantsDownload) return json({ok:true,url:s.signedUrl,version:r.version,name:r.installer_name});
-    const yaml="version: "+r.version+"\\nfiles:\\n  - url: "+s.signedUrl+"\\n    sha512: "+r.installer_sha512+"\\n    size: "+r.installer_size+"\\nreleaseDate: "+new Date(r.published_at).toISOString()+"\\n";
+    const STREAM_CHUNK_BYTES=40*1024*1024;
+    const chunkCount=Math.ceil(Number(r.installer_size)/STREAM_CHUNK_BYTES);
+    const chunkPaths=Array.from({length:chunkCount},(_,i)=>`${r.installer_path}.part${String(i+1).padStart(4,"0")}`);
+    const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,300);
+    if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
+    const streamUrl=new URL(req.url); streamUrl.searchParams.set("download","stream");
+    if(wantsDownload) return json({ok:true,url:streamUrl.toString(),version:r.version,name:r.installer_name});
+    if(requestUrl.searchParams.get("download")==="stream"){
+      const body=new ReadableStream({start(controller){(async()=>{try{
+        for(const item of signed){
+          const upstream=await fetch(item.signedUrl);
+          if(!upstream.ok||!upstream.body)throw new Error("Update chunk download failed");
+          const reader=upstream.body.getReader();
+          while(true){const {done,value}=await reader.read();if(done)break;controller.enqueue(value);}
+        }
+        controller.close();
+      }catch(error){controller.error(error);}})();}});
+      return new Response(body,{headers:{...headers,"Content-Type":"application/octet-stream","Content-Length":String(r.installer_size),"Content-Disposition":`attachment; filename="${r.installer_name.replace(/"/g,"")}"`,"Cache-Control":"no-store"}});
+    }
+    const yaml="version: "+r.version+"\\nfiles:\\n  - url: "+streamUrl.toString()+"\\n    sha512: "+r.installer_sha512+"\\n    size: "+r.installer_size+"\\nreleaseDate: "+new Date(r.published_at).toISOString()+"\\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:"Update request failed"},500);}
 });
