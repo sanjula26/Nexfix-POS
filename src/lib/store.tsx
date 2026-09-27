@@ -2513,6 +2513,10 @@ const deletePurchase = useCallback((id: string) => {
     if (!allowed.includes(status)) return;
     const current = (state.repairs || []).find(j => j.id === id);
     if (!current) return;
+    if (current.partsDeductedAt && patch?.parts !== undefined) {
+      pushAudit('DENIED', 'Repair', 'Blocked repair-part changes after stock was deducted');
+      return;
+    }
     const next = { ...current, ...patch, status };
     const now = new Date().toISOString();
     const shouldDeductParts = status === 'delivered' && current.status !== 'delivered' && !current.partsDeductedAt;
