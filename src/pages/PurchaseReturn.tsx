@@ -204,7 +204,7 @@ export default function PurchaseReturn() {
                                     if (i !== idx) return l;
                                     const nextIds = selected ? l.unitIds.filter(id => id !== unit.id) : [...l.unitIds, unit.id];
                                     return { ...l, unitIds: nextIds, qty: nextIds.length };
-                                  })} disabled={submitting} />
+                                  }))} disabled={submitting} />
                                   <span className="font-mono break-all">{label}</span>
                                 </label>;
                               })}
