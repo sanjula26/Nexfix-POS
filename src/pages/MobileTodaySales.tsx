@@ -121,6 +121,24 @@ async function loadCloudSalesData({
 
 }
 
+async function loadTokenSalesData(token: string, date: string, timeZone: string, setSales: Dispatch<SetStateAction<Sale[] | null>>, setError: Dispatch<SetStateAction<string>>, setLoading: Dispatch<SetStateAction<boolean>>): Promise<void> {
+  if (!token) return;
+  setLoading(true);
+  setError('');
+  try {
+    const params = new URLSearchParams({ token, date, tz: timeZone });
+    const response = await fetch(`https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/phone-sales?${params.toString()}`, { headers: { Accept: 'application/json' } });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || 'This phone sales link is not authorized.');
+    setSales(Array.isArray(data.sales) ? data.sales as Sale[] : []);
+  } catch (error) {
+    setSales(null);
+    setError(error instanceof Error ? error.message : 'Unable to load authorized phone sales.');
+  } finally {
+    setLoading(false);
+  }
+}
+
 async function waitForCloudSession(client: NonNullable<typeof supabase>): Promise<boolean> {
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const { data } = await client.auth.getSession();
@@ -135,18 +153,20 @@ export default function MobileTodaySales() {
   const navigate = useNavigate();
   const location = useLocation();
   const query = new URLSearchParams(location.search);
+  const requestedToken = query.get('token')?.trim() || '';
   const requestedShopId = query.get('shop')?.trim() || '';
   const requestedMachineId = query.get('machine')?.trim() || '';
   const requestedTimeZone = query.get('tz')?.trim() || '';
   const [activeShopId, setActiveShopId] = useState(getCloudShopId());
-  const [shopReady, setShopReady] = useState(!requestedMachineId && (!requestedShopId || requestedShopId === getCloudShopId()));
+  const [tokenSales, setTokenSales] = useState<Sale[] | null>(requestedToken ? [] : null);
+  const [shopReady, setShopReady] = useState(requestedToken ? true : (!requestedMachineId && (!requestedShopId || requestedShopId === getCloudShopId())));
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState('');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
-  const [pinVerified, setPinVerified] = useState(false);
+  const [pinVerified, setPinVerified] = useState(!!requestedToken);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dateKeyInTimeZone(new Date(), requestedTimeZone);
   const requestedDate = query.get('date')?.trim() || '';
@@ -173,6 +193,7 @@ export default function MobileTodaySales() {
   useEffect(() => {
     let cancelled = false;
     const alignShop = async () => {
+      if (requestedToken) { if (!cancelled) setShopReady(true); return; }
       if (requestedMachineId && !requestedShopId) return;
       if (!requestedShopId || requestedShopId === getCloudShopId()) {
         if (!cancelled) setShopReady(true);
@@ -214,10 +235,10 @@ export default function MobileTodaySales() {
     };
     void alignShop();
     return () => { cancelled = true; };
-  }, [requestedShopId, requestedMachineId]);
+  }, [requestedToken, requestedShopId, requestedMachineId]);
 
   useEffect(() => {
-    if (requestedShopId || !requestedMachineId || !supabaseConfigured || !supabase) return;
+    if (requestedToken || requestedShopId || !requestedMachineId || !supabaseConfigured || !supabase) return;
     let cancelled = false;
     const client = supabase;
     if (!client) return;
@@ -266,7 +287,7 @@ export default function MobileTodaySales() {
     };
     void resolveMachineShop();
     return () => { cancelled = true; };
-  }, [requestedShopId, requestedMachineId]);
+  }, [requestedToken, requestedShopId, requestedMachineId]);
 
   const shopId = activeShopId;
   const machine = getMachineIdentity();
@@ -285,18 +306,11 @@ export default function MobileTodaySales() {
 
 
 
-  const refreshCloudSales = () => void loadCloudSalesData({
-    shopId,
-    requestedShopId,
-    requestedMachineId,
-    setRemoteError,
-    setRemoteLoading,
-    setActiveShopId,
-    setRemoteState,
-  });
-
-  useEffect(() => {
-    if (!shopReady) return;
+  const refreshCloudSales = () => {
+    if (requestedToken) {
+      void loadTokenSalesData(requestedToken, selectedDate, requestedTimeZone, setTokenSales, setRemoteError, setRemoteLoading);
+      return;
+    }
     void loadCloudSalesData({
       shopId,
       requestedShopId,
@@ -306,7 +320,7 @@ export default function MobileTodaySales() {
       setActiveShopId,
       setRemoteState,
     });
-  }, [shopReady, shopId, requestedShopId, requestedMachineId]);
+  };
 
   const copyMachineLink = async () => {
     if (!phoneLink) return;
@@ -319,14 +333,14 @@ export default function MobileTodaySales() {
 
 
 
-  const cloudMode = !!shopId && supabaseConfigured && !!supabase;
-  const usingCloud = cloudMode && !!remoteState;
-  const cloudUnavailable = cloudMode && !remoteState;
+  const cloudMode = !requestedToken && !!shopId && supabaseConfigured && !!supabase;
+  const usingCloud = requestedToken ? tokenSales !== null : cloudMode && !!remoteState;
+  const cloudUnavailable = !requestedToken && cloudMode && !remoteState;
   const sales = useMemo(
-    () => (cloudMode ? (remoteState?.sales || []) : state.sales)
+    () => requestedToken ? (tokenSales || []) : (cloudMode ? (remoteState?.sales || []) : state.sales)
       .filter(s => dateKeyInTimeZone(new Date(s.date), requestedTimeZone) === selectedDate && s.machineId === machineId)
       .sort((a, b) => +new Date(b.date) - +new Date(a.date)),
-    [cloudMode, remoteState?.sales, state.sales, selectedDate, machineId, requestedTimeZone],
+    [requestedToken, tokenSales, cloudMode, remoteState?.sales, state.sales, selectedDate, machineId, requestedTimeZone],
   );
 
   const completed = sales.filter(s => s.status !== 'refunded' && s.status !== 'reversed');
@@ -351,7 +365,7 @@ export default function MobileTodaySales() {
     );
   }
 
-  if (!pinVerified) {
+  if (!requestedToken && !pinVerified) {
     return (
       <main className="min-h-screen bg-base p-5 text-ink">
         <div className="mx-auto mt-16 max-w-sm card p-6">
@@ -378,19 +392,19 @@ export default function MobileTodaySales() {
             <div className="text-sm font-extrabold">{viewMode === 'today' ? 'Today’s sales' : 'Past sales'}</div>
             <div className="text-[11px] text-sub">{selectedDate === today ? 'Today' : new Date(`${selectedDate}T00:00:00`).toLocaleDateString()}</div>
           </div>
-          <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-ink" aria-label="Log out">
+          {!requestedToken ? <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-sm font-bold text-ink" aria-label="Log out">
             <LogOut size={17} /> <span className="hidden xs:inline">Logout</span>
-          </button>
+          </button> : <span className="w-16" />}
         </header>
 
-        <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
+        {!requestedToken && <section className="mb-4 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
           <div className="text-xs font-bold uppercase tracking-wide text-violet-500 dark:text-violet-300">This POS machine — {linkMachineName}</div>
           <div className="mt-1 break-all text-xs font-semibold text-ink">{phoneLink || 'Shop ID not configured'}</div>
           <button type="button" onClick={() => void copyMachineLink()} disabled={!phoneLink} className="mt-3 min-h-11 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">
             {machineLinkCopied ? 'Link copied' : 'Copy this POS machine link'}
           </button>
-          <div className="mt-2 text-[11px] leading-relaxed text-sub">This link contains the shop and machine IDs, so sales from other POS machines are not mixed.</div>
-        </section>
+          <div className="mt-2 text-[11px] leading-relaxed text-sub">This legacy machine link is only available inside an authenticated POS session.</div>
+        </section>}
 
         <section className="mb-4 rounded-2xl card p-4">
           <div className="text-xs font-bold uppercase tracking-wide text-sub">Sales period</div>
@@ -408,7 +422,7 @@ export default function MobileTodaySales() {
           <div className="mt-4 flex items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold uppercase tracking-wide text-sub">Data source</div>
-              <div className="mt-1 text-sm font-extrabold">{usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
+              <div className="mt-1 text-sm font-extrabold">{requestedToken ? 'Secure authorized phone sales' : usingCloud ? 'Cloud-synced shop data' : cloudUnavailable ? 'Cloud data unavailable' : 'Local data'}</div>
             </div>
             <button type="button" onClick={refreshCloudSales} disabled={remoteLoading} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-line bg-raised px-3 text-xs font-bold text-ink disabled:opacity-50">
               <RefreshCw size={14} className={remoteLoading ? 'animate-spin' : ''} /> Refresh
@@ -416,6 +430,7 @@ export default function MobileTodaySales() {
           </div>
           {remoteError && <p className="mt-2 text-xs leading-relaxed text-amber-700">{remoteError}</p>}
           {cloudUnavailable && <p className="mt-2 text-[11px] leading-relaxed text-sub">Cloud mode is enabled, so local PC data is not substituted for the shop snapshot.</p>}
+          {requestedToken && <p className="mt-2 text-[11px] leading-relaxed text-sub">This page can only read sales through the secure link token. The token can be revoked from the authorized POS.</p>}
         </section>
 
         <section className="grid grid-cols-2 gap-3">
