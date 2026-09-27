@@ -173,7 +173,8 @@ export default function PurchaseReturn() {
               </div>
               <div className="p-3 space-y-2 max-h-[320px] overflow-y-auto">
                 {lines.map((line, idx) => {
-                  const tracked = Array.isArray(selectedGRN.items[line.itemIdx]?.unitIdentifiers) && selectedGRN.items[line.itemIdx].unitIdentifiers.length > 0;
+                  const historicalIdentifiers = selectedGRN.items[line.itemIdx]?.unitIdentifiers || [];
+                  const tracked = historicalIdentifiers.length > 0;
                   const availableUnits = tracked ? (state.units || []).filter(u => u.productId === line.productId && u.purchaseId === selectedGRN.id && u.status === 'in_stock') : [];
                   return (
                     <div key={idx} className={`p-2.5 rounded-lg border ${line.qty > 0 ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-900/10' : 'border-line'}`}>
