@@ -300,7 +300,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY }
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
           $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_size" -Headers $headers
           if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
           if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
