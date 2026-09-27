@@ -49,6 +49,10 @@ export async function ensureCloudSession(
 }
 
 export async function signOutFromCloud(): Promise<void> {
+  try {
+    const desktop = (window as Window & { nexfixDesktop?: { clearUpdateCredentials?: () => Promise<unknown> } }).nexfixDesktop;
+    await desktop?.clearUpdateCredentials?.();
+  } catch { /* updater credentials are memory-only and will expire with the app */ }
   if (!supabase) return;
   try { await supabase.auth.signOut(); } catch { /* local session remains authoritative offline */ }
 }
