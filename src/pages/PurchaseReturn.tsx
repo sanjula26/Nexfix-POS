@@ -173,7 +173,6 @@ export default function PurchaseReturn() {
               </div>
               <div className="p-3 space-y-2 max-h-[320px] overflow-y-auto">
                 {lines.map((line, idx) => {
-                  const product = state.products.find(p => p.id === line.productId);
                   const tracked = Array.isArray(selectedGRN.items[line.itemIdx]?.unitIdentifiers) && selectedGRN.items[line.itemIdx].unitIdentifiers.length > 0;
                   const availableUnits = tracked ? (state.units || []).filter(u => u.productId === line.productId && u.purchaseId === selectedGRN.id && u.status === 'in_stock') : [];
                   return (
