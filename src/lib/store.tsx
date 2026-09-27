@@ -2194,16 +2194,28 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close without admin access');
       return;
     }
+    const amount = Number(counted);
+    const cleanNote = String(note || '').trim();
+    if (!cashierId || !Number.isFinite(amount) || amount < 0) {
+      pushAudit('DENIED', 'Session', 'Blocked invalid cash-session closing count');
+      return;
+    }
+    const today = dkey(new Date());
+    const exists = state.sessions.some(x => x.cashierId === cashierId && x.date === today);
+    if (!exists) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: no session exists for today');
+      return;
+    }
     setState(s => ({
       ...s,
       sessions: s.sessions.map(x =>
-        x.cashierId === cashierId && x.date === dkey(new Date())
-          ? { ...x, closed: true, closing: counted, note }
+        x.cashierId === cashierId && x.date === today
+          ? { ...x, closed: true, closing: Math.round(amount * 100) / 100, note: cleanNote || undefined }
           : x,
       ),
     }));
-    pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${counted.toLocaleString()}${note ? ` · ${note}` : ''}`);
-  }, [pushAudit, user, can]);
+    pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${amount.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+  }, [pushAudit, user, state.sessions]);
 
   // auto-open today's drawer session once per cashier
   useEffect(() => {
