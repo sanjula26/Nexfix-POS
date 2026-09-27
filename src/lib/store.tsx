@@ -2223,9 +2223,13 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     const today = dkey(new Date());
-    const exists = state.sessions.some(x => x.cashierId === cashierId && x.date === today);
-    if (!exists) {
+    const current = state.sessions.find(x => x.cashierId === cashierId && x.date === today);
+    if (!current) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: no session exists for today');
+      return;
+    }
+    if (current.closed) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: session is already closed');
       return;
     }
     setState(s => ({
@@ -2640,6 +2644,10 @@ const deletePurchase = useCallback((id: string) => {
     setState(s => {
       const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
       if (existing) {
+        if (existing.closed) {
+          pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
+          return s;
+        }
         return {
           ...s,
           sessions: s.sessions.map(x =>
