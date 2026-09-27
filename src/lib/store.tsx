@@ -2408,6 +2408,10 @@ const deletePurchase = useCallback((id: string) => {
     }
     const u = (state.units || []).find(x => x.id === id);
     if (!u) return;
+    if (u.status !== 'in_stock') {
+      pushAudit('DENIED', 'Unit', 'Blocked deletion of ' + (u.imei || u.serial || u.id) + ': historical/non-stock unit must be retained');
+      return;
+    }
     setState(s => ({
       ...s,
       units: (s.units || []).filter(x => x.id !== id),
