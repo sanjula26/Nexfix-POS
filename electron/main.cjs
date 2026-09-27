@@ -17,7 +17,7 @@ function configureUpdaterCredentials(){
   if (!autoUpdater || !updateAuthToken || !updateDeviceId) return false;
   autoUpdater.setFeedURL({
     provider: 'generic',
-    url: UPDATE_FEED_URL,
+    url: `${UPDATE_FEED_URL}/`,
     requestHeaders: {
       Authorization: `Bearer ${updateAuthToken}`,
       'X-Nexfix-Device': updateDeviceId,
