@@ -165,7 +165,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)) { throw 'SUPABASE_SERVICE_ROLE_KEY secret is empty.' }
-          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $projectRef = 'ocmzgamnehwbkuwkjdrr'
+          $projectUrl = "https://$projectRef.supabase.co"
+          $storageUrl = "https://$projectRef.storage.supabase.co"
           $bucket = 'nexfix-desktop-updates'
           $version = $env:BUILD_VERSION
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
@@ -180,20 +182,66 @@ jobs:
             return [Convert]::ToBase64String($bytes)
           }
 
-          function Upload-PrivateObject([System.IO.FileInfo]$file, [string]$path) {
-            $uri = "$projectUrl/storage/v1/object/$bucket/$path"
-            $headers = @{ Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"; apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'x-upsert' = 'true'; 'cache-control' = '31536000' }
-            Invoke-WebRequest -Uri $uri -Method Post -InFile $file.FullName -Headers $headers -ContentType 'application/octet-stream' | Out-Null
-            Write-Host "Uploaded private object: $path"
+          # Supabase recommends TUS resumable uploads for files larger than 6 MB.
+          # The direct storage hostname is used for better large-file performance.
+          npm install --no-save --no-package-lock tus-js-client@4
+
+          @'
+          const fs = require('fs');
+          const tus = require('tus-js-client');
+
+          const [, , filePath, objectPath] = process.argv;
+          const endpoint = process.env.SUPABASE_TUS_ENDPOINT;
+          const token = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          const bucketName = process.env.SUPABASE_BUCKET;
+
+          if (!filePath || !objectPath || !endpoint || !token || !bucketName) {
+            throw new Error('Missing TUS upload arguments/environment.');
           }
-          $installerPath = "win32/latest/$($installer.Name)"
-          $portablePath = "win32/latest/$($portable.Name)"
-          Upload-PrivateObject $installer $installerPath
-          Upload-PrivateObject $portable $portablePath
+
+          const file = fs.createReadStream(filePath);
+          const upload = new tus.Upload(file, {
+            endpoint,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'x-upsert': 'true',
+            },
+            metadata: {
+              bucketName,
+              objectName: objectPath,
+              contentType: 'application/octet-stream',
+              cacheControl: '31536000',
+            },
+            chunkSize: 6 * 1024 * 1024,
+            retryDelays: [0, 3000, 5000, 10000, 20000],
+            onProgress(bytesUploaded, bytesTotal) {
+              const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(1);
+              process.stdout.write(`\\rUploading ${objectPath}: ${percent}%`);
+            },
+            onError(error) {
+              console.error(`\\nTUS upload failed for ${objectPath}:`, error);
+              process.exitCode = 1;
+            },
+            onSuccess() {
+              console.log(`\\nUploaded private object: ${objectPath}`);
+            },
+          });
+
+          upload.start();
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\supabase-tus-upload.cjs" -Encoding utf8
+
+          $env:SUPABASE_TUS_ENDPOINT = "$storageUrl/storage/v1/upload/resumable"
+          $env:SUPABASE_BUCKET = $bucket
+
+          node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)"
+          if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($installer.Name)." }
+
+          node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $portable.FullName "win32/latest/$($portable.Name)"
+          if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($portable.Name)." }
 
           $headers = @{ Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"; apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal' }
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
-          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path=$installerPath; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path=$portablePath; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
+          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
           Write-Host "Private release metadata published: $version"
 
