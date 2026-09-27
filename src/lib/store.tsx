@@ -184,7 +184,7 @@ const Ctx = createContext<StoreCtx | null>(null);
 function applyInventoryLedger(
   prev: POSState,
   next: POSState,
-  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL',
+  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS',
   by?: string,
 ): POSState {
   const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
@@ -600,7 +600,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch { /* ignore */ }
   }, [dark]);
 
-  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL', updater: (prev: POSState) => POSState) => {
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS', updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
 
@@ -797,8 +797,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }
-  }, [user, pushAudit]);
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit]);
 
   // Role switches create a real authenticated session; App.tsx enforces mustChangePassword on the target user.
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
@@ -1597,8 +1596,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(pendingRefundKey, returnId);
         }
       } catch {
-        returnId = crypto.randomUUID();
-      }
+        returnId = crypto.randomUUID();      }
     }
 
     const returnLines = remainingItems.map(({ it, qty }) => {
@@ -2397,8 +2395,7 @@ const deletePurchase = useCallback((id: string) => {
     // unchanged when the password field is intentionally left blank by the UI.
     const existing = state.users.find(x => x.id === u.id);
     const suppliedPassword = String(u.password || '');
-    const passwordChanged = !existing || suppliedPassword !== existing.password;
-    if (passwordChanged && suppliedPassword.length < 12) {
+    const passwordChanged = !existing || suppliedPassword !== existing.password;    if (passwordChanged && suppliedPassword.length < 12) {
       pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
       return;
     }
