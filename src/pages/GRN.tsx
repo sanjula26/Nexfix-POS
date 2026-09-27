@@ -375,11 +375,11 @@ export default function GRN() {
                     <button
                       className="btn bg-rose-600 hover:bg-rose-700 text-white"
                       disabled={actionRunning || !returnReason.trim() || !returnLines.some(x => x.qty > 0)}
-                      onClick={() => {
+                      onClick={async () => {
                         if (actionRunning) return;
                         setActionRunning(true);
                         try {
-                          const result = createPurchaseReturn({
+                          const result = await createPurchaseReturn({
                             purchaseId: returnPurchase.id,
                             lines: returnLines.filter(x => x.qty > 0).map(x => ({ itemIdx: x.itemIdx, qty: x.qty, ...(x.unitIds.length ? { unitIds: x.unitIds } : {}) })),
                             reason: returnReason.trim(),
@@ -387,7 +387,7 @@ export default function GRN() {
                           if (result) {
                             setReturnPurchase(null); setReturnLines([]); setReturnGrnId(''); setReturnReason(''); setFormError(''); setView('list');
                           } else {
-                            setFormError('Unable to create the supplier return. Check the GRN status, available stock, return quantity, and purchase permissions.');
+                            setFormError('Unable to create the supplier return. Check the GRN status, available stock, purchase permissions, and cloud connection.');
                           }
                         } finally {
                           setActionRunning(false);
