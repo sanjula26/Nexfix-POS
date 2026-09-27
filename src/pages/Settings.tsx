@@ -14,6 +14,7 @@ import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
+import { supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
@@ -45,15 +46,52 @@ export default function Settings() {
   const phoneSalesMachine = getMachineIdentity();
   const phoneSalesShopId = getCloudShopId();
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
-  const phoneSalesLink = buildPhoneSalesLink(phoneSalesShopId, phoneSalesMachine.id, phoneSalesTimeZone);
+  const [phoneSalesToken, setPhoneSalesToken] = useState('');
+  const [phoneSalesLink, setPhoneSalesLink] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    const loadPhoneSalesToken = async () => {
+      if (!phoneSalesShopId || !phoneSalesMachine.id || !supabaseConfigured || !supabase) {
+        if (!cancelled) { setPhoneSalesToken(''); setPhoneSalesLink(''); }
+        return;
+      }
+      const key = 'nexfix_phone_sales_token_v1';
+      try {
+        const saved = JSON.parse(localStorage.getItem(key) || 'null') as { shopId?: string; deviceId?: string; token?: string } | null;
+        if (saved?.shopId === phoneSalesShopId && saved?.deviceId === phoneSalesMachine.id && saved.token) {
+          if (!cancelled) { setPhoneSalesToken(saved.token); setPhoneSalesLink(buildPhoneSalesLink(saved.token, phoneSalesTimeZone)); }
+          return;
+        }
+      } catch { /* regenerate below */ }
+
+      for (let attempt = 0; attempt < 12 && !cancelled; attempt += 1) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData.session) {
+          const { data, error } = await supabase.functions.invoke('phone-sales', {
+            body: { shopId: phoneSalesShopId, deviceId: phoneSalesMachine.id, label: 'Phone Sales' },
+          });
+          if (!error && data?.ok && typeof data.token === 'string' && data.token.length >= 32) {
+            const token = data.token.trim();
+            try { localStorage.setItem(key, JSON.stringify({ shopId: phoneSalesShopId, deviceId: phoneSalesMachine.id, token })); } catch { /* link remains usable for this session */ }
+            if (!cancelled) { setPhoneSalesToken(token); setPhoneSalesLink(buildPhoneSalesLink(token, phoneSalesTimeZone)); }
+            return;
+          }
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 500));
+      }
+      if (!cancelled) setPhoneLinkMsg('Phone sales link could not be authorized yet. Keep the POS online and try again.');
+    };
+    void loadPhoneSalesToken();
+    return () => { cancelled = true; };
+  }, [phoneSalesShopId, phoneSalesMachine.id, phoneSalesTimeZone]);
   const copyPhoneSalesLink = async () => {
-    if (!phoneSalesLink) return;
+    if (!phoneSalesLink || !phoneSalesToken) return;
     const copied = await copyText(phoneSalesLink);
     setPhoneLinkMsg(copied ? 'Phone sales link copied.' : 'Copy failed. Use the link field below to select and copy.');
     if (copied) window.setTimeout(() => setPhoneLinkMsg(''), 1800);
   };
   const openPhoneSalesLink = async () => {
-    if (!phoneSalesLink) return;
+    if (!phoneSalesLink || !phoneSalesToken) return;
     const opened = await openExternalUrl(phoneSalesLink);
     if (!opened) setPhoneLinkMsg('Could not open the phone sales page. Copy the link and open it in Chrome.');
   };
