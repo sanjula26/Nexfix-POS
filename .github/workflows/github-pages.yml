@@ -1,32 +1,20 @@
-name: Deploy Nexfix POS Preview
+name: Deploy Nexfix POS Phone Sales
 
 on:
   push:
     branches: ['main']
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 concurrency:
-  group: github-pages
+  group: public-phone-sales
   cancel-in-progress: true
 
 jobs:
   deploy:
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-slim
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout private source
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -36,12 +24,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
-      - name: Build GitHub Pages preview
+      - name: Build public Phone Sales app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
-          VITE_PUBLIC_APP_URL: https://sanjula26.github.io/Nexfix-POS/
+          VITE_PUBLIC_APP_URL: https://sanjula26.github.io/Nexfix-POS-Public/
         run: |
           if [ -z "${VITE_GOOGLE_BACKUP_API_KEY}" ]; then
             echo "VITE_GOOGLE_BACKUP_API_KEY secret is empty."
@@ -49,13 +37,25 @@ jobs:
           fi
           VITE_APP_VERSION=$(node -p 'JSON.parse(require("fs").readFileSync("package.json","utf8")).version')
           export VITE_APP_VERSION
-          npm run build -- --mode github-pages
+          npm run build -- --mode public-pages
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Verify public build is static and does not contain source maps
+        run: |
+          test -f dist/index.html
+          if find dist -type f -name '*.map' | grep -q .; then
+            echo "Source maps must not be published to the public Phone Sales repository."
+            exit 1
+          fi
+          grep -q '/Nexfix-POS-Public/' dist/index.html
+          echo "Public Phone Sales build verified."
+
+      - name: Publish Phone Sales build to public repository
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: ./dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          personal_token: ${{ secrets.PUBLIC_REPO_DEPLOY_TOKEN }}
+          external_repository: sanjula26/Nexfix-POS-Public
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          force_orphan: true
+          enable_jekyll: false
+          commit_message: "Deploy Phone Sales from Nexfix-POS @ ${{ github.sha }}"
