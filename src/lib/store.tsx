@@ -17,7 +17,7 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
 
@@ -132,7 +132,7 @@ interface StoreCtx {
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
   receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
   processGRN: (id: string, processorName: string) => Promise<{ ok: boolean; error?: string }>;
-  createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }) => PurchaseReturn | null;
+  createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }) => Promise<PurchaseReturn | null>;
   deletePurchase: (id: string) => void;
   // expenses
   addExpense: (e: Omit<Expense, 'id' | 'date' | 'by'>) => void;
