@@ -1410,14 +1410,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     } catch { /* ignore malformed pending state */ }
     if (!saleId) saleId = uid();
     if (tradeIn?.addToInventory && !tradeInUnitId) tradeInUnitId = uid();
-    try {
-      const raw = localStorage.getItem(pendingKey);
-      if (!saleId && raw) {
-        const pending = JSON.parse(raw) as { saleId?: string; fingerprint?: string };
-        if (pending.saleId && pending.fingerprint === fingerprint) saleId = pending.saleId;
-      }
-    } catch { /* ignore malformed pending state */ }
-    if (!saleId) saleId = uid();
     try { localStorage.setItem(pendingKey, JSON.stringify({ saleId, fingerprint, tradeInUnitId })); } catch { /* ignore */ }
 
     const payments = (input.payments && input.payments.length)
