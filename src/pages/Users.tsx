@@ -38,8 +38,8 @@ export default function Users() {
       return;
     }
     if (newPass) {
-      if (newPass.length < 4) {
-        setFormErr('Password must be at least 4 characters');
+      if (newPass.length < 12) {
+        setFormErr('Password must be at least 12 characters');
         return;
       }
       if (newPass !== confirmPass) {
@@ -143,7 +143,7 @@ export default function Users() {
                   type="password"
                   value={editing.password}
                   onChange={e => { setEditing({ ...editing, password: e.target.value }); setFormErr(''); }}
-                  placeholder={isNew ? 'Min 4 characters' : 'Type only if changing password'}
+                  placeholder={isNew ? 'Min 12 characters' : 'Type only if changing password'}
                   autoComplete="new-password"
                 />
               </span>
