@@ -365,6 +365,42 @@ export async function receivePurchaseAtomic(input: {
   return { ok:true, alreadyCommitted:row.already_committed === true, purchaseId:row.purchase_id, total:Number(row.total || 0) };
 }
 
+export async function processPurchaseReturnAtomic(input: {
+  shopId: string;
+  returnId: string;
+  purchaseId: string;
+  deviceId: string;
+  reason: string;
+  lines: Array<{ item_idx: number; product_id: string; qty: number; cost: number; unit_ids?: string[] }>;
+}): Promise<{ok:boolean; alreadyCommitted?:boolean; returnId?:string; returnNo?:string; total?:number; purchaseId?:string; error?:string}> {
+  if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok:false, error:sessionError.message };
+  if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
+  if (!input.shopId || !input.returnId || !input.purchaseId || !input.deviceId) return { ok:false, error:'Missing supplier return identifiers' };
+  if (!input.lines.length) return { ok:false, error:'Return lines are required' };
+  const { data, error } = await supabase.rpc('process_purchase_return_atomic', {
+    p_shop_id: input.shopId,
+    p_return_id: input.returnId,
+    p_purchase_id: input.purchaseId,
+    p_device_id: input.deviceId,
+    p_reason: input.reason.trim().slice(0, 500),
+    p_lines: input.lines,
+  });
+  if (error) return { ok:false, error:error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok:false, error:'Cloud supplier return was not committed' };
+  return {
+    ok:true,
+    alreadyCommitted:row.already_committed === true,
+    returnId:row.return_id,
+    returnNo:row.return_no,
+    total:Number(row.total || 0),
+    purchaseId:row.purchase_id,
+  };
+}
+
 export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResult> {
   if (!supabaseConfigured || !supabase) return { status: 'disabled' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { status: 'offline' };
