@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from './supabase';
-import { ensureCloudShop } from './cloudSync';
+import { ensureCloudShop, registerDesktopUpdaterDevice } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
 function getDesktopUpdaterApi() {
@@ -54,6 +54,7 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     await desktop.clearUpdateCredentials?.();
     return false;
   }
+
   const { data, error } = await supabase.auth.getSession();
   if (error || !data.session?.access_token) {
     await desktop.clearUpdateCredentials?.();
@@ -72,11 +73,8 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     return false;
   }
 
-  const { data: registration, error: registrationError } = await supabase.rpc('register_pos_device', {
-    p_shop_id: shop.shopId,
-    p_device_id: deviceId,
-  });
-  if (registrationError || !registration?.ok) {
+  const registration = await registerDesktopUpdaterDevice(shop.shopId);
+  if (!registration.ok) {
     await desktop.clearUpdateCredentials?.();
     return false;
   }
@@ -97,19 +95,17 @@ if (supabase) {
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
   if (error) {
     syncDesktopUpdaterCredentials();
     return { ok: false, error: error.message };
   }
-  try {
-    const { data } = await supabase.auth.getSession();
-    syncDesktopUpdaterCredentials(data.session?.access_token);
-  } catch { /* updater authorization is optional until the desktop session is ready */ }
-  return { ok: true };
-}
 
-/**
+  const updaterReady = await refreshDesktopUpdaterCredentials();
+  if (!updaterReady) {
+    // Cloud sign-in can succeed before shop/device provisioning is complete.
+    // Keep local POS login independent; Settings can retry authorization/**
  * Local POS authentication is authoritative. Cloud authentication is a
  * background enhancement and must never delay or block entry to the POS.
  */
@@ -122,24 +118,12 @@ export async function ensureCloudSession(
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
-  void (async () => {
-    try {
-      const signedIn = await signInToCloud(email, password);
-      if (signedIn.ok) {
-        await ensureCloudShop('Nexfix Shop');
-        return;
-      }
-      if (signedIn.error === 'offline' || signedIn.error === 'Cloud authentication is not configured') return;
-
-      // Never create a new cloud identity from a local POS login. Automatic sign-up
-      // could turn an unprovisioned local cashier into the first cloud shop admin.
-      // Cloud accounts and shop membership must be provisioned explicitly.
-    } catch {
-      // Local POS login must remain usable when Supabase is unavailable.
-    }
-  })();
-
-  return { ok: true };
+  try {
+    return await signInToCloud(email, password);
+  } catch (error) {
+    // Local POS login must remain usable when Supabase is unavailable.
+    return { ok: false, error: error instanceof Error ? error.message : 'Cloud session could not be established' };
+  }
 }
 
 export async function signOutFromCloud(): Promise<void> {
