@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
   setUpdateCredentials: (payload) => ipcRenderer.invoke('update:set-credentials', payload),
+  clearUpdateCredentials: () => ipcRenderer.invoke('update:clear-credentials'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
   downloadAuthorizedInstaller: () => ipcRenderer.invoke('update:downloadAuthorizedInstaller'),
