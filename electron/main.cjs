@@ -55,6 +55,7 @@ function setupAutoUpdater(){
       pendingUpdateInfo=null;
       return {ok:configureUpdaterCredentials()};
     });
+    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; return {ok:true}; });
     ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
