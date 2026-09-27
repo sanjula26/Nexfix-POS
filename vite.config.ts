@@ -10,12 +10,17 @@ export default defineConfig(({ mode }) => {
     processEnvDefines[`process.env.${key}`] = JSON.stringify(value)
   }
 
+  const isPublicPages = mode === 'public-pages'
   const isGitHubPages = mode === 'github-pages'
 
   return {
     // Electron loads dist/index.html via file://, so packaged assets must be
-    // relative to that file. GitHub Pages remains rooted at /Nexfix-POS/.
-    base: isGitHubPages ? '/Nexfix-POS/' : './',
+    // relative. Public Phone Sales is a GitHub Pages project site.
+    base: isPublicPages
+      ? '/Nexfix-POS-Public/'
+      : isGitHubPages
+        ? '/Nexfix-POS/'
+        : './',
     plugins: [react(), tailwindcss()],
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
