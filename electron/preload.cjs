@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
+  setUpdateCredentials: (payload) => ipcRenderer.invoke('update:set-credentials', payload),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
   onUpdateEvent: (listener) => {
