@@ -196,8 +196,22 @@ function applyInventoryLedger(
 
   if (operation === 'SALE') {
     const ids = new Set(prev.sales.map(x => x.id));
-    for (const sale of next.sales) if (!ids.has(sale.id)) for (const item of sale.items) if (item.qty > 0) {
-      add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+    for (const sale of next.sales) if (!ids.has(sale.id)) {
+      const componentQty = new Map<string, number>();
+      for (const item of sale.items) if (item.qty > 0) {
+        const product = nextProducts.get(item.productId);
+        const kitLines = product?.isKit
+          ? (next.kitItems || []).filter(k => k.kitProductId === item.productId && Number.isFinite(k.qty) && k.qty > 0)
+          : [];
+        if (kitLines.length) {
+          for (const line of kitLines) componentQty.set(line.componentProductId, (componentQty.get(line.componentProductId) || 0) + line.qty * item.qty);
+        } else {
+          add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
+        }
+      }
+      for (const [productId, quantity] of componentQty) {
+        add({ id: 'inv:kit-sale:' + sale.id + ':' + productId, type: 'SALE', productId, quantity: -quantity, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Kit BOM component consumed' });
+      }
     }
     for (const sale of next.sales) if (!ids.has(sale.id) && sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.value > 0) {
       add({ id: 'inv:trade-in:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: 1, referenceId: sale.id, referenceNo: sale.billNo, unitIds: undefined, reason: `Trade-in value Rs. ${sale.tradeIn.value}` });
