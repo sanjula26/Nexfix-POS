@@ -1081,12 +1081,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!state.suppliers.some(s => s.id === p.supplierId)) return null;
     if (!Number.isFinite(p.amount) || p.amount <= 0) return null;
-    const purchaseTotal = state.purchases.filter(x => x.supplierId === p.supplierId && x.status === 'received').reduce((sum, x) => sum + Math.max(0, x.total), 0);
-    const returnTotal = (state.purchaseReturns || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, x.total), 0);
-    const paidTotal = (state.supplierPayments || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, x.amount), 0);
+    const purchase = p.purchaseId
+      ? state.purchases.find(x => x.id === p.purchaseId)
+      : undefined;
+    if (p.purchaseId && (!purchase || purchase.supplierId !== p.supplierId || purchase.status !== 'received')) {
+      pushAudit('DENIED', 'SupplierPayment', 'Blocked payment with invalid or unrelated purchase');
+      return null;
+    }
+    const purchaseTotal = state.purchases.filter(x => x.supplierId === p.supplierId && x.status === 'received').reduce((sum, x) => sum + Math.max(0, Number(x.total) || 0), 0);
+    const returnTotal = (state.purchaseReturns || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, Number(x.total) || 0), 0);
+    const paidTotal = (state.supplierPayments || []).filter(x => x.supplierId === p.supplierId).reduce((sum, x) => sum + Math.max(0, Number(x.amount) || 0), 0);
     const outstanding = Math.max(0, Math.round((purchaseTotal - returnTotal - paidTotal) * 100) / 100);
     if (p.amount > outstanding) return null;
-    const payment: import('./supplierPayments').SupplierPayment = { ...p, amount: Math.round(p.amount * 100) / 100, id: uid(), date: new Date().toISOString(), by: user.name };
+    if (purchase) {
+      const purchasePaid = (state.supplierPayments || []).filter(x => x.purchaseId === purchase.id).reduce((sum, x) => sum + Math.max(0, Number(x.amount) || 0), 0);
+      const purchaseReturns = (state.purchaseReturns || []).filter(x => x.purchaseId === purchase.id).reduce((sum, x) => sum + Math.max(0, Number(x.total) || 0), 0);
+      const purchaseOutstanding = Math.max(0, Math.round((Math.max(0, Number(purchase.total) || 0) - purchaseReturns - purchasePaid) * 100) / 100);
+      if (p.amount > purchaseOutstanding) {
+        pushAudit('DENIED', 'SupplierPayment', 'Blocked payment above selected purchase outstanding balance');
+        return null;
+      }
+    }
+    const payment: import('./supplierPayments').SupplierPayment = { ...p, amount: Math.round(p.amount * 100) / 100, purchaseId: purchase?.id, id: uid(), date: new Date().toISOString(), by: user.name };
     setState(s => ({ ...s, supplierPayments: [payment, ...(s.supplierPayments || [])] }));
     pushAudit('CREATE', 'SupplierPayment', `Payment of Rs. ${payment.amount.toLocaleString()} to supplier ${state.suppliers.find(s => s.id === p.supplierId)?.name || p.supplierId}`);
     return payment;
