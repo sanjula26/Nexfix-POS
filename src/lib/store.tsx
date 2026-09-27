@@ -910,8 +910,22 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Product', `Blocked invalid product input for ${p.id}`);
       return false;
     }
+    const exists = state.products.some(x => x.id === p.id);
+    const current = state.products.find(x => x.id === p.id);
+    const currentTracked = !!(current?.trackImei || current?.trackSerial);
+    const nextTracked = !!(p.trackImei || p.trackSerial);
+    const inStockUnits = exists
+      ? (state.units || []).filter(u => u.productId === p.id && u.status === 'in_stock').length
+      : 0;
+    if (nextTracked && Math.round(p.stock) !== inStockUnits) {
+      pushAudit('DENIED', 'Product', `Blocked tracked product save for ${name}: stock ${Math.round(p.stock)} does not match in-stock units ${inStockUnits}`);
+      return false;
+    }
+    if (currentTracked && !nextTracked && inStockUnits > 0) {
+      pushAudit('DENIED', 'Product', `Blocked disabling tracking for ${name}: ${inStockUnits} in-stock unit(s) remain`);
+      return false;
+    }
     const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
-    const exists = state.products.some(x => x.id === normalized.id);
     let duplicate = false;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
