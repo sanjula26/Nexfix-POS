@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   setUpdateCredentials: (payload) => ipcRenderer.invoke('update:set-credentials', payload),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
+  downloadAuthorizedInstaller: () => ipcRenderer.invoke('update:downloadAuthorizedInstaller'),
   onUpdateEvent: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on('update:event', handler);
