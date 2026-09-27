@@ -150,7 +150,7 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
   const [appVersion, setAppVersion] = useState('3.0.6');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;downloadAuthorizedInstaller?:()=>Promise<{supported?:boolean;ok?:boolean;path?:string;name?:string;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -169,13 +169,18 @@ export default function Settings() {
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
   const downloadAuthorizedInstaller = async () => {
-    if (!supabase || !supabaseConfigured || !phoneSalesShopId || !phoneSalesMachine.id) {
-      setInstallerDownloadMsg('Cloud authorization is not ready yet.');
-      return;
-    }
     setInstallerDownloadBusy(true);
     setInstallerDownloadMsg('');
     try {
+      if (desktopApi?.downloadAuthorizedInstaller) {
+        const result = await desktopApi.downloadAuthorizedInstaller();
+        if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
+        setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
+        return;
+      }
+      if (!supabase || !supabaseConfigured || !phoneSalesShopId || !phoneSalesMachine.id) {
+        throw new Error('Cloud authorization is not ready yet.');
+      }
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
       if (!token) throw new Error('Cloud login is not ready. Please wait and try again.');
@@ -184,8 +189,19 @@ export default function Settings() {
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.ok || typeof data.url !== 'string') throw new Error(data?.error || 'Installer download was not authorized.');
-      const opened = await openExternalUrl(data.url);
-      if (!opened) throw new Error('The authorized installer could not be opened.');
+      const streamResponse = await fetch(data.url, {
+        headers: { Authorization: `Bearer ${token}`, 'X-Nexfix-Device': phoneSalesMachine.id },
+      });
+      if (!streamResponse.ok) throw new Error('The authorized installer download could not be started.');
+      const blob = await streamResponse.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = typeof data.name === 'string' && data.name ? data.name : 'Nexfix-POS-installer.exe';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
       setInstallerDownloadMsg(`Authorized installer download started (v${data.version || 'latest'}).`);
     } catch (error) {
       setInstallerDownloadMsg(error instanceof Error ? error.message : 'Installer download failed.');
