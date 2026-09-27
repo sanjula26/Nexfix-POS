@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const URL = Deno.env.get("SUPABASE_URL")!;
 const SECRET_KEYS = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}");
-const SECRET = SECRET_KEYS.default || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const SECRET = SECRET_KEYS.default || "";
 const admin = createClient(URL, SECRET, { auth: { persistSession: false } });
 const cors = { "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, apikey, content-type, x-nexfix-action", "Access-Control-Allow-Methods":"GET,POST,OPTIONS", "Content-Type":"application/json" };
 const json = (body: unknown, status=200) => new Response(JSON.stringify(body), {status,headers:cors});
