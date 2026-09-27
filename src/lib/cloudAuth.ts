@@ -106,9 +106,8 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (!updaterReady) {
     // Cloud sign-in can succeed before shop/device provisioning is complete.
     // Keep local POS login independent; Settings can retry authorization.
-    syncDesktopUpdaterCredentials();
   }
-  return { ok: true };
+  return { ok: true, error: updaterReady ? undefined : 'Cloud session is signed in, but shop/device authorization is not provisioned' };
 }
 
 /**
