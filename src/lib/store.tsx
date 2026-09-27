@@ -184,7 +184,7 @@ const Ctx = createContext<StoreCtx | null>(null);
 function applyInventoryLedger(
   prev: POSState,
   next: POSState,
-  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS',
+  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS' | 'UNIT_DELETE',
   by?: string,
 ): POSState {
   const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
@@ -281,7 +281,23 @@ function applyInventoryLedger(
         add({ id: 'inv:repair-parts:' + repair.id + ':' + part.productId, type: 'REPAIR_PARTS', productId: part.productId, quantity: -part.qty, referenceId: repair.id, referenceNo: repair.jobNo, reason: 'Repair parts consumed on delivery' });
       }
     }
+  }  if (operation === 'UNIT_DELETE') {
+    const currentIds = new Set((next.units || []).map(u => u.id));
+    for (const unit of prev.units || []) {
+      if (currentIds.has(unit.id) || unit.status !== 'in_stock') continue;
+      add({
+        id: 'inv:unit-delete:' + unit.id,
+        type: 'UNIT_DELETE',
+        productId: unit.productId,
+        quantity: -1,
+        referenceId: unit.id,
+        unitIds: [unit.id],
+        reason: 'Inventory unit deleted',
+      });
+    }
   }
+
+
 
   if (operation === 'STOCK_ADJUSTMENT') {
     for (const [productId, product] of nextProducts) {
@@ -614,7 +630,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch { /* ignore */ }
   }, [dark]);
 
-  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS', updater: (prev: POSState) => POSState) => {
+  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS' | 'UNIT_DELETE', updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
 
@@ -2708,6 +2724,7 @@ const deletePurchase = useCallback((id: string) => {
 
     for (let i = 0; i < newUnits.length; i++) {
       const u = newUnits[i], line = i + 1;
+      if (u.status !== 'in_stock') { errors.push('Line ' + line + ': new inventory units must start as in_stock'); continue; }
       const product = currentProducts.find(p => p.id === u.productId);
       const imei = (u.imei || '').trim(), serial = (u.serial || '').trim();
       if (!product) { errors.push('Line ' + line + ': product not found'); continue; }
@@ -2771,12 +2788,10 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Unit', 'Blocked deletion of ' + (u.imei || u.serial || u.id) + ': historical/non-stock unit must be retained');
       return;
     }
-    setState(s => ({
+    setStateWithInventoryLedger('UNIT_DELETE', s => ({
       ...s,
       units: (s.units || []).filter(x => x.id !== id),
-      products: u.status === 'in_stock'
-        ? s.products.map(p => p.id === u.productId ? { ...p, stock: Math.max(0, p.stock - 1) } : p)
-        : s.products,
+      products: s.products.map(p => p.id === u.productId ? { ...p, stock: Math.max(0, p.stock - 1) } : p),
     }));
     if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`);
   }, [state.units, pushAudit, user, can]);
