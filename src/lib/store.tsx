@@ -2425,29 +2425,53 @@ const deletePurchase = useCallback((id: string) => {
     if (!user || !can('act:manageStock')) return { ok: false, added: 0, errors: ['You do not have permission to manage inventory units.'] };
     const errors: string[] = [];
     const current = state.units || [];
+    const currentProducts = state.products;
     const imeis = new Set(current.map(u => (u.imei || '').trim().toLowerCase()).filter(Boolean));
     const serials = new Set(current.map(u => (u.serial || '').trim().toLowerCase()).filter(Boolean));
     const accepted: InventoryUnit[] = [];
     const replacements: InventoryUnit[] = [];
+    const usedPlaceholderIds = new Set<string>();
+
     for (let i = 0; i < newUnits.length; i++) {
       const u = newUnits[i], line = i + 1;
+      const product = currentProducts.find(p => p.id === u.productId);
       const imei = (u.imei || '').trim(), serial = (u.serial || '').trim();
-      if (!imei && !serial) { errors.push('Line ' + line + ': IMEI or serial is required'); continue; }
+      if (!product) { errors.push('Line ' + line + ': product not found'); continue; }
+      if (!product.trackImei && !product.trackSerial) { errors.push('Line ' + line + ': product is not configured for IMEI/serial tracking'); continue; }
+      if (product.trackImei && !imei || product.trackSerial && !serial) {
+        errors.push('Line ' + line + ': required IMEI/serial identifier is missing');
+        continue;
+      }
+      if (!product.trackImei && imei || !product.trackSerial && serial) {
+        errors.push('Line ' + line + ': identifier does not match the product tracking settings');
+        continue;
+      }
       const ik = imei.toLowerCase(), sk = serial.toLowerCase();
       if (imei && imeis.has(ik)) { errors.push('Line ' + line + ': duplicate IMEI'); continue; }
       if (serial && serials.has(sk)) { errors.push('Line ' + line + ': duplicate serial'); continue; }
       if (imei) imeis.add(ik);
       if (serial) serials.add(sk);
+
       const placeholder = current.find(x =>
+        !usedPlaceholderIds.has(x.id) &&
         x.productId === u.productId && x.status === 'in_stock' && !!x.purchaseId &&
-        ((u.imei && !x.imei) || (u.serial && !x.serial))
+        ((!x.imei && imei) || (!x.serial && serial))
       );
       if (placeholder) {
-        replacements.push({ ...u, id: placeholder.id, purchaseId: placeholder.purchaseId, createdAt: placeholder.createdAt, cost: placeholder.cost, expiryDate: placeholder.expiryDate });
+        usedPlaceholderIds.add(placeholder.id);
+        replacements.push({
+          ...u,
+          id: placeholder.id,
+          purchaseId: placeholder.purchaseId,
+          createdAt: placeholder.createdAt,
+          cost: placeholder.cost,
+          expiryDate: placeholder.expiryDate,
+        });
       } else {
         accepted.push(u);
       }
     }
+
     if (!accepted.length && !replacements.length) return { ok: false, added: 0, errors };
     const counts = new Map<string, number>();
     for (const u of accepted) counts.set(u.productId, (counts.get(u.productId) || 0) + 1);
@@ -2460,7 +2484,7 @@ const deletePurchase = useCallback((id: string) => {
     const added = accepted.length + replacements.length;
     pushAudit('CREATE', 'Unit', 'Bulk added ' + added + ' IMEI/serial units');
     return { ok: true, added, errors };
-  }, [user, can, state.units, pushAudit]);
+  }, [user, can, state.units, state.products, pushAudit]);
 
   const deleteUnit = useCallback((id: string) => {
     if (!user || !can('page:units') || !can('act:deleteRecords')) {
