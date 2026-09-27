@@ -2043,18 +2043,45 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items,
       total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email,
     };
-    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({
-      ...prev,
-      products: prev.products.map(p => {
-        const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
-        return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
-      }),
-      units: (prev.units || []).map(u => returnedUnitIds.has(u.id)
-        ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` }
-        : u),
-      purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
-      counters: { ...prev.counters, dn: seq },
-    }));
+    let applied = false;
+    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => {
+      const currentPurchase = prev.purchases.find(x => x.id === purchase.id);
+      if (!currentPurchase || currentPurchase.status !== 'received') return prev;
+      const currentReturnedByItem = new Map<number, number>();
+      for (const existingReturn of prev.purchaseReturns || []) {
+        if (existingReturn.purchaseId !== purchase.id) continue;
+        for (const item of existingReturn.items) {
+          currentReturnedByItem.set(item.itemIdx, (currentReturnedByItem.get(item.itemIdx) || 0) + item.qty);
+        }
+      }
+      for (const item of items) {
+        const source = currentPurchase.items[item.itemIdx];
+        const alreadyReturnedNow = currentReturnedByItem.get(item.itemIdx) || 0;
+        const product = prev.products.find(p => p.id === item.productId);
+        if (!source || source.productId !== item.productId || item.qty > source.qty - alreadyReturnedNow || !product || !Number.isFinite(product.stock) || product.stock < item.qty) return prev;
+      }
+      for (const unitId of returnedUnitIds) {
+        const unit = (prev.units || []).find(u => u.id === unitId);
+        if (!unit || unit.status !== 'in_stock' || unit.purchaseId !== purchase.id || !items.some(item => item.productId === unit.productId && (purchase.items[item.itemIdx]?.unitIdentifiers || []).some(identifier =>
+          (identifier.imei?.trim().toLowerCase() || '') === (unit.imei?.trim().toLowerCase() || '') &&
+          (identifier.serial?.trim().toLowerCase() || '') === (unit.serial?.trim().toLowerCase() || '')
+        ))) return prev;
+      }
+      applied = true;
+      return {
+        ...prev,
+        products: prev.products.map(p => {
+          const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
+          return qty ? { ...p, stock: p.stock - qty } : p;
+        }),
+        units: (prev.units || []).map(u => returnedUnitIds.has(u.id)
+          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` }
+          : u),
+        purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
+        counters: { ...prev.counters, dn: seq },
+      };
+    });
+    if (!applied) return null;
     pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
     return ret;
   } finally {
