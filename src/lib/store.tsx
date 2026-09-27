@@ -2136,7 +2136,7 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.expenses, pushAudit, user, can]);
 
   /* ---------------- exchanges ---------------- */
-  const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => {
+  const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>, reason: string, mode: 'refund' | 'replace') => {
     const sale = state.sales.find(x => x.id === saleId);
     if (!user || !can('page:exchanges') || !sale || sale.status !== 'completed' || returns.length === 0) {
       if (user && !can('page:exchanges')) pushAudit('DENIED', 'Exchange', 'Blocked exchange without exchanges access');
@@ -2175,15 +2175,27 @@ const deletePurchase = useCallback((id: string) => {
           ? (priorReturnedByLine.get(lineKey) || 0)
           : (priorReturnedByProduct.get(it.productId) || 0);
         const availableQty = Math.max(0, it.qty - alreadyReturned);
-        const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).length;
-        const maxReturnable = Math.min(availableQty, it.unitIds && it.unitIds.length > 0 ? trackedAvailable : availableQty);
+        const tracked = (it.unitIds || []).length > 0;
+        const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id)).length;
+        const maxReturnable = Math.min(availableQty, tracked ? trackedAvailable : availableQty);
         if (requestedQty > maxReturnable) return s;
         const qty = requestedQty;
         if (qty <= 0) continue;
 
+        const requestedUnitIds = Array.isArray((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds)
+          ? ((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds || []).filter(Boolean)
+          : [];
+        if (tracked) {
+          if (requestedUnitIds.length !== qty || new Set(requestedUnitIds).size !== qty) return s;
+          const soldUnitIds = new Set((it.unitIds || []).filter(Boolean));
+          if (requestedUnitIds.some(id => !soldUnitIds.has(id) || !s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id))) return s;
+        } else if (requestedUnitIds.length) {
+          return s;
+        }
+
         const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
         const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
-        const unitIds = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold')).slice(0, qty);
+        const unitIds = tracked ? requestedUnitIds : [];
 
         exItems.push({ itemIdx, productId: it.productId, name: it.name, qty, amount });
         if (mode === 'refund') refund += amount;
