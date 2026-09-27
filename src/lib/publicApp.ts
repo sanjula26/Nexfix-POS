@@ -1,4 +1,4 @@
-const DEFAULT_PUBLIC_APP_URL = 'https://sanjula26.github.io/Nexfix-POS/';
+const DEFAULT_PUBLIC_APP_URL = 'https://sanjula26.github.io/Nexfix-POS-Public/';
 
 type DesktopBridge = {
   copyText?: (text: string) => Promise<boolean>;
