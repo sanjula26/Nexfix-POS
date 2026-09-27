@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { POSProvider, usePOS } from './lib/store';
@@ -101,7 +101,7 @@ function RouteFallback() {
 function DesktopUpdateNotice() {
   const { user } = usePOS();
   const [update, setUpdate] = useState<{status:'hidden'|'available'|'downloading'|'downloaded'|'error';version?:string;percent?:number;message?:string}>({status:'hidden'});
-  const desktopApi = (window as Window & {
+  const desktopApi = useMemo(() => (window as Window & {
     nexfixDesktop?: {
       isPackaged?: boolean;
       isPortable?: boolean;
@@ -110,7 +110,7 @@ function DesktopUpdateNotice() {
       downloadAndInstallUpdate?: () => Promise<{supported?:boolean;started?:boolean;error?:string}>;
       onUpdateEvent?: (listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>()=>void;
     };
-  }).nexfixDesktop;
+  }).nexfixDesktop, []);
 
   useEffect(() => {
     if (!user || !desktopApi?.isPackaged) {
