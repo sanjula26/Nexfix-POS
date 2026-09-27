@@ -1286,7 +1286,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
-    const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const sale: Sale = {
       id: input._saleId || uid(), billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
@@ -1397,15 +1396,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       note: input.note || '', salesmanId: input.salesmanId || user.id,
     });
     let saleId = input._saleId || '';
+    let tradeInUnitId = tradeIn?.addToInventory ? '' : undefined;
     try {
       const raw = localStorage.getItem(pendingKey);
-      if (!saleId && raw) {
-        const pending = JSON.parse(raw) as { saleId?: string; fingerprint?: string };
-        if (pending.saleId && pending.fingerprint === fingerprint) saleId = pending.saleId;
+      if (raw) {
+        const pending = JSON.parse(raw) as { saleId?: string; fingerprint?: string; tradeInUnitId?: string };
+        if (!saleId && pending.saleId && pending.fingerprint === fingerprint) saleId = pending.saleId;
+        if (tradeIn?.addToInventory && pending.saleId === saleId && pending.fingerprint === fingerprint && pending.tradeInUnitId) {
+          tradeInUnitId = pending.tradeInUnitId;
+        }
       }
     } catch { /* ignore malformed pending state */ }
     if (!saleId) saleId = uid();
-    try { localStorage.setItem(pendingKey, JSON.stringify({ saleId, fingerprint })); } catch { /* ignore */ }
+    if (tradeIn?.addToInventory && !tradeInUnitId) tradeInUnitId = uid();
+    try { localStorage.setItem(pendingKey, JSON.stringify({ saleId, fingerprint, tradeInUnitId })); } catch { /* ignore */ }
 
     const payments = (input.payments && input.payments.length)
       ? input.payments.filter(p => p.amount > 0).map(p => ({ method: p.method, amount: p.amount }))
