@@ -2670,8 +2670,12 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Unit', 'Blocked edit of historical/non-stock unit');
       return false;
     }
+    if (u.status !== 'in_stock') {
+      pushAudit('DENIED', 'Unit', 'Unit creation/edit must keep inventory status as in_stock; sales and returns control status transitions');
+      return false;
+    }
     const dup = (state.units || []).find(x =>
-      x.id !== u.id && x.status === 'in_stock' &&
+      x.id !== u.id &&
       ((imei && (x.imei || '').trim().toLowerCase() === imei.toLowerCase()) ||
        (serial && (x.serial || '').trim().toLowerCase() === serial.toLowerCase())),
     );
