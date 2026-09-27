@@ -192,7 +192,7 @@ export default function Settings() {
       setCloudSetupBusy(false);
     }
   };
-  const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
+  const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
   const downloadAuthorizedInstaller = async () => {
     setInstallerDownloadBusy(true);
     setInstallerDownloadMsg('');
@@ -201,10 +201,6 @@ export default function Settings() {
       const authorized = await ensureUpdaterReady();
       if (!authorized) throw new Error('Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.');
 
-      if (!desktopApi?.downloadAuthorizedInstaller || !desktopApi.isPackaged) {
-        throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
-      }
-      await refreshDesktopUpdaterCredentials();
       const result = await desktopApi.downloadAuthorizedInstaller();
       if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
       setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
