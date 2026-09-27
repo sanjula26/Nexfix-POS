@@ -300,7 +300,6 @@ export default function GRN() {
                 <div className="md:col-span-2 mt-5 space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-sub mb-2">Items to return</div>
                   {returnPurchase.items.map((item, itemIdx) => {
-                    const product = state.products.find(x => x.id === item.productId);
                     const tracked = Array.isArray(item.unitIdentifiers) && item.unitIdentifiers.length > 0;
                     const availableUnits = tracked
                       ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === returnPurchase.id && u.status === 'in_stock')
