@@ -60,6 +60,7 @@ create or replace function private.process_purchase_return_atomic(
   p_purchase_id uuid,
   p_device_id text,
   p_reason text,
+  p_purchase jsonb,
   p_lines jsonb
 ) returns jsonb
 language plpgsql
@@ -90,6 +91,10 @@ begin
   if v_uid is null then raise exception 'Authentication required'; end if;
   if p_shop_id is null or p_return_id is null or p_purchase_id is null then
     raise exception 'Missing supplier return identifiers';
+  end if;
+  if p_purchase is null or jsonb_typeof(p_purchase) <> 'object'
+     or jsonb_typeof(coalesce(p_purchase->'items','[]'::jsonb)) <> 'array' then
+    raise exception 'Invalid GRN payload';
   end if;
   if length(btrim(coalesce(p_device_id,''))) = 0 or length(p_device_id) > 200 then
     raise exception 'Invalid device id';
@@ -167,7 +172,16 @@ begin
     v_qty := (v_line->>'qty')::numeric;
     v_cost := (v_line->>'cost')::numeric;
 
-    if v_item_idx < 0 then raise exception 'Invalid return item index'; end if;
+    if v_item_idx < 0 or v_item_idx >= jsonb_array_length(coalesce(p_purchase->'items','[]'::jsonb)) then
+      raise exception 'Return item index is outside the source GRN';
+    end if;
+    if (p_purchase->'items'->v_item_idx->>'productId')::uuid <> v_product_id
+       or (p_purchase->'items'->v_item_idx->>'cost')::numeric <> v_cost then
+      raise exception 'Supplier return line does not match the selected GRN item';
+    end if;
+    if v_qty > (p_purchase->'items'->v_item_idx->>'qty')::numeric then
+      raise exception 'Supplier return quantity exceeds the selected GRN item quantity';
+    end if;
     if v_qty <= 0 or v_qty <> trunc(v_qty) then raise exception 'Return quantity must be a positive whole number'; end if;
     if v_cost < 0 or v_cost <> v_cost then raise exception 'Invalid return cost'; end if;
 
@@ -286,11 +300,11 @@ end
 $$;
 
 create or replace function public.process_purchase_return_atomic(
-  p_shop_id uuid,p_return_id uuid,p_purchase_id uuid,p_device_id text,p_reason text,p_lines jsonb
+  p_shop_id uuid,p_return_id uuid,p_purchase_id uuid,p_device_id text,p_reason text,p_purchase jsonb,p_lines jsonb
 ) returns jsonb
 language sql security invoker set search_path to ''
 as $$ select private.process_purchase_return_atomic($1,$2,$3,$4,$5,$6) $$;
 
-revoke all on function private.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb) from public,anon,authenticated;
-revoke all on function public.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb) from public,anon;
-grant execute on function public.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb) to authenticated;
+revoke all on function private.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb,jsonb) from public,anon,authenticated;
+revoke all on function public.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb,jsonb) from public,anon;
+grant execute on function public.process_purchase_return_atomic(uuid,uuid,uuid,text,text,jsonb,jsonb) to authenticated;
