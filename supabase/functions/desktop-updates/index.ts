@@ -18,6 +18,7 @@ Deno.serve(async req=>{
     const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",d.shop_id).eq("user_id",u.user.id).eq("active",true).maybeSingle();
     if(!m)return json({ok:false,error:"User is not an active member of this shop"},403);
     const requestUrl=new URL(req.url);
+    const isManifestRequest=requestUrl.pathname.endsWith("/latest.yml") || requestUrl.pathname.endsWith("/latest.yaml");
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
     if(wantsDownload && !["admin","manager"].includes(String(m.role))) return json({ok:false,error:"Only an admin or manager can download the Windows installer"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
@@ -28,6 +29,7 @@ Deno.serve(async req=>{
     const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,300);
     if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
     const streamUrl=new URL(req.url); streamUrl.searchParams.set("download","stream");
+    streamUrl.pathname=streamUrl.pathname.replace(/\/latest\.(?:yml|yaml)$/,"");
     if(wantsDownload) return json({ok:true,url:streamUrl.toString(),version:r.version,name:r.installer_name});
     if(requestUrl.searchParams.get("download")==="stream"){
       const body=new ReadableStream({start(controller){(async()=>{try{
@@ -41,7 +43,7 @@ Deno.serve(async req=>{
       }catch(error){controller.error(error);}})();}});
       return new Response(body,{headers:{...headers,"Content-Type":"application/octet-stream","Content-Length":String(r.installer_size),"Content-Disposition":`attachment; filename="${r.installer_name.replace(/"/g,"")}"`,"Cache-Control":"no-store"}});
     }
-    const yaml="version: "+r.version+"\\nfiles:\\n  - url: "+streamUrl.toString()+"\\n    sha512: "+r.installer_sha512+"\\n    size: "+r.installer_size+"\\nreleaseDate: "+new Date(r.published_at).toISOString()+"\\n";
+    const yaml="version: "+r.version+"\nfiles:\n  - url: "+streamUrl.toString()+"\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:"Update request failed"},500);}
 });
