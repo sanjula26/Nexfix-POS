@@ -132,7 +132,7 @@ interface StoreCtx {
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
   receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
   processGRN: (id: string, processorName: string) => Promise<{ ok: boolean; error?: string }>;
-  createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }) => PurchaseReturn | null;
+  createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }) => PurchaseReturn | null;
   deletePurchase: (id: string) => void;
   // expenses
   addExpense: (e: Omit<Expense, 'id' | 'date' | 'by'>) => void;
@@ -1959,23 +1959,34 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
 
-  const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number }>; reason: string }): PurchaseReturn | null => {
+  const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): PurchaseReturn | null => {
   if (purchaseReturnLockRef.current) return null;
   if (!user || !can('page:purchases')) {
     pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
     return null;
   }
   const purchase = state.purchases.find(x => x.id === input.purchaseId);
-  if (!purchase || purchase.status !== 'received' || !user || !input.reason.trim()) return null;
+  if (!purchase || purchase.status !== 'received' || !input.reason.trim()) return null;
   const existing = state.purchaseReturns || [];
   const returnedByItem = new Map<number, number>();
-  for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
-  const requested = new Map<number, number>();
-  for (const line of input.lines) { if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue; if (!Number.isInteger(line.qty) || line.qty <= 0) continue; requested.set(line.itemIdx, (requested.get(line.itemIdx) || 0) + line.qty); }
+  for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) {
+    returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
+  }
+  const requested = new Map<number, { qty: number; unitIds: string[] }>();
+  for (const line of input.lines) {
+    if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
+    if (!Number.isInteger(line.qty) || line.qty <= 0) continue;
+    const previous = requested.get(line.itemIdx);
+    const unitIds = Array.isArray(line.unitIds) ? line.unitIds.filter(Boolean) : [];
+    requested.set(line.itemIdx, {
+      qty: (previous?.qty || 0) + line.qty,
+      unitIds: [...(previous?.unitIds || []), ...unitIds],
+    });
+  }
   if (requested.size === 0) return null;
   const items: PurchaseReturnItem[] = [];
   const returnedUnitIds = new Set<string>();
-  for (const [itemIdx, qtyRequested] of requested) {
+  for (const [itemIdx, request] of requested) {
     const source = purchase.items[itemIdx];
     const already = returnedByItem.get(itemIdx) || 0;
     const remaining = Math.max(0, source.qty - already);
@@ -1984,27 +1995,52 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const tracked = !!(product?.trackImei || product?.trackSerial);
     const availableUnits = tracked ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock') : [];
     const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
-    if (qtyRequested > maxReturnable) return null;
-    const qty = qtyRequested;
-    if (qty <= 0) continue;
-    if (tracked) for (const unit of availableUnits.slice(0, qty)) returnedUnitIds.add(unit.id);
-    items.push({ itemIdx, productId: source.productId, name: source.name, qty, cost: source.cost, total: qty * source.cost });
+    if (request.qty > maxReturnable) return null;
+    let selectedUnitIds: string[] | undefined;
+    if (tracked) {
+      const selected = [...new Set(request.unitIds)];
+      if (selected.length !== request.qty) return null;
+      const availableIds = new Set(availableUnits.map(u => u.id));
+      for (const unitId of selected) {
+        if (!availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
+        returnedUnitIds.add(unitId);
+      }
+      selectedUnitIds = selected;
+    } else if (request.unitIds.length) {
+      return null;
+    }
+    items.push({
+      itemIdx, productId: source.productId, name: source.name, qty: request.qty, cost: source.cost, total: request.qty * source.cost,
+      ...(selectedUnitIds ? { unitIds: selectedUnitIds } : {}),
+    });
   }
   if (!items.length) return null;
   purchaseReturnLockRef.current = true;
-  const seq = (state.counters.dn || 0) + 1;
-  const ret: PurchaseReturn = { id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo, supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items, total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email };
-  setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({
-    ...prev,
-    products: prev.products.map(p => { const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0); return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p; }),
-    units: (prev.units || []).map(u => returnedUnitIds.has(u.id) ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` } : u),
-    purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
-    counters: { ...prev.counters, dn: seq },
-  }));
-  purchaseReturnLockRef.current = false;
-  pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
-  return ret;
-}, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can]);
+  try {
+    const seq = (state.counters.dn || 0) + 1;
+    const ret: PurchaseReturn = {
+      id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo,
+      supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items,
+      total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email,
+    };
+    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => ({
+      ...prev,
+      products: prev.products.map(p => {
+        const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
+        return qty ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
+      }),
+      units: (prev.units || []).map(u => returnedUnitIds.has(u.id)
+        ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` }
+        : u),
+      purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
+      counters: { ...prev.counters, dn: seq },
+    }));
+    pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
+    return ret;
+  } finally {
+    purchaseReturnLockRef.current = false;
+  }
+}, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can, setStateWithInventoryLedger]);
 
 const deletePurchase = useCallback((id: string) => {
     if (!user || !can('page:purchases') || !can('act:deleteRecords')) {
