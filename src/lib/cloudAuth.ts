@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from './supabase';
-import { ensureCloudShop, registerDesktopUpdaterDevice } from './cloudSync';
+import { ensureCloudShop, registerDesktopUpdaterDevice, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
 function getDesktopUpdaterApi() {
@@ -84,6 +84,55 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     deviceId,
   });
   return Boolean((result as { ok?: boolean } | null)?.ok);
+}
+
+/**
+ * One-time first-shop provisioning for an explicitly initiated admin setup.
+ * It never runs from normal login/background sync paths.
+ */
+export async function provisionCloudUpdaterAccount(
+  email: string,
+  password: string,
+  shopName: string,
+): Promise<{ ok: boolean; needsEmailConfirmation?: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+
+  const normalizedEmail = email.trim();
+  const normalizedShopName = shopName.trim();
+  if (!normalizedEmail) return { ok: false, error: 'Cloud account email is required' };
+  if (password.length < 12) return { ok: false, error: 'Cloud account password must be at least 12 characters' };
+  if (normalizedShopName.length < 2) return { ok: false, error: 'Shop name must be at least 2 characters' };
+
+  const { data, error } = await supabase.auth.signUp({
+    email: normalizedEmail,
+    password,
+    options: {
+      data: { full_name: normalizedShopName },
+    },
+  });
+  if (error) return { ok: false, error: error.message };
+  if (!data.session) {
+    return {
+      ok: false,
+      needsEmailConfirmation: true,
+      error: 'Cloud account created. Confirm the email, then sign in to the cloud account and retry this setup.',
+    };
+  }
+
+  const { data: shopId, error: bootstrapError } = await supabase.rpc('bootstrap_first_shop', {
+    shop_name: normalizedShopName,
+  });
+  if (bootstrapError || !shopId) {
+    return { ok: false, error: bootstrapError?.message || 'Cloud shop bootstrap failed' };
+  }
+
+  setCloudShopId(String(shopId));
+  const updaterReady = await refreshDesktopUpdaterCredentials();
+  if (!updaterReady) {
+    return { ok: false, error: 'Cloud account and shop were created, but this machine is not yet authorized for updates' };
+  }
+  return { ok: true };
 }
 
 if (supabase) {
