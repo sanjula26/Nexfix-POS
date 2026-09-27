@@ -1,6 +1,35 @@
 import { supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop } from './cloudSync';
 
+function getDesktopUpdaterApi() {
+  return (window as Window & {
+    nexfixDesktop?: {
+      setUpdateCredentials?: (payload: { token: string; deviceId: string }) => Promise<unknown>;
+      clearUpdateCredentials?: () => Promise<unknown>;
+    };
+  }).nexfixDesktop;
+}
+
+function getMachineId(): string {
+  try { return localStorage.getItem('nexfix_machine_id_v1') || ''; } catch { return ''; }
+}
+
+function syncDesktopUpdaterCredentials(accessToken?: string): void {
+  const desktop = getDesktopUpdaterApi();
+  const deviceId = getMachineId();
+  if (accessToken && deviceId) {
+    void desktop?.setUpdateCredentials?.({ token: accessToken, deviceId });
+  } else {
+    void desktop?.clearUpdateCredentials?.();
+  }
+}
+
+if (supabase) {
+  supabase.auth.onAuthStateChange((_event, session) => {
+    syncDesktopUpdaterCredentials(session?.access_token);
+  });
+}
+
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -8,9 +37,7 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (error) return { ok: false, error: error.message };
   try {
     const { data } = await supabase.auth.getSession();
-    const desktop = (window as Window & { nexfixDesktop?: { setUpdateCredentials?: (payload: { token: string; deviceId: string }) => Promise<unknown> } }).nexfixDesktop;
-    const deviceId = (() => { try { return localStorage.getItem('nexfix_machine_id_v1') || ''; } catch { return ''; } })();
-    if (data.session?.access_token && deviceId) await desktop?.setUpdateCredentials?.({ token: data.session.access_token, deviceId });
+    syncDesktopUpdaterCredentials(data.session?.access_token);
   } catch { /* updater authorization is optional until the desktop session is ready */ }
   return { ok: true };
 }
@@ -49,10 +76,7 @@ export async function ensureCloudSession(
 }
 
 export async function signOutFromCloud(): Promise<void> {
-  try {
-    const desktop = (window as Window & { nexfixDesktop?: { clearUpdateCredentials?: () => Promise<unknown> } }).nexfixDesktop;
-    await desktop?.clearUpdateCredentials?.();
-  } catch { /* updater credentials are memory-only and will expire with the app */ }
+  try { syncDesktopUpdaterCredentials(); } catch { /* updater credentials are memory-only and will expire with the app */ }
   if (!supabase) return;
   try { await supabase.auth.signOut(); } catch { /* local session remains authoritative offline */ }
 }
