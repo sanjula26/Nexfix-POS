@@ -259,6 +259,16 @@ function applyInventoryLedger(
     }
   }
 
+  if (operation === 'REPAIR_PARTS') {
+    for (const repair of next.repairs || []) {
+      const old = (prev.repairs || []).find(x => x.id === repair.id);
+      if (!old || old.partsDeductedAt || !repair.partsDeductedAt || repair.status !== 'delivered') continue;
+      for (const part of repair.parts || []) if (part.productId && part.qty > 0) {
+        add({ id: 'inv:repair-parts:' + repair.id + ':' + part.productId, type: 'REPAIR_PARTS', productId: part.productId, quantity: -part.qty, referenceId: repair.id, referenceNo: repair.jobNo, reason: 'Repair parts consumed on delivery' });
+      }
+    }
+  }
+
   if (operation === 'STOCK_ADJUSTMENT') {
     for (const [productId, product] of nextProducts) {
       const before = prevProducts.get(productId)?.stock;
@@ -2833,7 +2843,7 @@ const deletePurchase = useCallback((id: string) => {
     if ((status === 'ready' || status === 'delivered') && !next.completedAt) next.completedAt = now;
     if (status === 'delivered' && !next.deliveredAt) next.deliveredAt = now;
     if (status !== 'delivered') next.deliveredAt = undefined;
-    setState(s => {
+    setStateWithInventoryLedger('REPAIR_PARTS', s => {
       const products = shouldDeductParts
         ? s.products.map(p => {
             const qty = required.get(p.id) || 0;
