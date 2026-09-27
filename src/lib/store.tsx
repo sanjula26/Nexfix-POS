@@ -2001,8 +2001,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const selected = [...new Set(request.unitIds)];
       if (selected.length !== request.qty) return null;
       const availableIds = new Set(availableUnits.map(u => u.id));
+      const expectedIdentifiers = (source.unitIdentifiers || []).map(x => ({
+        imei: x.imei?.trim().toLowerCase() || '',
+        serial: x.serial?.trim().toLowerCase() || '',
+      }));
       for (const unitId of selected) {
-        if (!availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
+        const unit = availableUnits.find(u => u.id === unitId);
+        if (!unit || !availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
+        const imei = unit.imei?.trim().toLowerCase() || '';
+        const serial = unit.serial?.trim().toLowerCase() || '';
+        if (!expectedIdentifiers.some(x => x.imei === imei && x.serial === serial)) return null;
         returnedUnitIds.add(unitId);
       }
       selectedUnitIds = selected;
