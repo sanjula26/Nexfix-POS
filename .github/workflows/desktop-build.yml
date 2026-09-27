@@ -232,6 +232,7 @@ jobs:
 
           $env:SUPABASE_TUS_ENDPOINT = "$storageUrl/storage/v1/upload/resumable"
           $env:SUPABASE_BUCKET = $bucket
+          $env:NODE_PATH = "$PWD\node_modules"
 
           node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)"
           if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($installer.Name)." }
