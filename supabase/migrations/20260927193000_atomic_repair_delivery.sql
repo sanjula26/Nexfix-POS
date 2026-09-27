@@ -67,7 +67,7 @@ $$;
 revoke all on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public;
 create or replace function public.process_repair_delivery_atomic(p_shop_id uuid,p_repair_id uuid,p_device_id text,p_repair jsonb)
 returns table(ok boolean,already_committed boolean,repair_id uuid)
-language sql security invoker
-as $$ select * from private.process_repair_delivery_atomic($1,$2,$3,$4); $$;
+language sql security invoker set search_path to ''
+as $ select * from private.process_repair_delivery_atomic($1,$2,$3,$4); $$;
 revoke execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
 grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
