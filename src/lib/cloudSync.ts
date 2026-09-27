@@ -144,14 +144,6 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       const { error } = await supabase.from('customers').insert(missing);
       if (error) return { ok: false, error: `Customers: ${error.message}` };
     }
-    const existingRows = customerRows.filter(row => existingIds.has(row.id));
-    for (const row of existingRows) {
-      const { error } = await supabase.from('customers').update({
-        credit_limit: row.credit_limit,
-        updated_at: new Date().toISOString(),
-      }).eq('id', row.id).eq('shop_id', shopId);
-      if (error) return { ok: false, error: `Customer credit limit: ${error.message}` };
-    }
   }
 
   const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({
