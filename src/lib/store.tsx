@@ -422,6 +422,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReceiveLockRef = useRef(false);
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
+  const expenseLockRef = useRef(false);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -2106,34 +2107,64 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- expenses ---------------- */
   const addExpense = useCallback((e: Omit<Expense, 'id' | 'date' | 'by'>) => {
+    if (expenseLockRef.current) {
+      pushAudit('DENIED', 'Expense', 'Blocked duplicate expense submission while another expense is being committed');
+      return;
+    }
     if (!user || !can('page:expenses')) {
       pushAudit('DENIED', 'Expense', 'Blocked expense creation without expense access');
       return;
     }
-    const amount = Number(e.amount);
+    const amount = Math.round(Number(e.amount) * 100) / 100;
     const category = String(e.category || '').trim();
     const note = String(e.note || '').trim();
-    if (!Number.isFinite(amount) || amount <= 0 || !category || !note) {
+    const paymentMethod = e.paymentMethod || 'cash';
+    const periodStart = e.periodStart?.trim() || undefined;
+    const periodEnd = e.periodEnd?.trim() || undefined;
+    const validPaymentMethods = new Set<Expense['paymentMethod']>(['cash', 'bank', 'card']);
+    const validDate = (value?: string) => !value || /^\d{4}-\d{2}-\d{2}$/.test(value);
+    if (!Number.isFinite(amount) || amount <= 0 || !category || !note || !validPaymentMethods.has(paymentMethod) || !validDate(periodStart) || !validDate(periodEnd) || (periodStart && periodEnd && periodEnd < periodStart)) {
       pushAudit('DENIED', 'Expense', 'Blocked invalid expense input');
       return;
     }
-    const normalizedAmount = Math.round(amount * 100) / 100;
-    setState(s => ({
-      ...s,
-      expenses: [{ ...e, amount: normalizedAmount, category, note, id: uid(), date: new Date().toISOString(), by: user?.name || 'Unknown' }, ...s.expenses],
-    }));
-    pushAudit('EXPENSE', 'Expense', `${category}: ${note} · Rs. ${normalizedAmount.toLocaleString()}`);
-  }, [pushAudit, user?.name, user, can]);
+    expenseLockRef.current = true;
+    try {
+      const now = new Date().toISOString();
+      setState(s => ({
+        ...s,
+        expenses: [{ ...e, amount, category, note, paymentMethod, periodStart, periodEnd, id: uid(), date: now, by: user.name }, ...s.expenses],
+      }));
+      pushAudit('EXPENSE', 'Expense', `${category}: ${note} · Rs. ${amount.toLocaleString()}${paymentMethod === 'cash' ? ' · cash' : ''}`);
+    } finally {
+      expenseLockRef.current = false;
+    }
+  }, [pushAudit, user, can]);
 
   const deleteExpense = useCallback((id: string) => {
     if (!user || !can('page:expenses') || !can('act:deleteRecords')) {
       pushAudit('DENIED', 'Expense', 'Blocked expense delete without required permissions');
       return;
     }
-    const e = state.expenses.find(x => x.id === id);
-    setState(s => ({ ...s, expenses: s.expenses.filter(x => x.id !== id) }));
-    if (e) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`);
-  }, [state.expenses, pushAudit, user, can]);
+    const snapshot = stateRef.current;
+    const e = snapshot.expenses.find(x => x.id === id);
+    if (!e) return;
+    const expenseDate = dkey(new Date(e.date));
+    const session = snapshot.sessions.find(x => x.date === expenseDate && x.cashierId === user.id);
+    if ((e.paymentMethod || 'cash') === 'cash' && session?.closed) {
+      pushAudit('DENIED', 'Expense', 'Blocked cash expense deletion after the cashier session was closed');
+      return;
+    }
+    let deleted = false;
+    setState(s => {
+      const current = s.expenses.find(x => x.id === id);
+      if (!current) return s;
+      const currentSession = s.sessions.find(x => x.date === dkey(new Date(current.date)) && x.cashierId === user.id);
+      if ((current.paymentMethod || 'cash') === 'cash' && currentSession?.closed) return s;
+      deleted = true;
+      return { ...s, expenses: s.expenses.filter(x => x.id !== id) };
+    });
+    if (deleted) pushAudit('DELETE', 'Expense', `Deleted expense ${e.category} · Rs. ${e.amount.toLocaleString()}`);
+  }, [pushAudit, user, can]);
 
   /* ---------------- exchanges ---------------- */
   const processExchange = useCallback((saleId: string, returns: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>, reason: string, mode: 'refund' | 'replace') => {
@@ -2327,15 +2358,23 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: session is already closed');
       return;
     }
-    setState(s => ({
-      ...s,
-      sessions: s.sessions.map(x =>
-        x.cashierId === cashierId && x.date === today
-          ? { ...x, closed: true, closing: Math.round(amount * 100) / 100, note: cleanNote || undefined }
-          : x,
-      ),
-    }));
-    pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${amount.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    let closed = false;
+    setState(s => {
+      const currentSession = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
+      if (!currentSession || currentSession.closed) return s;
+      closed = true;
+      return {
+        ...s,
+        sessions: s.sessions.map(x =>
+          x.id === currentSession.id
+            ? { ...x, closed: true, closing: Math.round(amount * 100) / 100, note: cleanNote || undefined }
+            : x,
+        ),
+      };
+    });
+    if (closed) {
+      pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${amount.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    }
   }, [pushAudit, user, state.sessions]);
 
   // auto-open today's drawer session once per cashier
@@ -2772,6 +2811,12 @@ const deletePurchase = useCallback((id: string) => {
     const u = state.users.find(x => x.id === cashierId);
     if (!u) return;
     const today = dkey(new Date());
+    const normalizedOpening = Math.round(Math.max(0, Number(opening)) * 100) / 100;
+    if (!Number.isFinite(normalizedOpening)) {
+      pushAudit('DENIED', 'Session', 'Blocked invalid cash-session opening float');
+      return;
+    }
+    let opened = false;
     setState(s => {
       const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
       if (existing) {
@@ -2779,24 +2824,22 @@ const deletePurchase = useCallback((id: string) => {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
           return s;
         }
-        return {
-          ...s,
-          sessions: s.sessions.map(x =>
-            x.id === existing.id ? { ...x, opening: Math.max(0, opening), closed: false, closing: undefined } : x,
-          ),
-        };
+        // Once a live session exists, its opening float is the accounting anchor.
+        // Do not silently rewrite it from a second "Set opening cash" action.
+        return s;
       }
       const ns: DaySession = {
         id: uid(),
         cashierId,
         cashierName: u.name,
         date: today,
-        opening: Math.max(0, opening),
+        opening: normalizedOpening,
         closed: false,
       };
+      opened = true;
       return { ...s, sessions: [...s.sessions, ns] };
     });
-    pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${opening.toLocaleString()} · ${u.name}`);
+    if (opened) pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${normalizedOpening.toLocaleString()} · ${u.name}`);
   }, [state.users, pushAudit, user, can]);
 
   const saveBrand = useCallback((name: string) => {
