@@ -31,7 +31,7 @@ export default function GRN() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<Array<{ name: string; old: number; next: number }>>([]);
   const [returnPurchase, setReturnPurchase] = useState<Purchase | null>(null);
-  const [returnLines, setReturnLines] = useState<Array<{ itemIdx: number; maxQty: number; qty: number }>>([]);
+  const [returnLines, setReturnLines] = useState<Array<{ itemIdx: number; maxQty: number; qty: number; unitIds: string[] }>>([]);
   const [returnReason, setReturnReason] = useState('');
   const [formMode, setFormMode] = useState<'receive' | 'return'>('receive');
   const [returnGrnId, setReturnGrnId] = useState('');
@@ -74,7 +74,7 @@ export default function GRN() {
         ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === p.id && u.status === 'in_stock').length
         : Number.MAX_SAFE_INTEGER;
       const remaining = Math.max(0, item.qty - already);
-      return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0 };
+      return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0, unitIds: [] };
     }));
   };
   const edit = (p: Purchase) => { setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\\n') }))); setFormMode('receive'); setView('form'); };
@@ -300,27 +300,69 @@ export default function GRN() {
                 <div className="md:col-span-2 mt-5 space-y-2">
                   <div className="text-xs font-bold uppercase tracking-wider text-sub mb-2">Items to return</div>
                   {returnPurchase.items.map((item, itemIdx) => {
-                    const line = returnLines.find(x => x.itemIdx === itemIdx) || { itemIdx, maxQty: 0, qty: 0 };
+                    const product = state.products.find(x => x.id === item.productId);
+                    const tracked = !!(product?.trackImei || product?.trackSerial);
+                    const availableUnits = tracked
+                      ? (state.units || []).filter(u => u.productId === item.productId && u.purchaseId === returnPurchase.id && u.status === 'in_stock')
+                      : [];
+                    const line = returnLines.find(x => x.itemIdx === itemIdx) || { itemIdx, maxQty: 0, qty: 0, unitIds: [] };
                     return (
-                      <div key={itemIdx} className="flex items-center gap-3 rounded-xl border border-line bg-surface p-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-ink truncate">{item.name}</div>
-                          <div className="text-xs text-sub">Received: {item.qty} · Available: {line.maxQty} · Cost: {fmtRs(item.cost)}</div>
+                      <div key={itemIdx} className="rounded-xl border border-line bg-surface p-3">
+                        <div className="flex items-center gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-semibold text-ink truncate">{item.name}</div>
+                            <div className="text-xs text-sub">Received: {item.qty} · Available: {line.maxQty} · Cost: {fmtRs(item.cost)}</div>
+                          </div>
+                          {!tracked && (
+                            <input
+                              className="input num !w-24 text-center"
+                              type="number"
+                              min="0"
+                              max={line.maxQty}
+                              value={line.qty || ''}
+                              placeholder="Qty"
+                              onChange={e => {
+                                const qty = Math.max(0, Math.min(line.maxQty, Math.floor(Number(e.target.value) || 0)));
+                                setReturnLines(ls => ls.map(x => x.itemIdx === itemIdx ? { ...x, qty } : x));
+                              }}
+                              disabled={actionRunning}
+                            />
+                          )}
+                          <div className="num w-24 text-right font-bold text-rose-600">{line.qty ? fmtRs(line.qty * item.cost) : '—'}</div>
                         </div>
-                        <input
-                          className="input num !w-24 text-center"
-                          type="number"
-                          min="0"
-                          max={line.maxQty}
-                          value={line.qty || ''}
-                          placeholder="Qty"
-                          onChange={e => {
-                            const qty = Math.max(0, Math.min(line.maxQty, Math.floor(Number(e.target.value) || 0)));
-                            setReturnLines(ls => ls.map(x => x.itemIdx === itemIdx ? { ...x, qty } : x));
-                          }}
-                          disabled={actionRunning}
-                        />
-                        <div className="num w-24 text-right font-bold text-rose-600">{line.qty ? fmtRs(line.qty * item.cost) : '—'}</div>
+                        {tracked && (
+                          <div className="mt-3 rounded-lg border border-line bg-raised p-3">
+                            <div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-2">Select units to return</div>
+                            {availableUnits.length === 0 ? (
+                              <div className="text-xs text-faint">No in-stock tracked units are available for return.</div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                {availableUnits.map(unit => {
+                                  const selected = line.unitIds.includes(unit.id);
+                                  const label = [unit.imei, unit.serial].filter(Boolean).join(' · ') || unit.id;
+                                  return (
+                                    <label key={unit.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs cursor-pointer ${selected ? 'border-rose-400 bg-rose-50 dark:bg-rose-900/20' : 'border-line bg-surface'}`}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selected}
+                                        onChange={() => {
+                                          setReturnLines(ls => ls.map(x => {
+                                            if (x.itemIdx !== itemIdx) return x;
+                                            const nextIds = selected ? x.unitIds.filter(id => id !== unit.id) : [...x.unitIds, unit.id];
+                                            return { ...x, unitIds: nextIds, qty: nextIds.length };
+                                          }));
+                                        }}
+                                        disabled={actionRunning}
+                                      />
+                                      <span className="font-mono break-all">{label}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            <div className="text-[11px] text-sub mt-2">Selected: {line.unitIds.length} / {line.maxQty}</div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -340,7 +382,7 @@ export default function GRN() {
                         try {
                           const result = createPurchaseReturn({
                             purchaseId: returnPurchase.id,
-                            lines: returnLines.filter(x => x.qty > 0).map(x => ({ itemIdx: x.itemIdx, qty: x.qty })),
+                            lines: returnLines.filter(x => x.qty > 0).map(x => ({ itemIdx: x.itemIdx, qty: x.qty, ...(x.unitIds.length ? { unitIds: x.unitIds } : {}) })),
                             reason: returnReason.trim(),
                           });
                           if (result) {
