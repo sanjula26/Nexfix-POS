@@ -25,7 +25,6 @@ function configureUpdaterCredentials(){
     useMultipleRangeRequest: false,
     timeout: 10 * 60 * 1000,
     publishAutoUpdate: false,
-    provider: 'generic',
   });
   return true;
 }
