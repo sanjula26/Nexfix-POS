@@ -23,6 +23,11 @@ async function create(req:Request) {
   if(!shopId)return json({ok:false,error:"Shop is required"},400);
   const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",uid).eq("active",true).maybeSingle();
   if(!m||!["admin","manager"].includes(String(m.role)))return json({ok:false,error:"Only an active shop admin or manager can create a phone sales link"},403);
+  const oldToken=String(body.oldToken||"").trim();
+  if(oldToken){
+    const oldHash=await sha256(oldToken);
+    await admin.from("phone_sales_tokens").update({revoked_at:new Date().toISOString()}).eq("token_hash",oldHash).eq("shop_id",shopId).is("revoked_at",null);
+  }
   const token=base64Url(crypto.getRandomValues(new Uint8Array(32))), hash=await sha256(token);
   const {error}=await admin.from("phone_sales_tokens").insert({token_hash:hash,shop_id:shopId,device_id:String(body.deviceId||"").trim().slice(0,200)||null,created_by:uid,label:String(body.label||"Phone Sales").trim().slice(0,80)||"Phone Sales"});
   if(error)return json({ok:false,error:error.message},400);
