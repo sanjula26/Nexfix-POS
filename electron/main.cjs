@@ -1,6 +1,7 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
@@ -97,6 +98,22 @@ function setupAutoUpdater(){
           file.on('error',reject);
           Readable.fromWeb(streamResponse.body).on('error',reject).pipe(file);
         });
+        const expectedSize=Number(data.size);
+        const actualSize=fs.statSync(targetPath).size;
+        if(Number.isFinite(expectedSize)&&expectedSize>0&&actualSize!==expectedSize){
+          throw new Error('Installer integrity check failed: downloaded size does not match the authorized release.');
+        }
+        const actualSha512=await new Promise((resolve,reject)=>{
+          const hash=crypto.createHash('sha512');
+          const input=fs.createReadStream(targetPath);
+          input.on('error',reject);
+          input.on('data',chunk=>hash.update(chunk));
+          input.on('end',()=>resolve(hash.digest('base64')));
+        });
+        const expectedSha512=typeof data.sha512==='string'?data.sha512.trim():'';
+        if(!expectedSha512||actualSha512!==expectedSha512){
+          throw new Error('Installer integrity check failed: SHA-512 does not match the authorized release.');
+        }
         shell.showItemInFolder(targetPath);
         return{supported:true,ok:true,path:targetPath,name:path.basename(targetPath),version:data.version||null};
       }catch(error){
