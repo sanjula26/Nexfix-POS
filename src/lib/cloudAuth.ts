@@ -15,6 +15,11 @@ function getMachineId(): string {
   try { return getMachineIdentity().id; } catch { return ''; }
 }
 
+// Local POS login stays authoritative and must remain non-blocking. Keep the
+// in-flight cloud sign-in promise in memory so Settings/App Updates can wait
+// for the same credentials instead of racing the background cloud login.
+let cloudLoginPromise: Promise<{ ok: boolean; error?: string }> | null = null;
+
 async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void> {
   const desktop = getDesktopUpdaterApi();
   const deviceId = getMachineId();
@@ -55,7 +60,13 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     return false;
   }
 
-  const { data, error } = await supabase.auth.getSession();
+  let { data, error } = await supabase.auth.getSession();
+  if ((error || !data.session?.access_token) && cloudLoginPromise) {
+    try { await cloudLoginPromise; } catch { /* refresh below remains authoritative */ }
+    const refreshed = await supabase.auth.getSession();
+    data = refreshed.data;
+    error = refreshed.error;
+  }
   if (error || !data.session?.access_token) {
     await desktop.clearUpdateCredentials?.();
     return false;
@@ -166,13 +177,10 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
     syncDesktopUpdaterCredentials();
     return { ok: false, error: error.message };
   }
-
-  const updaterReady = await refreshDesktopUpdaterCredentials();
-  if (!updaterReady) {
-    // Cloud sign-in can succeed before shop/device provisioning is complete.
-    // Keep local POS login independent; Settings can retry authorization.
-  }
-  return { ok: true, error: updaterReady ? undefined : 'Cloud session is signed in, but shop/device authorization is not provisioned' };
+  // Do not wait for device/shop provisioning here. The caller may be the local
+  // login path, which must stay fast and offline-capable. The updater refresh
+  // path waits for this same in-flight login when necessary.
+  return { ok: true };
 }
 
 /**
@@ -188,11 +196,29 @@ export async function ensureCloudSession(
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
+  const loginPromise = (async () => {
+    try {
+      return await signInToCloud(email, password);
+    } catch (error) {
+      // Local POS login must remain usable when Supabase is unavailable.
+      return { ok: false, error: error instanceof Error ? error.message : 'Cloud session could not be established' };
+    }
+  })();
+  cloudLoginPromise = loginPromise;
   try {
-    return await signInToCloud(email, password);
-  } catch (error) {
-    // Local POS login must remain usable when Supabase is unavailable.
-    return { ok: false, error: error instanceof Error ? error.message : 'Cloud session could not be established' };
+    const result = await loginPromise;
+    if (result.ok) {
+      // Finish the same cloud-login path by registering this machine. This is
+      // awaited by Settings if the user opens App Updates immediately after
+      // logging in, eliminating the old timing/race failure.
+      const updaterReady = await refreshDesktopUpdaterCredentials();
+      return updaterReady
+        ? { ok: true }
+        : { ok: true, error: 'Cloud session is signed in, but shop/device authorization is not provisioned' };
+    }
+    return result;
+  } finally {
+    if (cloudLoginPromise === loginPromise) cloudLoginPromise = null;
   }
 }
 
