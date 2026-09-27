@@ -171,7 +171,8 @@ export default function Settings() {
     });
     return unsubscribe;
   }, []);
-  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await refreshDesktopUpdaterCredentials();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. This POS needs a provisioned cloud account, active shop membership, and registered machine.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
+  const ensureUpdaterReady=async()=>{for(let attempt=0;attempt<3;attempt+=1){if(await refreshDesktopUpdaterCredentials())return true;if(attempt<2)await new Promise(resolve=>window.setTimeout(resolve,500));}return false;};
+  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
   const provisionCloudUpdater = async () => {
     if (cloudSetupBusy) return;
     setCloudSetupBusy(true);
@@ -196,6 +197,10 @@ export default function Settings() {
     setInstallerDownloadBusy(true);
     setInstallerDownloadMsg('');
     try {
+      if (!desktopApi?.isPackaged || !desktopApi.downloadAuthorizedInstaller) throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
+      const authorized = await ensureUpdaterReady();
+      if (!authorized) throw new Error('Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.');
+
       if (!desktopApi?.downloadAuthorizedInstaller || !desktopApi.isPackaged) {
         throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
       }
