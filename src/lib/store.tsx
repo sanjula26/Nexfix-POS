@@ -423,6 +423,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
   const expenseLockRef = useRef(false);
+  const roleSwitchLockRef = useRef(false);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -799,6 +800,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     let target: AppUser | undefined;
     const secret = credential || '';
+    if (roleSwitchLockRef.current) return { ok: false, error: 'Please wait and try again' };
+    const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
+    let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
+    try {
+      const raw = localStorage.getItem(SWITCH_RATE_KEY);
+      if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
+    } catch { /* ignore malformed limiter state */ }
+    const now = Date.now();
+    if (guard.lockedUntil > now) {
+      return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
+    }
 
     if (role === 'cashier' && user.role === 'admin') {
       const mail = (email || '').trim().toLowerCase();
@@ -814,6 +826,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           action: 'DENIED', entity: 'Auth',
           details: 'Failed CASHIER switch authentication by ' + user.name,
         }, ...st.audit].slice(0, 500) }));
+        const failures = guard.failures + 1;
+        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
         return { ok: false, error: 'Incorrect cashier email or password' };
       }
     } else if (role === 'admin' && user.role === 'cashier') {
@@ -829,11 +844,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           action: 'DENIED', entity: 'Auth',
           details: 'Failed ADMIN unlock attempt by ' + user.name,
         }, ...st.audit].slice(0, 500) }));
+        const failures = guard.failures + 1;
+        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
         return { ok: false, error: 'Incorrect admin unlock PIN or admin login password' };
       }
     }
 
     if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
+    try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
@@ -2275,11 +2294,19 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     const exists = state.users.some(x => x.id === u.id);
-    // Always store password as hash (skip re-hash if already hashed and unchanged)
+    // Password changes and newly created accounts must use the same 12+ character
+    // policy as first-login and managed-password flows. Existing hashes are kept
+    // unchanged when the password field is intentionally left blank by the UI.
     const existing = state.users.find(x => x.id === u.id);
-    const password = isHashed(u.password)
-      ? u.password
-      : (existing && u.password === existing.password ? existing.password : hashPassword(u.password));
+    const suppliedPassword = String(u.password || '');
+    const passwordChanged = !existing || suppliedPassword !== existing.password;
+    if (passwordChanged && suppliedPassword.length < 12) {
+      pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
+      return;
+    }
+    const password = isHashed(suppliedPassword)
+      ? suppliedPassword
+      : (existing && suppliedPassword === existing.password ? existing.password : hashPassword(suppliedPassword));
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
