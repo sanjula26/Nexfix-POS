@@ -14,6 +14,7 @@ import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
+import { refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
@@ -166,7 +167,7 @@ export default function Settings() {
     });
     return unsubscribe;
   }, []);
-  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
+  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});await refreshDesktopUpdaterCredentials();const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
   const downloadAuthorizedInstaller = async () => {
     setInstallerDownloadBusy(true);
@@ -175,6 +176,7 @@ export default function Settings() {
       if (!desktopApi?.downloadAuthorizedInstaller || !desktopApi.isPackaged) {
         throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
       }
+      await refreshDesktopUpdaterCredentials();
       const result = await desktopApi.downloadAuthorizedInstaller();
       if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
       setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
