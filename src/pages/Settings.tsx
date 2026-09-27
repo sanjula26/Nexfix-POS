@@ -172,37 +172,12 @@ export default function Settings() {
     setInstallerDownloadBusy(true);
     setInstallerDownloadMsg('');
     try {
-      if (desktopApi?.downloadAuthorizedInstaller) {
-        const result = await desktopApi.downloadAuthorizedInstaller();
-        if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
-        setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
-        return;
+      if (!desktopApi?.downloadAuthorizedInstaller || !desktopApi.isPackaged) {
+        throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
       }
-      if (!supabase || !supabaseConfigured || !phoneSalesShopId || !phoneSalesMachine.id) {
-        throw new Error('Cloud authorization is not ready yet.');
-      }
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) throw new Error('Cloud login is not ready. Please wait and try again.');
-      const response = await fetch('https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates?download=1', {
-        headers: { Authorization: `Bearer ${token}`, 'X-Nexfix-Device': phoneSalesMachine.id, Accept: 'application/json' },
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.ok || typeof data.url !== 'string') throw new Error(data?.error || 'Installer download was not authorized.');
-      const streamResponse = await fetch(data.url, {
-        headers: { Authorization: `Bearer ${token}`, 'X-Nexfix-Device': phoneSalesMachine.id },
-      });
-      if (!streamResponse.ok) throw new Error('The authorized installer download could not be started.');
-      const blob = await streamResponse.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = typeof data.name === 'string' && data.name ? data.name : 'Nexfix-POS-installer.exe';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-      setInstallerDownloadMsg(`Authorized installer download started (v${data.version || 'latest'}).`);
+      const result = await desktopApi.downloadAuthorizedInstaller();
+      if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
+      setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
     } catch (error) {
       setInstallerDownloadMsg(error instanceof Error ? error.message : 'Installer download failed.');
     } finally {
