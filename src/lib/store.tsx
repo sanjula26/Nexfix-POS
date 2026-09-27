@@ -2380,7 +2380,16 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Unit', `Blocked unexpected identifier for ${u.productId}`);
       return false;
     }
-    const exists = (state.units || []).some(x => x.id === u.id);
+    const existingUnit = (state.units || []).find(x => x.id === u.id);
+    const exists = !!existingUnit;
+    if (existingUnit && existingUnit.productId !== u.productId) {
+      pushAudit('DENIED', 'Unit', 'Blocked unit product reassignment');
+      return false;
+    }
+    if (existingUnit && existingUnit.status !== 'in_stock') {
+      pushAudit('DENIED', 'Unit', 'Blocked edit of historical/non-stock unit');
+      return false;
+    }
     const dup = (state.units || []).find(x =>
       x.id !== u.id && x.status === 'in_stock' &&
       ((imei && (x.imei || '').trim().toLowerCase() === imei.toLowerCase()) ||
