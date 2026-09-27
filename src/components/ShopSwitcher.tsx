@@ -4,7 +4,7 @@ import { usePOS } from '../lib/store';
 import { buildSeed } from '../lib/seed';
 import { idbSaveState, idbListQueue } from '../lib/db';
 import { getCloudShopId, setCloudShopId } from '../lib/cloudSync';
-import { getCloudDeviceId } from '../lib/cloudDevice';
+import { getMachineIdentity } from '../lib/machine';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { runSyncNow } from '../lib/syncManager';
 import type { POSState } from '../lib/types';
@@ -72,7 +72,7 @@ async function listMemberships(userId: string): Promise<ShopOption[]> {
 
 async function registerDeviceForShop(shopId: string): Promise<void> {
   if (!supabaseConfigured || !supabase) throw new Error('Cloud authentication is not configured');
-  const { data, error } = await supabase.rpc('register_pos_device', { p_shop_id: shopId, p_device_id: getCloudDeviceId() });
+  const { data, error } = await supabase.rpc('register_pos_device', { p_shop_id: shopId, p_device_id: getMachineIdentity().id });
   if (error || !data?.ok) throw new Error(error?.message || 'Could not register this device for the selected shop');
 }
 
