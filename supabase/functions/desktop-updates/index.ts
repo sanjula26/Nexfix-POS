@@ -19,7 +19,6 @@ Deno.serve(async req=>{
     const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",d.shop_id).eq("user_id",u.user.id).eq("active",true).maybeSingle();
     if(!m)return json({ok:false,error:"User is not an active member of this shop"},403);
     const requestUrl=new URL(req.url);
-    const isManifestRequest=requestUrl.pathname.endsWith("/latest.yml") || requestUrl.pathname.endsWith("/latest.yaml");
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
     if(!m?.role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
     if(wantsDownload && String(m.role)!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
