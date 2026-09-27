@@ -5,7 +5,7 @@ import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../component
 import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
 import type { Purchase, PurchaseReturn } from '../lib/types';
 
-interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; }
+interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; unitIds: string[]; }
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -67,8 +67,11 @@ export default function PurchaseReturn() {
     }
     setLines(grn.items.map((i, itemIdx) => {
       const alreadyReturned = returnedByItem.get(itemIdx) || 0;
-      const stock = state.products.find(p => p.id === i.productId)?.stock ?? 0;
-      return { itemIdx, productId: i.productId, name: i.name, maxQty: Math.min(Math.max(0, i.qty - alreadyReturned), Math.max(0, stock)), qty: 0, cost: i.cost };
+      const product = state.products.find(p => p.id === i.productId);
+      const stock = product?.stock ?? 0;
+      const tracked = !!(product?.trackImei || product?.trackSerial);
+      const availableUnits = tracked ? (state.units || []).filter(u => u.productId === i.productId && u.purchaseId === grn.id && u.status === 'in_stock') : [];
+      return { itemIdx, productId: i.productId, name: i.name, maxQty: Math.min(Math.max(0, i.qty - alreadyReturned), Math.max(0, tracked ? availableUnits.length : stock)), qty: 0, cost: i.cost, unitIds: [] };
     }));
     setReason('');
   };
@@ -86,7 +89,7 @@ export default function PurchaseReturn() {
     if (!selectedGRN || returnItems.length === 0 || !reason.trim()) return;
     setSubmitting(true);
     try {
-      const result = createPurchaseReturn({ purchaseId: selectedGRN.id, lines: returnItems.map(item => ({ itemIdx: item.itemIdx, qty: item.qty })), reason: reason.trim() });
+      const result = createPurchaseReturn({ purchaseId: selectedGRN.id, lines: returnItems.map(item => ({ itemIdx: item.itemIdx, qty: item.qty, ...(item.unitIds.length ? { unitIds: item.unitIds } : {}) })), reason: reason.trim() });
       if (!result) return;
       setDone(result);
       setSelectedGRN(null);
@@ -169,31 +172,51 @@ export default function PurchaseReturn() {
                 <p className="text-xs text-sub">{fmtDate(selectedGRN.date)} · {fmtRs(selectedGRN.total)}</p>
               </div>
               <div className="p-3 space-y-2 max-h-[320px] overflow-y-auto">
-                {lines.map((line, idx) => (
-                  <div key={idx} className={`flex items-center gap-3 p-2.5 rounded-lg border ${line.qty > 0 ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-900/10' : 'border-line'}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{line.name}</p>
-                      <p className="text-xs text-sub">Max: {line.maxQty} · {fmtRs(line.cost)} each</p>
+                {lines.map((line, idx) => {
+                  const product = state.products.find(p => p.id === line.productId);
+                  const tracked = !!(product?.trackImei || product?.trackSerial);
+                  const availableUnits = tracked ? (state.units || []).filter(u => u.productId === line.productId && u.purchaseId === selectedGRN.id && u.status === 'in_stock') : [];
+                  return (
+                    <div key={idx} className={`p-2.5 rounded-lg border ${line.qty > 0 ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-900/10' : 'border-line'}`}>
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{line.name}</p>
+                          <p className="text-xs text-sub">Max: {line.maxQty} · {fmtRs(line.cost)} each</p>
+                        </div>
+                        {!tracked && (
+                          <div className="flex items-center gap-1">
+                            <button className="w-7 h-7 rounded-lg border border-line bg-surface flex items-center justify-center hover:bg-raised" onClick={() => setLineQty(idx, line.qty - 1)} disabled={line.qty <= 0}><Minus size={12}/></button>
+                            <input type="number" min={0} max={line.maxQty} className="w-12 text-center rounded border border-line bg-surface px-1 py-1 text-sm" value={line.qty} onChange={e => setLineQty(idx, +e.target.value)} />
+                            <button className="w-7 h-7 rounded-lg border border-line bg-surface flex items-center justify-center hover:bg-raised" onClick={() => setLineQty(idx, line.qty + 1)} disabled={line.qty >= line.maxQty}><Plus size={12}/></button>
+                          </div>
+                        )}
+                        <div className="text-right w-20"><p className="text-sm font-bold text-rose-500">{line.qty > 0 ? fmtRs(line.qty * line.cost) : '—'}</p></div>
+                      </div>
+                      {tracked && (
+                        <div className="mt-2 rounded-lg border border-line bg-raised p-2">
+                          <div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-2">Select units to return</div>
+                          {availableUnits.length === 0 ? <div className="text-xs text-faint">No in-stock tracked units are available for return.</div> : (
+                            <div className="grid grid-cols-1 gap-1.5">
+                              {availableUnits.map(unit => {
+                                const selected = line.unitIds.includes(unit.id);
+                                const label = [unit.imei, unit.serial].filter(Boolean).join(' · ') || unit.id;
+                                return <label key={unit.id} className={`flex items-center gap-2 rounded border px-2 py-1.5 text-xs cursor-pointer ${selected ? 'border-rose-400 bg-rose-50 dark:bg-rose-900/20' : 'border-line bg-surface'}`}>
+                                  <input type="checkbox" checked={selected} onChange={() => setLines(ls => ls.map((l,i) => {
+                                    if (i !== idx) return l;
+                                    const nextIds = selected ? l.unitIds.filter(id => id !== unit.id) : [...l.unitIds, unit.id];
+                                    return { ...l, unitIds: nextIds, qty: nextIds.length };
+                                  })} disabled={submitting} />
+                                  <span className="font-mono break-all">{label}</span>
+                                </label>;
+                              })}
+                            </div>
+                          )}
+                          <div className="text-[11px] text-sub mt-1">Selected: {line.unitIds.length} / {line.maxQty}</div>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button className="w-7 h-7 rounded-lg border border-line bg-surface flex items-center justify-center hover:bg-raised" onClick={() => setLineQty(idx, line.qty - 1)} disabled={line.qty <= 0}>
-                        <Minus size={12}/>
-                      </button>
-                      <input
-                        type="number" min={0} max={line.maxQty}
-                        className="w-12 text-center rounded border border-line bg-surface px-1 py-1 text-sm"
-                        value={line.qty}
-                        onChange={e => setLineQty(idx, +e.target.value)}
-                      />
-                      <button className="w-7 h-7 rounded-lg border border-line bg-surface flex items-center justify-center hover:bg-raised" onClick={() => setLineQty(idx, line.qty + 1)} disabled={line.qty >= line.maxQty}>
-                        <Plus size={12}/>
-                      </button>
-                    </div>
-                    <div className="text-right w-20">
-                      <p className="text-sm font-bold text-rose-500">{line.qty > 0 ? fmtRs(line.qty * line.cost) : '—'}</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="p-3 border-t border-line space-y-3">
                 <div>
