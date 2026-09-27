@@ -189,6 +189,7 @@ jobs:
         run: |
           $version = $env:BUILD_VERSION
           $tag = "v$version"
+          $publicRepo = "sanjula26/Nexfix-POS-Public"
           $assetNames = gh release view $tag --repo $publicRepo --json assets --jq '.assets[].name'
           if ($LASTEXITCODE -ne 0) { throw "Published public release $tag could not be read." }
           if ($assetNames -notcontains 'latest.yml') { throw "Published release $tag is missing latest.yml." }
