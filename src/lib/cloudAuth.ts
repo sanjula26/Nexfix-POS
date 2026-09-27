@@ -107,7 +107,7 @@ export async function provisionCloudUpdaterAccount(
   // First try the supplied credentials as an existing cloud account. This
   // makes the setup retryable after email confirmation without creating a
   // second account.
-  let { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
     email: normalizedEmail,
     password,
   });
@@ -126,7 +126,6 @@ export async function provisionCloudUpdaterAccount(
         error: 'Cloud account created or pending confirmation. Confirm the email, then run this setup again with the same cloud credentials.',
       };
     }
-    signInData = signUpData;
   }
 
   const existingShop = await ensureCloudShop(normalizedShopName);
