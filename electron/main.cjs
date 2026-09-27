@@ -1,5 +1,7 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const { Readable } = require('stream');
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
 let autoUpdater = null;
@@ -68,6 +70,38 @@ function setupAutoUpdater(){
         if(!pendingUpdateInfo){const result=await autoUpdater.checkForUpdates();if(!result?.isUpdateAvailable)return{supported:true,started:false};pendingUpdateInfo=result.updateInfo;}
         updateDownloadActive=true;sendUpdateEvent('progress',{percent:0});await autoUpdater.downloadUpdate();return{supported:true,started:true};
       }catch(error){updateDownloadActive=false;sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,started:false,error:error?.message||String(error)};}
+    });
+    ipcMain.handle('update:downloadAuthorizedInstaller',async()=>{
+      if(!app.isPackaged||process.platform!=='win32')return{supported:false,ok:false,error:'Authorized installer downloads are available in the installed Windows POS only.'};
+      if(!updateAuthToken||!updateDeviceId)return{supported:true,ok:false,error:'Update authorization is not ready. Please sign in to the POS first.'};
+      let targetPath='';
+      try{
+        const authHeaders={Authorization:`Bearer ${updateAuthToken}`,'X-Nexfix-Device':updateDeviceId,Accept:'application/json'};
+        const authorizeResponse=await fetch(`${UPDATE_FEED_URL}?download=1`,{headers:authHeaders});
+        const data=await authorizeResponse.json().catch(()=>null);
+        if(!authorizeResponse.ok||!data?.ok||typeof data.url!=='string')return{supported:true,ok:false,error:data?.error||'Installer download was not authorized.'};
+        const streamResponse=await fetch(data.url,{headers:{Authorization:`Bearer ${updateAuthToken}`,'X-Nexfix-Device':updateDeviceId}});
+        if(!streamResponse.ok||!streamResponse.body)return{supported:true,ok:false,error:'The authorized installer download could not be started.'};
+        const safeName=path.basename(typeof data.name==='string'&&data.name?data.name:'Nexfix-POS-installer.exe').replace(/[<>:"/\\|?*]/g,'_');
+        const downloadsDir=app.getPath('downloads');
+        targetPath=path.join(downloadsDir,safeName);
+        if(fs.existsSync(targetPath)){
+          const ext=path.extname(safeName);
+          const base=path.basename(safeName,ext);
+          targetPath=path.join(downloadsDir,`${base}-${Date.now()}${ext}`);
+        }
+        const file=fs.createWriteStream(targetPath);
+        await new Promise((resolve,reject)=>{
+          file.on('finish',resolve);
+          file.on('error',reject);
+          Readable.fromWeb(streamResponse.body).on('error',reject).pipe(file);
+        });
+        shell.showItemInFolder(targetPath);
+        return{supported:true,ok:true,path:targetPath,name:path.basename(targetPath),version:data.version||null};
+      }catch(error){
+        if(targetPath){try{fs.rmSync(targetPath,{force:true});}catch{}}
+        return{supported:true,ok:false,error:error?.message||String(error)};
+      }
     });
     const checkNow=()=>{void autoUpdater.checkForUpdates().catch(()=>{});};
     setTimeout(checkNow,5000);
