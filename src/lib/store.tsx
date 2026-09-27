@@ -10,14 +10,14 @@ import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
 
@@ -2833,7 +2833,7 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit(exists?'UPDATE':'CREATE','Repair',`${exists?'Updated':'Opened'} ${jobNo||'job'} · ${r.deviceBrand} ${r.deviceModel}`);
   }, [state.repairs,state.products,pushAudit,user,can]);
 
-  const updateRepairStatus = useCallback((id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
+  const updateRepairStatus = useCallback(async (id: string, status: RepairStatus, patch?: Partial<RepairJob>) => {
     if (!user || !can('page:repairs')) {
       pushAudit('DENIED', 'Repair', 'Blocked repair status update without repairs access');
       return;
@@ -2873,6 +2873,31 @@ const deletePurchase = useCallback((id: string) => {
     if ((status === 'ready' || status === 'delivered') && !next.completedAt) next.completedAt = now;
     if (status === 'delivered' && !next.deliveredAt) next.deliveredAt = now;
     if (status !== 'delivered') next.deliveredAt = undefined;
+
+    if (shouldDeductParts && supabaseConfigured) {
+      const machine = getMachineIdentity();
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (shop.ok && shop.shopId) {
+        if (getConnectivity() === 'offline') {
+          try {
+            await queueRepairDelivery(id, next, machine.id);
+          } catch (error) {
+            pushAudit('DENIED', 'Repair', error instanceof Error ? error.message : 'Repair delivery could not be queued safely');
+            return;
+          }
+        } else {
+          const cloud = await processRepairDeliveryAtomic({ shopId: shop.shopId, repairId: id, deviceId: machine.id, repair: next });
+          if (!cloud.ok) {
+            pushAudit('DENIED', 'Repair', 'Cloud repair delivery was not committed: ' + (cloud.error || 'unknown error'));
+            return;
+          }
+        }
+      } else if (getConnectivity() !== 'offline') {
+        pushAudit('DENIED', 'Repair', 'Cloud shop is not available; repair delivery was not committed');
+        return;
+      }
+    }
+
     setStateWithInventoryLedger('REPAIR_PARTS', s => {
       const products = shouldDeductParts
         ? s.products.map(p => {
