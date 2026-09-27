@@ -182,69 +182,116 @@ jobs:
             return [Convert]::ToBase64String($bytes)
           }
 
-          # Supabase recommends TUS resumable uploads for files larger than 6 MB.
-          # The direct storage hostname is used for better large-file performance.
+          # Free Supabase projects enforce a 50 MB global object limit.
+          # Keep each private release chunk safely below that limit and reconstruct
+          # the original installer only inside the authorized update gateway.
+          $chunkBytes = 40 * 1024 * 1024
           npm install --no-save --no-package-lock tus-js-client@4
 
           @'
           const fs = require('fs');
           const tus = require('tus-js-client');
 
-          const [, , filePath, objectPath] = process.argv;
+          const [, , filePath, objectPrefix, chunkBytesText] = process.argv;
           const endpoint = process.env.SUPABASE_TUS_ENDPOINT;
           const token = process.env.SUPABASE_SERVICE_ROLE_KEY;
           const bucketName = process.env.SUPABASE_BUCKET;
+          const chunkBytes = Number(chunkBytesText);
 
-          if (!filePath || !objectPath || !endpoint || !token || !bucketName) {
+          if (!filePath || !objectPrefix || !endpoint || !token || !bucketName || !Number.isFinite(chunkBytes) || chunkBytes <= 0) {
             throw new Error('Missing TUS upload arguments/environment.');
           }
 
-          const file = fs.createReadStream(filePath);
-          const upload = new tus.Upload(file, {
-            endpoint,
-            headers: {
-              apikey: token,
-              'x-upsert': 'true',
-            },
-            metadata: {
-              bucketName,
-              objectName: objectPath,
-              contentType: 'application/octet-stream',
-              cacheControl: '31536000',
-            },
-            chunkSize: 6 * 1024 * 1024,
-            retryDelays: [0, 3000, 5000, 10000, 20000],
-            onProgress(bytesUploaded, bytesTotal) {
-              const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(1);
-              process.stdout.write(`\\rUploading ${objectPath}: ${percent}%`);
-            },
-            onError(error) {
-              console.error(`\\nTUS upload failed for ${objectPath}:`, error);
-              process.exitCode = 1;
-            },
-            onSuccess() {
-              console.log(`\\nUploaded private object: ${objectPath}`);
-            },
-          });
+          function uploadBuffer(buffer, objectPath) {
+            return new Promise((resolve, reject) => {
+              const upload = new tus.Upload(buffer, {
+                endpoint,
+                headers: {
+                  apikey: token,
+                  'x-upsert': 'true',
+                },
+                metadata: {
+                  bucketName,
+                  objectName: objectPath,
+                  contentType: 'application/octet-stream',
+                  cacheControl: '31536000',
+                },
+                chunkSize: 6 * 1024 * 1024,
+                uploadDataDuringCreation: true,
+                removeFingerprintOnSuccess: true,
+                retryDelays: [0, 3000, 5000, 10000, 20000],
+                onProgress(bytesUploaded, bytesTotal) {
+                  const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(1);
+                  process.stdout.write(`\rUploading ${objectPath}: ${percent}%`);
+                },
+                onError(error) {
+                  reject(error);
+                },
+                onSuccess() {
+                  process.stdout.write('\n');
+                  resolve();
+                },
+              });
+              upload.start();
+            });
+          }
 
-          upload.start();
-          '@ | Set-Content -Path "$env:RUNNER_TEMP\supabase-tus-upload.cjs" -Encoding utf8
+          async function main() {
+            const stat = fs.statSync(filePath);
+            const fd = fs.openSync(filePath, 'r');
+            let index = 1;
+            try {
+              for (let offset = 0; offset < stat.size; offset += chunkBytes) {
+                const length = Math.min(chunkBytes, stat.size - offset);
+                const buffer = Buffer.allocUnsafe(length);
+                let read = 0;
+                while (read < length) {
+                  const n = fs.readSync(fd, buffer, read, length - read, offset + read);
+                  if (!n) throw new Error(`Unexpected EOF while reading ${filePath}`);
+                  read += n;
+                }
+                const objectPath = `${objectPrefix}.part${String(index).padStart(4, '0')}`;
+                await uploadBuffer(buffer, objectPath);
+                index++;
+              }
+              console.log(`Uploaded ${index - 1} private chunks for ${filePath}`);
+            } finally {
+              fs.closeSync(fd);
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" -Encoding utf8
 
           $env:SUPABASE_TUS_ENDPOINT = "$storageUrl/storage/v1/upload/resumable"
           $env:SUPABASE_BUCKET = $bucket
           $env:NODE_PATH = "$PWD\node_modules"
 
-          node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)"
-          if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($installer.Name)." }
+          node "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)" $chunkBytes
+          if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($installer.Name)." }
 
-          node "$env:RUNNER_TEMP\supabase-tus-upload.cjs" $portable.FullName "win32/latest/$($portable.Name)"
-          if ($LASTEXITCODE -ne 0) { throw "TUS upload failed for $($portable.Name)." }
+          node "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" $portable.FullName "win32/latest/$($portable.Name)" $chunkBytes
+          if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($portable.Name)." }
 
           $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal' }
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
           $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
-          Write-Host "Private release metadata published: $version"
+
+          $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
+          $portableParts = [math]::Ceiling([double]$portable.Length / $chunkBytes)
+          foreach ($i in 1..$installerParts) {
+            $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
+            Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY } | Out-Null
+          }
+          foreach ($i in 1..$portableParts) {
+            $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
+            Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY } | Out-Null
+          }
+          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts, portable $portableParts parts)"
 
       - name: Verify private Windows release
         shell: pwsh
