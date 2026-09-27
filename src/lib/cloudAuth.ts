@@ -15,14 +15,36 @@ function getMachineId(): string {
   try { return getMachineIdentity().id; } catch { return ''; }
 }
 
-function syncDesktopUpdaterCredentials(accessToken?: string): void {
+async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void> {
   const desktop = getDesktopUpdaterApi();
   const deviceId = getMachineId();
-  if (accessToken && deviceId) {
-    void desktop?.setUpdateCredentials?.({ token: accessToken, deviceId });
-  } else {
-    void desktop?.clearUpdateCredentials?.();
+  if (!desktop) return;
+  if (!accessToken || !deviceId) {
+    await desktop.clearUpdateCredentials?.();
+    return;
   }
+
+  // A token alone is not enough for the private updater: the device must be
+  // registered to the same authenticated user and active shop first.
+  if (!supabaseConfigured || !supabase) {
+    await desktop.clearUpdateCredentials?.();
+    return;
+  }
+  const shop = await ensureCloudShop('Nexfix Shop');
+  if (!shop.ok || !shop.shopId) {
+    await desktop.clearUpdateCredentials?.();
+    return;
+  }
+  const { data, error } = await supabase.rpc('register_pos_device', {
+    p_shop_id: shop.shopId,
+    p_device_id: deviceId,
+  });
+  if (error || !data?.ok) {
+    await desktop.clearUpdateCredentials?.();
+    return;
+  }
+
+  await desktop.setUpdateCredentials?.({ token: accessToken, deviceId });
 }
 
 export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
@@ -37,12 +59,32 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     await desktop.clearUpdateCredentials?.();
     return false;
   }
+
   const deviceId = getMachineId();
   if (!deviceId) {
     await desktop.clearUpdateCredentials?.();
     return false;
   }
-  const result = await desktop.setUpdateCredentials({ token: data.session.access_token, deviceId });
+
+  const shop = await ensureCloudShop('Nexfix Shop');
+  if (!shop.ok || !shop.shopId) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+
+  const { data: registration, error: registrationError } = await supabase.rpc('register_pos_device', {
+    p_shop_id: shop.shopId,
+    p_device_id: deviceId,
+  });
+  if (registrationError || !registration?.ok) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+
+  const result = await desktop.setUpdateCredentials({
+    token: data.session.access_token,
+    deviceId,
+  });
   return Boolean((result as { ok?: boolean } | null)?.ok);
 }
 
