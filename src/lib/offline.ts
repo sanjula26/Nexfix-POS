@@ -1,7 +1,7 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic } from './cloudSync';
+import { completeSaleAtomic, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -32,6 +32,13 @@ export async function queueWrite(note?:string):Promise<void>{
         shipping:sale.shipping,
         discount:sale.discount,
         tradeInValue:sale.tradeIn?.value || 0,
+        tradeIn: sale.tradeIn?.addToInventory && sale.tradeIn.productId ? {
+          unitId: sale.tradeIn.unitId,
+          productId: sale.tradeIn.productId,
+          value: sale.tradeIn.value,
+          imei: sale.tradeIn.imei,
+          serial: sale.tradeIn.serial,
+        } : undefined,
         taxPct:Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))) * 100 : 0,
         pointsRedeemed:sale.pointsRedeemed,
         note:sale.note,
@@ -69,7 +76,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     for(const op of ops){
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;tradeInValue?:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           if(state) {
@@ -85,6 +92,18 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             salesmanId:parsed.input.salesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
           if(!result.ok) break;
+          if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
+            const tradeIn = await registerTradeInAtomic({
+              shopId: shop.shopId,
+              saleId: parsed.saleId,
+              unitId: parsed.input.tradeIn.unitId,
+              productId: parsed.input.tradeIn.productId,
+              value: parsed.input.tradeIn.value,
+              imei: parsed.input.tradeIn.imei,
+              serial: parsed.input.tradeIn.serial,
+            });
+            if (!tradeIn.ok) break;
+          }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
