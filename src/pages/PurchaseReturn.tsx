@@ -85,11 +85,11 @@ export default function PurchaseReturn() {
 
   const dnNo = `DN-${String((state.counters.dn || 0) + 1).padStart(4, '0')}`;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedGRN || returnItems.length === 0 || !reason.trim()) return;
     setSubmitting(true);
     try {
-      const result = createPurchaseReturn({ purchaseId: selectedGRN.id, lines: returnItems.map(item => ({ itemIdx: item.itemIdx, qty: item.qty, ...(item.unitIds.length ? { unitIds: item.unitIds } : {}) })), reason: reason.trim() });
+      const result = await createPurchaseReturn({ purchaseId: selectedGRN.id, lines: returnItems.map(item => ({ itemIdx: item.itemIdx, qty: item.qty, ...(item.unitIds.length ? { unitIds: item.unitIds } : {}) })), reason: reason.trim() });
       if (!result) return;
       setDone(result);
       setSelectedGRN(null);
