@@ -1992,7 +1992,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const remaining = Math.max(0, source.qty - already);
     const product = state.products.find(p => p.id === source.productId);
     const stock = product?.stock || 0;
-    const tracked = !!(product?.trackImei || product?.trackSerial);
+    const tracked = Array.isArray(source.unitIdentifiers) && source.unitIdentifiers.length > 0;
     const availableUnits = tracked ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock') : [];
     const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
     if (request.qty > maxReturnable) return null;
