@@ -71,14 +71,6 @@
     "portable": {
       "artifactName": "Nexfix-POS-${version}-${arch}-portable.${ext}"
     },
-    "icon": "build/icon.ico",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "sanjula26",
-        "repo": "Nexfix-POS-Public",
-        "releaseType": "release"
-      }
-    ]
+    "icon": "build/icon.ico"
   }
 }
