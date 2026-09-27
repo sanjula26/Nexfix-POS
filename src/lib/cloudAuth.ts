@@ -104,20 +104,37 @@ export async function provisionCloudUpdaterAccount(
   if (password.length < 12) return { ok: false, error: 'Cloud account password must be at least 12 characters' };
   if (normalizedShopName.length < 2) return { ok: false, error: 'Shop name must be at least 2 characters' };
 
-  const { data, error } = await supabase.auth.signUp({
+  // First try the supplied credentials as an existing cloud account. This
+  // makes the setup retryable after email confirmation without creating a
+  // second account.
+  let { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
     email: normalizedEmail,
     password,
-    options: {
-      data: { full_name: normalizedShopName },
-    },
   });
-  if (error) return { ok: false, error: error.message };
-  if (!data.session) {
-    return {
-      ok: false,
-      needsEmailConfirmation: true,
-      error: 'Cloud account created. Confirm the email, then sign in to the cloud account and retry this setup.',
-    };
+
+  if (signInError || !signInData.session) {
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: { data: { full_name: normalizedShopName } },
+    });
+    if (signUpError) return { ok: false, error: signUpError.message };
+    if (!signUpData.session) {
+      return {
+        ok: false,
+        needsEmailConfirmation: true,
+        error: 'Cloud account created or pending confirmation. Confirm the email, then run this setup again with the same cloud credentials.',
+      };
+    }
+    signInData = signUpData;
+  }
+
+  const existingShop = await ensureCloudShop(normalizedShopName);
+  if (existingShop.ok && existingShop.shopId) {
+    const updaterReady = await refreshDesktopUpdaterCredentials();
+    return updaterReady
+      ? { ok: true }
+      : { ok: false, error: 'Cloud membership exists, but this machine is not yet authorized for updates' };
   }
 
   const { data: shopId, error: bootstrapError } = await supabase.rpc('bootstrap_first_shop', {
