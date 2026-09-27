@@ -1234,8 +1234,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? s.users.find(u => u.id === input.salesmanId && u.active)
       : undefined;
     const byUser = salesman || user;
-    const legs = (input.payments || []).filter(l => l.amount > 0);
+    const validPaymentMethods = new Set<PaymentMethod>(['cash', 'card', 'bank', 'mobile', 'credit']);
+    if (!validPaymentMethods.has(input.payment)) return null;
+    const rawLegs = Array.isArray(input.payments) ? input.payments : [];
+    if (rawLegs.some(l => !l || !validPaymentMethods.has(l.method) || !Number.isFinite(l.amount) || l.amount < 0)) return null;
+    const legs = rawLegs.filter(l => l.amount > 0).map(l => ({ method: l.method, amount: Math.round(l.amount * 100) / 100 }));
     const isSplit = legs.length > 1;
+    if (isSplit && legs.some(l => l.method === 'credit')) return null;
+    if (isSplit && Math.abs(legs.reduce((a, l) => a + l.amount, 0) - Math.max(0, Number(input.amountPaid) || 0)) > 0.01) return null;
     const isCredit = legs.some(l => l.method === 'credit') || (!isSplit && input.payment === 'credit');
     if (isCredit) {
       if (!cust) return null;
