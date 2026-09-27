@@ -434,6 +434,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       encrypted: true,
       ...shopMetadata,
       recoveryKey,
+      shopProof,
     }, shopId);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Drive encryption/upload failed.';
