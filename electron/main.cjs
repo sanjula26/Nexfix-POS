@@ -17,25 +17,33 @@ function getMainWindow(){ return BrowserWindow.getAllWindows()[0] || null; }
 function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
 
 function configureUpdaterCredentials(){
-  if (!autoUpdater || !updateAuthToken || !updateDeviceId) return false;
-  autoUpdater.setFeedURL({
+  if (!autoUpdater) return false;
+  const authorized = Boolean(updateAuthToken && updateDeviceId);
+  const options = {
     provider: 'generic',
     url: `${UPDATE_FEED_URL}/`,
-    requestHeaders: {
-      Authorization: `Bearer ${updateAuthToken}`,
-      'X-Nexfix-Device': updateDeviceId,
-    },
+    ...(authorized ? {
+      requestHeaders: {
+        Authorization: `Bearer ${updateAuthToken}`,
+        'X-Nexfix-Device': updateDeviceId,
+      },
+    } : {}),
     useMultipleRangeRequest: false,
     timeout: 10 * 60 * 1000,
     publishAutoUpdate: false,
-  });
-  return true;
+  };
+  autoUpdater.setFeedURL(options);
+  return authorized;
 }
 
 function setupAutoUpdater(){
   if(!app.isPackaged || process.platform!=='win32') return;
   try{
     ({autoUpdater}=require('electron-updater'));
+    // Always point the updater at the private Supabase gateway. Never fall back
+    // to the build-time GitHub provider before a signed-in session supplies
+    // authorization headers.
+    configureUpdaterCredentials();
     autoUpdater.autoDownload=false;
     autoUpdater.autoInstallOnAppQuit=false;
     autoUpdater.on('checking-for-update',()=>sendUpdateEvent('checking'));
@@ -54,7 +62,9 @@ function setupAutoUpdater(){
       updateAuthToken=token.length>=100?token:'';
       updateDeviceId=deviceId.length>=1&&deviceId.length<=200?deviceId:'';
       pendingUpdateInfo=null;
-      return {ok:configureUpdaterCredentials()};
+      const ok=configureUpdaterCredentials();
+      if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
+      return {ok};
     });
     ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; return {ok:true}; });
     ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
@@ -121,7 +131,10 @@ function setupAutoUpdater(){
         return{supported:true,ok:false,error:error?.message||String(error)};
       }
     });
-    const checkNow=()=>{void autoUpdater.checkForUpdates().catch(()=>{});};
+    const checkNow=()=>{
+      if(!configureUpdaterCredentials()) return;
+      void autoUpdater.checkForUpdates().catch(()=>{});
+    };
     setTimeout(checkNow,5000);
     setInterval(checkNow,10*60*1000);
     app.on('browser-window-focus',checkNow);
