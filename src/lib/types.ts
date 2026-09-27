@@ -18,7 +18,7 @@ export interface Sale { id:string; billNo:string; date:string; cashierId:string;
 export interface PurchaseItem { productId:string; name:string; qty:number; cost:number; expiryDate?:string; sellingPrice?:number; sellDiscountPct?:number; sellDiscountAmt?:number; updateSellingPrice?:boolean; unitIdentifiers?:Array<{ imei?:string; serial?:string }>; }
 export interface Purchase { id:string; poNo:string; date:string; supplierId:string; supplierName:string; items:PurchaseItem[]; total:number; status:'pending'|'received'; supplierInvoiceNo?:string; notes?:string; processedAt?:string; processedBy?:string; }
 
-export interface PurchaseReturnItem { itemIdx:number; productId:string; name:string; qty:number; cost:number; total:number; }
+export interface PurchaseReturnItem { itemIdx:number; productId:string; name:string; qty:number; cost:number; total:number; unitIds?:string[]; }
 export interface PurchaseReturn { id:string; dnNo:string; purchaseId:string; poNo:string; supplierId:string; supplierName:string; date:string; items:PurchaseReturnItem[]; total:number; reason:string; by:string; }
 
 // ── GRN (Goods Received Note) ──────────────────────────────────────────────
