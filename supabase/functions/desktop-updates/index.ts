@@ -32,7 +32,7 @@ Deno.serve(async req=>{
     if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
     const streamUrl=new URL(req.url); streamUrl.searchParams.set("download","stream");
     streamUrl.pathname=streamUrl.pathname.replace(/\/latest\.(?:yml|yaml)$/,"");
-    if(wantsDownload) return json({ok:true,url:streamUrl.toString(),version:r.version,name:r.installer_name});
+    if(wantsDownload) return json({ok:true,url:streamUrl.toString(),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
     if(requestUrl.searchParams.get("download")==="stream"){
       const body=new ReadableStream({start(controller){(async()=>{try{
         for(const item of signed){
