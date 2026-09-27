@@ -69,5 +69,5 @@ create or replace function public.process_repair_delivery_atomic(p_shop_id uuid,
 returns table(ok boolean,already_committed boolean,repair_id uuid)
 language sql security invoker
 as $$ select * from private.process_repair_delivery_atomic($1,$2,$3,$4); $$;
-revoke all on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from anon;
+revoke execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
 grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
