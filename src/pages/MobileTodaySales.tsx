@@ -7,7 +7,6 @@ import { downloadStateSnapshot, getCloudShopId, setCloudShopId } from '../lib/cl
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import type { POSState, Sale } from '../lib/types';
 import { getMachineIdentity } from '../lib/machine';
-import { copyText } from '../lib/publicApp';
 
 function dateKeyInTimeZone(date: Date, timeZone: string): string {
   if (!timeZone) return dkey(date);
@@ -174,7 +173,6 @@ export default function MobileTodaySales() {
   const initialView: 'today' | 'past' = query.get('view') === 'past' || validRequestedDate !== today ? 'past' : 'today';
   const [viewMode, setViewMode] = useState<'today' | 'past'>(initialView);
   const [selectedDate, setSelectedDate] = useState(validRequestedDate);
-  const [machineLinkCopied, setMachineLinkCopied] = useState(false);
 
   const previousDate = () => {
     return shiftDateKey(today, -1);
@@ -292,7 +290,6 @@ export default function MobileTodaySales() {
   const shopId = activeShopId;
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
-  const linkMachineName = requestedMachineId === machine.id ? machine.name : (requestedMachineId || machine.id);
   const submitPin = () => {
     const value = pin.trim();
     if (!value) { setPinError('Enter the Admin PIN.'); return; }
