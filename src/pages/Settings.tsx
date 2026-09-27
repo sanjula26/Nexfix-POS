@@ -98,6 +98,24 @@ export default function Settings() {
     if (!opened) setPhoneLinkMsg('Could not open the phone sales page. Copy the link and open it in Chrome.');
   };
 
+  const regeneratePhoneSalesLink = async () => {
+    if (!supabase || !supabaseConfigured || !phoneSalesShopId || !phoneSalesMachine.id) return;
+    setPhoneLinkMsg('Generating a new secure link…');
+    try {
+      const { data, error } = await supabase.functions.invoke('phone-sales', {
+        body: { shopId: phoneSalesShopId, deviceId: phoneSalesMachine.id, label: 'Phone Sales', oldToken: phoneSalesToken },
+      });
+      if (error || !data?.ok || typeof data.token !== 'string') throw new Error(data?.error || error?.message || 'Could not regenerate the phone sales link.');
+      const token = data.token.trim();
+      localStorage.setItem('nexfix_phone_sales_token_v1', JSON.stringify({ shopId: phoneSalesShopId, deviceId: phoneSalesMachine.id, token }));
+      setPhoneSalesToken(token);
+      setPhoneSalesLink(buildPhoneSalesLink(token, phoneSalesTimeZone));
+      setPhoneLinkMsg('New secure phone sales link generated. The previous link has been revoked.');
+    } catch (error) {
+      setPhoneLinkMsg(error instanceof Error ? error.message : 'Could not regenerate the phone sales link.');
+    }
+  };
+
   const [form, setForm] = useState(() => {
     const { adminPinHash, ...rest } = state.settings;
     void adminPinHash;
@@ -496,7 +514,7 @@ export default function Settings() {
               {phoneLinkMsg && <p className="mt-2 text-[12px] font-semibold text-emerald-600">{phoneLinkMsg}</p>}
             </div>
             <div className="flex shrink-0 flex-wrap gap-2">
-              <button type="button" onClick={() => void copyPhoneSalesLink()} disabled={!phoneSalesLink} className="btn btn-primary min-h-11"><Copy size={15} /> Copy link</button>
+              <button type="button" onClick={() => void copyPhoneSalesLink()} disabled={!phoneSalesLink} className="btn btn-primary min-h-11"><Copy size={15} /> Copy link</button>{phoneSalesLink&&<button type="button" onClick={() => void regeneratePhoneSalesLink()} className="btn btn-soft min-h-11">Regenerate link</button>}
               {phoneSalesLink && <button type="button" onClick={() => void openPhoneSalesLink()} className="btn btn-soft min-h-11"><ExternalLink size={15} /> Open in browser</button>}
               <button type="button" onClick={() => navigate('/today-links')} className="btn btn-soft min-h-11">Machine details</button>
             </div>
