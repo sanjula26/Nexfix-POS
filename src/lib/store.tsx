@@ -1989,125 +1989,207 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
 
-  const createPurchaseReturn = useCallback((input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): PurchaseReturn | null => {
-  if (purchaseReturnLockRef.current) return null;
-  if (!user || !can('page:purchases')) {
-    pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
-    return null;
-  }
-  const purchase = state.purchases.find(x => x.id === input.purchaseId);
-  if (!purchase || purchase.status !== 'received' || !input.reason.trim()) return null;
-  const existing = state.purchaseReturns || [];
-  const returnedByItem = new Map<number, number>();
-  for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) {
-    returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
-  }
-  const requested = new Map<number, { qty: number; unitIds: string[] }>();
-  for (const line of input.lines) {
-    if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
-    if (!Number.isInteger(line.qty) || line.qty <= 0) continue;
-    const previous = requested.get(line.itemIdx);
-    const unitIds = Array.isArray(line.unitIds) ? line.unitIds.filter(Boolean) : [];
-    requested.set(line.itemIdx, {
-      qty: (previous?.qty || 0) + line.qty,
-      unitIds: [...(previous?.unitIds || []), ...unitIds],
-    });
-  }
-  if (requested.size === 0) return null;
-  const items: PurchaseReturnItem[] = [];
-  const returnedUnitIds = new Set<string>();
-  for (const [itemIdx, request] of requested) {
-    const source = purchase.items[itemIdx];
-    if (!Number.isInteger(source.qty) || source.qty <= 0 || !Number.isFinite(source.cost) || source.cost < 0) return null;
-    const already = returnedByItem.get(itemIdx) || 0;
-    const remaining = Math.max(0, source.qty - already);
-    const product = state.products.find(p => p.id === source.productId);
-    const stock = product?.stock ?? NaN;
-    if (!product || !Number.isFinite(stock) || stock < 0) return null;
-    const tracked = Array.isArray(source.unitIdentifiers) && source.unitIdentifiers.length > 0;
-    const availableUnits = tracked ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock') : [];
-    const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
-    if (request.qty > maxReturnable) return null;
-    let selectedUnitIds: string[] | undefined;
-    if (tracked) {
-      const selected = [...new Set(request.unitIds)];
-      if (selected.length !== request.qty) return null;
-      const availableIds = new Set(availableUnits.map(u => u.id));
-      const expectedIdentifiers = (source.unitIdentifiers || []).map(x => ({
-        imei: x.imei?.trim().toLowerCase() || '',
-        serial: x.serial?.trim().toLowerCase() || '',
-      }));
-      for (const unitId of selected) {
-        const unit = availableUnits.find(u => u.id === unitId);
-        if (!unit || !availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
-        const imei = unit.imei?.trim().toLowerCase() || '';
-        const serial = unit.serial?.trim().toLowerCase() || '';
-        if (!expectedIdentifiers.some(x => x.imei === imei && x.serial === serial)) return null;
-        returnedUnitIds.add(unitId);
-      }
-      selectedUnitIds = selected;
-    } else if (request.unitIds.length) {
+  const createPurchaseReturn = useCallback(async (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): Promise<PurchaseReturn | null> => {
+    if (purchaseReturnLockRef.current) return null;
+    if (!user || !can('page:purchases')) {
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
       return null;
     }
-    items.push({
-      itemIdx, productId: source.productId, name: source.name, qty: request.qty, cost: source.cost, total: request.qty * source.cost,
-      ...(selectedUnitIds ? { unitIds: selectedUnitIds } : {}),
-    });
-  }
-  if (!items.length) return null;
-  purchaseReturnLockRef.current = true;
-  try {
-    const seq = (state.counters.dn || 0) + 1;
-    const ret: PurchaseReturn = {
-      id: uid(), dnNo: 'DN-' + String(seq).padStart(4, '0'), purchaseId: purchase.id, poNo: purchase.poNo,
-      supplierId: purchase.supplierId, supplierName: purchase.supplierName, date: new Date().toISOString(), items,
-      total: items.reduce((a, x) => a + x.total, 0), reason: input.reason.trim(), by: user.email,
-    };
-    let applied = false;
-    setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => {
-      const currentPurchase = prev.purchases.find(x => x.id === purchase.id);
-      if (!currentPurchase || currentPurchase.status !== 'received') return prev;
-      const currentReturnedByItem = new Map<number, number>();
-      for (const existingReturn of prev.purchaseReturns || []) {
-        if (existingReturn.purchaseId !== purchase.id) continue;
-        for (const item of existingReturn.items) {
-          currentReturnedByItem.set(item.itemIdx, (currentReturnedByItem.get(item.itemIdx) || 0) + item.qty);
+    const purchase = state.purchases.find(x => x.id === input.purchaseId);
+    if (!purchase || purchase.status !== 'received' || !input.reason.trim()) return null;
+
+    const existing = state.purchaseReturns || [];
+    const returnedByItem = new Map<number, number>();
+    for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) {
+      returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
+    }
+
+    const requested = new Map<number, { qty: number; unitIds: string[] }>();
+    for (const line of input.lines) {
+      if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
+      if (!Number.isInteger(line.qty) || line.qty <= 0) continue;
+      const previous = requested.get(line.itemIdx);
+      const unitIds = Array.isArray(line.unitIds) ? line.unitIds.filter(Boolean) : [];
+      requested.set(line.itemIdx, {
+        qty: (previous?.qty || 0) + line.qty,
+        unitIds: [...(previous?.unitIds || []), ...unitIds],
+      });
+    }
+    if (requested.size === 0) return null;
+
+    const items: PurchaseReturnItem[] = [];
+    const returnedUnitIds = new Set<string>();
+    for (const [itemIdx, request] of requested) {
+      const source = purchase.items[itemIdx];
+      if (!Number.isInteger(source.qty) || source.qty <= 0 || !Number.isFinite(source.cost) || source.cost < 0) return null;
+      const already = returnedByItem.get(itemIdx) || 0;
+      const remaining = Math.max(0, source.qty - already);
+      const product = state.products.find(p => p.id === source.productId);
+      const stock = product?.stock ?? NaN;
+      if (!product || !Number.isFinite(stock) || stock < 0) return null;
+
+      const tracked = Array.isArray(source.unitIdentifiers) && source.unitIdentifiers.length > 0;
+      const availableUnits = tracked
+        ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock')
+        : [];
+      const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
+      if (request.qty > maxReturnable) return null;
+
+      let selectedUnitIds: string[] | undefined;
+      if (tracked) {
+        const selected = [...new Set(request.unitIds)];
+        if (selected.length !== request.qty) return null;
+        const availableIds = new Set(availableUnits.map(u => u.id));
+        const expectedIdentifiers = (source.unitIdentifiers || []).map(x => ({
+          imei: x.imei?.trim().toLowerCase() || '',
+          serial: x.serial?.trim().toLowerCase() || '',
+        }));
+        for (const unitId of selected) {
+          const unit = availableUnits.find(u => u.id === unitId);
+          if (!unit || !availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
+          const imei = unit.imei?.trim().toLowerCase() || '';
+          const serial = unit.serial?.trim().toLowerCase() || '';
+          if (!expectedIdentifiers.some(x => x.imei === imei && x.serial === serial)) return null;
+          returnedUnitIds.add(unitId);
         }
+        selectedUnitIds = selected;
+      } else if (request.unitIds.length) {
+        return null;
       }
-      for (const item of items) {
-        const source = currentPurchase.items[item.itemIdx];
-        const alreadyReturnedNow = currentReturnedByItem.get(item.itemIdx) || 0;
-        const product = prev.products.find(p => p.id === item.productId);
-        if (!source || source.productId !== item.productId || item.qty > source.qty - alreadyReturnedNow || !product || !Number.isFinite(product.stock) || product.stock < item.qty) return prev;
+
+      items.push({
+        itemIdx,
+        productId: source.productId,
+        name: source.name,
+        qty: request.qty,
+        cost: source.cost,
+        total: request.qty * source.cost,
+        ...(selectedUnitIds ? { unitIds: selectedUnitIds } : {}),
+      });
+    }
+    if (!items.length) return null;
+
+    purchaseReturnLockRef.current = true;
+    try {
+      const cloudEnabled = supabaseConfigured;
+      const online = getConnectivity() === 'online';
+      const returnKey = 'nexfix_pending_purchase_return_v1:' + purchase.id;
+      let returnId = '';
+      if (cloudEnabled) {
+        try {
+          returnId = localStorage.getItem(returnKey)?.trim() || '';
+          if (!returnId) {
+            returnId = crypto.randomUUID();
+            localStorage.setItem(returnKey, returnId);
+          }
+        } catch {
+          returnId = uid();
+        }
+      } else {
+        returnId = uid();
       }
-      for (const unitId of returnedUnitIds) {
-        const unit = (prev.units || []).find(u => u.id === unitId);
-        if (!unit || unit.status !== 'in_stock' || unit.purchaseId !== purchase.id || !items.some(item => item.productId === unit.productId && (purchase.items[item.itemIdx]?.unitIdentifiers || []).some(identifier =>
-          (identifier.imei?.trim().toLowerCase() || '') === (unit.imei?.trim().toLowerCase() || '') &&
-          (identifier.serial?.trim().toLowerCase() || '') === (unit.serial?.trim().toLowerCase() || '')
-        ))) return prev;
+
+      let cloudReturnNo: string | undefined;
+      let cloudTotal: number | undefined;
+
+      if (cloudEnabled) {
+        if (!online) {
+          pushAudit('DENIED', 'Purchase', 'Supplier return blocked while offline because cloud stock must remain authoritative');
+          return null;
+        }
+        const shop = await ensureCloudShop('Nexfix Shop');
+        if (!shop.ok || !shop.shopId) {
+          pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: ' + (shop.error || 'Cloud shop is unavailable'));
+          return null;
+        }
+        const cloudResult = await processPurchaseReturnAtomic({
+          shopId: shop.shopId,
+          returnId,
+          purchaseId: purchase.id,
+          deviceId: getMachineIdentity().id,
+          reason: input.reason.trim(),
+          lines: items.map(item => ({
+            item_idx: item.itemIdx,
+            product_id: item.productId,
+            qty: item.qty,
+            cost: item.cost,
+            ...(item.unitIds?.length ? { unit_ids: item.unitIds } : {}),
+          })),
+        });
+        if (!cloudResult.ok) {
+          pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: ' + (cloudResult.error || 'Return was not committed'));
+          return null;
+        }
+        cloudReturnNo = cloudResult.returnNo;
+        cloudTotal = cloudResult.total;
       }
-      applied = true;
-      return {
-        ...prev,
-        products: prev.products.map(p => {
-          const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
-          return qty ? { ...p, stock: p.stock - qty } : p;
-        }),
-        units: (prev.units || []).map(u => returnedUnitIds.has(u.id)
-          ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` }
-          : u),
-        purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
-        counters: { ...prev.counters, dn: seq },
+
+      const localSeq = (state.counters.dn || 0) + 1;
+      const serverSeq = cloudReturnNo && /^DN-(\d+)$/.test(cloudReturnNo) ? Number(cloudReturnNo.slice(3)) : 0;
+      const seq = Math.max(localSeq, Number.isFinite(serverSeq) ? serverSeq : 0);
+      const ret: PurchaseReturn = {
+        id: returnId,
+        dnNo: cloudReturnNo || 'DN-' + String(seq).padStart(4, '0'),
+        purchaseId: purchase.id,
+        poNo: purchase.poNo,
+        supplierId: purchase.supplierId,
+        supplierName: purchase.supplierName,
+        date: new Date().toISOString(),
+        items,
+        total: cloudTotal ?? items.reduce((a, x) => a + x.total, 0),
+        reason: input.reason.trim(),
+        by: user.email,
       };
-    });
-    if (!applied) return null;
-    pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
-    return ret;
-  } finally {
-    purchaseReturnLockRef.current = false;
-  }
-}, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can, setStateWithInventoryLedger]);
+
+      let applied = false;
+      setStateWithInventoryLedger('PURCHASE_REVERSAL', prev => {
+        const currentPurchase = prev.purchases.find(x => x.id === purchase.id);
+        if (!currentPurchase || currentPurchase.status !== 'received') return prev;
+        const currentReturnedByItem = new Map<number, number>();
+        for (const existingReturn of prev.purchaseReturns || []) {
+          if (existingReturn.purchaseId !== purchase.id) continue;
+          for (const item of existingReturn.items) {
+            currentReturnedByItem.set(item.itemIdx, (currentReturnedByItem.get(item.itemIdx) || 0) + item.qty);
+          }
+        }
+        for (const item of items) {
+          const source = currentPurchase.items[item.itemIdx];
+          const alreadyReturnedNow = currentReturnedByItem.get(item.itemIdx) || 0;
+          const product = prev.products.find(p => p.id === item.productId);
+          if (!source || source.productId !== item.productId || item.qty > source.qty - alreadyReturnedNow || !product || !Number.isFinite(product.stock) || product.stock < item.qty) return prev;
+        }
+        for (const unitId of returnedUnitIds) {
+          const unit = (prev.units || []).find(u => u.id === unitId);
+          if (!unit || unit.status !== 'in_stock' || unit.purchaseId !== purchase.id || !items.some(item => item.productId === unit.productId && (purchase.items[item.itemIdx]?.unitIdentifiers || []).some(identifier =>
+            (identifier.imei?.trim().toLowerCase() || '') === (unit.imei?.trim().toLowerCase() || '') &&
+            (identifier.serial?.trim().toLowerCase() || '') === (unit.serial?.trim().toLowerCase() || '')
+          ))) return prev;
+        }
+        applied = true;
+        return {
+          ...prev,
+          products: prev.products.map(p => {
+            const qty = items.filter(x => x.productId === p.id).reduce((a, x) => a + x.qty, 0);
+            return qty ? { ...p, stock: p.stock - qty } : p;
+          }),
+          units: (prev.units || []).map(u => returnedUnitIds.has(u.id)
+            ? { ...u, status: 'returned' as const, saleId: undefined, saleBillNo: undefined, soldAt: undefined, note: `Returned to supplier via ${ret.dnNo}` }
+            : u),
+          purchaseReturns: [ret, ...(prev.purchaseReturns || [])],
+          counters: { ...prev.counters, dn: seq },
+        };
+      });
+      if (!applied) return null;
+
+      if (cloudEnabled) {
+        try { localStorage.removeItem(returnKey); } catch {}
+      }
+      pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
+      return ret;
+    } finally {
+      purchaseReturnLockRef.current = false;
+    }
+  }, [state.purchases, state.purchaseReturns, state.products, state.units, state.counters.dn, user, pushAudit, can, setStateWithInventoryLedger]);
 
 const deletePurchase = useCallback((id: string) => {
     if (!user || !can('page:purchases') || !can('act:deleteRecords')) {
