@@ -129,6 +129,21 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
 
+  // Kit/BOM definitions are normalized catalog data too. Replace the cloud BOM
+  // for the shop's kit products so removals are reflected, not just additions.
+  const kitProductIds = productRows.filter(p => p.is_kit).map(p => p.id);
+  if (kitProductIds.length) {
+    const { error: deleteKitError } = await supabase.from('kit_items').delete().in('kit_product_id', kitProductIds);
+    if (deleteKitError) return { ok: false, error: `Kit BOM delete: ${deleteKitError.message}` };
+    const kitRows = (state.kitItems || [])
+      .filter(k => kitProductIds.includes(k.kitProductId))
+      .map(k => ({ kit_product_id: k.kitProductId, component_product_id: k.componentProductId, qty: k.qty }));
+    if (kitRows.length) {
+      const { error: insertKitError } = await supabase.from('kit_items').insert(kitRows);
+      if (insertKitError) return { ok: false, error: `Kit BOM insert: ${insertKitError.message}` };
+    }
+  }
+
   const customerRows = state.customers.map(c => ({
     id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
     nic: c.nic || null, address: c.address || null, credit_limit: Math.max(0, Number(c.creditLimit ?? 0) || 0), notes: null,
