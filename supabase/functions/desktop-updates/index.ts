@@ -13,15 +13,38 @@ Deno.serve(async req=>{
     if(!token||!deviceId)return json({ok:false,error:"Authorization and device are required"},401);
     const {data:u,error:ue}=await admin.auth.getUser(token);
     if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
-    const {data:d}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
-    if(!d?.shop_id || d.revoked_at)return json({ok:false,error:"This POS device is not authorized for updates"},403);
-    if(d.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different account"},403);
-    const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",d.shop_id).eq("user_id",u.user.id).eq("active",true).maybeSingle();
-    if(!m)return json({ok:false,error:"User is not an active member of this shop"},403);
+    // Backward-compatible enrollment for desktop clients that already have a valid
+    // Supabase session but were built before client-side device registration.
+    const {data:existing,error:existingError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
+    if(existingError)return json({ok:false,error:"Could not verify POS device authorization"},500);
+    let shopId:string;
+    let role:string;
+    if(existing){
+      if(existing.revoked_at)return json({ok:false,error:"This POS device is not authorized for updates"},403);
+      if(existing.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different account"},403);
+      shopId=String(existing.shop_id);
+      const {data:m,error:me}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
+      if(me)return json({ok:false,error:"Could not verify shop membership"},500);
+      if(!m?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+      role=String(m.role);
+    }else{
+      const {data:members,error:memberError}=await admin.from("shop_memberships").select("shop_id,role").eq("user_id",u.user.id).eq("active",true);
+      if(memberError)return json({ok:false,error:"Could not verify shop membership"},500);
+      if(!members?.length)return json({ok:false,error:"User is not an active member of a shop"},403);
+      if(members.length!==1)return json({ok:false,error:"Multiple active shops require explicit device registration"},403);
+      shopId=String(members[0].shop_id);
+      role=String(members[0].role||"");
+      if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
+      const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:u.user.id,device_id:deviceId});
+      if(insertError){
+        const {data:raced}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
+        if(!raced || raced.revoked_at || raced.user_id!==u.user.id)return json({ok:false,error:"This POS device could not be authorized"},403);
+        shopId=String(raced.shop_id);
+      }
+    }
     const requestUrl=new URL(req.url);
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
-    if(!m?.role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
-    if(wantsDownload && String(m.role)!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
+    if(wantsDownload && role!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
     const STREAM_CHUNK_BYTES=40*1024*1024;
