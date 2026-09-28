@@ -92,7 +92,7 @@ jobs:
           $env:VITE_PUBLIC_APP_URL = "https://sanjula26.github.io/Nexfix-POS/"
           npm run build
           $bundled = (Get-ChildItem -Path dist/assets -File -ErrorAction Stop | ForEach-Object { Get-Content $_.FullName -Raw }) -join [Environment]::NewLine
-          if ($bundled -notmatch 'ocmzgamnehwbkuwkjdrr\\.supabase\\.co') { throw 'Supabase URL was not bundled into the desktop web build.' }
+          if (-not $bundled.Contains('ocmzgamnehwbkuwkjdrr.supabase.co')) { throw 'Supabase URL was not bundled into the desktop web build.' }
           Write-Host 'Supabase client configuration is present in the generated renderer bundle.'
 
       - name: Verify Electron asset paths
