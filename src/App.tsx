@@ -45,7 +45,12 @@ function CloudAuthLifecycle() {
   useEffect(() => {
     if (user) {
       hadLocalSession.current = true;
-      void refreshDesktopUpdaterCredentials().catch(() => {});
+      if (user.role === 'admin') {
+        void refreshDesktopUpdaterCredentials().catch(() => {});
+      } else {
+        const desktop = (window as Window & { nexfixDesktop?: { clearUpdateCredentials?: () => Promise<unknown> } }).nexfixDesktop;
+        void desktop?.clearUpdateCredentials?.().catch(() => {});
+      }
       return;
     }
     if (!hadLocalSession.current) return;
