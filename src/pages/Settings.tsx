@@ -15,7 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
-import { requestLegacyCloudEmailOtp, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
+import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
@@ -234,15 +234,16 @@ export default function Settings() {
     setLegacyOtpBusy(true);
     setLegacyOtpMsg(null);
     try {
-      const result = await requestLegacyCloudEmailOtp(email);
+      const result = await authorizeLegacyCloudPassword(email, cloudSetupPassword);
       if (!result.ok) {
-        setLegacyOtpMsg({ ok: false, text: result.error || 'Could not send the sign-in link.' });
+        setLegacyOtpMsg({ ok: false, text: result.error || 'Cloud Admin authorization failed.' });
         return;
       }
       try { localStorage.setItem('nexfix_cloud_updater_email', email); } catch { /* optional convenience only */ }
-      setLegacyOtpMsg({ ok: true, text: 'Sign-in link sent. Open it from the cloud Admin email; this Windows POS will receive the secure callback automatically.' });
+      setCloudSetupPassword('');
+      setLegacyOtpMsg({ ok: true, text: 'Windows PC authorized successfully. Future private updates can now use secure saved credentials without email links.' });
     } catch (error) {
-      setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Could not send the sign-in link.' });
+      setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud Admin authorization failed.' });
     } finally {
       setLegacyOtpBusy(false);
     }
@@ -631,10 +632,10 @@ export default function Settings() {
                 <p className="text-sm font-bold text-ink">Legacy installation migration — no local password reset</p>
                 <p className="mt-1 text-[11px] leading-5 text-faint">For existing shops that already have local Admin/Cashier accounts, use the provisioned cloud Admin email to authorize this machine. Your existing local passwords stay exactly as they are.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="btn btn-primary" onClick={() => void migrateLegacyUpdater()} disabled={legacyOtpBusy || !desktopApi?.isPackaged}>{legacyOtpBusy ? 'Sending…' : 'Send secure sign-in link'}</button>
+                  <button type="button" className="btn btn-primary" onClick={() => void migrateLegacyUpdater()} disabled={legacyOtpBusy || !desktopApi?.isPackaged || cloudSetupPassword.length < 12}>{legacyOtpBusy ? 'Authorizing…' : 'Authorize this Windows PC'}</button>
                 </div>
                 {legacyOtpMsg && <p className={`mt-2 text-[11px] font-semibold ${legacyOtpMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{legacyOtpMsg.text}</p>}
-                <p className="mt-2 text-[10px] text-faint">This uses Supabase PKCE Magic Link authentication, so the existing link-only email works; no 6-digit code or email-template edit is required.</p>
+                <p className="mt-2 text-[10px] text-faint">Uses the existing Cloud Admin email + password above. No email, rate-limit, deep-link, or 6-digit code is needed. Your local POS Admin/Cashier passwords are not changed.</p>
               </div>
             </div>
           </div>
