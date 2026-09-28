@@ -302,7 +302,7 @@ export default function Login() {
       }
       if (remember) saveRememberedLogin(mail, loginRole);
       else clearRememberedLogin(loginRole);
-      void ensureCloudSession(mail, password, mail).catch(() => {});
+      void ensureCloudSession(mail, password, mail, loginRole).catch(() => {});
       window.setTimeout(() => {
         setLoading(prev => {
           if (prev) setError('Session did not start. Clear site data (or use a private window) and try again.');
