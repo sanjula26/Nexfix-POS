@@ -64,3 +64,39 @@ export async function verifyLegacyCloudEmailOtp(
     ? { ok: true }
     : { ok: false, error: 'Email verified, but this machine is not yet authorized for updates' };
 }
+
+export async function completeLegacyCloudEmailMagicLink(
+  code: string,
+  flowId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  const normalizedCode = code.trim();
+  if (!normalizedCode) return { ok: false, error: 'The cloud sign-in link did not contain an authorization code' };
+
+  const { data, error } = await supabase.auth.exchangeCodeForSession(
+    normalizedCode,
+    flowId ? { flowId } : undefined,
+  );
+  if (error || !data.session) {
+    return { ok: false, error: error?.message || 'The cloud sign-in link could not create a session' };
+  }
+
+  const desktop = (window as Window & {
+    nexfixDesktop?: {
+      saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
+    };
+  }).nexfixDesktop;
+  if (desktop?.saveCloudUpdaterRecovery && data.session.user?.id && data.session.user.email && data.session.refresh_token) {
+    const saved = await desktop.saveCloudUpdaterRecovery({
+      email: data.session.user.email,
+      userId: data.session.user.id,
+      refreshToken: data.session.refresh_token,
+    });
+    if (!saved?.ok) return { ok: false, error: saved?.error || 'Cloud authorization was verified but could not be stored securely' };
+  }
+
+  const updaterReady = await refreshDesktopUpdaterCredentials();
+  return updaterReady
+    ? { ok: true }
+    : { ok: false, error: 'Email sign-in succeeded, but this machine is not yet authorized for updates' };
+}
