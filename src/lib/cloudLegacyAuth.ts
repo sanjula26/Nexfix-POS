@@ -45,19 +45,38 @@ export async function verifyLegacyCloudEmailOtp(
     return { ok: false, error: error?.message || 'Email verification did not create a cloud session' };
   }
 
+  // Supabase can return the session before the user fields are fully
+  // hydrated in some desktop PKCE callback timings. Resolve the authenticated
+  // user explicitly before persisting the recovery credential.
+  const userResult = data.session.user?.id && data.session.user?.email
+    ? { data: { user: data.session.user }, error: null }
+    : await supabase.auth.getUser();
+  const callbackUser = userResult.data?.user;
+  const callbackEmail = callbackUser?.email?.trim().toLowerCase() || '';
+  const callbackUserId = callbackUser?.id?.trim() || '';
+  const callbackRefreshToken = data.session.refresh_token?.trim() || '';
+
+  if (!callbackEmail || !callbackUserId || !callbackRefreshToken) {
+    return { ok: false, error: 'Cloud sign-in succeeded, but Supabase did not return a complete recovery credential. Please request a new sign-in link.' };
+  }
+
   const desktop = (window as Window & {
     nexfixDesktop?: {
       saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
     };
   }).nexfixDesktop;
-  if (desktop?.saveCloudUpdaterRecovery && data.session.user?.id && data.session.user.email && data.session.refresh_token) {
+  if (desktop?.saveCloudUpdaterRecovery) {
     const saved = await desktop.saveCloudUpdaterRecovery({
-      email: data.session.user.email,
-      userId: data.session.user.id,
-      refreshToken: data.session.refresh_token,
+      email: callbackEmail,
+      userId: callbackUserId,
+      refreshToken: callbackRefreshToken,
     });
     if (!saved?.ok) return { ok: false, error: saved?.error || 'Cloud authorization was verified but could not be stored securely' };
+  } else {
+    return { ok: false, error: 'Secure Windows cloud storage is unavailable. Please restart the installed POS and try again.' };
   }
+
+  try { localStorage.setItem('nexfix_cloud_updater_email', callbackEmail); } catch { /* optional convenience only */ }
 
   const updaterReady = await refreshDesktopUpdaterCredentials();
   return updaterReady
