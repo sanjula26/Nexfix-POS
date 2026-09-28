@@ -41,6 +41,11 @@ Deno.serve(async req=>{
       shopId=String(members[0].shop_id);
       role=String(members[0].role||"");
       if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
+      // Legacy cloud-sync tables require a matching pos_shops row. Some existing
+      // accounts have an active shop_memberships row but no legacy pos_shops row,
+      // so create the compatibility row before registering the device.
+      const {error:shopError}=await admin.from("pos_shops").upsert({shop_id:shopId,created_by:u.user.id},{onConflict:"shop_id",ignoreDuplicates:true});
+      if(shopError)return json({ok:false,error:"Could not initialize the POS shop authorization"},500);
       const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:u.user.id,device_id:deviceId});
       if(insertError){
         // A concurrent registration may have won the race. Re-read it and
