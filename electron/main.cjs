@@ -21,23 +21,23 @@ function isTrustedRenderer(event){
   return isAllowedNavigation(frame.url);
 }
 
-const SECURE_RECOVERY_FILE=path.join(app.getPath('userData'),'secure-recovery.json');
+function getSecureRecoveryFile(){ return path.join(app.getPath('userData'),'nexfix-secure','cloud-updater-recovery.json'); }
 
 function readSecureRecoveryFile(){
   try{
-    if(!fs.existsSync(SECURE_RECOVERY_FILE)) return {};
-    const raw=fs.readFileSync(SECURE_RECOVERY_FILE,'utf8');
+    if(!fs.existsSync(getSecureRecoveryFile())) return {};
+    const raw=fs.readFileSync(getSecureRecoveryFile(),'utf8');
     const parsed=JSON.parse(raw);
     return parsed && typeof parsed==='object' ? parsed : {};
   }catch{return {};}
 }
 
 function writeSecureRecoveryFile(value){
-  const dir=path.dirname(SECURE_RECOVERY_FILE);
+  const dir=path.dirname(getSecureRecoveryFile());
   fs.mkdirSync(dir,{recursive:true});
-  const tmp=SECURE_RECOVERY_FILE+'.tmp';
+  const tmp=getSecureRecoveryFile()+'.tmp';
   fs.writeFileSync(tmp,JSON.stringify(value),'utf8');
-  fs.renameSync(tmp,SECURE_RECOVERY_FILE);
+  fs.renameSync(tmp,getSecureRecoveryFile());
 }
 function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
 
@@ -112,7 +112,7 @@ function setupAutoUpdater(){
       try{
         const value=readSecureRecoveryFile();
         delete value.cloudUpdaterRecovery;
-        if(Object.keys(value).length===0){try{fs.rmSync(SECURE_RECOVERY_FILE,{force:true});}catch{}}
+        if(Object.keys(value).length===0){try{fs.rmSync(getSecureRecoveryFile(),{force:true});}catch{}}
         else writeSecureRecoveryFile(value);
         return {ok:true};
       }catch(error){return {ok:false,error:error?.message||String(error)};}
