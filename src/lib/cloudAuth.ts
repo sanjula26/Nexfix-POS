@@ -2,13 +2,46 @@ import { supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop, registerDesktopUpdaterDevice, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
+type CloudUpdaterRecovery = { email: string; userId: string; refreshToken: string };
+
 function getDesktopUpdaterApi() {
   return (window as Window & {
     nexfixDesktop?: {
       setUpdateCredentials?: (payload: { token: string; deviceId: string }) => Promise<unknown>;
       clearUpdateCredentials?: () => Promise<unknown>;
+      saveCloudUpdaterRecovery?: (payload: CloudUpdaterRecovery) => Promise<{ ok?: boolean; error?: string }>;
+      loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
     };
   }).nexfixDesktop;
+}
+
+async function saveCloudUpdaterRecovery(session: { user?: { id?: string | null; email?: string | null } | null; refresh_token?: string | null }): Promise<void> {
+  const desktop = getDesktopUpdaterApi();
+  if (!desktop?.saveCloudUpdaterRecovery) return;
+  const email = session.user?.email?.trim().toLowerCase() || '';
+  const userId = session.user?.id?.trim() || '';
+  const refreshToken = session.refresh_token?.trim() || '';
+  if (!email || !userId || refreshToken.length < 20) return;
+  await desktop.saveCloudUpdaterRecovery({ email, userId, refreshToken });
+}
+
+async function restoreCloudUpdaterRecovery(email: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase || !supabaseConfigured) return { ok: false, error: 'Cloud authentication is not configured' };
+  const desktop = getDesktopUpdaterApi();
+  if (!desktop?.loadCloudUpdaterRecovery) return { ok: false, error: 'Secure cloud recovery is available only in the installed Windows POS' };
+  const wanted = email.trim().toLowerCase();
+  if (!wanted) return { ok: false, error: 'Cloud account email is required' };
+  const stored = await desktop.loadCloudUpdaterRecovery(wanted);
+  if (!stored?.ok) return { ok: false, error: stored?.error || 'Stored cloud recovery credential is unavailable' };
+  if (!stored.found || !stored.refreshToken || !stored.userId) return { ok: false, error: 'No saved cloud updater authorization exists for this admin account' };
+  const { data, error } = await supabase.auth.refreshSession({ refresh_token: stored.refreshToken });
+  if (error || !data.session) return { ok: false, error: error?.message || 'Saved cloud updater authorization has expired. Re-authorize this machine.' };
+  if (data.user?.id !== stored.userId || data.user.email?.trim().toLowerCase() !== wanted) {
+    return { ok: false, error: 'Saved cloud updater authorization belongs to a different cloud account' };
+  }
+  await saveCloudUpdaterRecovery(data.session);
+  const updaterReady = await refreshDesktopUpdaterCredentials();
+  return updaterReady ? { ok: true } : { ok: false, error: 'Cloud session restored, but this machine is not authorized for updates' };
 }
 
 function getMachineId(): string {
@@ -164,7 +197,9 @@ export async function provisionCloudUpdaterAccount(
 
 if (supabase) {
   supabase.auth.onAuthStateChange((_event, session) => {
-    syncDesktopUpdaterCredentials(session?.access_token);
+    if (session) {
+      void saveCloudUpdaterRecovery(session).catch(() => {});
+    }
   });
 }
 
@@ -173,10 +208,7 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-  if (error) {
-    syncDesktopUpdaterCredentials();
-    return { ok: false, error: error.message };
-  }
+  if (error) return { ok: false, error: error.message };
   // Do not wait for device/shop provisioning here. The caller may be the local
   // login path, which must stay fast and offline-capable. The updater refresh
   // path waits for this same in-flight login when necessary.
@@ -191,37 +223,39 @@ export async function ensureCloudSession(
   email: string,
   password: string,
   fullName: string,
+  role: 'admin' | 'cashier' = 'cashier',
 ): Promise<{ ok: boolean; error?: string; needsEmailConfirmation?: boolean }> {
   void fullName;
+  if (role !== 'admin') return { ok: true };
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
   const loginPromise = (async () => {
     try {
-      return await signInToCloud(email, password);
+      const passwordResult = await signInToCloud(email, password);
+      if (passwordResult.ok) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) await saveCloudUpdaterRecovery(data.session);
+        return await refreshDesktopUpdaterCredentials()
+          ? { ok: true }
+          : { ok: true, error: 'Cloud session is signed in, but shop/device authorization is not provisioned' };
+      }
+
+      // Legacy installations may have a local Admin password that is different
+      // from the provisioned cloud password. Restore the one-time migrated
+      // cloud refresh capability instead of asking the user to recreate accounts.
+      return await restoreCloudUpdaterRecovery(email);
     } catch (error) {
-      // Local POS login must remain usable when Supabase is unavailable.
       return { ok: false, error: error instanceof Error ? error.message : 'Cloud session could not be established' };
     }
   })();
   cloudLoginPromise = loginPromise;
   try {
-    const result = await loginPromise;
-    if (result.ok) {
-      // Finish the same cloud-login path by registering this machine. This is
-      // awaited by Settings if the user opens App Updates immediately after
-      // logging in, eliminating the old timing/race failure.
-      const updaterReady = await refreshDesktopUpdaterCredentials();
-      return updaterReady
-        ? { ok: true }
-        : { ok: true, error: 'Cloud session is signed in, but shop/device authorization is not provisioned' };
-    }
-    return result;
+    return await loginPromise;
   } finally {
     if (cloudLoginPromise === loginPromise) cloudLoginPromise = null;
   }
 }
-
 export async function signOutFromCloud(): Promise<void> {
   try { syncDesktopUpdaterCredentials(); } catch { /* updater credentials are memory-only and will expire with the app */ }
   if (!supabase) return;
