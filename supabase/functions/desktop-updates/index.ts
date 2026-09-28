@@ -15,19 +15,13 @@ Deno.serve(async req=>{
     if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
     // Backward-compatible enrollment for desktop clients that already have a valid
     // Supabase session but were built before client-side device registration.
-    const {data:existing,error:existingError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
+    const {data:existingRows,error:existingError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
     if(existingError)return json({ok:false,error:"Could not verify POS device authorization"},500);
+    if((existingRows?.length||0)>1)return json({ok:false,error:"This POS device has ambiguous registrations and must be re-authorized by support"},409);
+    const existing=existingRows?.[0]||null;
     let shopId:string;
     let role:string;
     if(existing){
-      if(existing.revoked_at)return json({ok:false,error:"This POS device is not authorized for updates"},403);
-      if(existing.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different account"},403);
-      shopId=String(existing.shop_id);
-      const {data:m,error:me}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
-      if(me)return json({ok:false,error:"Could not verify shop membership"},500);
-      if(!m?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
-      role=String(m.role);
-    }else{
       const {data:members,error:memberError}=await admin.from("shop_memberships").select("shop_id,role").eq("user_id",u.user.id).eq("active",true);
       if(memberError)return json({ok:false,error:"Could not verify shop membership"},500);
       if(!members?.length)return json({ok:false,error:"User is not an active member of a shop"},403);
@@ -37,14 +31,16 @@ Deno.serve(async req=>{
       if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
       const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:u.user.id,device_id:deviceId});
       if(insertError){
-        const {data:raced}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
-        if(!raced || raced.revoked_at || raced.user_id!==u.user.id)return json({ok:false,error:"This POS device could not be authorized"},403);
+        const {data:racedRows}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
+        if((racedRows?.length||0)!==1)return json({ok:false,error:"This POS device could not be authorized"},403);
+        const raced=racedRows[0];
+        if(raced.revoked_at || raced.user_id!==u.user.id)return json({ok:false,error:"This POS device could not be authorized"},403);
         shopId=String(raced.shop_id);
       }
     }
     const requestUrl=new URL(req.url);
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
-    if(wantsDownload && role!=="admin") return json({ok:false,error:"Only the shop admin can download the Windows installer"},403);
+    if(role!=="admin") return json({ok:false,error:"Only the shop admin can use private Windows updater authorization"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
     const STREAM_CHUNK_BYTES=40*1024*1024;
