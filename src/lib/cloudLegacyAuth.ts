@@ -24,6 +24,65 @@ export async function requestLegacyCloudEmailOtp(email: string): Promise<{ ok: b
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
+export async function authorizeLegacyCloudPassword(
+  email: string,
+  password: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return { ok: false, error: 'Cloud account email is required' };
+  if (password.length < 12) return { ok: false, error: 'Cloud account password must be at least 12 characters' };
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
+  });
+  if (error || !data.session) {
+    return { ok: false, error: error?.message || 'Cloud Admin password sign-in failed' };
+  }
+
+  const userResult = data.session.user?.id && data.session.user?.email
+    ? { data: { user: data.session.user }, error: null }
+    : await supabase.auth.getUser();
+  const user = userResult.data?.user;
+  const userId = user?.id?.trim() || '';
+  const userEmail = user?.email?.trim().toLowerCase() || '';
+  const refreshToken = data.session.refresh_token?.trim() || '';
+  if (!userId || !userEmail || !refreshToken) {
+    return { ok: false, error: 'Cloud sign-in succeeded, but the secure recovery credential was incomplete. Please try again.' };
+  }
+  if (userEmail !== normalizedEmail) {
+    return { ok: false, error: 'The signed-in cloud account does not match the requested Admin email.' };
+  }
+
+  const desktop = (window as Window & {
+    nexfixDesktop?: {
+      saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
+    };
+  }).nexfixDesktop;
+  if (!desktop?.saveCloudUpdaterRecovery) {
+    return { ok: false, error: 'Secure Windows cloud storage is unavailable. Please restart the installed POS and try again.' };
+  }
+
+  const saved = await desktop.saveCloudUpdaterRecovery({
+    email: userEmail,
+    userId,
+    refreshToken,
+  });
+  if (!saved?.ok) {
+    return { ok: false, error: saved?.error || 'Cloud authorization was verified but could not be stored securely' };
+  }
+
+  try { localStorage.setItem('nexfix_cloud_updater_email', userEmail); } catch { /* optional convenience only */ }
+
+  const updaterReady = await refreshDesktopUpdaterCredentials();
+  return updaterReady
+    ? { ok: true }
+    : { ok: false, error: 'Cloud Admin sign-in succeeded, but this machine is not yet authorized for private updates' };
+}
+
 export async function verifyLegacyCloudEmailOtp(
   email: string,
   token: string,
