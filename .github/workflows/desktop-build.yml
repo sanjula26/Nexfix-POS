@@ -319,11 +319,33 @@ jobs:
           }
 
           function Get-StorageObjectSize([string]$path) {
-            $body = @{ prefix = $path; limit = 10; offset = 0 } | ConvertTo-Json -Compress
+            $lastSlash = $path.LastIndexOf('/')
+            if ($lastSlash -lt 0) {
+              $prefix = ''
+              $filename = $path
+            } else {
+              $prefix = $path.Substring(0, $lastSlash + 1)
+              $filename = $path.Substring($lastSlash + 1)
+            }
+
+            $body = @{ prefix = $prefix; limit = 100; offset = 0 } | ConvertTo-Json -Compress
             $listUrl = "$storageUrl/storage/v1/object/list/$bucket"
             $rows = @(Invoke-RestMethod -Uri $listUrl -Method Post -Headers $storageHeaders -Body $body)
-            $matches = @($rows | Where-Object { $_.name -eq $path -or $_.name -eq ([System.IO.Path]::GetFileName($path)) })
-            if ($matches.Count -ne 1) { throw "Expected exactly one uploaded storage object: $path (found $($matches.Count))" }
+
+            # Storage list results may return names relative to the requested prefix or
+            # as full object keys. Accept either form, but require an exact filename/path match.
+            $matches = @($rows | Where-Object {
+              $_.name -eq $filename -or
+              $_.name -eq $path
+            })
+
+            if ($matches.Count -ne 1) {
+              Write-Host "Storage list verification returned $($rows.Count) row(s) for prefix '$prefix'. Looking for '$filename' or '$path'."
+              Write-Host "Raw Storage list response:"
+              ($rows | ConvertTo-Json -Depth 20) | Write-Host
+              throw "Expected exactly one uploaded storage object: $path (found $($matches.Count))"
+            }
+
             $metadata = $matches[0].metadata
             if ($null -eq $metadata) { throw "Storage object metadata is missing: $path" }
             if ($metadata -is [string]) { $metadata = $metadata | ConvertFrom-Json }
