@@ -13,6 +13,33 @@ let updateInstallScheduled = false;
 let updateAuthToken = '';
 let updateDeviceId = '';
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
+const AUTH_PROTOCOL = 'nexfix';
+let pendingAuthCallback = null;
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+function emitAuthCallback(url){
+  try{
+    const parsed = new URL(url);
+    if(parsed.protocol !== AUTH_PROTOCOL + ':' || parsed.hostname !== 'auth' || parsed.pathname !== '/callback') return;
+    const code = parsed.searchParams.get('code')?.trim() || '';
+    if(!code || code.length > 4096) return;
+    const flowId = parsed.searchParams.get('sb_flow_id')?.trim() || '';
+    pendingAuthCallback = { code, flowId: flowId || undefined };
+    const win = getMainWindow();
+    if(win && !win.isDestroyed()) win.webContents.send('auth:callback', pendingAuthCallback);
+  }catch{}
+}
+
+if(!singleInstanceLock){
+  app.quit();
+}else{
+  app.on('second-instance',(_event,commandLine)=>{
+    const url = [...commandLine].reverse().find(value => typeof value === 'string' && value.toLowerCase().startsWith(AUTH_PROTOCOL + '://'));
+    if(url) emitAuthCallback(url);
+    const win = getMainWindow();
+    if(win && !win.isDestroyed()){ if(win.isMinimized()) win.restore(); win.focus(); }
+  });
+}
 
 function getMainWindow(){ return BrowserWindow.getAllWindows()[0] || null; }
 
@@ -268,6 +295,11 @@ ipcMain.handle('app:version',()=>app.getVersion());
 ipcMain.handle('app:copy-text',(_event,text)=>{if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
 ipcMain.handle('app:open-external',async(_event,url)=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
 app.whenReady().then(()=>{
+  if(process.platform==='win32' && app.isPackaged){
+    try{ app.setAsDefaultProtocolClient(AUTH_PROTOCOL); }catch{}
+  }
+  const startupAuthUrl = process.argv.find(value => typeof value === 'string' && value.toLowerCase().startsWith(AUTH_PROTOCOL + '://'));
+  if(startupAuthUrl) emitAuthCallback(startupAuthUrl);
   session.defaultSession.setPermissionRequestHandler((webContents,permission,callback)=>callback(permission==='camera'&&isAllowedNavigation(webContents.getURL())));
   setupAutoUpdater(); createWindow();
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});
