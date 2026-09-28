@@ -69,11 +69,11 @@ Deno.serve(async req=>{
     const STREAM_CHUNK_BYTES=40*1024*1024;
     const chunkCount=Math.ceil(Number(r.installer_size)/STREAM_CHUNK_BYTES);
     const chunkPaths=Array.from({length:chunkCount},(_,i)=>`${r.installer_path}.part${String(i+1).padStart(4,"0")}`);
-    const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,300);
+    const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,900);
     if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
     const streamUrl=new URL(req.url); streamUrl.searchParams.set("download","stream");
     streamUrl.pathname=streamUrl.pathname.replace(/\/latest\.(?:yml|yaml)$/,"");
-    if(wantsDownload) return json({ok:true,url:streamUrl.toString(),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
+    if(wantsDownload) return json({ok:true,url:streamUrl.toString(),chunks:signed.map(x=>x.signedUrl),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
     if(requestUrl.searchParams.get("download")==="stream"){
       const body=new ReadableStream({start(controller){(async()=>{try{
         for(const item of signed){
