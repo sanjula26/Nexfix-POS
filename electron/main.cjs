@@ -205,7 +205,6 @@ function setupAutoUpdater(){
       if(!updateAuthToken||!updateDeviceId)return{supported:true,ok:false,error:'Update authorization is not ready. Please sign in to the POS first.'};
       let targetPath='';
       try{
-        const authHeaders={Authorization:`Bearer ${updateAuthToken}`,'X-Nexfix-Device':updateDeviceId,Accept:'application/json'};
         const data=await fetchAuthorizedUpdatePackage();
         const safeName=path.basename(typeof data.name==='string'&&data.name?data.name:'Nexfix-POS-installer.exe').replace(/[<>:"/\\|?*]/g,'_');
         const downloadsDir=app.getPath('downloads');
