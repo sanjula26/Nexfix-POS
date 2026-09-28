@@ -315,7 +315,7 @@ jobs:
           $installerUploadedBytes = [int64]0
           foreach ($i in 1..$installerParts) {
             $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
+            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Get -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
             $size = [int64]$info.metadata.size
             $expected = [int64][math]::Min($chunkBytes, $installer.Length - (($i - 1) * $chunkBytes))
             if ($size -ne $expected) { throw "Installer chunk size mismatch: $path => $size != $expected" }
@@ -328,7 +328,7 @@ jobs:
           $portableUploadedBytes = [int64]0
           foreach ($i in 1..$portableParts) {
             $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
+            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Get -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
             $size = [int64]$info.metadata.size
             $expected = [int64][math]::Min($chunkBytes, $portable.Length - (($i - 1) * $chunkBytes))
             if ($size -ne $expected) { throw "Portable chunk size mismatch: $path => $size != $expected" }
