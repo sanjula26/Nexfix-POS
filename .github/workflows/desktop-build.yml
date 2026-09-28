@@ -79,6 +79,10 @@ jobs:
       - name: Build web app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
+          # Supabase publishable client configuration is safe to ship in the renderer.
+          # The service-role key is never exposed to Vite/browser code.
+          VITE_SUPABASE_URL: https://ocmzgamnehwbkuwkjdrr.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-
         run: |
           if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
           $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
