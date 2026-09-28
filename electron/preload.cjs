@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
   downloadAuthorizedInstaller: () => ipcRenderer.invoke('update:downloadAuthorizedInstaller'),
+  onAuthCallback: (listener) => {
+    const handler = (_event, payload) => listener(payload);
+    ipcRenderer.on('auth:callback', handler);
+    return () => ipcRenderer.removeListener('auth:callback', handler);
+  },
   onUpdateEvent: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on('update:event', handler);
