@@ -42,6 +42,20 @@ export async function verifyLegacyCloudEmailOtp(
     return { ok: false, error: error?.message || 'Email verification did not create a cloud session' };
   }
 
+  const desktop = (window as Window & {
+    nexfixDesktop?: {
+      saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
+    };
+  }).nexfixDesktop;
+  if (desktop?.saveCloudUpdaterRecovery && data.session.user?.id && data.session.user.email && data.session.refresh_token) {
+    const saved = await desktop.saveCloudUpdaterRecovery({
+      email: data.session.user.email,
+      userId: data.session.user.id,
+      refreshToken: data.session.refresh_token,
+    });
+    if (!saved?.ok) return { ok: false, error: saved?.error || 'Cloud authorization was verified but could not be stored securely' };
+  }
+
   const updaterReady = await refreshDesktopUpdaterCredentials();
   return updaterReady
     ? { ok: true }
