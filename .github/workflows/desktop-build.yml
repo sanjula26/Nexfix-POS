@@ -305,38 +305,45 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($portable.Name)." }
 
           $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
-          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
-          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
 
+          # Verify storage metadata before changing the active release pointer. The object-info
+          # endpoint returns the authoritative stored object size; PowerShell's HEAD response
+          # headers can expose a synthetic Content-Length (for example, 11 bytes) on Supabase
+          # Storage and must not be used as the object size.
           $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
           $portableParts = [math]::Ceiling([double]$portable.Length / $chunkBytes)
           $installerUploadedBytes = [int64]0
           foreach ($i in 1..$installerParts) {
             $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
-            $lengthValues = @($head.Headers['Content-Length']) | Where-Object { $_ -ne $null -and $_.ToString().Trim() -ne '' }
-            if ($lengthValues.Count -lt 1) { throw "Installer chunk Content-Length header is missing: $path" }
-            $length = [int64]($lengthValues[0].ToString().Trim())
-            if ($length -le 0) { throw "Installer chunk has invalid Content-Length: $path" }
-            $installerUploadedBytes += $length
+            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
+            $size = [int64]$info.metadata.size
+            $expected = [int64][math]::Min($chunkBytes, $installer.Length - (($i - 1) * $chunkBytes))
+            if ($size -ne $expected) { throw "Installer chunk size mismatch: $path => $size != $expected" }
+            $installerUploadedBytes += $size
           }
           if ($installerUploadedBytes -ne [int64]$installer.Length) {
             throw "Installer chunk byte total mismatch: $installerUploadedBytes != $($installer.Length)"
           }
+
           $portableUploadedBytes = [int64]0
           foreach ($i in 1..$portableParts) {
             $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY }
-            $lengthValues = @($head.Headers['Content-Length']) | Where-Object { $_ -ne $null -and $_.ToString().Trim() -ne '' }
-            if ($lengthValues.Count -lt 1) { throw "Portable chunk Content-Length header is missing: $path" }
-            $length = [int64]($lengthValues[0].ToString().Trim())
-            if ($length -le 0) { throw "Portable chunk has invalid Content-Length: $path" }
-            $portableUploadedBytes += $length
+            $info = Invoke-RestMethod -Uri "$storageUrl/storage/v1/object/info/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
+            $size = [int64]$info.metadata.size
+            $expected = [int64][math]::Min($chunkBytes, $portable.Length - (($i - 1) * $chunkBytes))
+            if ($size -ne $expected) { throw "Portable chunk size mismatch: $path => $size != $expected" }
+            $portableUploadedBytes += $size
           }
           if ($portableUploadedBytes -ne [int64]$portable.Length) {
             throw "Portable chunk byte total mismatch: $portableUploadedBytes != $($portable.Length)"
           }
+
+          # Only now switch the active release. A failed upload/verification must never
+          # leave the database pointing at an incomplete release.
+          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
+          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
+
           Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts, portable $portableParts parts; byte totals exact)"
 
       - name: Verify private Windows release
