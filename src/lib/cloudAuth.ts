@@ -172,6 +172,9 @@ export async function provisionCloudUpdaterAccount(
     }
   }
 
+  const { data: provisionedSession } = await supabase.auth.getSession();
+  if (provisionedSession.session) await saveCloudUpdaterRecovery(provisionedSession.session);
+
   const existingShop = await ensureCloudShop(normalizedShopName);
   if (existingShop.ok && existingShop.shopId) {
     const updaterReady = await refreshDesktopUpdaterCredentials();
