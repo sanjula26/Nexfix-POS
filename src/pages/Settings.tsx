@@ -152,7 +152,9 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
   const [appVersion, setAppVersion] = useState('3.0.6');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
-  const [cloudSetupEmail, setCloudSetupEmail] = useState(() => state.users.find(u => u.role === 'admin' && u.active)?.email || '');
+  const [cloudSetupEmail, setCloudSetupEmail] = useState(() => {
+    try { return localStorage.getItem('nexfix_cloud_updater_email')?.trim() || ''; } catch { return ''; }
+  });
   const [cloudSetupPassword, setCloudSetupPassword] = useState('');
   const [cloudSetupBusy, setCloudSetupBusy] = useState(false);
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -188,6 +190,7 @@ export default function Settings() {
         setCloudSetupMsg({ ok: false, text: result.error || 'Cloud updater setup could not be completed.' });
         return;
       }
+      try { localStorage.setItem('nexfix_cloud_updater_email', cloudSetupEmail.trim().toLowerCase()); } catch { /* optional convenience only */ }
       setCloudSetupPassword('');
       setCloudSetupMsg({ ok: true, text: 'Cloud updater authorization is ready on this machine. You can now check for updates.' });
       setUpdateState({ status: 'idle' });
@@ -235,6 +238,7 @@ export default function Settings() {
         setLegacyOtpMsg({ ok: false, text: result.error || 'Cloud Admin verification failed.' });
         return;
       }
+      try { localStorage.setItem('nexfix_cloud_updater_email', email); } catch { /* optional convenience only */ }
       setLegacyOtp('');
       setLegacyOtpSent(false);
       setLegacyOtpMsg({ ok: true, text: 'Existing local Admin/Cashier accounts were kept unchanged. This Windows machine is now authorized for private updates.' });
@@ -613,7 +617,7 @@ export default function Settings() {
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Cloud update authorization</h3>
           <p className="text-xs text-faint mb-4">One-time setup for the private Windows updater. This creates the cloud account and first shop only when you explicitly start this setup; normal local POS login remains unchanged.</p>
           <div className="grid sm:grid-cols-2 gap-3.5">
-            <Field label="Cloud account email"><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="admin@example.com" autoComplete="email" /></Field>
+            <Field label="Cloud account email" hint="Use the Supabase Auth Admin email; it may be different from the local POS login email."><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="cloud-admin@example.com" autoComplete="email" /></Field>
             <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
