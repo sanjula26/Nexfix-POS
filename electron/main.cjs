@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, clipboard, shell } = require('electron');
+const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -14,6 +14,31 @@ let updateDeviceId = '';
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
 
 function getMainWindow(){ return BrowserWindow.getAllWindows()[0] || null; }
+
+function isTrustedRenderer(event){
+  const frame=event?.senderFrame;
+  if(!frame || frame!==event.sender.mainFrame) return false;
+  return isAllowedNavigation(frame.url);
+}
+
+const SECURE_RECOVERY_FILE=path.join(app.getPath('userData'),'secure-recovery.json');
+
+function readSecureRecoveryFile(){
+  try{
+    if(!fs.existsSync(SECURE_RECOVERY_FILE)) return {};
+    const raw=fs.readFileSync(SECURE_RECOVERY_FILE,'utf8');
+    const parsed=JSON.parse(raw);
+    return parsed && typeof parsed==='object' ? parsed : {};
+  }catch{return {};}
+}
+
+function writeSecureRecoveryFile(value){
+  const dir=path.dirname(SECURE_RECOVERY_FILE);
+  fs.mkdirSync(dir,{recursive:true});
+  const tmp=SECURE_RECOVERY_FILE+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify(value),'utf8');
+  fs.renameSync(tmp,SECURE_RECOVERY_FILE);
+}
 function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
 
 function configureUpdaterCredentials(){
@@ -56,6 +81,42 @@ function setupAutoUpdater(){
       if(!updateInstallScheduled){updateInstallScheduled=true;setTimeout(()=>{try{autoUpdater.quitAndInstall(false,true);}catch(error){updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});}},600);}
     });
     autoUpdater.on('error',error=>{updateDownloadActive=false;updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});});
+    ipcMain.handle('cloud-recovery:save',(event,payload)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+      const email=typeof payload?.email==='string'?payload.email.trim().toLowerCase():'';
+      const userId=typeof payload?.userId==='string'?payload.userId.trim():'';
+      const refreshToken=typeof payload?.refreshToken==='string'?payload.refreshToken.trim():'';
+      if(!email || !userId || refreshToken.length<20 || refreshToken.length>4096) return {ok:false,error:'Invalid cloud recovery credential'};
+      try{
+        const encrypted=safeStorage.encryptString(JSON.stringify({email,userId,refreshToken,updatedAt:new Date().toISOString()})).toString('base64');
+        writeSecureRecoveryFile({version:1,cloudUpdaterRecovery:encrypted});
+        return {ok:true};
+      }catch(error){ return {ok:false,error:error?.message||String(error)}; }
+    });
+    ipcMain.handle('cloud-recovery:load',(event,email)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+      const wanted=typeof email==='string'?email.trim().toLowerCase():'';
+      if(!wanted) return {ok:false,error:'Cloud account email is required'};
+      try{
+        const encrypted=readSecureRecoveryFile().cloudUpdaterRecovery;
+        if(typeof encrypted!=='string'||!encrypted) return {ok:true,found:false};
+        const parsed=JSON.parse(safeStorage.decryptString(Buffer.from(encrypted,'base64')));
+        if(!parsed || typeof parsed!=='object' || parsed.email!==wanted || typeof parsed.userId!=='string' || typeof parsed.refreshToken!=='string') return {ok:true,found:false};
+        return {ok:true,found:true,userId:parsed.userId,refreshToken:parsed.refreshToken};
+      }catch{return {ok:false,error:'Stored cloud recovery credential could not be opened'};}
+    });
+    ipcMain.handle('cloud-recovery:clear',(event)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      try{
+        const value=readSecureRecoveryFile();
+        delete value.cloudUpdaterRecovery;
+        if(Object.keys(value).length===0){try{fs.rmSync(SECURE_RECOVERY_FILE,{force:true});}catch{}}
+        else writeSecureRecoveryFile(value);
+        return {ok:true};
+      }catch(error){return {ok:false,error:error?.message||String(error)};}
+    });
     ipcMain.handle('update:set-credentials',(_event,payload)=>{
       const token=typeof payload?.token==='string'?payload.token.trim():'';
       const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
