@@ -22,6 +22,18 @@ Deno.serve(async req=>{
     let shopId:string;
     let role:string;
     if(existing){
+      // Existing registrations are authoritative: never re-insert the same
+      // device and never allow a different user to take over a registered ID.
+      if(existing.revoked_at)return json({ok:false,error:"This POS device has been revoked and must be re-authorized by support"},403);
+      if(existing.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different cloud account"},403);
+      shopId=String(existing.shop_id);
+      const {data:membership,error:membershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
+      if(membershipError)return json({ok:false,error:"Could not verify shop membership"},500);
+      if(!membership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+      role=String(membership.role);
+    }else{
+      // First-time/backward-compatible enrollment: bind the new device only
+      // when the authenticated account has exactly one active shop.
       const {data:members,error:memberError}=await admin.from("shop_memberships").select("shop_id,role").eq("user_id",u.user.id).eq("active",true);
       if(memberError)return json({ok:false,error:"Could not verify shop membership"},500);
       if(!members?.length)return json({ok:false,error:"User is not an active member of a shop"},403);
@@ -31,11 +43,17 @@ Deno.serve(async req=>{
       if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
       const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:u.user.id,device_id:deviceId});
       if(insertError){
+        // A concurrent registration may have won the race. Re-read it and
+        // accept only if it belongs to the same user and is not revoked.
         const {data:racedRows}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
         if((racedRows?.length||0)!==1)return json({ok:false,error:"This POS device could not be authorized"},403);
         const raced=racedRows[0];
         if(raced.revoked_at || raced.user_id!==u.user.id)return json({ok:false,error:"This POS device could not be authorized"},403);
         shopId=String(raced.shop_id);
+        const {data:racedMembership,error:racedMembershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
+        if(racedMembershipError)return json({ok:false,error:"Could not verify shop membership"},500);
+        if(!racedMembership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+        role=String(racedMembership.role);
       }
     }
     const requestUrl=new URL(req.url);
