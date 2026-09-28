@@ -315,7 +315,9 @@ jobs:
           foreach ($i in 1..$installerParts) {
             $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
             $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
-            $length = [int64]$head.Headers['Content-Length']
+            $lengthValues = @($head.Headers['Content-Length']) | Where-Object { $_ -ne $null -and $_.ToString().Trim() -ne '' }
+            if ($lengthValues.Count -lt 1) { throw "Installer chunk Content-Length header is missing: $path" }
+            $length = [int64]($lengthValues[0].ToString().Trim())
             if ($length -le 0) { throw "Installer chunk has invalid Content-Length: $path" }
             $installerUploadedBytes += $length
           }
@@ -326,7 +328,9 @@ jobs:
           foreach ($i in 1..$portableParts) {
             $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
             $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY }
-            $length = [int64]$head.Headers['Content-Length']
+            $lengthValues = @($head.Headers['Content-Length']) | Where-Object { $_ -ne $null -and $_.ToString().Trim() -ne '' }
+            if ($lengthValues.Count -lt 1) { throw "Portable chunk Content-Length header is missing: $path" }
+            $length = [int64]($lengthValues[0].ToString().Trim())
             if ($length -le 0) { throw "Portable chunk has invalid Content-Length: $path" }
             $portableUploadedBytes += $length
           }
