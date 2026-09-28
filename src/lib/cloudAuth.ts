@@ -100,6 +100,26 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     data = refreshed.data;
     error = refreshed.error;
   }
+
+  // A Windows POS restart can leave the browser cloud session absent even
+  // though this machine was already provisioned. Restore the encrypted cloud
+  // Admin refresh credential saved during one-time setup.
+  if (error || !data.session?.access_token) {
+    let cloudEmail = '';
+    try { cloudEmail = localStorage.getItem('nexfix_cloud_updater_email')?.trim().toLowerCase() || ''; } catch { /* optional storage */ }
+    if (cloudEmail) {
+      const stored = await getDesktopUpdaterApi()?.loadCloudUpdaterRecovery?.(cloudEmail);
+      if (stored?.ok && stored.found && stored.refreshToken && stored.userId) {
+        const restored = await supabase.auth.refreshSession({ refresh_token: stored.refreshToken });
+        if (!restored.error && restored.data.session && restored.data.user?.id === stored.userId && restored.data.user.email?.trim().toLowerCase() === cloudEmail) {
+          await saveCloudUpdaterRecovery(restored.data.session);
+          data = restored.data;
+          error = restored.error;
+        }
+      }
+    }
+  }
+
   if (error || !data.session?.access_token) {
     await desktop.clearUpdateCredentials?.();
     return false;
@@ -235,6 +255,17 @@ export async function ensureCloudSession(
 
   const loginPromise = (async () => {
     try {
+      let provisionedCloudEmail = '';
+      try { provisionedCloudEmail = localStorage.getItem('nexfix_cloud_updater_email')?.trim().toLowerCase() || ''; } catch { /* optional storage */ }
+
+      // If the provisioned cloud Admin email differs from the local POS login,
+      // restore the encrypted cloud credential instead of trying the local
+      // password against a different cloud account.
+      if (provisionedCloudEmail && provisionedCloudEmail !== email.trim().toLowerCase()) {
+        const restored = await restoreCloudUpdaterRecovery(provisionedCloudEmail);
+        return restored.ok ? restored : { ok: true, error: restored.error || 'Cloud updater authorization is not provisioned' };
+      }
+
       const passwordResult = await signInToCloud(email, password);
       if (passwordResult.ok) {
         const { data } = await supabase.auth.getSession();
