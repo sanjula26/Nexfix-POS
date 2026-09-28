@@ -329,48 +329,33 @@ jobs:
             }
 
             $listUrl = "$storageUrl/storage/v1/object/list/$bucket"
-            $pageSize = 100
-            $offset = 0
-            $maxPages = 100
-            $match = $null
 
-            # The Storage list endpoint paginates results. This bucket already contains
-            # many historical releases, so the target chunk may be beyond the first page.
-            # Walk pages until the exact object is found instead of assuming offset=0 is enough.
-            for ($page = 0; $page -lt $maxPages; $page++) {
-              $body = @{
-                prefix = $prefix
-                limit = $pageSize
-                offset = $offset
-                sortBy = @{ column = 'name'; order = 'asc' }
-              } | ConvertTo-Json -Compress
+            # Storage's list API supports server-side search within a prefix. This is
+            # important because this bucket contains many historical release chunks and
+            # the target version is not guaranteed to be on the first paginated page.
+            $body = @{
+              prefix = $prefix
+              search = $filename
+              limit = 10
+              offset = 0
+            } | ConvertTo-Json -Compress
+            $rows = @(Invoke-RestMethod -Uri $listUrl -Method Post -Headers $storageHeaders -Body $body)
 
-              $rows = @(Invoke-RestMethod -Uri $listUrl -Method Post -Headers $storageHeaders -Body $body)
+            # Results may use names relative to the prefix or full object keys.
+            $matches = @($rows | Where-Object {
+              $_.name -eq $filename -or
+              $_.name -eq $path -or
+              $_.name -eq "$prefix$filename"
+            })
 
-              $matches = @($rows | Where-Object {
-                $_.name -eq $filename -or
-                $_.name -eq $path
-              })
-
-              if ($matches.Count -gt 1) {
-                throw "Expected at most one exact storage object: $path (found $($matches.Count))"
-              }
-              if ($matches.Count -eq 1) {
-                $match = $matches[0]
-                break
-              }
-
-              if ($rows.Count -lt $pageSize) { break }
-              $offset += $pageSize
+            if ($matches.Count -ne 1) {
+              Write-Host "Storage search verification returned $($rows.Count) row(s) for prefix '$prefix', search '$filename'."
+              Write-Host "Raw Storage search response:"
+              ($rows | ConvertTo-Json -Depth 20) | Write-Host
+              throw "Expected exactly one uploaded storage object: $path (found $($matches.Count))"
             }
 
-            if ($null -eq $match) {
-              Write-Host "Storage list verification could not find '$path' under prefix '$prefix' after pagination."
-              Write-Host "Last queried offset: $offset"
-              throw "Expected exactly one uploaded storage object: $path (found 0)"
-            }
-
-            $metadata = $match.metadata
+            $metadata = $matches[0].metadata
             if ($null -eq $metadata) { throw "Storage object metadata is missing: $path" }
             if ($metadata -is [string]) { $metadata = $metadata | ConvertFrom-Json }
             if ($null -eq $metadata.size) { throw "Storage object metadata size is missing: $path" }
