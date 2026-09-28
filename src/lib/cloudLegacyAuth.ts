@@ -16,7 +16,10 @@ export async function requestLegacyCloudEmailOtp(email: string): Promise<{ ok: b
 
   const { error } = await supabase.auth.signInWithOtp({
     email: normalizedEmail,
-    options: { shouldCreateUser: false },
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: 'nexfix://auth/callback',
+    },
   });
   return error ? { ok: false, error: error.message } : { ok: true };
 }
