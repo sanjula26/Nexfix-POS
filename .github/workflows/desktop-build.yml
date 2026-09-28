@@ -306,20 +306,35 @@ jobs:
 
           $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
 
-          # Verify storage metadata before changing the active release pointer. The object-info
-          # endpoint returns the authoritative stored object size; PowerShell's HEAD response
-          # headers can expose a synthetic Content-Length (for example, 11 bytes) on Supabase
-          # Storage and must not be used as the object size.
+          # Verify uploaded objects through the Supabase Storage API before changing the
+          # active release pointer. The Storage Data API does not expose the internal
+          # storage.objects table through /rest/v1, so use the supported object-list endpoint.
           $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
           $portableParts = [math]::Ceiling([double]$portable.Length / $chunkBytes)
+          $storageHeaders = @{
+            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
+            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
+            'Content-Type' = 'application/json'
+            'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+          }
+
+          function Get-StorageObjectSize([string]$path) {
+            $body = @{ prefix = $path; limit = 10; offset = 0 } | ConvertTo-Json -Compress
+            $listUrl = "$storageUrl/storage/v1/object/list/$bucket"
+            $rows = @(Invoke-RestMethod -Uri $listUrl -Method Post -Headers $storageHeaders -Body $body)
+            $matches = @($rows | Where-Object { $_.name -eq $path -or $_.name -eq ([System.IO.Path]::GetFileName($path)) })
+            if ($matches.Count -ne 1) { throw "Expected exactly one uploaded storage object: $path (found $($matches.Count))" }
+            $metadata = $matches[0].metadata
+            if ($null -eq $metadata) { throw "Storage object metadata is missing: $path" }
+            if ($metadata -is [string]) { $metadata = $metadata | ConvertFrom-Json }
+            if ($null -eq $metadata.size) { throw "Storage object metadata size is missing: $path" }
+            return [int64]$metadata.size
+          }
+
           $installerUploadedBytes = [int64]0
           foreach ($i in 1..$installerParts) {
             $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            $encodedPath = [Uri]::EscapeDataString($path)
-            $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/objects?select=name,metadata&bucket_id=eq.$bucket&name=eq.$encodedPath" -Method Get -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
-            if ($rows.Count -ne 1) { throw "Expected exactly one storage object metadata row: $path (found $($rows.Count))" }
-            if ($null -eq $rows[0].metadata -or $null -eq $rows[0].metadata.size) { throw "Storage object metadata size is missing: $path" }
-            $size = [int64]$rows[0].metadata.size
+            $size = Get-StorageObjectSize $path
             $expected = [int64][math]::Min($chunkBytes, $installer.Length - (($i - 1) * $chunkBytes))
             if ($size -ne $expected) { throw "Installer chunk size mismatch: $path => $size != $expected" }
             $installerUploadedBytes += $size
@@ -331,11 +346,7 @@ jobs:
           $portableUploadedBytes = [int64]0
           foreach ($i in 1..$portableParts) {
             $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            $encodedPath = [Uri]::EscapeDataString($path)
-            $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/objects?select=name,metadata&bucket_id=eq.$bucket&name=eq.$encodedPath" -Method Get -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
-            if ($rows.Count -ne 1) { throw "Expected exactly one storage object metadata row: $path (found $($rows.Count))" }
-            if ($null -eq $rows[0].metadata -or $null -eq $rows[0].metadata.size) { throw "Storage object metadata size is missing: $path" }
-            $size = [int64]$rows[0].metadata.size
+            $size = Get-StorageObjectSize $path
             $expected = [int64][math]::Min($chunkBytes, $portable.Length - (($i - 1) * $chunkBytes))
             if ($size -ne $expected) { throw "Portable chunk size mismatch: $path => $size != $expected" }
             $portableUploadedBytes += $size
