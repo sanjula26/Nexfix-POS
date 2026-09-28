@@ -311,15 +311,29 @@ jobs:
 
           $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
           $portableParts = [math]::Ceiling([double]$portable.Length / $chunkBytes)
+          $installerUploadedBytes = [int64]0
           foreach ($i in 1..$installerParts) {
             $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' } | Out-Null
+            $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent'='Nexfix-GitHub-Action/1.0' }
+            $length = [int64]$head.Headers['Content-Length']
+            if ($length -le 0) { throw "Installer chunk has invalid Content-Length: $path" }
+            $installerUploadedBytes += $length
           }
+          if ($installerUploadedBytes -ne [int64]$installer.Length) {
+            throw "Installer chunk byte total mismatch: $installerUploadedBytes != $($installer.Length)"
+          }
+          $portableUploadedBytes = [int64]0
           foreach ($i in 1..$portableParts) {
             $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY } | Out-Null
+            $head = Invoke-WebRequest -Uri "$storageUrl/storage/v1/object/$bucket/$path" -Method Head -Headers @{ apikey=$env:SUPABASE_SERVICE_ROLE_KEY }
+            $length = [int64]$head.Headers['Content-Length']
+            if ($length -le 0) { throw "Portable chunk has invalid Content-Length: $path" }
+            $portableUploadedBytes += $length
           }
-          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts, portable $portableParts parts)"
+          if ($portableUploadedBytes -ne [int64]$portable.Length) {
+            throw "Portable chunk byte total mismatch: $portableUploadedBytes != $($portable.Length)"
+          }
+          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts, portable $portableParts parts; byte totals exact)"
 
       - name: Verify private Windows release
         shell: pwsh
