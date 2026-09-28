@@ -11,6 +11,7 @@ export const supabase: SupabaseClient | null = supabaseConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        flowType: 'pkce',
       },
       global: {
         headers: { 'x-client-info': 'nexfix-pos' },
