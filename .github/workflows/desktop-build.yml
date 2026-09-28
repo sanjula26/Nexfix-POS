@@ -167,12 +167,19 @@ jobs:
           # The source repository is public, so GitHub Release assets are public too.
           # Windows installers must be served only through the authenticated Supabase
           # updater gateway. Remove all historical public installer releases/tags.
-          $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName'
+          $tags = gh release list --limit 1000 --json tagName --jq '.[].tagName' |
+            Where-Object { $_ -and $_.Trim() } |
+            Sort-Object -Unique
           if ($LASTEXITCODE -ne 0) { throw 'Could not list GitHub releases for public-installer cleanup.' }
-          foreach ($tag in ($tags | Where-Object { $_ -and $_.Trim() })) {
+          foreach ($tag in $tags) {
             Write-Host "Removing public GitHub release: $tag"
             gh release delete $tag --yes --cleanup-tag
-            if ($LASTEXITCODE -ne 0) { throw "Could not remove public GitHub release $tag." }
+            if ($LASTEXITCODE -ne 0) {
+              # Release listings can contain duplicate/stale entries while GitHub
+              # finishes deleting a release/tag. Keep cleaning the remaining
+              # public installer releases instead of blocking the private build.
+              Write-Warning "GitHub release $tag was already absent or could not be removed; continuing cleanup."
+            }
           }
           Write-Host 'Public GitHub installer release cleanup complete. Supabase is the only Windows installer distribution channel.'
 
