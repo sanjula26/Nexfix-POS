@@ -15,7 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
-import { requestLegacyCloudEmailOtp, verifyLegacyCloudEmailOtp } from '../lib/cloudLegacyAuth';
+import { requestLegacyCloudEmailOtp, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
@@ -158,11 +158,9 @@ export default function Settings() {
   const [cloudSetupPassword, setCloudSetupPassword] = useState('');
   const [cloudSetupBusy, setCloudSetupBusy] = useState(false);
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [legacyOtp, setLegacyOtp] = useState('');
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
-  const [legacyOtpSent, setLegacyOtpSent] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;downloadAuthorizedInstaller?:()=>Promise<{supported?:boolean;ok?:boolean;path?:string;name?:string;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;downloadAuthorizedInstaller?:()=>Promise<{supported?:boolean;ok?:boolean;path?:string;name?:string;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -178,6 +176,28 @@ export default function Settings() {
     });
     return unsubscribe;
   }, []);
+  useEffect(() => {
+    if (!desktopApi?.onAuthCallback) return;
+    const unsubscribe = desktopApi.onAuthCallback(async ({ code, flowId }) => {
+      setLegacyOtpBusy(true);
+      setLegacyOtpMsg(null);
+      try {
+        const result = await completeLegacyCloudEmailMagicLink(code, flowId);
+        if (!result.ok) {
+          setLegacyOtpMsg({ ok: false, text: result.error || 'Cloud Admin sign-in link could not be completed.' });
+          return;
+        }
+        try { localStorage.setItem('nexfix_cloud_updater_email', cloudSetupEmail.trim().toLowerCase()); } catch { /* optional convenience only */ }
+        setLegacyOtpMsg({ ok: true, text: 'Cloud Admin sign-in confirmed. This Windows machine is now authorized for private updates.' });
+        setUpdateState({ status: 'idle' });
+      } catch (error) {
+        setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud Admin sign-in link could not be completed.' });
+      } finally {
+        setLegacyOtpBusy(false);
+      }
+    });
+    return unsubscribe;
+  }, [cloudSetupEmail, desktopApi]);
   const ensureUpdaterReady=async()=>{for(let attempt=0;attempt<3;attempt+=1){if(await refreshDesktopUpdaterCredentials())return true;if(attempt<2)await new Promise(resolve=>window.setTimeout(resolve,500));}return false;};
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};
   const provisionCloudUpdater = async () => {
@@ -216,35 +236,13 @@ export default function Settings() {
     try {
       const result = await requestLegacyCloudEmailOtp(email);
       if (!result.ok) {
-        setLegacyOtpMsg({ ok: false, text: result.error || 'Could not send the verification code.' });
-        return;
-      }
-      setLegacyOtpSent(true);
-      setLegacyOtpMsg({ ok: true, text: 'Verification code sent. Check the cloud Admin email and enter the 6-digit code below.' });
-    } catch (error) {
-      setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Could not send the verification code.' });
-    } finally {
-      setLegacyOtpBusy(false);
-    }
-  };
-  const verifyLegacyUpdater = async () => {
-    if (legacyOtpBusy) return;
-    const email = cloudSetupEmail.trim().toLowerCase();
-    setLegacyOtpBusy(true);
-    setLegacyOtpMsg(null);
-    try {
-      const result = await verifyLegacyCloudEmailOtp(email, legacyOtp);
-      if (!result.ok) {
-        setLegacyOtpMsg({ ok: false, text: result.error || 'Cloud Admin verification failed.' });
+        setLegacyOtpMsg({ ok: false, text: result.error || 'Could not send the sign-in link.' });
         return;
       }
       try { localStorage.setItem('nexfix_cloud_updater_email', email); } catch { /* optional convenience only */ }
-      setLegacyOtp('');
-      setLegacyOtpSent(false);
-      setLegacyOtpMsg({ ok: true, text: 'Existing local Admin/Cashier accounts were kept unchanged. This Windows machine is now authorized for private updates.' });
-      setUpdateState({ status: 'idle' });
+      setLegacyOtpMsg({ ok: true, text: 'Sign-in link sent. Open it from the cloud Admin email; this Windows POS will receive the secure callback automatically.' });
     } catch (error) {
-      setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud Admin verification failed.' });
+      setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Could not send the sign-in link.' });
     } finally {
       setLegacyOtpBusy(false);
     }
@@ -633,12 +631,10 @@ export default function Settings() {
                 <p className="text-sm font-bold text-ink">Legacy installation migration — no local password reset</p>
                 <p className="mt-1 text-[11px] leading-5 text-faint">For existing shops that already have local Admin/Cashier accounts, use the provisioned cloud Admin email to authorize this machine. Your existing local passwords stay exactly as they are.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="btn btn-soft" onClick={() => void migrateLegacyUpdater()} disabled={legacyOtpBusy || !desktopApi?.isPackaged}>{legacyOtpBusy ? 'Sending…' : legacyOtpSent ? 'Resend verification code' : 'Send verification code'}</button>
-                  <input aria-label="Cloud Admin verification code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={legacyOtp} onChange={e => setLegacyOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit code" className="input w-36" disabled={!legacyOtpSent || legacyOtpBusy} />
-                  <button type="button" className="btn btn-primary" onClick={() => void verifyLegacyUpdater()} disabled={!legacyOtpSent || legacyOtp.length !== 6 || legacyOtpBusy}>{legacyOtpBusy ? 'Verifying…' : 'Verify & authorize'}</button>
+                  <button type="button" className="btn btn-primary" onClick={() => void migrateLegacyUpdater()} disabled={legacyOtpBusy || !desktopApi?.isPackaged}>{legacyOtpBusy ? 'Sending…' : 'Send secure sign-in link'}</button>
                 </div>
                 {legacyOtpMsg && <p className={`mt-2 text-[11px] font-semibold ${legacyOtpMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{legacyOtpMsg.text}</p>}
-                <p className="mt-2 text-[10px] text-faint">The Supabase Magic Link/OTP email template must contain <code className="font-mono">{'{{ .Token }}'}</code> for the 6-digit code flow.</p>
+                <p className="mt-2 text-[10px] text-faint">This uses Supabase PKCE Magic Link authentication, so the existing link-only email works; no 6-digit code or email-template edit is required.</p>
               </div>
             </div>
           </div>
