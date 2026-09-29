@@ -7,7 +7,7 @@ type CloudUpdaterRecovery = { email: string; userId: string; refreshToken: strin
 function getDesktopUpdaterApi() {
   return (window as Window & {
     nexfixDesktop?: {
-      setUpdateCredentials?: (payload: { token: string; deviceId: string }) => Promise<unknown>;
+      setUpdateCredentials?: (payload: { token: string; deviceId: string; mode?: 'bearer' | 'device' }) => Promise<unknown>;
       clearUpdateCredentials?: () => Promise<unknown>;
       saveCloudUpdaterRecovery?: (payload: CloudUpdaterRecovery) => Promise<{ ok?: boolean; error?: string }>;
       loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
