@@ -179,7 +179,22 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
   // manifest arrives. Never download/decrypt an older full backup just to
   // verify an individual part after a transient status read failure.
   const format = String(body.format || '');
-  if (format === 'encrypted-part') return false;
+  if (format === 'encrypted-part') {
+    try {
+      const url = new URL(getGoogleScriptUrl());
+      url.searchParams.set('action', 'hasBackupPart');
+      url.searchParams.set('shopId', shopId);
+      url.searchParams.set('requestId', makeRequestId());
+      url.searchParams.set('shopProof', String(body.shopProof || ''));
+      url.searchParams.set('backupId', String(body.backupId || ''));
+      url.searchParams.set('partName', String(body.partName || ''));
+      url.searchParams.set('apiKey', BACKUP_API_KEY);
+      const result = await getJsonp<{ ok?: boolean; exists?: boolean }>(url, 8000);
+      return result?.ok === true && result.exists === true;
+    } catch {
+      return false;
+    }
+  }
   try {
     const latest = await fetchLatestGoogleBackup(8000);
     if (!latest || latest.shopId !== shopId) return false;
