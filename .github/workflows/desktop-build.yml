@@ -450,8 +450,7 @@ jobs:
                 $_ -notlike "$($portable.Name).part*"
               }
           )
-          if ($bad.Count -gt 0) { throw "Storage cleanup verification failed; unexpected objects remain: $($bad -join 
-)" }
+          if ($bad.Count -gt 0) { throw "Storage cleanup verification failed; unexpected objects remain: $($bad -join ', ')" }
           $expectedInstallerParts = [math]::Ceiling([double]$installer.Length / (40 * 1024 * 1024))
           $expectedPortableParts = [math]::Ceiling([double]$portable.Length / (40 * 1024 * 1024))
           $expectedTotal = $expectedInstallerParts + $expectedPortableParts
