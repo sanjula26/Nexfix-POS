@@ -202,8 +202,8 @@ jobs:
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
 
-          $releases = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
-          $active = @($releases | Where-Object { $_.is_active -eq $true })
+          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
+          $releases = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.false&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
           if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release before upload cleanup; found $($active.Count)." }
 
           $keepNames = @([string]$active[0].installer_name,[string]$active[0].portable_name) | Where-Object { $_ }
@@ -240,12 +240,13 @@ jobs:
           Write-Host "Superseded chunks to remove before upload: $($removePaths.Count)"
 
           if ($removePaths.Count -gt 0) {
-            $deleteBody = @{ prefixes = @($removePaths) } | ConvertTo-Json -Compress
-            $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
-            if ($deleted.Count -ne $removePaths.Count) {
-              throw "Pre-upload storage delete count mismatch: requested $($removePaths.Count), API returned $($deleted.Count)."
+            $deletedCount = 0
+            foreach ($path in $removePaths) {
+              $deleteBody = @{ prefixes = @([string]$path) } | ConvertTo-Json -Compress
+              Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
+              $deletedCount++
             }
-            Write-Host "Pre-upload storage cleanup removed $($deleted.Count) superseded chunk(s)."
+            Write-Host "Pre-upload storage cleanup requested deletion of $deletedCount superseded chunk(s)."
           }
 
           $verifyBody = @{
@@ -503,8 +504,7 @@ jobs:
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
 
-          $releases = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
-          $active = @($releases | Where-Object { $_.is_active -eq $true })
+          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
           if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release after publish; found $($active.Count)." }
           if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
 
@@ -533,12 +533,13 @@ jobs:
           Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
           Write-Host "Superseded chunks to remove: $($removePaths.Count)"
           if ($removePaths.Count -gt 0) {
-            $deleteBody = @{ prefixes = @($removePaths) } | ConvertTo-Json -Compress
-            $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
-            if ($deleted.Count -ne $removePaths.Count) {
-              throw "Storage delete count mismatch: requested $($removePaths.Count), API returned $($deleted.Count)."
+            $deletedCount = 0
+            foreach ($path in $removePaths) {
+              $deleteBody = @{ prefixes = @([string]$path) } | ConvertTo-Json -Compress
+              Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
+              $deletedCount++
             }
-            Write-Host "Removed $($deleted.Count) superseded storage chunk(s)."
+            Write-Host "Requested deletion of $deletedCount superseded storage chunk(s)."
           }
 
           $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
