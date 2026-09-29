@@ -194,6 +194,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
           $bucket = 'nexfix-desktop-updates'
+          $storageUrl = "$projectUrl/storage/v1"
           $headers = @{
             apikey = $env:SUPABASE_SERVICE_ROLE_KEY
             Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
@@ -201,52 +202,77 @@ jobs:
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
 
-          # Keep the currently active release intact until the new release is fully
-          # uploaded and verified. Use the release table as the authoritative list of
-          # known artifact names, so cleanup does not depend on Storage folder listing.
           $releases = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
-          if ($releases.Count -lt 1) { throw 'No private Windows releases exist before upload cleanup.' }
           $active = @($releases | Where-Object { $_.is_active -eq $true })
           if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release before upload cleanup; found $($active.Count)." }
 
-          $keepNames = @(
-            [string]$active[0].installer_name,
-            [string]$active[0].portable_name
-          ) | Where-Object { $_ }
+          $keepNames = @([string]$active[0].installer_name,[string]$active[0].portable_name) | Where-Object { $_ }
 
-          $removePrefixes = @(
-            $releases |
-              Where-Object { $_.is_active -ne $true } |
+          $listBody = @{
+            prefix = 'win32/latest/'
+            limit = 1000
+            with_delimiter = $false
+          } | ConvertTo-Json -Compress
+          $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
+          $objects = @($listResult.objects)
+          if ($null -eq $listResult.objects) { throw 'Storage list-v2 returned no objects field.' }
+
+          $releasePaths = @(
+            $objects |
+              Where-Object { $_.id -ne $null } |
               ForEach-Object {
-                if ($_.installer_name) { "win32/latest/$([string]$_.installer_name).part" }
-                if ($_.portable_name) { "win32/latest/$([string]$_.portable_name).part" }
+                $name = [string]$_.name
+                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
               } |
-              Where-Object { $_ } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
           )
-
-          # Never allow the active artifact names to enter the deletion list.
-          $removePrefixes = @(
-            $removePrefixes |
+          $removePaths = @(
+            $releasePaths |
               Where-Object {
-                $prefix = $_
-                -not ($keepNames | Where-Object { $prefix -eq "win32/latest/$_.part" })
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                -not ($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
               }
           )
 
           Write-Host "Active release kept: $($active[0].version)"
-          Write-Host "Known superseded release prefixes to remove: $($removePrefixes.Count)"
+          Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
+          Write-Host "Superseded chunks to remove before upload: $($removePaths.Count)"
 
-          if ($removePrefixes.Count -gt 0) {
-            $deleteBody = @{ prefixes = $removePrefixes } | ConvertTo-Json -Compress
-            $deleted = @(Invoke-RestMethod -Uri "https://ocmzgamnehwbkuwkjdrr.supabase.co/storage/v1/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
-            if ($deleted.Count -lt 1) { throw 'Pre-upload storage cleanup deleted no objects.' }
-            Write-Host "Pre-upload storage cleanup removed $($deleted.Count) superseded storage object(s)."
-          } else {
-            Write-Host 'No superseded release prefixes required deletion.'
+          if ($removePaths.Count -gt 0) {
+            $deleteBody = @{ prefixes = @($removePaths) } | ConvertTo-Json -Compress
+            $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
+            if ($deleted.Count -ne $removePaths.Count) {
+              throw "Pre-upload storage delete count mismatch: requested $($removePaths.Count), API returned $($deleted.Count)."
+            }
+            Write-Host "Pre-upload storage cleanup removed $($deleted.Count) superseded chunk(s)."
           }
 
-          Write-Host 'Pre-upload storage cleanup completed without touching the active release.'
+          $verifyBody = @{
+            prefix = 'win32/latest/'
+            limit = 1000
+            with_delimiter = $false
+          } | ConvertTo-Json -Compress
+          $verify = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $verifyBody
+          $remaining = @(
+            $verify.objects |
+              Where-Object { $_.id -ne $null } |
+              ForEach-Object {
+                $name = [string]$_.name
+                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
+              } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
+              Sort-Object -Unique
+          )
+          $bad = @(
+            $remaining |
+              Where-Object {
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                -not ($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
+              }
+          )
+          if ($bad.Count -gt 0) { throw "Pre-upload cleanup verification failed; superseded chunks remain: $($bad -join ', ')" }
+          Write-Host "Pre-upload storage cleanup verified; active release chunks remain intact."
           
       - name: Publish Windows release to private Supabase Storage
         shell: pwsh
@@ -469,84 +495,79 @@ jobs:
           $portable = Get-ChildItem -Path release -Filter '*-portable.exe' -File | Select-Object -First 1
           if (-not $installer -or -not $portable) { throw 'Current release artifacts are missing during storage cleanup.' }
 
-          # The desktop_releases table is the source of truth for every known release
-          # artifact. Delete superseded chunk prefixes only through the Storage API.
+          $storageUrl = "$projectUrl/storage/v1"
           $headers = @{
             apikey = $env:SUPABASE_SERVICE_ROLE_KEY
             Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
             'Content-Type' = 'application/json'
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
+
           $releases = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
           $active = @($releases | Where-Object { $_.is_active -eq $true })
           if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release after publish; found $($active.Count)." }
           if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
 
-          $removePrefixes = @(
-            $releases |
-              Where-Object { $_.is_active -ne $true } |
+          $currentNames = @($installer.Name,$portable.Name)
+          $listBody = @{ prefix='win32/latest/'; limit=1000; with_delimiter=$false } | ConvertTo-Json -Compress
+          $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
+          $releasePaths = @(
+            $listResult.objects |
+              Where-Object { $_.id -ne $null } |
               ForEach-Object {
-                if ($_.installer_name) { "win32/latest/$([string]$_.installer_name).part" }
-                if ($_.portable_name) { "win32/latest/$([string]$_.portable_name).part" }
+                $name = [string]$_.name
+                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
               } |
-              Where-Object { $_ } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
           )
-          $currentPrefixes = @(
-            "win32/latest/$($installer.Name).part",
-            "win32/latest/$($portable.Name).part"
-          )
-          $removePrefixes = @(
-            $removePrefixes |
+          $removePaths = @(
+            $releasePaths |
               Where-Object {
-                $prefix = $_
-                -not ($currentPrefixes -contains $prefix)
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                -not ($currentNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
               }
           )
 
           Write-Host "Current release: $version"
-          Write-Host "Superseded release prefixes to remove: $($removePrefixes.Count)"
-          if ($removePrefixes.Count -gt 0) {
-            $deleteBody = @{ prefixes = $removePrefixes } | ConvertTo-Json -Compress
-            $deleted = @(Invoke-RestMethod -Uri "$projectUrl/storage/v1/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
-            Write-Host "Removed $($deleted.Count) superseded storage object(s)."
+          Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
+          Write-Host "Superseded chunks to remove: $($removePaths.Count)"
+          if ($removePaths.Count -gt 0) {
+            $deleteBody = @{ prefixes = @($removePaths) } | ConvertTo-Json -Compress
+            $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
+            if ($deleted.Count -ne $removePaths.Count) {
+              throw "Storage delete count mismatch: requested $($removePaths.Count), API returned $($deleted.Count)."
+            }
+            Write-Host "Removed $($deleted.Count) superseded storage chunk(s)."
           }
 
-          # Verify that the current installer and portable artifact each have their
-          # expected chunk count through exact filename searches. This avoids the
-          # folder-listing ambiguity while still proving the current release exists.
-          function Get-ExactStorageRows([string]$path) {
-            $slash = $path.LastIndexOf('/')
-            $prefix = $path.Substring(0, $slash + 1)
-            $filename = $path.Substring($slash + 1)
-            $body = @{
-              prefix = $prefix
-              search = $filename
-              limit = 1000
-              offset = 0
-            } | ConvertTo-Json -Compress
-            return @(Invoke-RestMethod -Uri "$projectUrl/storage/v1/object/list/$bucket" -Method Post -Headers $headers -Body $body)
-          }
+          $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
+          $remaining = @(
+            $verifyResult.objects |
+              Where-Object { $_.id -ne $null } |
+              ForEach-Object {
+                $name = [string]$_.name
+                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
+              } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
+              Sort-Object -Unique
+          )
+          $bad = @(
+            $remaining |
+              Where-Object {
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                -not ($currentNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
+              }
+          )
+          if ($bad.Count -gt 0) { throw "Storage cleanup verification failed; unexpected release objects remain: $($bad -join ', ')" }
 
-          $installerParts = [math]::Ceiling([double]$installer.Length / (40 * 1024 * 1024))
-          $portableParts = [math]::Ceiling([double]$portable.Length / (40 * 1024 * 1024))
-          $expectedInstaller = 0
-          for ($i = 1; $i -le $installerParts; $i++) {
-            $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            $rows = @(Get-ExactStorageRows $path)
-            $match = @($rows | Where-Object { $_.name -eq $installer.Name + ".part$('{0:D4}' -f $i)" -or $_.name -eq $path -or $_.name -eq "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)" })
-            if ($match.Count -ne 1) { throw "Current installer chunk missing or ambiguous: $path" }
-            $expectedInstaller++
+          $expectedInstallerParts = [math]::Ceiling([double]$installer.Length / (40 * 1024 * 1024))
+          $expectedPortableParts = [math]::Ceiling([double]$portable.Length / (40 * 1024 * 1024))
+          $expectedTotal = $expectedInstallerParts + $expectedPortableParts
+          if ($remaining.Count -ne $expectedTotal) {
+            throw "Storage cleanup verification failed; expected $expectedTotal current chunks but found $($remaining.Count). Remaining: $($remaining -join ', ')"
           }
-          $expectedPortable = 0
-          for ($i = 1; $i -le $portableParts; $i++) {
-            $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            $rows = @(Get-ExactStorageRows $path)
-            $match = @($rows | Where-Object { $_.name -eq $portable.Name + ".part$('{0:D4}' -f $i)" -or $_.name -eq $path -or $_.name -eq "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)" })
-            if ($match.Count -ne 1) { throw "Current portable chunk missing or ambiguous: $path" }
-            $expectedPortable++
-          }
-          Write-Host "Storage cleanup verified: $expectedInstaller installer chunks + $expectedPortable portable chunks remain for $version."
+          Write-Host "Storage cleanup verified: $($remaining.Count) current release chunks remain for $version."
           
       - name: Verify private Windows release
 
