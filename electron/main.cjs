@@ -305,7 +305,16 @@ function setupAutoUpdater(){
 function isAllowedNavigation(url){try{const parsed=new URL(url);if(isDev)return parsed.origin===new URL(DEV_URL).origin;return parsed.protocol==='file:';}catch{return false;}}
 function createWindow(){
   const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
-  win.webContents.setWindowOpenHandler(({url})=>isAllowedNavigation(url)?{action:'allow'}:{action:'deny'});
+  win.webContents.setWindowOpenHandler(({url})=>{
+    if(isAllowedNavigation(url)) return {action:'allow'};
+    try{
+      const parsed=new URL(url);
+      if(parsed.protocol==='https:' && parsed.hostname==='wa.me'){
+        void shell.openExternal(url);
+      }
+    }catch{}
+    return {action:'deny'};
+  });
   win.webContents.on('will-navigate',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
   win.webContents.on('will-redirect',(event,url)=>{if(!isAllowedNavigation(url))event.preventDefault();});
   const debugPackaged=app.isPackaged && process.env.NEXFIX_DEBUG==='1';
