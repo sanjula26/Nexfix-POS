@@ -21,7 +21,8 @@ async function saveCloudUpdaterRecovery(session: { user?: { id?: string | null; 
   const email = session.user?.email?.trim().toLowerCase() || '';
   const userId = session.user?.id?.trim() || '';
   const refreshToken = session.refresh_token?.trim() || '';
-  if (!email || !userId || refreshToken.length < 20) return;
+  // Supabase refresh tokens are opaque credentials; do not enforce a minimum length.
+  if (!email || !userId || !refreshToken || refreshToken.length > 16384) return;
   await desktop.saveCloudUpdaterRecovery({ email, userId, refreshToken });
 }
 
