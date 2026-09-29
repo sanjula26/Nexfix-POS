@@ -407,10 +407,10 @@ jobs:
           $portable = Get-ChildItem -Path release -Filter '*-portable.exe' -File | Select-Object -First 1
           if (-not $installer -or -not $portable) { throw 'Current release artifacts are missing during storage cleanup.' }
 
-          # Delete through the official Storage API. Never delete storage.objects rows with SQL.
-          # Do NOT combine prefix + search here: Supabase's generic list endpoint may return
-          # virtual folder rows instead of every file. Listing from the bucket root lets us
-          # enumerate actual object keys, then we filter only Nexfix release chunks.
+          # Supabase Storage folders are virtual prefixes. The list endpoint returns
+          # files/folders relative to the requested folder, so list the exact release
+          # folder instead of trying to recursively enumerate the bucket root.
+          # Delete only through the official Storage API; never delete storage.objects via SQL.
           $storageUrl = "$projectUrl/storage/v1"
           $headers = @{
             apikey = $env:SUPABASE_SERVICE_ROLE_KEY
@@ -419,12 +419,12 @@ jobs:
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
 
-          function Get-AllStorageObjects {
+          function Get-LatestReleaseObjects {
             $all = @()
             $offset = 0
             while ($true) {
               $listBody = @{
-                prefix = ''
+                prefix = 'win32/latest/'
                 limit = 1000
                 offset = $offset
               } | ConvertTo-Json -Compress
@@ -437,10 +437,16 @@ jobs:
             return @($all)
           }
 
-          $objects = @(Get-AllStorageObjects)
+          function Normalize-LatestPath([string]$name) {
+            if ([string]::IsNullOrWhiteSpace($name)) { return $null }
+            if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { return $name }
+            return "win32/latest/$name"
+          }
+
+          $objects = @(Get-LatestReleaseObjects)
           $releaseObjects = @(
             $objects |
-              ForEach-Object { [string]$_.name } |
+              ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
               Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
           )
@@ -457,9 +463,13 @@ jobs:
           )
 
           Write-Host "Current release: $version"
-          Write-Host "Storage objects scanned: $($objects.Count)"
+          Write-Host "Storage list rows in win32/latest/: $($objects.Count)"
           Write-Host "Nexfix release chunk objects found: $($releaseObjects.Count)"
           Write-Host "Superseded chunk objects to remove: $($removePaths.Count)"
+
+          if ($releaseObjects.Count -eq 0) {
+            throw 'Storage cleanup found no Nexfix release chunks in win32/latest/. Refusing to continue.'
+          }
 
           if ($removePaths.Count -gt 0) {
             for ($offset = 0; $offset -lt $removePaths.Count; $offset += 1000) {
@@ -471,10 +481,10 @@ jobs:
             }
           }
 
-          $remainingObjects = @(Get-AllStorageObjects)
+          $remainingObjects = @(Get-LatestReleaseObjects)
           $remaining = @(
             $remainingObjects |
-              ForEach-Object { [string]$_.name } |
+              ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
               Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
           )
