@@ -98,6 +98,10 @@ function setupAutoUpdater(){
     // authorization headers.
     configureUpdaterCredentials();
     autoUpdater.autoDownload=false;
+    // The private gateway reconstructs the full NSIS installer from protected chunks.
+    // Do not let electron-updater request a blockmap/differential payload that the
+    // gateway does not publish.
+    autoUpdater.disableDifferentialDownload=true;
     autoUpdater.autoInstallOnAppQuit=false;
     autoUpdater.on('checking-for-update',()=>sendUpdateEvent('checking'));
     autoUpdater.on('update-available',info=>{pendingUpdateInfo=info;sendUpdateEvent('available',{version:info.version});});
