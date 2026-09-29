@@ -217,7 +217,7 @@ function setupAutoUpdater(){
       if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
       return {ok};
     });
-    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; return {ok:true}; });
+    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
     ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),authorizationMode:updateAuthMode,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
