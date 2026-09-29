@@ -110,6 +110,9 @@ function RouteFallback() {
 function DesktopUpdateNotice() {
   const { user } = usePOS();
   const [update, setUpdate] = useState<{status:'hidden'|'available'|'downloading'|'downloaded'|'error';version?:string;percent?:number;message?:string}>({status:'hidden'});
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string>(() => {
+    try { return sessionStorage.getItem('nexfix_dismissed_update_version') || ''; } catch { return ''; }
+  });
   const desktopApi = useMemo(() => (window as Window & {
     nexfixDesktop?: {
       isPackaged?: boolean;
@@ -129,7 +132,11 @@ function DesktopUpdateNotice() {
     let alive = true;
     const apply = (event:{type:string;version?:string;percent?:number;message?:string}) => {
       if (!alive) return;
-      if (event.type === 'available') setUpdate({status:'available',version:event.version});
+      if (event.type === 'available') {
+        const version = event.version || '';
+        if (version && version === dismissedUpdateVersion) return;
+        setUpdate({status:'available',version});
+      }
       else if (event.type === 'progress') setUpdate({status:'downloading',percent:Math.max(0,Math.min(100,Number(event.percent||0)))});
       else if (event.type === 'downloaded') setUpdate({status:'downloaded',version:event.version});
       else if (event.type === 'error') setUpdate({status:'error',message:event.message || 'The update service could not be reached.'});
@@ -138,7 +145,9 @@ function DesktopUpdateNotice() {
     const unsubscribe = desktopApi.onUpdateEvent?.(apply);
     void desktopApi.getUpdateStatus?.().then(status => {
       if (!alive || !status?.available) return;
-      setUpdate({status:'available',version:status.version || undefined});
+      const version = status.version || '';
+      if (version && version === dismissedUpdateVersion) return;
+      setUpdate({status:'available',version:version || undefined});
     }).catch(() => {});
     // CloudAuthLifecycle restores/loads the one-time device updater credential
     // before the main process performs its authorized check. Do not race that
@@ -150,6 +159,15 @@ function DesktopUpdateNotice() {
   }, [user, desktopApi]);
 
   if (!user || !desktopApi?.isPackaged || update.status === 'hidden') return null;
+
+  const dismissUpdate = () => {
+    const version = update.version || '';
+    if (version) {
+      setDismissedUpdateVersion(version);
+      try { sessionStorage.setItem('nexfix_dismissed_update_version', version); } catch { /* optional */ }
+    }
+    setUpdate({status:'hidden'});
+  };
 
   const updateNow = async () => {
     if (desktopApi.isPortable) {
@@ -174,6 +192,9 @@ function DesktopUpdateNotice() {
                   <p className="text-sm font-black text-[#17133c] dark:text-white">New Nexfix POS update available</p>
                   <p className="mt-1 text-xs text-[#6f7391] dark:text-slate-400">Version {update.version || 'new'} is ready. Update now to keep this POS current.</p>
                 </div>
+                <button type="button" onClick={dismissUpdate} aria-label="Close update notification" title="Close" className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white">
+                  ×
+                </button>
               </div>
               <button type="button" onClick={() => void updateNow()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-500 py-2.5 text-xs font-extrabold text-white shadow-[0_10px_24px_rgba(14,165,233,0.22)] transition hover:brightness-110">
                 <Download size={15} /> Update now
