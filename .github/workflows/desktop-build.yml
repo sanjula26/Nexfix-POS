@@ -244,15 +244,7 @@ jobs:
               Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
           )
-          $removePaths = @(
-            $releaseObjects |
-              Where-Object {
-                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
-                $keepNames -notcontains (($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) }) | Select-Object -First 1)
-              }
-          )
-
-          # Simpler and safer explicit keep test: keep only chunks belonging to the
+          # Keep only chunks belonging to the currently active installer or portable artifact.
           # currently active installer or portable artifact.
           $removePaths = @(
             $releaseObjects |
