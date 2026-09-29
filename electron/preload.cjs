@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   saveCloudUpdaterRecovery: (payload) => ipcRenderer.invoke('cloud-recovery:save', payload),
   loadCloudUpdaterRecovery: (email) => ipcRenderer.invoke('cloud-recovery:load', email),
   clearCloudUpdaterRecovery: () => ipcRenderer.invoke('cloud-recovery:clear'),
+  saveCloudUpdaterDeviceToken: (payload) => ipcRenderer.invoke('cloud-updater-token:save', payload),
+  loadCloudUpdaterDeviceToken: () => ipcRenderer.invoke('cloud-updater-token:load'),
+  clearCloudUpdaterDeviceToken: () => ipcRenderer.invoke('cloud-updater-token:clear'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
   onAuthCallback: (listener) => {
