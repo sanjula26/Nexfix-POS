@@ -27,6 +27,7 @@ async function saveCloudUpdaterRecovery(session: { user?: { id?: string | null; 
   // Supabase refresh tokens are opaque credentials; do not enforce a minimum length.
   if (!email || !userId || !refreshToken || refreshToken.length > 16384) return;
   await desktop.saveCloudUpdaterRecovery({ email, userId, refreshToken });
+  try { localStorage.setItem('nexfix_cloud_updater_email', email); } catch { /* optional recovery hint */ }
 }
 
 async function restoreCloudUpdaterRecovery(email: string): Promise<{ ok: boolean; error?: string }> {
