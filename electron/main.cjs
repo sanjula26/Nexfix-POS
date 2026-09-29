@@ -72,20 +72,23 @@ function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!w
 function configureUpdaterCredentials(){
   if (!autoUpdater) return false;
   const authorized = Boolean(updateAuthToken && updateDeviceId);
-  const options = {
+
+  // electron-updater reads requestHeaders from the updater instance. Passing
+  // requestHeaders only to setFeedURL() does not reliably carry them into
+  // manifest/download requests on installed clients.
+  autoUpdater.requestHeaders = authorized ? {
+    Authorization: `Bearer ${updateAuthToken}`,
+    'X-Nexfix-Device': updateDeviceId,
+    'Cache-Control': 'no-cache',
+  } : null;
+
+  autoUpdater.setFeedURL({
     provider: 'generic',
     url: `${UPDATE_FEED_URL}/`,
-    ...(authorized ? {
-      requestHeaders: {
-        Authorization: `Bearer ${updateAuthToken}`,
-        'X-Nexfix-Device': updateDeviceId,
-      },
-    } : {}),
     useMultipleRangeRequest: false,
     timeout: 10 * 60 * 1000,
     publishAutoUpdate: false,
-  };
-  autoUpdater.setFeedURL(options);
+  });
   return authorized;
 }
 
@@ -149,7 +152,18 @@ function setupAutoUpdater(){
     autoUpdater.on('update-downloaded',info=>{
       pendingUpdateInfo=info; updateDownloadActive=false;
       sendUpdateEvent('downloaded',{version:info?.version||''});
-      if(!updateInstallScheduled){updateInstallScheduled=true;setTimeout(()=>{try{autoUpdater.quitAndInstall(false,true);}catch(error){updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});}},600);}
+      // Install the downloaded NSIS update silently and relaunch the POS.
+      // No installer is copied to the user's Downloads folder.
+      if(!updateInstallScheduled){
+        updateInstallScheduled=true;
+        setTimeout(()=>{
+          try{ autoUpdater.quitAndInstall(true,true); }
+          catch(error){
+            updateInstallScheduled=false;
+            sendUpdateEvent('error',{message:error?.message||String(error)});
+          }
+        },600);
+      }
     });
     autoUpdater.on('error',error=>{updateDownloadActive=false;updateInstallScheduled=false;sendUpdateEvent('error',{message:error?.message||String(error)});});
     ipcMain.handle('cloud-recovery:save',(event,payload)=>{
@@ -215,45 +229,26 @@ function setupAutoUpdater(){
       if(!app.isPackaged||process.platform!=='win32')return{supported:false,started:false};
       if(!configureUpdaterCredentials())return{supported:true,started:false,error:'Update authorization is not ready.'};
       if(updateDownloadActive||updateInstallScheduled)return{supported:true,started:false};
-      let targetPath='';
       try{
-        if(!pendingUpdateInfo){const result=await autoUpdater.checkForUpdates();if(!result?.isUpdateAvailable)return{supported:true,started:false};pendingUpdateInfo=result.updateInfo;}
-        updateDownloadActive=true;sendUpdateEvent('progress',{percent:0});
-        const data=await fetchAuthorizedUpdatePackage();
-        if(pendingUpdateInfo?.version&&data.version&&String(data.version)!==String(pendingUpdateInfo.version)) throw new Error('Authorized update metadata changed during download. Please check for updates again.');
-        const safeName=path.basename(typeof data.name==='string'&&data.name?data.name:'Nexfix-POS-installer.exe').replace(/[<>:"/\\|?*]/g,'_');
-        targetPath=path.join(app.getPath('userData'),'updates',safeName+'.download');
-        await downloadAuthorizedChunks(data,targetPath,p=>sendUpdateEvent('progress',{percent:p}));
-        const finalPath=targetPath.slice(0,-'.download'.length); try{fs.rmSync(finalPath,{force:true});}catch{} fs.renameSync(targetPath,finalPath); targetPath=finalPath;
-        pendingUpdateInfo=null;updateDownloadActive=false;updateInstallScheduled=true;sendUpdateEvent('downloaded',{version:data.version||''});
-        launchAuthorizedInstaller(targetPath); return{supported:true,started:true};
-      }catch(error){
-        updateDownloadActive=false;updateInstallScheduled=false;if(targetPath){try{fs.rmSync(targetPath,{force:true});}catch{}}
-        sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,started:false,error:error?.message||String(error)};
-      }
-    });
-    ipcMain.handle('update:downloadAuthorizedInstaller',async()=>{
-      if(!app.isPackaged||process.platform!=='win32')return{supported:false,ok:false,error:'Authorized installer downloads are available in the installed Windows POS only.'};
-      if(!updateAuthToken||!updateDeviceId)return{supported:true,ok:false,error:'Update authorization is not ready. Please sign in to the POS first.'};
-      let targetPath='';
-      try{
-        const data=await fetchAuthorizedUpdatePackage();
-        const safeName=path.basename(typeof data.name==='string'&&data.name?data.name:'Nexfix-POS-installer.exe').replace(/[<>:"/\\|?*]/g,'_');
-        const downloadsDir=app.getPath('downloads');
-        targetPath=path.join(downloadsDir,safeName);
-        if(fs.existsSync(targetPath)){
-          const ext=path.extname(safeName);
-          const base=path.basename(safeName,ext);
-          targetPath=path.join(downloadsDir,`${base}-${Date.now()}${ext}`);
+        if(!pendingUpdateInfo){
+          const result=await autoUpdater.checkForUpdates();
+          if(!result?.isUpdateAvailable)return{supported:true,started:false};
+          pendingUpdateInfo=result.updateInfo;
         }
-        await downloadAuthorizedChunks(data,targetPath,p=>sendUpdateEvent('progress',{percent:p}));
-        shell.showItemInFolder(targetPath);
-        return{supported:true,ok:true,path:targetPath,name:path.basename(targetPath),version:data.version||null};
+        updateDownloadActive=true;
+        sendUpdateEvent('progress',{percent:0});
+        // Download into electron-updater's private cache, then the
+        // update-downloaded handler performs the silent NSIS install/restart.
+        await autoUpdater.downloadUpdate();
+        return{supported:true,started:true};
       }catch(error){
-        if(targetPath){try{fs.rmSync(targetPath,{force:true});}catch{}}
-        return{supported:true,ok:false,error:error?.message||String(error)};
+        updateDownloadActive=false;
+        updateInstallScheduled=false;
+        sendUpdateEvent('error',{message:error?.message||String(error)});
+        return{supported:true,started:false,error:error?.message||String(error)};
       }
     });
+
     const checkNow=()=>{
       if(!configureUpdaterCredentials()) return;
       void autoUpdater.checkForUpdates().catch(()=>{});
