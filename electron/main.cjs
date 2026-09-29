@@ -195,7 +195,8 @@ function setupAutoUpdater(){
     ipcMain.handle('update:set-credentials',(_event,payload)=>{
       const token=typeof payload?.token==='string'?payload.token.trim():'';
       const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
-      updateAuthToken=token.length>=100?token:'';
+      // Supabase access tokens are JWT/opaque credentials; never assume a minimum length.
+      updateAuthToken=token && token.length<=16384?token:'';
       updateDeviceId=deviceId.length>=1&&deviceId.length<=200?deviceId:'';
       pendingUpdateInfo=null;
       const ok=configureUpdaterCredentials();
