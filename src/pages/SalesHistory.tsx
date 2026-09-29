@@ -21,6 +21,8 @@ export default function SalesHistory() {
   const [view, setView] = useState<Sale | null>(null);
   const [refunding, setRefunding] = useState<Sale | null>(null);
   const [printSale, setPrintSale] = useState<Sale | null>(null);
+  const [whatsappSale, setWhatsappSale] = useState<Sale | null>(null);
+  const [whatsappPhone, setWhatsappPhone] = useState('');
   const [limit, setLimit] = useState(50);
   const [refundBusy, setRefundBusy] = useState(false);
   const [reverseBusy, setReverseBusy] = useState<string | null>(null);
@@ -165,12 +167,11 @@ export default function SalesHistory() {
                       <div className="flex items-center justify-end gap-1">
                         <button className="icon-btn !w-8 !h-8" title="View" onClick={() => setView(s)}><Eye size={14} /></button>
                         <button className="icon-btn !w-8 !h-8" title="Reprint receipt" onClick={() => setPrintSale(s)}><Printer size={14} /></button>
-                        {(() => {
+                        <button className="icon-btn !w-8 !h-8 !text-emerald-600 hover:!bg-emerald-500/10" title="Send bill via WhatsApp" onClick={() => {
                           const phone = s.customerId ? state.customers.find(c => c.id === s.customerId)?.phone || '' : '';
-                          return normalizeWhatsAppPhone(phone).length >= 9 ? (
-                            <a className="icon-btn !w-8 !h-8 !text-emerald-600 hover:!bg-emerald-500/10" title="Send bill via WhatsApp" href={waLink(phone, buildWhatsAppText(s, state.settings))} target="_blank" rel="noreferrer"><MessageCircle size={14} /></a>
-                          ) : null;
-                        })()}
+                          setWhatsappSale(s);
+                          setWhatsappPhone(phone);
+                        }}><MessageCircle size={14} /></button>
                         {can('act:refund') && s.status === 'completed' && (
                           <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Refund" onClick={() => setRefunding(s)}>
                             <RotateCcw size={14} />
@@ -259,10 +260,62 @@ export default function SalesHistory() {
             </div>
             <div className="flex gap-2.5">
               <button className="btn btn-primary flex-1" onClick={() => { setPrintSale(view); setView(null); }}><Printer size={15} /> Print receipt</button>
-              {view.customerId && normalizeWhatsAppPhone(state.customers.find(c => c.id === view.customerId)?.phone || '').length >= 9 && (
-                <a className="btn !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} href={waLink(state.customers.find(c => c.id === view.customerId)?.phone || '', buildWhatsAppText(view, state.settings))} target="_blank" rel="noreferrer"><MessageCircle size={15} /> WhatsApp bill</a>
-              )}
+              <button className="btn !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => {
+                const phone = view.customerId ? state.customers.find(c => c.id === view.customerId)?.phone || '' : '';
+                setWhatsappSale(view);
+                setWhatsappPhone(phone);
+              }}><MessageCircle size={15} /> WhatsApp bill</button>
               <button className="btn btn-soft" onClick={() => setView(null)}>Close</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* WhatsApp recipient */}
+      <Modal open={!!whatsappSale} onClose={() => setWhatsappSale(null)} title="Send bill via WhatsApp" sub={whatsappSale ? whatsappSale.billNo : ''}>
+        {whatsappSale && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-raised border border-line p-3">
+              <div className="text-[10px] font-bold tracking-wider uppercase text-faint">Bill</div>
+              <div className="text-sm font-bold text-ink mt-1">{whatsappSale.billNo} · {fmtRs(whatsappSale.total)}</div>
+              <div className="text-xs text-sub mt-0.5">{whatsappSale.customerName || 'Walk-in customer'}</div>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-sub mb-1.5 block" htmlFor="whatsapp-bill-phone">WhatsApp number</label>
+              <input
+                id="whatsapp-bill-phone"
+                className="input w-full"
+                type="tel"
+                inputMode="tel"
+                autoFocus
+                value={whatsappPhone}
+                onChange={e => setWhatsappPhone(e.target.value)}
+                placeholder="e.g. 0771234567 or +94771234567"
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const digits = normalizeWhatsAppPhone(whatsappPhone);
+                    if (digits.length >= 9 && digits.length <= 15) {
+                      window.open(waLink(whatsappPhone, buildWhatsAppText(whatsappSale, state.settings)), '_blank', 'noopener,noreferrer');
+                      setWhatsappSale(null);
+                    }
+                  }
+                }}
+              />
+              <div className="text-[11px] text-faint mt-1.5">Enter the customer's WhatsApp number. The number is used only to open WhatsApp for this bill.</div>
+            </div>
+            <div className="flex gap-2.5">
+              <button className="btn btn-soft flex-1" onClick={() => setWhatsappSale(null)}>Cancel</button>
+              <button
+                className="btn !text-white flex-1"
+                style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}
+                disabled={(() => { const digits = normalizeWhatsAppPhone(whatsappPhone); return digits.length < 9 || digits.length > 15; })()}
+                onClick={() => {
+                  const digits = normalizeWhatsAppPhone(whatsappPhone);
+                  if (digits.length < 9 || digits.length > 15) return;
+                  window.open(waLink(whatsappPhone, buildWhatsAppText(whatsappSale, state.settings)), '_blank', 'noopener,noreferrer');
+                  setWhatsappSale(null);
+                }}
+              ><MessageCircle size={15} /> Open WhatsApp</button>
             </div>
           </div>
         )}
