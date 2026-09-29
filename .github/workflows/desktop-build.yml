@@ -426,12 +426,23 @@ jobs:
                 prefix = 'win32/latest/'
                 limit = 1000
                 offset = $offset
+                sortBy = @{
+                  column = 'name'
+                  order = 'asc'
+                }
               } | ConvertTo-Json -Compress
               $page = @(Invoke-RestMethod -Uri "$storageUrl/object/list/$bucket" -Method Post -Headers $headers -Body $listBody)
               if ($page.Count -eq 0) { break }
+
+              # Some hosted Storage responses can return fewer rows than the requested
+              # limit without meaning that the prefix is exhausted. Advance by the
+              # actual page size and continue until the API returns zero rows.
               $all += $page
-              if ($page.Count -lt 1000) { break }
               $offset += $page.Count
+
+              if ($offset -gt 10000) {
+                throw 'Storage cleanup pagination exceeded 10,000 rows; refusing to loop indefinitely.'
+              }
             }
             return @($all)
           }
