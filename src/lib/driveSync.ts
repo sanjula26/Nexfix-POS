@@ -172,7 +172,7 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
-async function verifyRecentGoogleBackup(baseUrl: string, shopId: string, body: Record<string, unknown>): Promise<boolean> {
+async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unknown>): Promise<boolean> {
   try {
     const latest = await fetchLatestGoogleBackup(8000);
     if (!latest || latest.shopId !== shopId) return false;
@@ -249,7 +249,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         // Older/slow Apps Script deployments can report a generic status error
         // after Drive has already committed the backup. Verify the actual latest
         // shop-scoped backup before surfacing a failure to the operator.
-        if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
+        if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
         return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
       pollDelay = Math.min(4000, Math.round(pollDelay * 1.4));
@@ -268,14 +268,14 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
         return postGoogleBackup(body, shopId, attempt + 1);
       }
-      if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
+      if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
       return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.', ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
 
     // Last-resort verification is read-only and still authenticated with the
     // same shopProof/apiKey. Accept a recent latest backup for this shop only
     // when its timestamp/backupId corresponds closely to this upload attempt.
-    if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
+    if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
 
     console.error('[Google Backup] confirmation could not be verified', { requestId });
     return { ok: false, error: 'Google Drive backup confirmation timed out. Please check Google Drive and try again.' };
