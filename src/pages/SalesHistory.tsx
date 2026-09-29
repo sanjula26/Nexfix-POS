@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
-  ReceiptText, Eye, RotateCcw, Printer, TrendingUp, Banknote, CalendarDays, ShieldCheck, CheckCircle2, X,
+  ReceiptText, Eye, RotateCcw, Printer, MessageCircle, TrendingUp, Banknote, CalendarDays, ShieldCheck, CheckCircle2, X,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, EmptyState, PageHeading, Avatar } from '../components/ui';
-import ReceiptModal from '../components/ReceiptModal';
-import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel } from '../lib/utils';
+import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
+import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel, waLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 type RangeKey = 'today' | 'custom' | 'week' | 'month' | 'all';
@@ -165,6 +165,12 @@ export default function SalesHistory() {
                       <div className="flex items-center justify-end gap-1">
                         <button className="icon-btn !w-8 !h-8" title="View" onClick={() => setView(s)}><Eye size={14} /></button>
                         <button className="icon-btn !w-8 !h-8" title="Reprint receipt" onClick={() => setPrintSale(s)}><Printer size={14} /></button>
+                        {(() => {
+                          const phone = s.customerId ? state.customers.find(c => c.id === s.customerId)?.phone || '' : '';
+                          return normalizeWhatsAppPhone(phone).length >= 9 ? (
+                            <a className="icon-btn !w-8 !h-8 !text-emerald-600 hover:!bg-emerald-500/10" title="Send bill via WhatsApp" href={waLink(phone, buildWhatsAppText(s, state.settings))} target="_blank" rel="noreferrer"><MessageCircle size={14} /></a>
+                          ) : null;
+                        })()}
                         {can('act:refund') && s.status === 'completed' && (
                           <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Refund" onClick={() => setRefunding(s)}>
                             <RotateCcw size={14} />
@@ -253,6 +259,9 @@ export default function SalesHistory() {
             </div>
             <div className="flex gap-2.5">
               <button className="btn btn-primary flex-1" onClick={() => { setPrintSale(view); setView(null); }}><Printer size={15} /> Print receipt</button>
+              {view.customerId && normalizeWhatsAppPhone(state.customers.find(c => c.id === view.customerId)?.phone || '').length >= 9 && (
+                <a className="btn !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} href={waLink(state.customers.find(c => c.id === view.customerId)?.phone || '', buildWhatsAppText(view, state.settings))} target="_blank" rel="noreferrer"><MessageCircle size={15} /> WhatsApp bill</a>
+              )}
               <button className="btn btn-soft" onClick={() => setView(null)}>Close</button>
             </div>
           </div>
