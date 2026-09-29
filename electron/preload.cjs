@@ -16,7 +16,6 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   clearCloudUpdaterRecovery: () => ipcRenderer.invoke('cloud-recovery:clear'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
-  downloadAuthorizedInstaller: () => ipcRenderer.invoke('update:downloadAuthorizedInstaller'),
   onAuthCallback: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on('auth:callback', handler);
