@@ -407,10 +407,9 @@ jobs:
           $portable = Get-ChildItem -Path release -Filter '*-portable.exe' -File | Select-Object -First 1
           if (-not $installer -or -not $portable) { throw 'Current release artifacts are missing during storage cleanup.' }
 
-          # Supabase Storage folders are virtual prefixes. The list endpoint returns
-          # files/folders relative to the requested folder, so list the exact release
-          # folder instead of trying to recursively enumerate the bucket root.
-          # Delete only through the official Storage API; never delete storage.objects via SQL.
+          # Supabase Storage folders are virtual prefixes. List the exact release folder
+          # without search so file rows are returned; names are relative to that folder.
+          # Delete only through the official Storage API, never storage.objects via SQL.
           $storageUrl = "$projectUrl/storage/v1"
           $headers = @{
             apikey = $env:SUPABASE_SERVICE_ROLE_KEY
@@ -446,6 +445,7 @@ jobs:
           $objects = @(Get-LatestReleaseObjects)
           $releaseObjects = @(
             $objects |
+              Where-Object { $_.id -ne $null } |
               ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
               Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
@@ -463,8 +463,7 @@ jobs:
           )
 
           Write-Host "Current release: $version"
-          Write-Host "Storage list rows in win32/latest/: $($objects.Count)"
-          Write-Host "Nexfix release chunk objects found: $($releaseObjects.Count)"
+          Write-Host "Storage file rows in win32/latest/: $($releaseObjects.Count)"
           Write-Host "Superseded chunk objects to remove: $($removePaths.Count)"
 
           if ($releaseObjects.Count -eq 0) {
@@ -476,14 +475,18 @@ jobs:
               $take = [Math]::Min(1000, $removePaths.Count - $offset)
               $batch = @($removePaths[$offset..($offset + $take - 1)])
               $deleteBody = @{ prefixes = $batch } | ConvertTo-Json -Compress
-              Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
-              Write-Host "Removed $($batch.Count) superseded storage object(s)."
+              $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
+              if ($deleted.Count -ne $batch.Count) {
+                throw "Storage delete count mismatch: requested $($batch.Count), API returned $($deleted.Count)."
+              }
+              Write-Host "Removed $($deleted.Count) superseded storage object(s)."
             }
           }
 
           $remainingObjects = @(Get-LatestReleaseObjects)
           $remaining = @(
             $remainingObjects |
+              Where-Object { $_.id -ne $null } |
               ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
               Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
               Sort-Object -Unique
