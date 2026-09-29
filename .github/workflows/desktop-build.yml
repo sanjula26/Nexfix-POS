@@ -186,6 +186,110 @@ jobs:
             }
           }
           Write-Host 'Public GitHub installer release cleanup complete. Supabase is the only Windows installer distribution channel.'
+      - name: Free superseded private release storage before upload
+        shell: pwsh
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $bucket = 'nexfix-desktop-updates'
+          $storageUrl = "$projectUrl/storage/v1"
+          $headers = @{
+            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
+            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
+            'Content-Type' = 'application/json'
+            'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+          }
+
+          # Keep the currently active release intact until the new release has been
+          # uploaded and verified. This prevents a failed upload from breaking rollback.
+          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=installer_name,portable_name&limit=1" -Headers $headers)
+          if ($active.Count -ne 1) { throw 'Expected exactly one active private Windows release before upload cleanup.' }
+          $keepNames = @(
+            [string]$active[0].installer_name,
+            [string]$active[0].portable_name
+          ) | Where-Object { $_ }
+
+          function Get-LatestReleaseObjects {
+            $all = @()
+            $offset = 0
+            while ($true) {
+              $listBody = @{
+                prefix = 'win32/latest/'
+                limit = 1000
+                offset = $offset
+                sortBy = @{ column = 'name'; order = 'asc' }
+              } | ConvertTo-Json -Compress
+              $page = @(Invoke-RestMethod -Uri "$storageUrl/object/list/$bucket" -Method Post -Headers $headers -Body $listBody)
+              if ($page.Count -eq 0) { break }
+              $all += $page
+              $offset += $page.Count
+              if ($offset -gt 10000) { throw 'Pre-upload storage cleanup pagination exceeded 10,000 rows.' }
+            }
+            return @($all)
+          }
+
+          function Normalize-LatestPath([string]$name) {
+            if ([string]::IsNullOrWhiteSpace($name)) { return $null }
+            if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { return $name }
+            return "win32/latest/$name"
+          }
+
+          $objects = @(Get-LatestReleaseObjects)
+          $releaseObjects = @(
+            $objects |
+              Where-Object { $_.id -ne $null } |
+              ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
+              Sort-Object -Unique
+          )
+          $removePaths = @(
+            $releaseObjects |
+              Where-Object {
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                $keepNames -notcontains (($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) }) | Select-Object -First 1)
+              }
+          )
+
+          # Simpler and safer explicit keep test: keep only chunks belonging to the
+          # currently active installer or portable artifact.
+          $removePaths = @(
+            $releaseObjects |
+              Where-Object {
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                -not ($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
+              }
+          )
+
+          Write-Host "Active release kept: $($keepNames -join ', ')"
+          Write-Host "Superseded chunk objects to remove before upload: $($removePaths.Count)"
+          if ($removePaths.Count -gt 0) {
+            $deleteBody = @{ prefixes = @($removePaths) } | ConvertTo-Json -Compress
+            $deleted = @(Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody)
+            if ($deleted.Count -ne $removePaths.Count) {
+              throw "Pre-upload storage delete count mismatch: requested $($removePaths.Count), API returned $($deleted.Count)."
+            }
+            Write-Host "Pre-upload storage cleanup removed $($deleted.Count) superseded chunks."
+          }
+
+          $after = @(Get-LatestReleaseObjects)
+          $remainingOld = @(
+            $after |
+              Where-Object { $_.id -ne $null } |
+              ForEach-Object { Normalize-LatestPath ([string]$_.name) } |
+              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
+              ForEach-Object {
+                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
+                if (-not ($keepNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })) { $_ }
+              } |
+              Sort-Object -Unique
+          )
+          if ($remainingOld.Count -gt 0) {
+            throw "Pre-upload storage cleanup failed; superseded chunks remain: $($remainingOld -join ', ')"
+          }
+          Write-Host 'Pre-upload storage cleanup verified; active release remains intact.'
+          
       - name: Publish Windows release to private Supabase Storage
         shell: pwsh
         env:
