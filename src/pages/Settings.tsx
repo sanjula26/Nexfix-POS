@@ -196,9 +196,18 @@ export default function Settings() {
     });
     return unsubscribe;
   }, [cloudSetupEmail, desktopApi]);
-  const ensureUpdaterReady=async()=>{\n    // Cloud auth can finish restoring shortly after the POS window becomes interactive.\n    // Give the startup lifecycle enough time to restore the encrypted device credentials\n    // before showing an authorization error to the user.\n    const maxAttempts=8;\n    for(let attempt=0;attempt<maxAttempts;attempt+=1){\n      if(await refreshDesktopUpdaterCredentials())return true;\n      if(attempt<maxAttempts-1)await new Promise(resolve=>window.setTimeout(resolve,750));\n    }\n    return false;\n  };
-  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};  const provisionCloudUpdater = async () => {
-    if (cloudSetupBusy) return;
+  const ensureUpdaterReady=async()=>{
+    // Cloud auth can finish restoring shortly after the POS window becomes interactive.
+    // Give the startup lifecycle enough time to restore the encrypted device credentials
+    // before showing an authorization error to the user.
+    const maxAttempts=8;
+    for(let attempt=0;attempt<maxAttempts;attempt+=1){
+      if(await refreshDesktopUpdaterCredentials())return true;
+      if(attempt<maxAttempts-1)await new Promise(resolve=>window.setTimeout(resolve,750));
+    }
+    return false;
+  };
+  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}const result=await desktopApi.checkForUpdates?.();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});};  const provisionCloudUpdater = async () => {    if (cloudSetupBusy) return;
     setCloudSetupBusy(true);
     setCloudSetupMsg(null);
     try {
@@ -397,8 +406,7 @@ export default function Settings() {
       // Google Drive encrypted single-file backup: {_meta, payload: AES envelope}.
       if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload) {
         const meta = candidate._meta as Record<string, unknown>;        if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
-          const decrypted = await decryptBackupEnvelope(candidate.payload);
-          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+          const decrypted = await decryptBackupEnvelope(candidate.payload);          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
         }
       // Google Drive multipart backup: select the manifest plus all .partNNN files.
       } else if (candidate && typeof candidate === 'object' && candidate.encrypted === true && Array.isArray(candidate.partNames)) {
@@ -597,8 +605,7 @@ export default function Settings() {
             <Field label="Cloud account email" hint="Use the Supabase Auth Admin email; it may be different from the local POS login email."><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="cloud-admin@example.com" autoComplete="email" /></Field>
             <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>          </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
-            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>
-            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
+            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
           </div>
           {cloudSetupMsg && <p className={`mt-3 text-[12px] font-semibold ${cloudSetupMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{cloudSetupMsg.text}</p>}
           <p className="text-[11px] text-faint mt-3">If Supabase requires email confirmation, confirm the message sent to the cloud account and then sign in again before retrying this setup.</p>
@@ -797,8 +804,7 @@ export default function Settings() {
           <div className="card p-6"><h3 className="font-bold text-ink flex items-center gap-2 mb-3"><span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center"><ReceiptText size={15} /></span>Receipt Identity</h3><div className="flex flex-wrap gap-2"><Badge tone="violet">{form.shopName}</Badge><Badge tone="slate">{form.phone}</Badge><Badge tone="slate">{form.email}</Badge><Badge tone="amber">{form.exchangeDays}-day exchange policy</Badge></div><p className="text-xs text-faint mt-3">These print on every bill and price tag sheet.</p></div>
       </div>
 
-      <Modal
-        open={confirmGoogleRestore !== null}
+      <Modal        open={confirmGoogleRestore !== null}
         onClose={() => { if (!gRestoreBusy) setConfirmGoogleRestore(null); }}
         title="Restore latest Google backup?"
         sub="This will replace the current local POS data"
