@@ -9,6 +9,7 @@ let updateDownloadActive = false;
 let updateInstallScheduled = false;
 let updateAuthToken = '';
 let updateDeviceId = '';
+let updateAuthMode = 'bearer';
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
 const AUTH_PROTOCOL = 'nexfix';
 let pendingAuthCallback = null;
@@ -74,7 +75,9 @@ function configureUpdaterCredentials(){
   // requestHeaders only to setFeedURL() does not reliably carry them into
   // manifest/download requests on installed clients.
   autoUpdater.requestHeaders = authorized ? {
-    Authorization: `Bearer ${updateAuthToken}`,
+    ...(updateAuthMode === 'device'
+      ? { 'X-Nexfix-Update-Token': updateAuthToken }
+      : { Authorization: `Bearer ${updateAuthToken}` }),
     'X-Nexfix-Device': updateDeviceId,
     'Cache-Control': 'no-cache',
   } : null;
@@ -154,6 +157,41 @@ function setupAutoUpdater(){
         return {ok:true,found:true,userId:parsed.userId,refreshToken:parsed.refreshToken};
       }catch{return {ok:false,error:'Stored cloud recovery credential could not be opened'};}
     });
+    ipcMain.handle('cloud-updater-token:save',(event,payload)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+      const token=typeof payload?.token==='string'?payload.token.trim():'';
+      if(!token || token.length<64 || token.length>512) return {ok:false,error:'Invalid Windows updater authorization token'};
+      try{
+        const current=readSecureRecoveryFile();
+        current.cloudUpdaterDeviceToken=safeStorage.encryptString(token).toString('base64');
+        current.cloudUpdaterDeviceTokenVersion=1;
+        writeSecureRecoveryFile({...current,version:2});
+        return {ok:true};
+      }catch(error){return {ok:false,error:error?.message||String(error)};}
+    });
+    ipcMain.handle('cloud-updater-token:load',(event)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+      try{
+        const encrypted=readSecureRecoveryFile().cloudUpdaterDeviceToken;
+        if(typeof encrypted!=='string'||!encrypted) return {ok:true,found:false};
+        const token=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
+        if(!token || token.length<64 || token.length>512) return {ok:true,found:false};
+        return {ok:true,found:true,token};
+      }catch{return {ok:false,error:'Stored Windows updater authorization could not be opened'};}
+    });
+    ipcMain.handle('cloud-updater-token:clear',(event)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+      try{
+        const current=readSecureRecoveryFile();
+        delete current.cloudUpdaterDeviceToken;
+        delete current.cloudUpdaterDeviceTokenVersion;
+        if(Object.keys(current).length===0){try{fs.rmSync(getSecureRecoveryFile(),{force:true});}catch{}}
+        else writeSecureRecoveryFile(current);
+        return {ok:true};
+      }catch(error){return {ok:false,error:error?.message||String(error)};}
+    });
     ipcMain.handle('cloud-recovery:clear',(event)=>{
       if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
       try{
@@ -167,16 +205,20 @@ function setupAutoUpdater(){
     ipcMain.handle('update:set-credentials',(_event,payload)=>{
       const token=typeof payload?.token==='string'?payload.token.trim():'';
       const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
-      // Supabase access tokens are JWT/opaque credentials; never assume a minimum length.
+      const mode=payload?.mode==='device'?'device':'bearer';
+      // Supabase access tokens are opaque credentials; device updater tokens are
+      // high-entropy 32-byte values encoded as 64 hex characters. Never assume
+      // a JWT minimum length for the legacy bearer path.
       updateAuthToken=token && token.length<=16384?token:'';
       updateDeviceId=deviceId.length>=1&&deviceId.length<=200?deviceId:'';
+      updateAuthMode=mode;
       pendingUpdateInfo=null;
       const ok=configureUpdaterCredentials();
       if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
       return {ok};
     });
-    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; return {ok:true}; });
-    ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
+    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; return {ok:true}; });
+    ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),authorizationMode:updateAuthMode,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
       if(!configureUpdaterCredentials())return{supported:true,available:false,error:'Update authorization is not ready.'};
