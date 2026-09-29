@@ -415,7 +415,7 @@ jobs:
             'Content-Type' = 'application/json'
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
-          $listBody = @{ prefix = 'win32/latest/'; limit = 1000; offset = 0 } | ConvertTo-Json -Compress
+          $listBody = @{ prefix = 'win32/latest/'; search = 'Nexfix-POS-'; limit = 1000; offset = 0 } | ConvertTo-Json -Compress
           $objects = @(Invoke-RestMethod -Uri "$storageUrl/object/list/$bucket" -Method Post -Headers $headers -Body $listBody)
           $keepPrefixes = @(
             "$($installer.Name).part",
@@ -436,7 +436,7 @@ jobs:
             for ($offset = 0; $offset -lt $removePaths.Count; $offset += 1000) {
               $take = [Math]::Min(1000, $removePaths.Count - $offset)
               $batch = @($removePaths[$offset..($offset + $take - 1)])
-              $deleteBody = $batch | ConvertTo-Json -Compress
+              $deleteBody = @{ prefixes = $batch } | ConvertTo-Json -Compress
               Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
               Write-Host "Removed $($batch.Count) superseded storage object(s)."
             }
