@@ -1,9 +1,6 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
-const { Readable } = require('stream');
-const { spawn } = require('child_process');
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
 let autoUpdater = null;
@@ -92,49 +89,6 @@ function configureUpdaterCredentials(){
   return authorized;
 }
 
-async function fetchAuthorizedUpdatePackage(){
-  const authHeaders={Authorization:'Bearer '+updateAuthToken,'X-Nexfix-Device':updateDeviceId,Accept:'application/json'};
-  const response=await fetch(UPDATE_FEED_URL+'?download=1',{headers:authHeaders,cache:'no-store'});
-  const data=await response.json().catch(()=>null);
-  if(!response.ok||!data?.ok||!Array.isArray(data.chunks)||data.chunks.length<1) throw new Error(data?.error||'The authorized installer download could not be started.');
-  if(!Number.isFinite(Number(data.size))||Number(data.size)<=0||typeof data.sha512!=='string'||!data.sha512.trim()) throw new Error('The authorized update metadata is incomplete.');
-  return data;
-}
-
-async function downloadAuthorizedChunks(data,targetPath,onProgress){
-  fs.mkdirSync(path.dirname(targetPath),{recursive:true});
-  const file=fs.createWriteStream(targetPath);
-  let total=0;
-  try{
-    for(let index=0;index<data.chunks.length;index++){
-      const chunkUrl=typeof data.chunks[index]==='string'?data.chunks[index]:'';
-      if(!chunkUrl) throw new Error('Update chunk '+(index+1)+' is missing.');
-      const response=await fetch(chunkUrl,{cache:'no-store'});
-      if(!response.ok||!response.body) throw new Error('Update chunk '+(index+1)+' could not be downloaded.');
-      for await(const chunk of Readable.fromWeb(response.body)){
-        if(!file.write(chunk)) await new Promise(resolve=>file.once('drain',resolve));
-        total+=chunk.length;
-        onProgress?.(Math.min(99,(total/Number(data.size))*100));
-      }
-    }
-    await new Promise((resolve,reject)=>{file.end(error=>error?reject(error):resolve());});
-  }catch(error){ file.destroy(); throw error; }
-  const actualSize=fs.statSync(targetPath).size;
-  if(actualSize!==Number(data.size)) throw new Error('Installer integrity check failed: downloaded size does not match the authorized release.');
-  const actualSha512=await new Promise((resolve,reject)=>{
-    const hash=crypto.createHash('sha512'); const input=fs.createReadStream(targetPath);
-    input.on('error',reject); input.on('data',chunk=>hash.update(chunk)); input.on('end',()=>resolve(hash.digest('base64')));
-  });
-  if(actualSha512!==String(data.sha512).trim()) throw new Error('Installer integrity check failed: SHA-512 does not match the authorized release.');
-  onProgress?.(100);
-}
-
-function launchAuthorizedInstaller(installerPath){
-  if(process.platform!=='win32') throw new Error('Windows installer execution is supported only on Windows.');
-  const child=spawn(installerPath,['/S'],{detached:true,stdio:'ignore',windowsHide:true});
-  child.unref();
-  setTimeout(()=>{try{app.quit();}catch{}},500);
-}
 function setupAutoUpdater(){
   if(!app.isPackaged || process.platform!=='win32') return;
   try{
