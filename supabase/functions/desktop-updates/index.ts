@@ -2,63 +2,83 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 const SUPABASE_URL=Deno.env.get("SUPABASE_URL")!, KEYS=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}"), SECRET=KEYS.default||"";
 const admin=createClient(SUPABASE_URL,SECRET,{auth:{persistSession:false}});
-const headers={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,apikey,content-type,x-nexfix-device","Access-Control-Allow-Methods":"GET,OPTIONS"};
+const headers={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,apikey,content-type,x-nexfix-device,x-nexfix-update-token","Access-Control-Allow-Methods":"GET,OPTIONS"};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...headers,"Content-Type":"application/json"}});
 const bearer=(r:Request)=>{const v=r.headers.get("authorization")||"";return v.startsWith("Bearer ")?v.slice(7).trim():"";};
 Deno.serve(async req=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers});
   if(req.method!=="GET")return json({ok:false,error:"Method not allowed"},405);
   try{
-    const token=bearer(req), deviceId=(req.headers.get("x-nexfix-device")||"").trim();
-    if(!token||!deviceId)return json({ok:false,error:"Authorization and device are required"},401);
-    const {data:u,error:ue}=await admin.auth.getUser(token);
-    if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
-    // Backward-compatible enrollment for desktop clients that already have a valid
-    // Supabase session but were built before client-side device registration.
-    const {data:existingRows,error:existingError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
-    if(existingError)return json({ok:false,error:"Could not verify POS device authorization"},500);
-    if((existingRows?.length||0)>1)return json({ok:false,error:"This POS device has ambiguous registrations and must be re-authorized by support"},409);
-    const existing=existingRows?.[0]||null;
+    const token=bearer(req), deviceToken=(req.headers.get("x-nexfix-update-token")||"").trim(), deviceId=(req.headers.get("x-nexfix-device")||"").trim();
+    if(!deviceId)return json({ok:false,error:"Authorization and device are required"},401);
+
     let shopId:string;
     let role:string;
-    if(existing){
-      // Existing registrations are authoritative: never re-insert the same
-      // device and never allow a different user to take over a registered ID.
-      if(existing.revoked_at)return json({ok:false,error:"This POS device has been revoked and must be re-authorized by support"},403);
-      if(existing.user_id!==u.user.id)return json({ok:false,error:"This POS device is registered to a different cloud account"},403);
-      shopId=String(existing.shop_id);
-      const {data:membership,error:membershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
+    let authenticatedUserId:string;
+
+    if(deviceToken){
+      // One-time authorized machines use a dedicated high-entropy device token.
+      // This path is independent of the Supabase interactive session, so normal
+      // POS logout, refresh-token rotation, and cashier/admin switching do not
+      // revoke future private updates.
+      if(deviceToken.length<64 || deviceToken.length>512)return json({ok:false,error:"Invalid updater device credential"},401);
+      const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(deviceToken));
+      const tokenHash=Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,"0")).join("");
+      const {data:device,error:deviceError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).eq("updater_token_hash",tokenHash).maybeSingle();
+      if(deviceError)return json({ok:false,error:"Could not verify POS device authorization"},500);
+      if(!device)return json({ok:false,error:"This Windows PC is not authorized for private updates"},401);
+      if(device.revoked_at)return json({ok:false,error:"This POS device has been revoked and must be re-authorized by support"},403);
+      authenticatedUserId=String(device.user_id);
+      shopId=String(device.shop_id);
+      const {data:membership,error:membershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",authenticatedUserId).eq("active",true).maybeSingle();
       if(membershipError)return json({ok:false,error:"Could not verify shop membership"},500);
       if(!membership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
       role=String(membership.role);
     }else{
-      // First-time/backward-compatible enrollment: bind the new device only
-      // when the authenticated account has exactly one active shop.
-      const {data:members,error:memberError}=await admin.from("shop_memberships").select("shop_id,role").eq("user_id",u.user.id).eq("active",true);
-      if(memberError)return json({ok:false,error:"Could not verify shop membership"},500);
-      if(!members?.length)return json({ok:false,error:"User is not an active member of a shop"},403);
-      if(members.length!==1)return json({ok:false,error:"Multiple active shops require explicit device registration"},403);
-      shopId=String(members[0].shop_id);
-      role=String(members[0].role||"");
-      if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
-      // Legacy cloud-sync tables require a matching pos_shops row. Some existing
-      // accounts have an active shop_memberships row but no legacy pos_shops row,
-      // so create the compatibility row before registering the device.
-      const {error:shopError}=await admin.from("pos_shops").upsert({shop_id:shopId,created_by:u.user.id},{onConflict:"shop_id",ignoreDuplicates:true});
-      if(shopError)return json({ok:false,error:"Could not initialize the POS shop authorization"},500);
-      const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:u.user.id,device_id:deviceId});
-      if(insertError){
-        // A concurrent registration may have won the race. Re-read it and
-        // accept only if it belongs to the same user and is not revoked.
-        const {data:racedRows}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
-        if((racedRows?.length||0)!==1)return json({ok:false,error:"This POS device could not be authorized"},403);
-        const raced=racedRows[0];
-        if(raced.revoked_at || raced.user_id!==u.user.id)return json({ok:false,error:"This POS device could not be authorized"},403);
-        shopId=String(raced.shop_id);
-        const {data:racedMembership,error:racedMembershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",u.user.id).eq("active",true).maybeSingle();
-        if(racedMembershipError)return json({ok:false,error:"Could not verify shop membership"},500);
-        if(!racedMembership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
-        role=String(racedMembership.role);
+      if(!token)return json({ok:false,error:"Authorization and device are required"},401);
+      const {data:u,error:ue}=await admin.auth.getUser(token);
+      if(ue||!u.user)return json({ok:false,error:"Invalid authorization"},401);
+      authenticatedUserId=u.user.id;
+      // Backward-compatible enrollment for desktop clients that already have a valid
+      // Supabase session but were built before client-side device registration.
+      const {data:existingRows,error:existingError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
+      if(existingError)return json({ok:false,error:"Could not verify POS device authorization"},500);
+      if((existingRows?.length||0)>1)return json({ok:false,error:"This POS device has ambiguous registrations and must be re-authorized by support"},409);
+      const existing=existingRows?.[0]||null;
+      if(existing){
+        // Existing registrations are authoritative: never re-insert the same
+        // device and never allow a different user to take over a registered ID.
+        if(existing.revoked_at)return json({ok:false,error:"This POS device has been revoked and must be re-authorized by support"},403);
+        if(existing.user_id!==authenticatedUserId)return json({ok:false,error:"This POS device is registered to a different cloud account"},403);
+        shopId=String(existing.shop_id);
+        const {data:membership,error:membershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",authenticatedUserId).eq("active",true).maybeSingle();
+        if(membershipError)return json({ok:false,error:"Could not verify shop membership"},500);
+        if(!membership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+        role=String(membership.role);
+      }else{
+        // First-time/backward-compatible enrollment: bind the new device only
+        // when the authenticated account has exactly one active shop.
+        const {data:members,error:memberError}=await admin.from("shop_memberships").select("shop_id,role").eq("user_id",authenticatedUserId).eq("active",true);
+        if(memberError)return json({ok:false,error:"Could not verify shop membership"},500);
+        if(!members?.length)return json({ok:false,error:"User is not an active member of a shop"},403);
+        if(members.length!==1)return json({ok:false,error:"Multiple active shops require explicit device registration"},403);
+        shopId=String(members[0].shop_id);
+        role=String(members[0].role||"");
+        if(!role)return json({ok:false,error:"Your account is not an active member of this shop"},403);
+        const {error:shopError}=await admin.from("pos_shops").upsert({shop_id:shopId,created_by:authenticatedUserId},{onConflict:"shop_id",ignoreDuplicates:true});
+        if(shopError)return json({ok:false,error:"Could not initialize the POS shop authorization"},500);
+        const {error:insertError}=await admin.from("pos_devices").insert({shop_id:shopId,user_id:authenticatedUserId,device_id:deviceId});
+        if(insertError){
+          const {data:racedRows}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).limit(10);
+          if((racedRows?.length||0)!==1)return json({ok:false,error:"This POS device could not be authorized"},403);
+          const raced=racedRows[0];
+          if(raced.revoked_at || raced.user_id!==authenticatedUserId)return json({ok:false,error:"This POS device could not be authorized"},403);
+          shopId=String(raced.shop_id);
+          const {data:racedMembership,error:racedMembershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",authenticatedUserId).eq("active",true).maybeSingle();
+          if(racedMembershipError)return json({ok:false,error:"Could not verify shop membership"},500);
+          if(!racedMembership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+          role=String(racedMembership.role);
+        }
       }
     }
     const requestUrl=new URL(req.url);
