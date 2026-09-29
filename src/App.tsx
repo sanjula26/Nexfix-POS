@@ -156,7 +156,7 @@ function DesktopUpdateNotice() {
       alive = false;
       unsubscribe?.();
     };
-  }, [user, desktopApi]);
+  }, [user, desktopApi, dismissedUpdateVersion]);
 
   if (!user || !desktopApi?.isPackaged || update.status === 'hidden') return null;
 
