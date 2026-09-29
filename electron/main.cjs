@@ -67,6 +67,33 @@ function writeSecureRecoveryFile(value){
 }
 function sendUpdateEvent(type,payload={}){ const win=getMainWindow(); if(win&&!win.isDestroyed()) win.webContents.send('update:event',{type,...payload}); }
 
+function restoreStoredUpdaterCredentials(){
+  if(!safeStorage.isEncryptionAvailable()) return false;
+  try{
+    const encrypted=readSecureRecoveryFile().cloudUpdaterDeviceToken;
+    if(typeof encrypted!=='string'||!encrypted) return false;
+    const decrypted=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
+    let token='';
+    let deviceId='';
+    try{
+      const parsed=JSON.parse(decrypted);
+      token=typeof parsed?.token==='string'?parsed.token.trim():'';
+      deviceId=typeof parsed?.deviceId==='string'?parsed.deviceId.trim():'';
+    }catch{
+      // Older v3.0.1279 records contain only the token; the renderer will
+      // provide the current device identity during its normal auth restore.
+      token=decrypted;
+    }
+    if(!token || token.length<64 || token.length>512 || !deviceId || deviceId.length>200) return false;
+    updateAuthToken=token;
+    updateDeviceId=deviceId;
+    updateAuthMode='device';
+    return true;
+  }catch{
+    return false;
+  }
+}
+
 function configureUpdaterCredentials(){
   if (!autoUpdater) return false;
   const authorized = Boolean(updateAuthToken && updateDeviceId);
@@ -96,6 +123,10 @@ function setupAutoUpdater(){
   if(!app.isPackaged || process.platform!=='win32') return;
   try{
     ({autoUpdater}=require('electron-updater'));
+    // Restore the encrypted per-device updater credential before the renderer
+    // starts. This removes the restart-time renderer race while keeping the
+    // token protected by Windows safeStorage.
+    restoreStoredUpdaterCredentials();
     // Always point the updater at the private Supabase gateway. Never fall back
     // to the build-time GitHub provider before a signed-in session supplies
     // authorization headers.
