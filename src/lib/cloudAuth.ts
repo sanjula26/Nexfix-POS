@@ -102,7 +102,7 @@ async function issueDesktopUpdaterDeviceToken(shopId: string): Promise<string> {
   return saved?.ok ? token : '';
 }
 
-export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
+async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
   const desktop = getDesktopUpdaterApi();
   if (!desktop?.setUpdateCredentials) return false;
   const deviceId = getMachineId();
@@ -187,6 +187,19 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     mode: 'device',
   });
   return Boolean((result as { ok?: boolean } | null)?.ok);
+}
+
+let updaterRefreshPromise: Promise<boolean> | null = null;
+
+export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
+  if (updaterRefreshPromise) return updaterRefreshPromise;
+  const promise = refreshDesktopUpdaterCredentialsInternal();
+  updaterRefreshPromise = promise;
+  try {
+    return await promise;
+  } finally {
+    if (updaterRefreshPromise === promise) updaterRefreshPromise = null;
+  }
 }
 
 /**
