@@ -172,6 +172,24 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
+async function verifyRecentGoogleBackup(baseUrl: string, shopId: string, body: Record<string, unknown>): Promise<boolean> {
+  try {
+    const latest = await fetchLatestGoogleBackup(8000);
+    if (!latest || latest.shopId !== shopId) return false;
+    const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
+    const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
+    const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
+    const attemptBackupId = String(body.backupId || '');
+    const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
+      && latestAt >= attemptAt - 10000
+      && latestAt <= attemptAt + 180000;
+    return Boolean((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough);
+  } catch (error) {
+    console.warn('[Google Backup] recent-backup verification failed', error);
+    return false;
+  }
+}
+
 async function postGoogleBackup(body: Record<string, unknown>, shopId: string, attempt = 0): Promise<GoogleBackupPostResult> {
   const baseUrl = getGoogleScriptUrl();
   if (!baseUrl) return { ok: false, error: 'Central Google Drive backup is not configured.' };
@@ -227,6 +245,11 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
           await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
           return postGoogleBackup(body, shopId, attempt + 1);
         }
+        // A status endpoint error is not enough to declare the upload failed.
+        // Older/slow Apps Script deployments can report a generic status error
+        // after Drive has already committed the backup. Verify the actual latest
+        // shop-scoped backup before surfacing a failure to the operator.
+        if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
         return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
       pollDelay = Math.min(4000, Math.round(pollDelay * 1.4));
@@ -245,25 +268,14 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
         return postGoogleBackup(body, shopId, attempt + 1);
       }
+      if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
       return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.', ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
 
     // Last-resort verification is read-only and still authenticated with the
     // same shopProof/apiKey. Accept a recent latest backup for this shop only
     // when its timestamp/backupId corresponds closely to this upload attempt.
-    const latest = await fetchLatestGoogleBackup(5000);
-    if (latest && latest.shopId === shopId) {
-      const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
-      const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
-      const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
-      const attemptBackupId = String(body.backupId || '');
-      const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
-        && latestAt >= attemptAt - 10000
-        && latestAt <= attemptAt + 180000;
-      if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) {
-        return { ok: true };
-      }
-    }
+    if (await verifyRecentGoogleBackup(baseUrl, shopId, body)) return { ok: true };
 
     console.error('[Google Backup] confirmation could not be verified', { requestId });
     return { ok: false, error: 'Google Drive backup confirmation timed out. Please check Google Drive and try again.' };
