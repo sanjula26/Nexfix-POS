@@ -91,8 +91,7 @@ Deno.serve(async req=>{
     const chunkPaths=Array.from({length:chunkCount},(_,i)=>`${r.installer_path}.part${String(i+1).padStart(4,"0")}`);
     const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,900);
     if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
-    const streamUrl=new URL(req.url); streamUrl.searchParams.set("download","stream");
-    streamUrl.pathname=streamUrl.pathname.replace(/\/latest\.(?:yml|yaml)$/,"");
+    const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates`); streamUrl.searchParams.set("download","stream");
     if(wantsDownload) return json({ok:true,url:streamUrl.toString(),chunks:signed.map(x=>x.signedUrl),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
     if(requestUrl.searchParams.get("download")==="stream"){
       const body=new ReadableStream({start(controller){(async()=>{try{
