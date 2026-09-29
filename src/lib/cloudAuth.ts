@@ -11,8 +11,8 @@ function getDesktopUpdaterApi() {
       clearUpdateCredentials?: () => Promise<unknown>;
       saveCloudUpdaterRecovery?: (payload: CloudUpdaterRecovery) => Promise<{ ok?: boolean; error?: string }>;
       loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
-      saveCloudUpdaterDeviceToken?: (payload: { token: string }) => Promise<{ ok?: boolean; error?: string }>;
-      loadCloudUpdaterDeviceToken?: () => Promise<{ ok?: boolean; found?: boolean; token?: string; error?: string }>;
+      saveCloudUpdaterDeviceToken?: (payload: { token: string; deviceId: string }) => Promise<{ ok?: boolean; error?: string }>;
+      loadCloudUpdaterDeviceToken?: () => Promise<{ ok?: boolean; found?: boolean; token?: string; deviceId?: string; error?: string }>;
       clearCloudUpdaterDeviceToken?: () => Promise<{ ok?: boolean; error?: string }>;
     };
   }).nexfixDesktop;
@@ -99,15 +99,15 @@ async function issueDesktopUpdaterDeviceToken(shopId: string): Promise<string> {
   });
   const token = typeof data?.token === 'string' ? data.token.trim() : '';
   if (error || data?.ok !== true || token.length < 64) return '';
-  const saved = await desktop.saveCloudUpdaterDeviceToken({ token });
+  const saved = await desktop.saveCloudUpdaterDeviceToken({ token, deviceId: getMachineId() });
   return saved?.ok ? token : '';
 }
 
 async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
   const desktop = getDesktopUpdaterApi();
   if (!desktop?.setUpdateCredentials) return false;
-  const deviceId = getMachineId();
-  if (!deviceId) {
+  const currentDeviceId = getMachineId();
+  if (!currentDeviceId) {
     await desktop.clearUpdateCredentials?.();
     return false;
   }
@@ -119,9 +119,10 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
   // not require the cloud email/password again.
   const storedDeviceToken = await desktop.loadCloudUpdaterDeviceToken?.();
   if (storedDeviceToken?.ok && storedDeviceToken.found && storedDeviceToken.token) {
+    const storedDeviceId = storedDeviceToken.deviceId?.trim() || currentDeviceId;
     const result = await desktop.setUpdateCredentials({
       token: storedDeviceToken.token,
-      deviceId,
+      deviceId: storedDeviceId,
       mode: 'device',
     });
     if ((result as { ok?: boolean } | null)?.ok) return true;
