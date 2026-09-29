@@ -364,7 +364,7 @@ export async function getGoogleScriptHealth(force = false): Promise<GoogleScript
 }
 
 async function getGoogleDeploymentError(): Promise<string | undefined> {
-  const health = await getGoogleScriptHealth(true);
+  const health = await getGoogleScriptHealth(false);
   if (!health) return undefined;
   if (health.version && health.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
     return `Google Backup API is outdated (live version ${health.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs before backing up.`;
