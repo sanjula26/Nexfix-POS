@@ -995,6 +995,30 @@ function parsePostBody(e) {
   return raw ? JSON.parse(raw) : {};
 }
 
+function hasBackupPart(shopId, backupId, partName) {
+  var normalizedShopId = normalizeShopId(shopId);
+  var safeBackupId = String(backupId || '').trim();
+  var safePartName = String(partName || '').trim();
+  if (!/^[A-Za-z0-9._:-]+$/.test(safeBackupId) || !/^[A-Za-z0-9._:-]+$/.test(safePartName)) return false;
+  var root = getRootBackupFolder();
+  var folders = root.getFolders();
+  var partition = shopPartitionKey(normalizedShopId);
+  var prefix = 'Shop_' + partition + ' - ';
+  var expectedPartPrefix = 'NEXFIX_' + partition + '_';
+  if (safePartName.indexOf(expectedPartPrefix) !== 0 || safePartName.indexOf('.part') < 0) return false;
+  while (folders.hasNext()) {
+    var shopFolder = folders.next();
+    if (shopFolder.getName().indexOf(prefix) !== 0) continue;
+    var backups = shopFolder.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
+    while (backups.hasNext()) {
+      var backupFolder = backups.next();
+      var file = findMultipartPart(backupFolder, safePartName, safeBackupId);
+      if (file) return { exists: true, size: file.getSize(), backupId: safeBackupId, partName: safePartName, shopPartition: partition };
+    }
+  }
+  return false;
+}
+
 function backupStatusKey(shopId, requestId) {
   return 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
 }
@@ -1185,6 +1209,26 @@ function doGet(e) {
       return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
     }
     return json(result);
+  }
+
+  if (p.action === 'hasBackupPart') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    var existsShopId;
+    try {
+      existsShopId = normalizeShopId(p.shopId);
+      validateRequestId(p.requestId);
+      validateShopProof(p.shopProof);
+      authorizeShopAccess(existsShopId, p.shopProof, false);
+    } catch (err) { return json(unauthorized('Unauthorized')); }
+    var exists = hasBackupPart(existsShopId, p.backupId, p.partName);
+    var existsResponse = exists
+      ? ok({ action: 'hasBackupPart', exists: true, size: exists.size, backupId: exists.backupId, partName: exists.partName, shopPartition: exists.shopPartition })
+      : { ok: false, status: 'error', version: VERSION, message: 'Backup part not found' };
+    var existsCallback = String(p.callback || '').trim();
+    if (existsCallback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(existsCallback)) {
+      return ContentService.createTextOutput(existsCallback + '(' + JSON.stringify(existsResponse) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return json(existsResponse);
   }
 
   if (p.action === 'getBackupPart') {
