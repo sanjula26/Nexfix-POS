@@ -14,6 +14,8 @@ import {
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
+const EXPECTED_GOOGLE_SCRIPT_VERSION = '3.3.0';
+let cachedGoogleHealth: { checkedAt: number; health: GoogleScriptHealth | null } | null = null;
 // This is a transport credential, not a frontend secret. Any value compiled
 // into an Electron/Vite bundle can be extracted; Apps Script still rejects
 // requests that do not present the configured Script Property value.
@@ -173,6 +175,11 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
 async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unknown>): Promise<boolean> {
+  // Multipart parts do not create the latest backup record until the final
+  // manifest arrives. Never download/decrypt an older full backup just to
+  // verify an individual part after a transient status read failure.
+  const format = String(body.format || '');
+  if (format === 'encrypted-part') return false;
   try {
     const latest = await fetchLatestGoogleBackup(8000);
     if (!latest || latest.shopId !== shopId) return false;
@@ -324,14 +331,30 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
   });
 }
 
-export async function getGoogleScriptHealth(): Promise<GoogleScriptHealth | null> {
+export async function getGoogleScriptHealth(force = false): Promise<GoogleScriptHealth | null> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
+  const now = Date.now();
+  if (!force && cachedGoogleHealth && now - cachedGoogleHealth.checkedAt < 300000) return cachedGoogleHealth.health;
   try {
     const url = new URL(getGoogleScriptUrl());
     url.searchParams.set('action', 'ping');
     const result = await getJsonp<GoogleScriptHealth>(url, 8000);
-    return result?.ok === true ? result : null;
-  } catch { return null; }
+    const health = result?.ok === true ? result : null;
+    cachedGoogleHealth = { checkedAt: now, health };
+    return health;
+  } catch {
+    cachedGoogleHealth = { checkedAt: now, health: null };
+    return null;
+  }
+}
+
+async function getGoogleDeploymentError(): Promise<string | undefined> {
+  const health = await getGoogleScriptHealth(true);
+  if (!health) return undefined;
+  if (health.version && health.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
+    return `Google Backup API is outdated (live version ${health.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs before backing up.`;
+  }
+  return undefined;
 }
 
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
@@ -341,6 +364,9 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
 
   try {
+    const deploymentError = await getGoogleDeploymentError();
+    if (deploymentError) return { ok: false, error: deploymentError };
+
     const source = state && typeof state === 'object' && !Array.isArray(state)
       ? state as Record<string, unknown>
       : {};
