@@ -29,8 +29,6 @@ export default function Settings() {
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
-  const [installerDownloadBusy, setInstallerDownloadBusy] = useState(false);
-  const [installerDownloadMsg, setInstallerDownloadMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const gEnabled = isGoogleSyncEnabled();
   const [gMsg, setGMsg] = useState('');
@@ -160,7 +158,7 @@ export default function Settings() {
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;downloadAuthorizedInstaller?:()=>Promise<{supported?:boolean;ok?:boolean;path?:string;name?:string;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -249,24 +247,6 @@ export default function Settings() {
     }
   };
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
-  const downloadAuthorizedInstaller = async () => {
-    setInstallerDownloadBusy(true);
-    setInstallerDownloadMsg('');
-    try {
-      if (!desktopApi?.isPackaged || !desktopApi.downloadAuthorizedInstaller) throw new Error('Authorized installer downloads are available only from the installed Windows POS.');
-      const authorized = await ensureUpdaterReady();
-      if (!authorized) throw new Error('Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.');
-
-      const result = await desktopApi.downloadAuthorizedInstaller();
-      if (!result?.ok) throw new Error(result?.error || 'Installer download was not authorized.');
-      setInstallerDownloadMsg(`Authorized installer saved to Downloads: ${result.name || 'installer'}`);
-    } catch (error) {
-      setInstallerDownloadMsg(error instanceof Error ? error.message : 'Installer download failed.');
-    } finally {
-      setInstallerDownloadBusy(false);
-    }
-  };
-
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
     const accounts = state.users.filter(u => u.role === securityRole && u.active);
@@ -605,8 +585,8 @@ export default function Settings() {
           {updateState.status==='downloaded'&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">Update downloaded. Restarting…</p>}
           {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
           {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
-          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}{user?.role==='admin'&&<button type="button" className="btn btn-soft" onClick={()=>void downloadAuthorizedInstaller()} disabled={installerDownloadBusy}>{installerDownloadBusy?'Authorizing…':'Download authorized installer'}</button>}</div>
-          {installerDownloadMsg&&<p className="mt-2 text-[11px] font-semibold text-sub">{installerDownloadMsg}</p>}
+          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
+          {updateState.status==='available'&&<p className="mt-3 text-[11px] font-semibold text-sub">Version {updateState.version} is ready. Update now downloads it securely, closes the POS, installs it silently, and reopens the updated POS automatically.</p>}
         </div>
       )}
 
