@@ -161,10 +161,11 @@ function setupAutoUpdater(){
       if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
       if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
       const token=typeof payload?.token==='string'?payload.token.trim():'';
-      if(!token || token.length<64 || token.length>512) return {ok:false,error:'Invalid Windows updater authorization token'};
+      const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
+      if(!token || token.length<64 || token.length>512 || !deviceId || deviceId.length>200) return {ok:false,error:'Invalid Windows updater authorization token'};
       try{
         const current=readSecureRecoveryFile();
-        current.cloudUpdaterDeviceToken=safeStorage.encryptString(token).toString('base64');
+        current.cloudUpdaterDeviceToken=safeStorage.encryptString(JSON.stringify({token,deviceId})).toString('base64');
         current.cloudUpdaterDeviceTokenVersion=1;
         writeSecureRecoveryFile({...current,version:2});
         return {ok:true};
@@ -176,9 +177,20 @@ function setupAutoUpdater(){
       try{
         const encrypted=readSecureRecoveryFile().cloudUpdaterDeviceToken;
         if(typeof encrypted!=='string'||!encrypted) return {ok:true,found:false};
-        const token=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
+        const decrypted=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
+        let token='';
+        let storedDeviceId='';
+        try{
+          const parsed=JSON.parse(decrypted);
+          token=typeof parsed?.token==='string'?parsed.token.trim():'';
+          storedDeviceId=typeof parsed?.deviceId==='string'?parsed.deviceId.trim():'';
+        }catch{
+          // Backward-compatible migration for tokens saved by v3.0.1279 before
+          // the device id was included in the encrypted record.
+          token=decrypted;
+        }
         if(!token || token.length<64 || token.length>512) return {ok:true,found:false};
-        return {ok:true,found:true,token};
+        return {ok:true,found:true,token,deviceId:storedDeviceId};
       }catch{return {ok:false,error:'Stored Windows updater authorization could not be opened'};}
     });
     ipcMain.handle('cloud-updater-token:clear',(event)=>{
