@@ -343,7 +343,7 @@ export async function ensureCloudSession(
   }
 }
 export async function signOutFromCloud(): Promise<void> {
-  try { syncDesktopUpdaterCredentials(); } catch { /* updater credentials are memory-only and will expire with the app */ }
+  try { await syncDesktopUpdaterCredentials(); } catch { /* local sign-out must remain non-blocking */ }
   if (!supabase) return;
   try { await supabase.auth.signOut(); } catch { /* local session remains authoritative offline */ }
 }
