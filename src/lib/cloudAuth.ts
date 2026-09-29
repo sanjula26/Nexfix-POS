@@ -11,6 +11,9 @@ function getDesktopUpdaterApi() {
       clearUpdateCredentials?: () => Promise<unknown>;
       saveCloudUpdaterRecovery?: (payload: CloudUpdaterRecovery) => Promise<{ ok?: boolean; error?: string }>;
       loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
+      saveCloudUpdaterDeviceToken?: (payload: { token: string }) => Promise<{ ok?: boolean; error?: string }>;
+      loadCloudUpdaterDeviceToken?: () => Promise<{ ok?: boolean; found?: boolean; token?: string; error?: string }>;
+      clearCloudUpdaterDeviceToken?: () => Promise<{ ok?: boolean; error?: string }>;
     };
   }).nexfixDesktop;
 }
@@ -86,9 +89,43 @@ async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void
   await desktop.setUpdateCredentials?.({ token: accessToken, deviceId });
 }
 
+async function issueDesktopUpdaterDeviceToken(shopId: string): Promise<string> {
+  const desktop = getDesktopUpdaterApi();
+  if (!desktop?.saveCloudUpdaterDeviceToken || !supabase) return '';
+  const { data, error } = await supabase.rpc('issue_pos_updater_token', {
+    p_shop_id: shopId,
+    p_device_id: getMachineId(),
+  });
+  const token = typeof data?.token === 'string' ? data.token.trim() : '';
+  if (error || data?.ok !== true || token.length < 64) return '';
+  const saved = await desktop.saveCloudUpdaterDeviceToken({ token });
+  return saved?.ok ? token : '';
+}
+
 export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
   const desktop = getDesktopUpdaterApi();
   if (!desktop?.setUpdateCredentials) return false;
+  const deviceId = getMachineId();
+  if (!deviceId) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+
+  // Preferred path: the one-time Windows authorization creates a high-entropy
+  // per-device updater token. It is encrypted with Windows safeStorage and is
+  // independent of the Supabase interactive session, so local POS logout,
+  // cashier/admin switching, refresh-token rotation, and future app updates do
+  // not require the cloud email/password again.
+  const storedDeviceToken = await desktop.loadCloudUpdaterDeviceToken?.();
+  if (storedDeviceToken?.ok && storedDeviceToken.found && storedDeviceToken.token) {
+    const result = await desktop.setUpdateCredentials({
+      token: storedDeviceToken.token,
+      deviceId,
+      mode: 'device',
+    });
+    if ((result as { ok?: boolean } | null)?.ok) return true;
+  }
+
   if (!supabaseConfigured || !supabase) {
     await desktop.clearUpdateCredentials?.();
     return false;
@@ -102,14 +139,14 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     error = refreshed.error;
   }
 
-  // A Windows POS restart can leave the browser cloud session absent even
-  // though this machine was already provisioned. Restore the encrypted cloud
-  // Admin refresh credential saved during one-time setup.
+  // Backward-compatible migration: older installations stored a Supabase
+  // refresh token instead of a device token. Use it once to issue the new
+  // per-device token, then all later updates are independent of Auth sessions.
   if (error || !data.session?.access_token) {
     let cloudEmail = '';
     try { cloudEmail = localStorage.getItem('nexfix_cloud_updater_email')?.trim().toLowerCase() || ''; } catch { /* optional storage */ }
     if (cloudEmail) {
-      const stored = await getDesktopUpdaterApi()?.loadCloudUpdaterRecovery?.(cloudEmail);
+      const stored = await desktop.loadCloudUpdaterRecovery?.(cloudEmail);
       if (stored?.ok && stored.found && stored.refreshToken && stored.userId) {
         const restored = await supabase.auth.refreshSession({ refresh_token: stored.refreshToken });
         if (!restored.error && restored.data.session && restored.data.user?.id === stored.userId && restored.data.user.email?.trim().toLowerCase() === cloudEmail) {
@@ -126,12 +163,6 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     return false;
   }
 
-  const deviceId = getMachineId();
-  if (!deviceId) {
-    await desktop.clearUpdateCredentials?.();
-    return false;
-  }
-
   const shop = await ensureCloudShop('Nexfix Shop');
   if (!shop.ok || !shop.shopId) {
     await desktop.clearUpdateCredentials?.();
@@ -144,9 +175,16 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
     return false;
   }
 
+  const token = await issueDesktopUpdaterDeviceToken(shop.shopId);
+  if (!token) {
+    await desktop.clearUpdateCredentials?.();
+    return false;
+  }
+
   const result = await desktop.setUpdateCredentials({
-    token: data.session.access_token,
+    token,
     deviceId,
+    mode: 'device',
   });
   return Boolean((result as { ok?: boolean } | null)?.ok);
 }
