@@ -140,9 +140,9 @@ function DesktopUpdateNotice() {
       if (!alive || !status?.available) return;
       setUpdate({status:'available',version:status.version || undefined});
     }).catch(() => {});
-    // Always perform a fresh check when the POS session is opened. This makes
-    // the in-app notification independent of the main-process startup timing.
-    void desktopApi.checkForUpdates?.().catch(() => {});
+    // CloudAuthLifecycle restores/loads the one-time device updater credential
+    // before the main process performs its authorized check. Do not race that
+    // async provisioning with a credential-less check from this component.
     return () => {
       alive = false;
       unsubscribe?.();
