@@ -185,7 +185,7 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
 
   const result = await desktop.setUpdateCredentials({
     token,
-    deviceId,
+    deviceId: currentDeviceId,
     mode: 'device',
   });
   return Boolean((result as { ok?: boolean } | null)?.ok);
