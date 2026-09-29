@@ -83,6 +83,7 @@ Deno.serve(async req=>{
     }
     const requestUrl=new URL(req.url);
     const wantsDownload=requestUrl.searchParams.get("download")==="1";
+    const isStreamDownload=requestUrl.pathname.endsWith("/download") || /\/download\/[^/]+\.exe$/i.test(requestUrl.pathname);
     if(role!=="admin") return json({ok:false,error:"Only the shop admin can use private Windows updater authorization"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
@@ -91,9 +92,12 @@ Deno.serve(async req=>{
     const chunkPaths=Array.from({length:chunkCount},(_,i)=>`${r.installer_path}.part${String(i+1).padStart(4,"0")}`);
     const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,900);
     if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
-    const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates`); streamUrl.searchParams.set("download","stream");
+    // The updater expects the manifest file URL to have an installer-like filename.
+    // A query-only stream URL can be treated as a cache filename such as
+    // `temp-desktop-updates?download=stream`, which breaks electron-updater on Windows.
+    const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates/download/${encodeURIComponent(r.installer_name)}`);
     if(wantsDownload) return json({ok:true,url:streamUrl.toString(),chunks:signed.map(x=>x.signedUrl),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
-    if(requestUrl.searchParams.get("download")==="stream"){
+    if(isStreamDownload){
       const body=new ReadableStream({start(controller){(async()=>{try{
         for(const item of signed){
           const upstream=await fetch(item.signedUrl);
