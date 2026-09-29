@@ -160,7 +160,9 @@ function setupAutoUpdater(){
       const refreshToken=typeof payload?.refreshToken==='string'?payload.refreshToken.trim():'';
       // Supabase refresh tokens are opaque credentials. Keep a generous
       // upper bound for future token formats while rejecting empty/absurd payloads.
-      if(!email || !userId || refreshToken.length<16 || refreshToken.length>8192) return {ok:false,error:'Invalid cloud recovery credential'};
+      // Supabase refresh tokens are opaque credentials and their exact length is not a stable API contract.
+      // Only reject missing or absurdly large values; never assume a minimum token length.
+      if(!email || !userId || !refreshToken || refreshToken.length>16384) return {ok:false,error:'Invalid cloud recovery credential'};
       try{
         const encrypted=safeStorage.encryptString(JSON.stringify({email,userId,refreshToken,updatedAt:new Date().toISOString()})).toString('base64');
         writeSecureRecoveryFile({version:1,cloudUpdaterRecovery:encrypted});
