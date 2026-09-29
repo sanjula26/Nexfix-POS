@@ -173,6 +173,8 @@ export async function completeLegacyCloudEmailMagicLink(
     if (!saved?.ok) return { ok: false, error: saved?.error || 'Cloud authorization was verified but could not be stored securely' };
   }
 
+  try { localStorage.setItem('nexfix_cloud_updater_email', data.session.user?.email?.trim().toLowerCase() || ''); } catch { /* optional recovery hint */ }
+
   const updaterReady = await refreshDesktopUpdaterCredentials();
   return updaterReady
     ? { ok: true }
