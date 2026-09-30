@@ -1461,7 +1461,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
     });
-    if (!cloud.ok || !cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) return null;
+    if (!cloud.ok) throw new Error(cloud.error || 'Cloud sale could not be completed');
+    if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
       const tradeInCloud = await registerTradeInAtomic({
