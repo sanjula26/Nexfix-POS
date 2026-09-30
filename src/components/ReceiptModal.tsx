@@ -1,7 +1,8 @@
 import { Printer, Plus, Globe, MessageCircle } from 'lucide-react';
+import { useState } from 'react';
 import { Modal } from './ui';
 import { usePOS } from '../lib/store';
-import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, waLink } from '../lib/utils';
+import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, waLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolean }) {
@@ -17,4 +18,44 @@ export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolea
 }
 
 export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: string }): string { const L:string[]=[]; L.push(`*${shop.shopName}*`); L.push(`Bill: ${sale.billNo}`); L.push(`Date: ${fmtDateTime(sale.date)}`); L.push(`Cashier: ${sale.cashierName}`); L.push('--------------------------------'); sale.items.forEach(it=>{const net=it.price*it.qty-(it.discount||0);L.push(`${it.name} x${it.qty} — Rs. ${net.toLocaleString('en-US',{minimumFractionDigits:2})}`);}); L.push('--------------------------------'); if(sale.discount>0)L.push(`Discount: -Rs. ${sale.discount.toLocaleString()}`); if(sale.tax)L.push(`Tax: Rs. ${sale.tax.toLocaleString()}`); if(sale.shipping)L.push(`Delivery: Rs. ${sale.shipping.toLocaleString()}`); L.push(`*TOTAL: Rs. ${sale.total.toLocaleString('en-US',{minimumFractionDigits:2})}*`); if(sale.note)L.push(`Note: ${sale.note}`); L.push(''); L.push('Thank you for shopping with us!'); L.push(shop.phone); return L.join('\n'); }
-export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;onClose:()=>void;onNewSale?:()=>void;}){const{state}=usePOS();if(!sale)return null;const customer=sale.customerId?state.customers.find(c=>c.id===sale.customerId):undefined;const waUrl=customer?.phone?waLink(customer.phone,buildWhatsAppText(sale,state.settings)):'';return <><Modal open={!!sale} onClose={onClose} title="Sale completed" sub={`Bill ${sale.billNo} saved to sales history`}><div className="bg-raised rounded-2xl p-4 max-h-[46vh] overflow-y-auto border border-line"><ReceiptSheet sale={sale}/></div><div className="flex flex-col sm:flex-row gap-2.5 mt-5"><button className="btn btn-primary flex-1" onClick={()=>window.print()}><Printer size={15}/> Print receipt</button>{waUrl&&<a href={waUrl} target="_blank" rel="noreferrer" className="btn flex-1 !text-white" style={{background:'linear-gradient(135deg,#25d366,#128c7e)',boxShadow:'0 8px 20px -6px rgba(18,140,126,.5)'}}><MessageCircle size={15}/> WhatsApp receipt</a>}<button className="btn btn-soft flex-1" onClick={()=>{onClose();onNewSale?.();}}><Plus size={15}/> New sale</button></div></Modal><ReceiptSheet sale={sale} forPrint/></>; }
+export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;onClose:()=>void;onNewSale?:()=>void;}){
+  const { state } = usePOS();
+  const [whatsappOpen,setWhatsappOpen]=useState(false);
+  const [whatsappPhone,setWhatsappPhone]=useState('');
+  if(!sale)return null;
+  const customer=sale.customerId?state.customers.find(c=>c.id===sale.customerId):undefined;
+  const openWhatsApp=()=>{
+    const phone=normalizeWhatsAppPhone(customer?.phone||'');
+    if(phone.length>=9&&phone.length<=15){
+      window.open(waLink(phone,buildWhatsAppText(sale,state.settings)),'_blank','noopener,noreferrer');
+      return;
+    }
+    setWhatsappPhone(customer?.phone||'');
+    setWhatsappOpen(true);
+  };
+  const sendWhatsApp=()=>{
+    const phone=normalizeWhatsAppPhone(whatsappPhone);
+    if(phone.length<9||phone.length>15)return;
+    window.open(waLink(phone,buildWhatsAppText(sale,state.settings)),'_blank','noopener,noreferrer');
+    setWhatsappOpen(false);
+  };
+  return <><Modal open={!!sale} onClose={onClose} title="Sale completed" sub={`Bill ${sale.billNo} saved to sales history`}>
+    <div className="bg-raised rounded-2xl p-4 max-h-[46vh] overflow-y-auto border border-line"><ReceiptSheet sale={sale}/></div>
+    <div className="flex flex-col sm:flex-row gap-2.5 mt-5">
+      <button className="btn btn-primary flex-1" onClick={()=>window.print()}><Printer size={15}/> Print receipt</button>
+      <button type="button" className="btn flex-1 !text-white" onClick={openWhatsApp} style={{background:'linear-gradient(135deg,#25d366,#128c7e)',boxShadow:'0 8px 20px -6px rgba(18,140,126,.5)'}}><MessageCircle size={15}/> WhatsApp receipt</button>
+      <button className="btn btn-soft flex-1" onClick={()=>{onClose();onNewSale?.();}}><Plus size={15}/> New sale</button>
+    </div>
+  </Modal>
+  <Modal open={whatsappOpen} onClose={()=>setWhatsappOpen(false)} title="Send bill via WhatsApp" sub={sale.billNo}>
+    <div className="space-y-4">
+      <div className="text-sm text-sub">Enter the customer's WhatsApp number. It is used only to open WhatsApp for this bill.</div>
+      <input className="input w-full" type="tel" inputMode="tel" autoFocus value={whatsappPhone} onChange={e=>setWhatsappPhone(e.target.value)} placeholder="e.g. 0771234567 or +94771234567" onKeyDown={e=>{if(e.key==='Enter')sendWhatsApp();}} />
+      <div className="flex gap-2">
+        <button type="button" className="btn btn-soft flex-1" onClick={()=>setWhatsappOpen(false)}>Cancel</button>
+        <button type="button" className="btn !text-white flex-1" disabled={normalizeWhatsAppPhone(whatsappPhone).length<9||normalizeWhatsAppPhone(whatsappPhone).length>15} onClick={sendWhatsApp} style={{background:'linear-gradient(135deg,#25d366,#128c7e)'}}><MessageCircle size={15}/> Send on WhatsApp</button>
+      </div>
+    </div>
+  </Modal>
+  <ReceiptSheet sale={sale} forPrint/></>;
+}
