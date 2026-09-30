@@ -425,7 +425,6 @@ export default function POS() {
   const finish = async () => {
     if (finishingSale) return;
     setError('');
-    setFinishingSale(true);
     if (lines.length === 0) return setError('Add at least one item to the cart');
     if ((discCart > 0 || lineDisc > 0) && !can('act:discount')) return setError('Your role cannot apply discounts');
     if (tradeInOpen) {
@@ -454,6 +453,7 @@ export default function POS() {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
+    setFinishingSale(true);
     const whatsappDigits = normalizeWhatsAppPhone(customer?.phone || billingWhatsApp || custQuery);
     const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
