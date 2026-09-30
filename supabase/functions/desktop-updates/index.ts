@@ -98,16 +98,43 @@ Deno.serve(async req=>{
     const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates/download/${encodeURIComponent(r.installer_name)}`);
     if(wantsDownload) return json({ok:true,url:streamUrl.toString(),chunks:signed.map(x=>x.signedUrl),version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
     if(isStreamDownload){
-      const body=new ReadableStream({start(controller){(async()=>{try{
-        for(const item of signed){
-          const upstream=await fetch(item.signedUrl);
-          if(!upstream.ok||!upstream.body)throw new Error("Update chunk download failed");
-          const reader=upstream.body.getReader();
-          while(true){const {done,value}=await reader.read();if(done)break;controller.enqueue(value);}
+      // Keep the edge worker explicitly alive for the entire downstream stream.
+      // A detached ReadableStream producer can be retired while Electron is still
+      // downloading, which surfaces as a network/QUIC protocol error mid-file.
+      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+      const streamTask = (async () => {
+        const writer = writable.getWriter();
+        try {
+          for(const item of signed){
+            const upstream = await fetch(item.signedUrl, { cache: "no-store" });
+            if(!upstream.ok || !upstream.body) throw new Error(`Update chunk download failed (${upstream.status})`);
+            const reader = upstream.body.getReader();
+            try {
+              while(true){
+                const {done,value}=await reader.read();
+                if(done) break;
+                await writer.write(value);
+              }
+            } finally {
+              reader.releaseLock();
+            }
+          }
+          await writer.close();
+        } catch(error) {
+          try { await writer.abort(error); } catch {}
+          throw error;
         }
-        controller.close();
-      }catch(error){controller.error(error);}})();}});
-      return new Response(body,{headers:{...headers,"Content-Type":"application/octet-stream","Content-Length":String(r.installer_size),"Content-Disposition":`attachment; filename="${r.installer_name.replace(/"/g,"")}"`,"Cache-Control":"no-store"}});
+      })();
+      EdgeRuntime.waitUntil(streamTask.catch(error => console.error("Private updater stream failed:", error)));
+      return new Response(readable,{
+        headers:{
+          ...headers,
+          "Content-Type":"application/octet-stream",
+          "Content-Length":String(r.installer_size),
+          "Content-Disposition":`attachment; filename="${r.installer_name.replace(/"/g,"")}"`,
+          "Cache-Control":"no-store"
+        }
+      });
     }
     const yaml="version: "+r.version+"\nfiles:\n  - url: "+streamUrl.toString()+"\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
