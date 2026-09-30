@@ -110,6 +110,7 @@ export default function POS() {
   const [gateShow, setGateShow] = useState(false);
 
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
+  const [finishingSale, setFinishingSale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
   const [reverseOpen, setReverseOpen] = useState(false);
@@ -422,7 +423,9 @@ export default function POS() {
 
   /* ---------- finish ---------- */
   const finish = async () => {
+    if (finishingSale) return;
     setError('');
+    setFinishingSale(true);
     if (lines.length === 0) return setError('Add at least one item to the cart');
     if ((discCart > 0 || lineDisc > 0) && !can('act:discount')) return setError('Your role cannot apply discounts');
     if (tradeInOpen) {
@@ -481,10 +484,13 @@ export default function POS() {
       note: note.trim() || undefined,
       salesmanId: salesmanId || undefined,
     });
-    } catch {
+    } catch (error) {
       if (whatsappWindow) whatsappWindow.close();
-      setError('Sale could not be completed. Please try again.');
+      const message = error instanceof Error ? error.message.trim() : '';
+      setError(message ? `Sale could not be completed: ${message}` : 'Sale could not be completed. Please try again.');
       return;
+    } finally {
+      setFinishingSale(false);
     }
     if (sale) {
       setDoneSale(sale);
@@ -1393,10 +1399,10 @@ export default function POS() {
               <button
                 className="btn btn-primary !py-4 !text-[16px] !rounded-xl !font-extrabold tracking-wide shadow-xl shadow-violet-600/40"
                 onClick={finish}
-                disabled={lines.length === 0}
+                disabled={lines.length === 0 || finishingSale}
                 title="Complete sale (F6)"
               >
-                <Zap size={17} /> Complete Sale · {fmtRs(total)}
+                <Zap size={17} /> {finishingSale ? 'Completing…' : `Complete Sale · ${fmtRs(total)}`}
               </button>
             </div>
           </div>
