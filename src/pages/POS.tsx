@@ -500,8 +500,9 @@ export default function POS() {
       }
       reset();
       setTimeout(focusSearch, 150);
-    } else if (whatsappWindow) {
-      whatsappWindow.close();
+    } else {
+      if (whatsappWindow) whatsappWindow.close();
+      setError('Sale could not be completed. No sale was committed. Please check the displayed validation or cloud status and try again.');
     }
   };
 
