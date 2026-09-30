@@ -122,7 +122,7 @@ Deno.serve(async req=>{
           }
           await writer.close();
         } catch(error) {
-          try { await writer.abort(error); } catch {}
+          try { await writer.abort(error); } catch (abortError) { console.error("Private updater stream abort failed:", abortError); }
           throw error;
         }
       })();
