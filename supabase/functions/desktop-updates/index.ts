@@ -6,6 +6,14 @@ const admin=createClient(SUPABASE_URL,SECRET,{auth:{persistSession:false}});
 const headers={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,apikey,content-type,x-nexfix-device,x-nexfix-update-token","Access-Control-Allow-Methods":"GET,OPTIONS"};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...headers,"Content-Type":"application/json"}});
 const bearer=(r:Request)=>{const v=r.headers.get("authorization")||"";return v.startsWith("Bearer ")?v.slice(7).trim():"";};
+const b64url=(value:string)=>value.replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
+const fromB64url=(value:string)=>value.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-value.length%4)%4);
+const tokenText=(value:string)=>b64url(btoa(unescape(encodeURIComponent(value))));
+const decodeTokenText=(value:string)=>decodeURIComponent(escape(atob(fromB64url(value))));
+const hmacKeyPromise=crypto.subtle.importKey("raw",new TextEncoder().encode(SECRET),{name:"HMAC",hash:"SHA-256"},false,["sign","verify"]);
+const signDownloadToken=async(payload:string)=>{const key=await hmacKeyPromise;const sig=await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(payload));return b64url(btoa(String.fromCharCode(...new Uint8Array(sig))));};
+const createDownloadToken=async(claims:Record<string,string|number>)=>{const payload=tokenText(JSON.stringify(claims));return payload+"."+await signDownloadToken(payload);};
+const verifyDownloadToken=async(token:string)=>{try{const [payload,sig]=token.split(".");if(!payload||!sig)return null;const key=await hmacKeyPromise;const sigBytes=Uint8Array.from(atob(fromB64url(sig)),c=>c.charCodeAt(0));const valid=await crypto.subtle.verify("HMAC",key,sigBytes,new TextEncoder().encode(payload));if(!valid)return null;const claims=JSON.parse(decodeTokenText(payload));if(!claims||typeof claims!=="object"||Number(claims.exp)<=Math.floor(Date.now()/1000))return null;return claims as Record<string,unknown>;}catch{return null;}};
 Deno.serve(async req=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers});
   if(req.method!=="GET")return json({ok:false,error:"Method not allowed"},405);
@@ -17,7 +25,18 @@ Deno.serve(async req=>{
     let role:string;
     let authenticatedUserId:string;
 
-    if(deviceToken){
+    if(signedClaims){
+      if(String(signedClaims.deviceId)!==deviceId)return json({ok:false,error:"Invalid private download authorization"},401);
+      const {data:device,error:deviceError}=await admin.from("pos_devices").select("shop_id,user_id,revoked_at").eq("device_id",deviceId).maybeSingle();
+      if(deviceError)return json({ok:false,error:"Could not verify POS device authorization"},500);
+      if(!device || device.revoked_at || String(device.shop_id)!==String(signedClaims.shopId) || String(device.user_id)!==String(signedClaims.userId))return json({ok:false,error:"This private download authorization is no longer valid"},403);
+      authenticatedUserId=String(device.user_id);
+      shopId=String(device.shop_id);
+      const {data:membership,error:membershipError}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",authenticatedUserId).eq("active",true).maybeSingle();
+      if(membershipError)return json({ok:false,error:"Could not verify shop membership"},500);
+      if(!membership?.role)return json({ok:false,error:"User is not an active member of this shop"},403);
+      role=String(membership.role);
+    }else if(deviceToken){
       // One-time authorized machines use a dedicated high-entropy device token.
       // This path is independent of the Supabase interactive session, so normal
       // POS logout, refresh-token rotation, and cashier/admin switching do not
