@@ -150,8 +150,6 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('');
   const [appVersion, setAppVersion] = useState('3.0.6');
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
-  const [privateDownloadLink, setPrivateDownloadLink] = useState('');
-  const [privateDownloadMsg, setPrivateDownloadMsg] = useState('');
   const [cloudSetupEmail, setCloudSetupEmail] = useState(() => {
     try { return localStorage.getItem('nexfix_cloud_updater_email')?.trim() || ''; } catch { return ''; }
   });
@@ -160,7 +158,7 @@ export default function Settings() {
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;createPrivateDownloadLink?:()=>Promise<{ok?:boolean;url?:string;expiresIn?:number;version?:string|null;name?:string|null;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -266,24 +264,6 @@ export default function Settings() {
     } finally {
       setLegacyOtpBusy(false);
     }
-  };
-  const createPrivateDownloadLink=async()=>{
-    if(!desktopApi?.isPackaged){setPrivateDownloadMsg('Private installer links are available in the installed Windows POS only.');return;}
-    setPrivateDownloadMsg('Generating secure download link…');
-    const authorized=await ensureUpdaterReady();
-    if(!authorized){setPrivateDownloadMsg('Cloud update authorization is not ready. Sign in with the provisioned Admin account first.');return;}
-    const result=await desktopApi.createPrivateDownloadLink?.();
-    if(result?.ok && result.url){
-      setPrivateDownloadLink(result.url);
-      setPrivateDownloadMsg(`Secure link ready for ${result.version||'the current release'} (expires in ${Math.max(1,Math.round(Number(result.expiresIn||600)/60))} minutes).`);
-      return;
-    }
-    setPrivateDownloadMsg(result?.error||'Could not generate the private installer link.');
-  };
-  const copyPrivateDownloadLink=async()=>{
-    if(!privateDownloadLink)return;
-    const copied=await (desktopApi?.copyText ? desktopApi.copyText(privateDownloadLink) : copyText(privateDownloadLink));
-    setPrivateDownloadMsg(copied?'Private installer link copied. It expires automatically.':'Copy failed. Select the link and copy it manually.');
   };
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});let result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error&&isUpdaterAuthorizationError(result.error)){const recovered=await reauthorizeUpdater();if(recovered){setUpdateState({status:'downloading',percent:0});result=await desktopApi?.downloadAndInstallUpdate?.();}}if(result?.error)setUpdateState({status:'error',message:result.error});};
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
@@ -622,7 +602,7 @@ export default function Settings() {
           {updateState.status==='downloaded'&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">Update downloaded. Restarting…</p>}
           {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
           {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
-          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}{user?.role==='admin'&&<button type="button" className="btn btn-soft" onClick={()=>void createPrivateDownloadLink()}><ExternalLink size={15} /> Get private installer link</button>}</div>{privateDownloadLink&&user?.role==='admin'&&<div className="mt-3 flex gap-2"><input className="input flex-1 font-mono text-[11px]" value={privateDownloadLink} readOnly/><button type="button" className="btn btn-soft shrink-0" onClick={()=>void copyPrivateDownloadLink()}><Copy size={15}/> Copy</button></div>}{privateDownloadMsg&&<p className="mt-2 text-[11px] font-semibold text-sub">{privateDownloadMsg}</p>}
+          <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
           {updateState.status==='available'&&<p className="mt-3 text-[11px] font-semibold text-sub">Version {updateState.version} is ready. Update now downloads it securely, closes the POS, installs it silently, and reopens the updated POS automatically.</p>}
         </div>
       )}
