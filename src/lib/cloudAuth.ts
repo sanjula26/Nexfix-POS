@@ -1,5 +1,5 @@
 import { supabase, supabaseConfigured } from './supabase';
-import { ensureCloudShop, registerDesktopUpdaterDevice, setCloudShopId } from './cloudSync';
+import { ensureCloudShop, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
 type CloudUpdaterRecovery = { email: string; userId: string; refreshToken: string };
@@ -90,13 +90,21 @@ async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void
   await desktop.setUpdateCredentials?.({ token: accessToken, deviceId });
 }
 
+const UPDATER_AUTH_TIMEOUT_MS = 12000;
+
 async function issueDesktopUpdaterDeviceToken(shopId: string): Promise<string> {
   const desktop = getDesktopUpdaterApi();
   if (!desktop?.saveCloudUpdaterDeviceToken || !supabase) return '';
-  const { data, error } = await supabase.rpc('issue_pos_updater_token', {
+  const rpcPromise = supabase.rpc('authorize_pos_updater_device', {
     p_shop_id: shopId,
     p_device_id: getMachineId(),
   });
+  const { data, error } = await Promise.race([
+    rpcPromise,
+    new Promise<{ data: null; error: { message: string } }>((resolve) =>
+      window.setTimeout(() => resolve({ data: null, error: { message: 'Windows update authorization timed out. Please check the internet connection and try again.' } }), UPDATER_AUTH_TIMEOUT_MS),
+    ),
+  ]);
   const token = typeof data?.token === 'string' ? data.token.trim() : '';
   if (error || data?.ok !== true || token.length < 64) return '';
   const saved = await desktop.saveCloudUpdaterDeviceToken({ token, deviceId: getMachineId() });
@@ -171,12 +179,6 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
     return false;
   }
 
-  const registration = await registerDesktopUpdaterDevice(shop.shopId);
-  if (!registration.ok) {
-    await desktop.clearUpdateCredentials?.();
-    return false;
-  }
-
   const token = await issueDesktopUpdaterDeviceToken(shop.shopId);
   if (!token) {
     await desktop.clearUpdateCredentials?.();
@@ -195,7 +197,16 @@ let updaterRefreshPromise: Promise<boolean> | null = null;
 
 export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
   if (updaterRefreshPromise) return updaterRefreshPromise;
-  const promise = refreshDesktopUpdaterCredentialsInternal();
+  const promise = (async () => {
+    const internal = refreshDesktopUpdaterCredentialsInternal();
+    const result = await Promise.race([
+      internal,
+      new Promise<boolean>((resolve) =>
+        window.setTimeout(() => resolve(false), UPDATER_AUTH_TIMEOUT_MS),
+      ),
+    ]);
+    return result;
+  })();
   updaterRefreshPromise = promise;
   try {
     return await promise;
