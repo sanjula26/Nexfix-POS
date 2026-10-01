@@ -125,8 +125,10 @@ export async function resolveCloudSalesmanId(
     }
   }
 
-  // If the selected local account has no cloud profile, only use the current
-  // authenticated cloud user as a safe fallback. Otherwise omit salesman_id.
+  // If a specific local salesman was selected but has no cloud profile,
+  // do not silently credit the sale to another cloud account.
+  if (localSalesman) return undefined;
+
   const { data: sessionData } = await supabase.auth.getSession();
   const authUserId = sessionData.session?.user.id;
   if (!authUserId) return undefined;
