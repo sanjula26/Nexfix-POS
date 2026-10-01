@@ -203,10 +203,14 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     // directly on insert. Existing products created by an older build may have
     // been inserted with stock=0; repair that exact bootstrap case once, but
     // never overwrite cloud stock after any normalized transaction/unit exists.
-    const bootstrapRows = productRows
-      .filter(row => !existingIds.has(row.id) || Number(row.stock) > 0)
-      .map(row => ({ product_id: row.id, stock: Number(row.stock) || 0 }));
-    if (bootstrapRows.length && existingRows.length) {
+    const localProductById = new Map(productRows.map(row => [row.id, row]));
+    const needsInitialBootstrap = existingRows.some(row =>
+      Number(row.stock || 0) === 0 && Number(localProductById.get(row.id)?.stock || 0) > 0,
+    );
+    if (needsInitialBootstrap) {
+      const bootstrapRows = productRows
+        .filter(row => existingIds.has(row.id) && Number(row.stock) > 0)
+        .map(row => ({ product_id: row.id, stock: Number(row.stock) || 0 }));
       const { error: bootstrapError } = await supabase.rpc('bootstrap_initial_catalog_stock', {
         p_shop_id: shopId,
         p_rows: bootstrapRows,
