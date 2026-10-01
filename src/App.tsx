@@ -95,11 +95,25 @@ function SessionSecurity() {
 
 function CloudSyncStateBridge() {
   const { state, user, connectivity } = usePOS();
+
+  // Do not upload the entire POSState after every local mutation. The legacy
+  // snapshot contains sales, products, customers, units, repairs and settings,
+  // so syncing it on every product/customer/stock edit can consume the
+  // Supabase Free-plan egress quota quickly. Normalized sales/GRN/return
+  // operations are already cloud-authoritative; keep the snapshot for the
+  // meaningful transaction boundaries that mobile/legacy views need.
+  const cloudSnapshotTrigger = useMemo(() => JSON.stringify({
+    sales: state.sales.map(s => [s.id, s.status, s.date, s.total]),
+    purchases: state.purchases.map(p => [p.id, p.status, p.date]),
+    repairs: state.repairs.map(r => [r.id, r.status, r.updatedAt]),
+  }), [state.sales, state.purchases, state.repairs]);
+
   useEffect(() => {
     if (!user || connectivity !== 'online') return;
     scheduleCloudSync();
     return () => cancelScheduledCloudSync();
-  }, [state, user, connectivity]);
+  }, [cloudSnapshotTrigger, user, connectivity]);
+
   return null;
 }
 
