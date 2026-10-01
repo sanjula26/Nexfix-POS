@@ -1,7 +1,7 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
-import { completeSaleAtomic, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
+import { completeSaleAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -87,10 +87,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const payments=(parsed.input.payments&&parsed.input.payments.length)
             ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
             : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
+          const localSalesman = parsed.input.salesmanId && state
+            ? state.users.find(u => u.id === parsed.input.salesmanId && u.active)
+            : undefined;
+          const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
             shopId:shop.shopId,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
-            salesmanId:parsed.input.salesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
+            salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
           if(!result.ok) break;
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
