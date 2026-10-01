@@ -10,6 +10,8 @@ let updateInstallScheduled = false;
 let updateAuthToken = '';
 let updateDeviceId = '';
 let updateAuthMode = 'bearer';
+let updateCheckPromise = null;
+const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
 const AUTH_PROTOCOL = 'nexfix';
 let pendingAuthCallback = null;
@@ -113,7 +115,9 @@ function configureUpdaterCredentials(){
     provider: 'generic',
     url: `${UPDATE_FEED_URL}/`,
     useMultipleRangeRequest: false,
-    timeout: 10 * 60 * 1000,
+    // A metadata check must fail fast. A hung network request must never leave
+    // the Settings UI stuck on "Checking..." indefinitely.
+    timeout: UPDATE_CHECK_TIMEOUT_MS,
     publishAutoUpdate: false,
   });
   return authorized;
@@ -262,11 +266,31 @@ function setupAutoUpdater(){
     });
     ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
     ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),authorizationMode:updateAuthMode,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
+    const checkForUpdatesWithTimeout = async()=>{
+      if(updateCheckPromise)return updateCheckPromise;
+      updateCheckPromise=(async()=>{
+        try{
+          return await Promise.race([
+            autoUpdater.checkForUpdates(),
+            new Promise((_,reject)=>setTimeout(()=>reject(new Error(`Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS/1000} seconds. Please check your internet connection and try again.`)),UPDATE_CHECK_TIMEOUT_MS)),
+          ]);
+        }finally{
+          updateCheckPromise=null;
+        }
+      })();
+      return updateCheckPromise;
+    };
     ipcMain.handle('update:check',async()=>{
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
       if(!configureUpdaterCredentials())return{supported:true,available:false,error:'Update authorization is not ready.'};
-      try{const result=await autoUpdater.checkForUpdates();return{supported:true,available:Boolean(result?.isUpdateAvailable),version:result?.updateInfo?.version||null};}
-      catch(error){sendUpdateEvent('error',{message:error?.message||String(error)});return{supported:true,available:false,error:error?.message||String(error)};}
+      try{
+        const result=await checkForUpdatesWithTimeout();
+        return{supported:true,available:Boolean(result?.isUpdateAvailable),version:result?.updateInfo?.version||null};
+      }catch(error){
+        const message=error?.message||String(error);
+        sendUpdateEvent('error',{message});
+        return{supported:true,available:false,error:message};
+      }
     });
     ipcMain.handle('update:downloadAndInstall',async()=>{
       if(!app.isPackaged||process.platform!=='win32')return{supported:false,started:false};
@@ -274,7 +298,7 @@ function setupAutoUpdater(){
       if(updateDownloadActive||updateInstallScheduled)return{supported:true,started:false};
       try{
         if(!pendingUpdateInfo){
-          const result=await autoUpdater.checkForUpdates();
+          const result=await checkForUpdatesWithTimeout();
           if(!result?.isUpdateAvailable)return{supported:true,started:false};
           pendingUpdateInfo=result.updateInfo;
         }
@@ -294,7 +318,7 @@ function setupAutoUpdater(){
 
     const checkNow=()=>{
       if(!configureUpdaterCredentials()) return;
-      void autoUpdater.checkForUpdates().catch(()=>{});
+      void checkForUpdatesWithTimeout().catch(()=>{});
     };
     setTimeout(checkNow,5000);
     setInterval(checkNow,10*60*1000);
