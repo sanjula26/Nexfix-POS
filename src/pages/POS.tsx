@@ -110,6 +110,7 @@ export default function POS() {
   const [gateShow, setGateShow] = useState(false);
 
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
+  const [reprintOpen, setReprintOpen] = useState(false);
   const [finishingSale, setFinishingSale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
@@ -416,7 +417,11 @@ export default function POS() {
     setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
     setRedeemOn(false); setPoints(''); setPayment('cash'); setPaid(''); setPaidAuto(false);
     setWaReceipt(false);
-    setSplitOn(false); setLegs([{ method: 'cash', amount: 0 }]); setError('');
+    // Keep Split mode selected between bills. The cashier can press Split again
+    // to return to the normal single-payment buttons.
+    if (splitOn) setLegs([{ method: 'cash', amount: 0 }]);
+    else setLegs([{ method: 'cash', amount: 0 }]);
+    setError('');
     setNote(''); setNoteOpen(false); setPriceUnlocked(false);
     setSalesmanId(user?.id || '');
   };
@@ -668,6 +673,21 @@ export default function POS() {
   const expected = (session?.opening ?? state.settings.openingFloat) + (user?.role === 'cashier' ? myCash : cashOf(todaySales));
 
   const lastCompletedSale = doneSale || state.sales.find(s => s.status === 'completed') || null;
+  const todayBills = useMemo(() => [...state.sales]
+    .filter(s => dkey(s.date) === dkey(new Date()) && s.status === 'completed')
+    .sort((a, b) => +new Date(b.date) - +new Date(a.date)), [state.sales]);
+
+  const openReprintSale = (sale: Sale) => {
+    setReprintOpen(false);
+    setDoneSale(sale);
+  };
+
+  const sendReprintWhatsApp = (sale: Sale) => {
+    const phone = normalizeWhatsAppPhone(sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '');
+    const entered = phone || normalizeWhatsAppPhone(window.prompt(`WhatsApp number for ${sale.billNo}:`, '') || '');
+    if (entered.length < 9 || entered.length > 15) return;
+    window.open(waLink(entered, buildWhatsAppText(sale, state.settings)), '_blank', 'noopener,noreferrer');
+  };
 
   const payState: 'idle' | 'short' | 'exact' | 'change' | 'due' =
     total <= 0 ? 'idle'
@@ -734,11 +754,11 @@ export default function POS() {
             <button
               className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs disabled:opacity-40"
               onClick={() => {
-                if (lastCompletedSale) setDoneSale(lastCompletedSale);
-                else toast('No completed sale is available to reprint', 'rose');
+                if (todayBills.length) setReprintOpen(true);
+                else toast('No completed bills were found for today', 'rose');
               }}
-              disabled={!lastCompletedSale}
-              title="Reprint last completed sale"
+              disabled={!todayBills.length}
+              title="Choose any completed bill from today to print or send"
             >
               <Printer size={14} /> REPRINT
             </button>
@@ -1746,6 +1766,31 @@ export default function POS() {
             </div>
           );
         })()}
+      </Modal>
+
+      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} completed bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
+        <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
+          {todayBills.map((sale, index) => {
+            const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
+            return (
+              <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center text-[11px] font-extrabold num">{index + 1}</div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><span className="font-extrabold text-violet-600">{sale.billNo}</span><span className="text-[11px] text-faint">{timeAgo(sale.date)}</span></div>
+                    <div className="text-[11px] text-sub truncate">{sale.customerName || 'Walk-in customer'} · {sale.items.reduce((n, it) => n + it.qty, 0)} item{sale.items.reduce((n, it) => n + it.qty, 0) === 1 ? '' : 's'}</div>
+                    <div className="text-sm font-extrabold text-ink num mt-0.5">{fmtRs(sale.total)}</div>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <button type="button" className="btn btn-primary !py-2 !px-3 !text-xs" onClick={() => openReprintSale(sale)}><Printer size={13} /> Print</button>
+                  <button type="button" className="btn !py-2 !px-3 !text-xs !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => sendReprintWhatsApp(sale)}><MessageCircle size={13} /> WhatsApp</button>
+                  {!customerPhone && <span className="self-center text-[10px] text-faint">number will be requested</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </Modal>
 
       <ReceiptModal sale={doneSale} onClose={() => { setDoneSale(null); setTimeout(focusSearch, 120); }} />
