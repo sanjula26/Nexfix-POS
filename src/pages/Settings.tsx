@@ -197,15 +197,9 @@ export default function Settings() {
     return unsubscribe;
   }, [cloudSetupEmail, desktopApi]);
   const ensureUpdaterReady=async()=>{
-    // Cloud auth can finish restoring shortly after the POS window becomes interactive.
-    // Give the startup lifecycle enough time to restore the encrypted device credentials
-    // before showing an authorization error to the user.
-    const maxAttempts=8;
-    for(let attempt=0;attempt<maxAttempts;attempt+=1){
-      if(await refreshDesktopUpdaterCredentials())return true;
-      if(attempt<maxAttempts-1)await new Promise(resolve=>window.setTimeout(resolve,750));
-    }
-    return false;
+    // Authorization is single-flight and has a bounded timeout in cloudAuth.
+    // Never keep a Settings action in an indefinite retry loop.
+    return refreshDesktopUpdaterCredentials();
   };
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}try{const result=await Promise.race([desktopApi.checkForUpdates?.(),new Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>((_,reject)=>window.setTimeout(()=>reject(new Error('Update check timed out after 35 seconds. Please check your internet connection and try again.')),35000))]);if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});else setUpdateState({status:'not-available'});}catch(error){setUpdateState({status:'error',message:error instanceof Error?error.message:'The update check could not be completed.'});}};  const provisionCloudUpdater = async () => {    if (cloudSetupBusy) return;
     setCloudSetupBusy(true);
@@ -605,7 +599,7 @@ export default function Settings() {
             <Field label="Cloud account email" hint="Use the Supabase Auth Admin email; it may be different from the local POS login email."><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="cloud-admin@example.com" autoComplete="email" /></Field>
             <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>          </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
-            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
+            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
           </div>
           {cloudSetupMsg && <p className={`mt-3 text-[12px] font-semibold ${cloudSetupMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{cloudSetupMsg.text}</p>}
           <p className="text-[11px] text-faint mt-3">If Supabase requires email confirmation, confirm the message sent to the cloud account and then sign in again before retrying this setup.</p>
@@ -616,7 +610,7 @@ export default function Settings() {
                 <p className="text-sm font-bold text-ink">Legacy installation migration — no local password reset</p>
                 <p className="mt-1 text-[11px] leading-5 text-faint">For existing shops that already have local Admin/Cashier accounts, use the provisioned cloud Admin email to authorize this machine. Your existing local passwords stay exactly as they are.</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="btn btn-primary" onClick={() => void migrateLegacyUpdater()} disabled={legacyOtpBusy || !desktopApi?.isPackaged || cloudSetupPassword.length < 12}>{legacyOtpBusy ? 'Authorizing…' : 'Authorize this Windows PC'}</button>
+                  <button type="button" className="btn btn-primary" onClick={() => void migrateLegacyUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !desktopApi?.isPackaged || cloudSetupPassword.length < 12}>{legacyOtpBusy ? 'Authorizing…' : 'Authorize this Windows PC'}</button>
                 </div>
                 {legacyOtpMsg && <p className={`mt-2 text-[11px] font-semibold ${legacyOtpMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{legacyOtpMsg.text}</p>}
                 <p className="mt-2 text-[10px] text-faint">Uses the existing Cloud Admin email + password above. No email, rate-limit, deep-link, or 6-digit code is needed. Your local POS Admin/Cashier passwords are not changed.</p>
