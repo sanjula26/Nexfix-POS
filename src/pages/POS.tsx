@@ -419,8 +419,7 @@ export default function POS() {
     setWaReceipt(false);
     // Keep Split mode selected between bills. The cashier can press Split again
     // to return to the normal single-payment buttons.
-    if (splitOn) setLegs([{ method: 'cash', amount: 0 }]);
-    else setLegs([{ method: 'cash', amount: 0 }]);
+    setLegs([{ method: 'cash', amount: 0 }]);
     setError('');
     setNote(''); setNoteOpen(false); setPriceUnlocked(false);
     setSalesmanId(user?.id || '');
@@ -672,7 +671,6 @@ export default function POS() {
   const session = state.sessions.find(s => s.cashierId === user?.id && s.date === dkey(new Date()));
   const expected = (session?.opening ?? state.settings.openingFloat) + (user?.role === 'cashier' ? myCash : cashOf(todaySales));
 
-  const lastCompletedSale = doneSale || state.sales.find(s => s.status === 'completed') || null;
   const todayBills = useMemo(() => [...state.sales]
     .filter(s => dkey(s.date) === dkey(new Date()) && s.status === 'completed')
     .sort((a, b) => +new Date(b.date) - +new Date(a.date)), [state.sales]);
