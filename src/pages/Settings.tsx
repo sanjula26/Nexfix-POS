@@ -31,7 +31,7 @@ export default function Settings() {
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const gEnabled = isGoogleSyncEnabled();
-  const recoveryScope = getLocalShopId();
+  const recoveryScope = getDriveShopId() || getCloudShopId() || '';
   const [gMsg, setGMsg] = useState('');
   const [gRestoreBusy, setGRestoreBusy] = useState(false);
   const [confirmGoogleRestore, setConfirmGoogleRestore] = useState<{
