@@ -158,7 +158,7 @@ export default function Settings() {
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -196,12 +196,29 @@ export default function Settings() {
     });
     return unsubscribe;
   }, [cloudSetupEmail, desktopApi]);
+  const isUpdaterAuthorizationError=(message:string)=>/\\b401\\b|not authorized for private updates|invalid updater device credential|POS device is registered to a different cloud account/i.test(message);
+  const reauthorizeUpdater=async()=>{
+    // A stale device token can happen after an older/duplicate installation
+    // re-authorizes the same terminal. Drop only the updater token, not the
+    // cloud recovery credential or local POS session, then issue one fresh token.
+    await desktopApi?.clearUpdateCredentials?.();
+    await desktopApi?.clearCloudUpdaterDeviceToken?.();
+    return refreshDesktopUpdaterCredentials();
+  };
+  const runUpdateCheck=async()=>{
+    const first=await Promise.race([desktopApi?.checkForUpdates?.(),new Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>((_,reject)=>window.setTimeout(()=>reject(new Error('Update check timed out after 35 seconds. Please check your internet connection and try again.')),35000))]);
+    if (!first?.error || !isUpdaterAuthorizationError(first.error)) return first;
+    const recovered=await reauthorizeUpdater();
+    if (!recovered) return first;
+    return Promise.race([desktopApi?.checkForUpdates?.(),new Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>((_,reject)=>window.setTimeout(()=>reject(new Error('Update check timed out after 35 seconds. Please check your internet connection and try again.')),35000))]);
+  };
   const ensureUpdaterReady=async()=>{
     // Authorization is single-flight and has a bounded timeout in cloudAuth.
     // Never keep a Settings action in an indefinite retry loop.
     return refreshDesktopUpdaterCredentials();
   };
-  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}try{const result=await Promise.race([desktopApi.checkForUpdates?.(),new Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>((_,reject)=>window.setTimeout(()=>reject(new Error('Update check timed out after 35 seconds. Please check your internet connection and try again.')),35000))]);if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});else setUpdateState({status:'not-available'});}catch(error){setUpdateState({status:'error',message:error instanceof Error?error.message:'The update check could not be completed.'});}};  const provisionCloudUpdater = async () => {    if (cloudSetupBusy) return;
+  const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}try{const result=await runUpdateCheck();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});else setUpdateState({status:'not-available'});}catch(error){setUpdateState({status:'error',message:error instanceof Error?error.message:'The update check could not be completed.'});}};
+  const provisionCloudUpdater = async () => {    if (cloudSetupBusy) return;
     setCloudSetupBusy(true);
     setCloudSetupMsg(null);
     try {
@@ -248,7 +265,7 @@ export default function Settings() {
       setLegacyOtpBusy(false);
     }
   };
-  const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});const result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error)setUpdateState({status:'error',message:result.error});};
+  const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});let result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error&&isUpdaterAuthorizationError(result.error)){const recovered=await reauthorizeUpdater();if(recovered){setUpdateState({status:'downloading',percent:0});result=await desktopApi?.downloadAndInstallUpdate?.();}}if(result?.error)setUpdateState({status:'error',message:result.error});};
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
     const accounts = state.users.filter(u => u.role === securityRole && u.active);
