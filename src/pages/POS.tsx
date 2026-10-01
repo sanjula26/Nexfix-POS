@@ -672,7 +672,7 @@ export default function POS() {
   const expected = (session?.opening ?? state.settings.openingFloat) + (user?.role === 'cashier' ? myCash : cashOf(todaySales));
 
   const todayBills = useMemo(() => [...state.sales]
-    .filter(s => dkey(s.date) === dkey(new Date()) && s.status === 'completed')
+    .filter(s => dkey(s.date) === dkey(new Date()))
     .sort((a, b) => +new Date(b.date) - +new Date(a.date)), [state.sales]);
 
   const openReprintSale = (sale: Sale) => {
