@@ -149,10 +149,10 @@ async function downloadDirectPrivateUpdate() {
   }
 
   const expectedSize = Number(manifest.size);
-  const expectedHash = String(manifest.sha512 || '').toLowerCase();
+  const expectedHash = String(manifest.sha512 || '').trim();
   const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
   if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) throw new Error('Invalid installer size from the private update gateway.');
-  if (!/^[a-f0-9]{128}$/.test(expectedHash)) throw new Error('Invalid installer SHA-512 from the private update gateway.');
+  if (!/^[a-f0-9]{128}$/i.test(expectedHash) && !/^[A-Za-z0-9+/]{86}==$/.test(expectedHash)) throw new Error('Invalid installer SHA-512 from the private update gateway.');
   if (!chunks.length || chunks.length !== Math.ceil(expectedSize / DIRECT_UPDATE_CHUNK_BYTES)) {
     throw new Error('Private update chunk metadata is inconsistent with the installer size.');
   }
@@ -188,9 +188,11 @@ async function downloadDirectPrivateUpdate() {
     await handle.close();
   }
 
-  const actualHash = hash.digest('hex');
+  const digest = hash.digest();
+  const actualHex = digest.toString('hex');
+  const actualBase64 = digest.toString('base64');
   if (total !== expectedSize) throw new Error(`Installer size verification failed. Expected ${expectedSize} bytes, received ${total}.`);
-  if (actualHash !== expectedHash) throw new Error('Installer SHA-512 verification failed. The update was NOT installed.');
+  if (actualHex.toLowerCase() !== expectedHash.toLowerCase() && actualBase64 !== expectedHash) throw new Error('Installer SHA-512 verification failed. The update was NOT installed.');
   fs.renameSync(tempPath, installerPath);
   sendUpdateEvent('progress', { percent: 100 });
   return { version: String(manifest.version || ''), installerPath, installerName: safeName };
