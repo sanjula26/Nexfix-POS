@@ -140,7 +140,20 @@ export function hasBackupPassphrase(): boolean { return !!sessionPassphrase; }
 export function getRecoveryKey(scope?: string): string {
   const normalizedScope = normalizeRecoveryScope(scope);
   try {
-    if (normalizedScope) return (readRecoveryKeyMap()[normalizedScope] || '').trim();
+    if (normalizedScope) {
+      const map = readRecoveryKeyMap();
+      if (map[normalizedScope]) return map[normalizedScope].trim();
+      const legacy = (localStorage.getItem(RECOVERY_KEY_STORAGE) || '').trim();
+      // One-time migration for existing installs that stored a single shop key.
+      // Only migrate while the scoped map is still empty; after the first scoped
+      // key exists, another shop must provide/generate its own key.
+      if (!Object.keys(map).length && legacy) {
+        map[normalizedScope] = legacy;
+        writeRecoveryKeyMap(map);
+        return legacy;
+      }
+      return '';
+    }
     return (localStorage.getItem(RECOVERY_KEY_STORAGE) || '').trim();
   } catch { return ''; }
 }
