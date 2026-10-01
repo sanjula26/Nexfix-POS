@@ -179,7 +179,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
 
   const productRows = state.products.map(p => ({
     id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null,
-    description: null, cost: p.cost || 0, price: p.price || 0, reorder_level: p.reorderLevel ?? 5,
+    description: null, cost: p.cost || 0, price: p.price || 0, stock: Math.max(0, Math.round(Number(p.stock) || 0)), reorder_level: p.reorderLevel ?? 5,
     track_imei: !!p.trackImei, track_serial: !!p.trackSerial, track_expiry: !!p.trackExpiry,
     warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit, is_service: !!p.isService,
     active: p.active !== false, attributes: p.attributes || {}, image_url: null,
@@ -188,13 +188,30 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   }));
   if (productRows.length) {
     const ids = productRows.map(p => p.id);
-    const { data: existing, error: existingError } = await supabase.from('products').select('id').eq('shop_id', shopId).in('id', ids);
+    const { data: existing, error: existingError } = await supabase.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
     if (existingError) return { ok: false, error: `Products lookup: ${existingError.message}` };
-    const existingIds = new Set((existing || []).map(row => row.id));
+    const existingRows = (existing || []) as Array<{ id: string; stock?: number }>;
+    const existingIds = new Set(existingRows.map(row => row.id));
     const missing = productRows.filter(row => !existingIds.has(row.id));
     if (missing.length) {
       const { error } = await supabase.from('products').insert(missing);
       if (error) return { ok: false, error: `Products: ${error.message}` };
+    }
+
+    // The first full-shop stock entry is created locally before later purchases
+    // move through GRN. Missing cloud products now receive their initial stock
+    // directly on insert. Existing products created by an older build may have
+    // been inserted with stock=0; repair that exact bootstrap case once, but
+    // never overwrite cloud stock after any normalized transaction/unit exists.
+    const bootstrapRows = productRows
+      .filter(row => !existingIds.has(row.id) || Number(row.stock) > 0)
+      .map(row => ({ product_id: row.id, stock: Number(row.stock) || 0 }));
+    if (bootstrapRows.length && existingRows.length) {
+      const { error: bootstrapError } = await supabase.rpc('bootstrap_initial_catalog_stock', {
+        p_shop_id: shopId,
+        p_rows: bootstrapRows,
+      });
+      if (bootstrapError) return { ok: false, error: `Initial cloud stock bootstrap: ${bootstrapError.message}` };
     }
   }
 
