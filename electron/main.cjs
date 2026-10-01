@@ -1,6 +1,8 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 // Supabase/Cloudflare can negotiate HTTP/3/QUIC on Windows. This POS has
 // repeatedly observed Chromium ERR_QUIC_PROTOCOL_ERROR on the updater path.
@@ -20,6 +22,8 @@ let updateAuthMode = 'bearer';
 let updateCheckPromise = null;
 const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
+const DIRECT_UPDATE_CHUNKS_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-download-chunks';
+const DIRECT_UPDATE_CHUNK_BYTES = 40 * 1024 * 1024;
 const AUTH_PROTOCOL = 'nexfix';
 let pendingAuthCallback = null;
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -128,6 +132,68 @@ function configureUpdaterCredentials(){
     publishAutoUpdate: false,
   });
   return authorized;
+}
+
+async function downloadDirectPrivateUpdate() {
+  if (!updateAuthToken || !updateDeviceId) throw new Error('Update authorization is not ready.');
+  const headers = { 'X-Nexfix-Device': updateDeviceId };
+  if (updateAuthMode === 'device') headers['X-Nexfix-Update-Token'] = updateAuthToken;
+  else headers.Authorization = `Bearer ${updateAuthToken}`;
+
+  const manifestResponse = await fetch(DIRECT_UPDATE_CHUNKS_URL, { headers });
+  const manifestText = await manifestResponse.text();
+  let manifest;
+  try { manifest = JSON.parse(manifestText); } catch { manifest = null; }
+  if (!manifestResponse.ok || !manifest?.ok || manifest.mode !== 'chunks') {
+    throw new Error(manifest?.error || 'Could not authorize the direct private update download.');
+  }
+
+  const expectedSize = Number(manifest.size);
+  const expectedHash = String(manifest.sha512 || '').toLowerCase();
+  const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
+  if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) throw new Error('Invalid installer size from the private update gateway.');
+  if (!/^[a-f0-9]{128}$/.test(expectedHash)) throw new Error('Invalid installer SHA-512 from the private update gateway.');
+  if (!chunks.length || chunks.length !== Math.ceil(expectedSize / DIRECT_UPDATE_CHUNK_BYTES)) {
+    throw new Error('Private update chunk metadata is inconsistent with the installer size.');
+  }
+
+  const safeName = path.basename(String(manifest.name || 'Nexfix-POS-update.exe')).replace(/[^A-Za-z0-9._-]/g, '_');
+  const tempDir = path.join(app.getPath('temp'), 'Nexfix-POS-Updater');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const tempPath = path.join(tempDir, safeName + '.download');
+  const installerPath = path.join(tempDir, safeName);
+  try { fs.rmSync(tempPath, { force: true }); } catch {}
+  try { fs.rmSync(installerPath, { force: true }); } catch {}
+
+  const handle = await fs.promises.open(tempPath, 'w');
+  const hash = crypto.createHash('sha512');
+  let total = 0;
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const response = await fetch(String(chunks[i]?.url || ''));
+      if (!response.ok) throw new Error(`Update chunk ${i + 1} failed (HTTP ${response.status}).`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const expectedChunkSize = i === chunks.length - 1
+        ? expectedSize - DIRECT_UPDATE_CHUNK_BYTES * (chunks.length - 1)
+        : DIRECT_UPDATE_CHUNK_BYTES;
+      if (buffer.length !== expectedChunkSize) {
+        throw new Error(`Update chunk ${i + 1} size mismatch. Expected ${expectedChunkSize} bytes, received ${buffer.length}.`);
+      }
+      await handle.write(buffer, 0, buffer.length, total);
+      hash.update(buffer);
+      total += buffer.length;
+      sendUpdateEvent('progress', { percent: Math.min(99, (total / expectedSize) * 100) });
+    }
+  } finally {
+    await handle.close();
+  }
+
+  const actualHash = hash.digest('hex');
+  if (total !== expectedSize) throw new Error(`Installer size verification failed. Expected ${expectedSize} bytes, received ${total}.`);
+  if (actualHash !== expectedHash) throw new Error('Installer SHA-512 verification failed. The update was NOT installed.');
+  fs.renameSync(tempPath, installerPath);
+  sendUpdateEvent('progress', { percent: 100 });
+  return { version: String(manifest.version || ''), installerPath, installerName: safeName };
 }
 
 function setupAutoUpdater(){
@@ -311,9 +377,23 @@ function setupAutoUpdater(){
         }
         updateDownloadActive=true;
         sendUpdateEvent('progress',{percent:0});
-        // Download into electron-updater's private cache, then the
-        // update-downloaded handler performs the silent NSIS install/restart.
-        await autoUpdater.downloadUpdate();
+        // Download the protected installer chunks directly from Supabase Storage.
+        // This avoids streaming the 100+ MB installer through the Edge Function,
+        // which otherwise adds another egress leg and is the main bandwidth hotspot.
+        const direct = await downloadDirectPrivateUpdate();
+        pendingUpdateInfo = { ...(pendingUpdateInfo || {}), version: direct.version };
+        updateInstallScheduled = true;
+        sendUpdateEvent('downloaded', { version: direct.version });
+        // The verified NSIS installer lives only in the updater temp directory.
+        // Launch it after the POS exits so locked application files are released.
+        setTimeout(() => {
+          try {
+            const child = spawn(direct.installerPath, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
+            child.unref();
+          } finally {
+            app.quit();
+          }
+        }, 700);
         return{supported:true,started:true};
       }catch(error){
         updateDownloadActive=false;
