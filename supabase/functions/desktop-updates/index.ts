@@ -116,6 +116,28 @@ Deno.serve(async req=>{
     // A query-only stream URL can be treated as a cache filename such as
     // `temp-desktop-updates?download=stream`, which breaks electron-updater on Windows.
     const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates/download/${encodeURIComponent(r.installer_name)}`);
+    const wantsChunkManifest=wantsDownload && requestUrl.searchParams.get("mode")==="chunks";
+    if(wantsChunkManifest){
+      // Large installer payloads must go directly from Storage to the authorized
+      // client. Streaming the full EXE through this Edge Function adds another
+      // large egress hop and is unnecessary now that the client can reconstruct
+      // the already-verified 40 MB Storage parts locally.
+      const chunks=signed.map((item,index)=>({
+        index:index+1,
+        path:chunkPaths[index],
+        url:item.signedUrl,
+      }));
+      return json({
+        ok:true,
+        mode:"chunks",
+        expiresIn:900,
+        version:r.version,
+        name:r.installer_name,
+        size:Number(r.installer_size),
+        sha512:r.installer_sha512,
+        chunks,
+      });
+    }
     if(wantsDownload){
       const claims={deviceId,shopId,userId:authenticatedUserId,version:r.version,exp:Math.floor(Date.now()/1000)+600};
       const downloadToken=await createDownloadToken(claims);
