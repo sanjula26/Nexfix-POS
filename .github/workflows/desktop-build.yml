@@ -199,9 +199,7 @@ jobs:
           $bucket = 'nexfix-desktop-updates'
           $version = $env:BUILD_VERSION
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
-          $portable = Get-ChildItem -Path release -Filter '*-portable.exe' -File | Select-Object -First 1
           if (-not $installer) { throw 'Installer artifact not found.' }
-          if (-not $portable) { throw 'Portable artifact not found.' }
 
           function Get-Sha512Base64([string]$path) {
             $hex = (Get-FileHash -Algorithm SHA512 -Path $path).Hash
@@ -301,16 +299,12 @@ jobs:
           node "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)" $chunkBytes
           if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($installer.Name)." }
 
-          node "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" $portable.FullName "win32/latest/$($portable.Name)" $chunkBytes
-          if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($portable.Name)." }
-
           $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
 
           # Verify uploaded objects through the Supabase Storage API before changing the
           # active release pointer. The Storage Data API does not expose the internal
           # storage.objects table through /rest/v1, so use the supported object-list endpoint.
           $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
-          $portableParts = [math]::Ceiling([double]$portable.Length / $chunkBytes)
           $storageHeaders = @{
             apikey = $env:SUPABASE_SERVICE_ROLE_KEY
             Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
@@ -374,25 +368,16 @@ jobs:
             throw "Installer chunk byte total mismatch: $installerUploadedBytes != $($installer.Length)"
           }
 
-          $portableUploadedBytes = [int64]0
-          foreach ($i in 1..$portableParts) {
-            $path = "win32/latest/$($portable.Name).part$('{0:D4}' -f $i)"
-            $size = Get-StorageObjectSize $path
-            $expected = [int64][math]::Min($chunkBytes, $portable.Length - (($i - 1) * $chunkBytes))
-            if ($size -ne $expected) { throw "Portable chunk size mismatch: $path => $size != $expected" }
-            $portableUploadedBytes += $size
-          }
-          if ($portableUploadedBytes -ne [int64]$portable.Length) {
-            throw "Portable chunk byte total mismatch: $portableUploadedBytes != $($portable.Length)"
-          }
-
           # Only now switch the active release. A failed upload/verification must never
           # leave the database pointing at an incomplete release.
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
-          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path="win32/latest/$($portable.Name)"; portable_name=$portable.Name; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
+          # The private updater distributes only the signed NSIS installer. Keep the
+          # portable build as a CI artifact, but do not store a second ~120 MB copy in
+          # Supabase Storage because electron-updater never requests it.
+          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path=$null; portable_name=$null; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
 
-          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts, portable $portableParts parts; byte totals exact)"
+          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts; byte total exact)"
 
       - name: Remove superseded private release chunks
         shell: pwsh
@@ -404,8 +389,7 @@ jobs:
           $bucket = 'nexfix-desktop-updates'
           $version = $env:BUILD_VERSION
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
-          $portable = Get-ChildItem -Path release -Filter '*-portable.exe' -File | Select-Object -First 1
-          if (-not $installer -or -not $portable) { throw 'Current release artifacts are missing during storage cleanup.' }
+          if (-not $installer) { throw 'Current installer artifact is missing during storage cleanup.' }
 
           $storageUrl = "$projectUrl/storage/v1"
           $headers = @{
@@ -415,11 +399,11 @@ jobs:
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
           }
 
-          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,portable_name,is_active&order=published_at.desc" -Headers $headers)
+          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,is_active&order=published_at.desc" -Headers $headers)
           if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release after publish; found $($active.Count)." }
           if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
 
-          $currentNames = @($installer.Name,$portable.Name)
+          $currentNames = @($installer.Name)
           $listBody = @{ prefix='win32/latest/'; limit=1000; with_delimiter=$false } | ConvertTo-Json -Compress
           $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
           $releasePaths = @(
@@ -474,8 +458,7 @@ jobs:
           if ($bad.Count -gt 0) { throw "Storage cleanup verification failed; unexpected release objects remain: $($bad -join ', ')" }
 
           $expectedInstallerParts = [math]::Ceiling([double]$installer.Length / (40 * 1024 * 1024))
-          $expectedPortableParts = [math]::Ceiling([double]$portable.Length / (40 * 1024 * 1024))
-          $expectedTotal = $expectedInstallerParts + $expectedPortableParts
+          $expectedTotal = $expectedInstallerParts
           if ($remaining.Count -ne $expectedTotal) {
             throw "Storage cleanup verification failed; expected $expectedTotal current chunks but found $($remaining.Count). Remaining: $($remaining -join ', ')"
           }
