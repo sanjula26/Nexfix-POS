@@ -271,22 +271,6 @@ function setupAutoUpdater(){
       if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
       return {ok};
     });
-    ipcMain.handle('update:create-private-link',async()=>{
-      if(!updateAuthToken || !updateDeviceId) return {ok:false,error:'Update authorization is not ready.'};
-      try{
-        const authHeaders=updateAuthMode==='device'
-          ? {'X-Nexfix-Update-Token':updateAuthToken,'X-Nexfix-Device':updateDeviceId}
-          : {Authorization:`Bearer ${updateAuthToken}`,'X-Nexfix-Device':updateDeviceId};
-        const controller=new AbortController();
-        const timeout=setTimeout(()=>controller.abort(),UPDATE_CHECK_TIMEOUT_MS);
-        try{
-          const response=await fetch(`${UPDATE_FEED_URL}?download=1`,{headers:authHeaders,cache:'no-store',signal:controller.signal});
-          const data=await response.json().catch(()=>null);
-          if(!response.ok || !data?.ok || typeof data.url!=='string') return {ok:false,error:data?.error||`Private download link request failed (HTTP ${response.status}).`};
-          return {ok:true,url:data.url,expiresIn:Number(data.expiresIn||600),version:data.version||null,name:data.name||null};
-        }finally{clearTimeout(timeout);}
-      }catch(error){return {ok:false,error:error?.name==='AbortError'?'Private download link request timed out.':error?.message||String(error)};}
-    });
     ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
     ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),authorizationMode:updateAuthMode,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
     const checkForUpdatesWithTimeout = async()=>{
