@@ -11,6 +11,26 @@ const SALT_BYTES = 16;
 const IV_BYTES = 12;
 const RECOVERY_KEY_BYTES = 32;
 const RECOVERY_KEY_STORAGE = 'nexfix_backup_recovery_key_v1';
+const RECOVERY_KEY_MAP_STORAGE = 'nexfix_backup_recovery_keys_v2';
+
+function normalizeRecoveryScope(scope?: string): string {
+  const value = String(scope || '').trim();
+  return value && value.length <= 100 ? value : '';
+}
+
+function readRecoveryKeyMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(RECOVERY_KEY_MAP_STORAGE);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k && typeof v === 'string'));
+  } catch { return {}; }
+}
+
+function writeRecoveryKeyMap(map: Record<string, string>): void {
+  try { localStorage.setItem(RECOVERY_KEY_MAP_STORAGE, JSON.stringify(map)); } catch { /* ignore */ }
+}
 
 export interface EncryptedBackupEnvelopeV1 {
   v: 1;
@@ -117,27 +137,39 @@ export function setBackupPassphrase(passphrase: string): { ok: boolean; error?: 
 export function clearBackupPassphrase(): void { sessionPassphrase = null; }
 export function hasBackupPassphrase(): boolean { return !!sessionPassphrase; }
 
-export function getRecoveryKey(): string {
-  try { return (localStorage.getItem(RECOVERY_KEY_STORAGE) || '').trim(); } catch { return ''; }
+export function getRecoveryKey(scope?: string): string {
+  const normalizedScope = normalizeRecoveryScope(scope);
+  try {
+    if (normalizedScope) return (readRecoveryKeyMap()[normalizedScope] || '').trim();
+    return (localStorage.getItem(RECOVERY_KEY_STORAGE) || '').trim();
+  } catch { return ''; }
 }
 
-export function setRecoveryKey(value: string): { ok: boolean; error?: string } {
+export function setRecoveryKey(value: string, scope?: string): { ok: boolean; error?: string } {
   const key = value.trim();
+  const normalizedScope = normalizeRecoveryScope(scope);
   try {
     if (base64UrlToBytes(key).length !== RECOVERY_KEY_BYTES) return { ok: false, error: 'Recovery Key is invalid.' };
-    localStorage.setItem(RECOVERY_KEY_STORAGE, key);
+    if (normalizedScope) {
+      const map = readRecoveryKeyMap();
+      map[normalizedScope] = key;
+      writeRecoveryKeyMap(map);
+    } else {
+      localStorage.setItem(RECOVERY_KEY_STORAGE, key);
+    }
     return { ok: true };
   } catch { return { ok: false, error: 'Could not save the Recovery Key on this browser.' }; }
 }
 
-export function hasRecoveryKey(): boolean { return !!getRecoveryKey(); }
+export function hasRecoveryKey(scope?: string): boolean { return !!getRecoveryKey(scope); }
 
-export function ensureRecoveryKey(): string {
-  const existing = getRecoveryKey();
+export function ensureRecoveryKey(scope?: string): string {
+  const normalizedScope = normalizeRecoveryScope(scope);
+  const existing = getRecoveryKey(normalizedScope);
   if (existing) return existing;
   assertCrypto();
   const key = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(RECOVERY_KEY_BYTES)));
-  const result = setRecoveryKey(key);
+  const result = setRecoveryKey(key, normalizedScope);
   if (!result.ok) throw new Error(result.error || 'Could not create the Recovery Key.');
   return key;
 }
