@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   clearCloudUpdaterDeviceToken: () => ipcRenderer.invoke('cloud-updater-token:clear'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadAndInstallUpdate: () => ipcRenderer.invoke('update:downloadAndInstall'),
+  createPrivateDownloadLink: () => ipcRenderer.invoke('update:create-private-link'),
   onAuthCallback: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on('auth:callback', handler);
