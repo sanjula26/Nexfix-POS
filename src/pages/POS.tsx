@@ -426,6 +426,32 @@ export default function POS() {
     if (finishingSale) return;
     setError('');
     if (lines.length === 0) return setError('Add at least one item to the cart');
+
+    // Validate the aggregate quantity per product before calling Supabase.
+    // Quotation imports/older held carts can contain duplicate product lines,
+    // even though the normal cashier add flow merges them into one line.
+    // The cloud RPC correctly validates the aggregate too; doing the same
+    // preflight locally gives the cashier the real stock error before a remote
+    // transaction is attempted.
+    const requestedQtyByProduct = new Map<string, number>();
+    for (const line of lines) {
+      const qty = Number(line.qty);
+      const current = requestedQtyByProduct.get(line.productId) || 0;
+      requestedQtyByProduct.set(line.productId, current + (Number.isFinite(qty) ? qty : 0));
+    }
+    for (const [productId, requestedQty] of requestedQtyByProduct) {
+      const product = products.find(p => p.id === productId);
+      if (!product || !Number.isFinite(requestedQty) || requestedQty <= 0) {
+        return setError('One or more sale lines are invalid');
+      }
+      const kitItems = product.isKit
+        ? (state.kitItems || []).filter(k => k.kitProductId === product.id && Number.isFinite(k.qty) && k.qty > 0)
+        : [];
+      if (!kitItems.length && requestedQty > product.stock) {
+        return setError(`Only ${product.stock} in stock — ${product.name}`);
+      }
+    }
+
     if ((discCart > 0 || lineDisc > 0) && !can('act:discount')) return setError('Your role cannot apply discounts');
     if (tradeInOpen) {
       const tp = products.find(p => p.id === tradeIn.productId);
