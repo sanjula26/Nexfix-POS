@@ -105,7 +105,7 @@ function CloudSyncStateBridge() {
   const cloudSnapshotTrigger = useMemo(() => JSON.stringify({
     sales: state.sales.map(s => [s.id, s.status, s.date, s.total]),
     purchases: state.purchases.map(p => [p.id, p.status, p.date]),
-    repairs: state.repairs.map(r => [r.id, r.status, r.updatedAt]),
+    repairs: state.repairs.map(r => [r.id, r.status, r.receivedAt, r.completedAt, r.deliveredAt]),
   }), [state.sales, state.purchases, state.repairs]);
 
   useEffect(() => {
