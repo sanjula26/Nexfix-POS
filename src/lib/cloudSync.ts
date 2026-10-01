@@ -94,6 +94,52 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
 /** Register this machine with the currently authenticated cloud shop.
  * The server remains the source of truth for device ownership and membership.
  */
+/** Resolve a local POS salesman to the authenticated cloud profile for this shop.
+ * Local POS account IDs and Supabase auth/profile IDs are separate namespaces.
+ * Never pass a local POS UUID into the cloud sale RPC.
+ */
+export async function resolveCloudSalesmanId(
+  shopId: string,
+  localSalesman?: { email?: string } | null,
+): Promise<string | undefined> {
+  if (!supabaseConfigured || !supabase || !shopId) return undefined;
+
+  const email = localSalesman?.email?.trim().toLowerCase();
+  if (email) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .eq('active', true)
+      .maybeSingle();
+
+    if (profile?.id) {
+      const { data: membership } = await supabase
+        .from('shop_memberships')
+        .select('user_id')
+        .eq('shop_id', shopId)
+        .eq('user_id', profile.id)
+        .eq('active', true)
+        .maybeSingle();
+      if (membership?.user_id) return String(profile.id);
+    }
+  }
+
+  // If the selected local account has no cloud profile, only use the current
+  // authenticated cloud user as a safe fallback. Otherwise omit salesman_id.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const authUserId = sessionData.session?.user.id;
+  if (!authUserId) return undefined;
+  const { data: membership } = await supabase
+    .from('shop_memberships')
+    .select('user_id')
+    .eq('shop_id', shopId)
+    .eq('user_id', authUserId)
+    .eq('active', true)
+    .maybeSingle();
+  return membership?.user_id ? String(authUserId) : undefined;
+}
+
 export async function registerDesktopUpdaterDevice(shopId: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   const normalizedShopId = shopId.trim();
