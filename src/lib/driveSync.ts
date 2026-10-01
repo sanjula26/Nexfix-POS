@@ -390,7 +390,7 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
       : state;
     const safeState = sanitizeCloudState(businessState);
     const exportedAt = new Date().toISOString();
-    const recoveryKey = ensureRecoveryKey();
+    const recoveryKey = ensureRecoveryKey(shopId);
     const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
     const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
     const serialized = JSON.stringify(envelope);
@@ -552,7 +552,7 @@ export async function fetchLatestGoogleBackup(timeoutMs = 30000): Promise<Latest
   if (!shopId) return null;
 
   try {
-    const recoveryKey = ensureRecoveryKey();
+    const recoveryKey = ensureRecoveryKey(shopId);
     const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
     const url = new URL(getGoogleScriptUrl());
     url.searchParams.set('action', 'getLatestBackup');
