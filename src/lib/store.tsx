@@ -17,7 +17,7 @@ import { syncToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { completeSaleAtomic, ensureCloudShop, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
+import { completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
 
@@ -1426,6 +1426,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const catalog = await syncNormalizedCatalog(state, shop.shopId);
       if (!catalog.ok) return null;
     }
+    const localSalesman = input.salesmanId
+      ? state.users.find(u => u.id === input.salesmanId && u.active)
+      : user;
+    const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
+
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
       lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
@@ -1433,7 +1438,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       shipping: input.shipping || 0, pointsRedeemed: input.pointsRedeemed || 0,
       payment: input.payment, amountPaid: input.amountPaid,
       payments: (input.payments || []).map(p => ({ method: p.method, amount: p.amount })),
-      note: input.note || '', salesmanId: input.salesmanId || user.id,
+      note: input.note || '', salesmanId: cloudSalesmanId || null,
     });
     let saleId = input._saleId || '';
     let tradeInUnitId = tradeIn?.addToInventory ? '' : undefined;
@@ -1457,7 +1462,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const cloud = await completeSaleAtomic({
       shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
-      note: input.note, salesmanId: input.salesmanId || user.id,
+      note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
     });
