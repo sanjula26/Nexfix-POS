@@ -1,6 +1,13 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// Supabase/Cloudflare can negotiate HTTP/3/QUIC on Windows. This POS has
+// repeatedly observed Chromium ERR_QUIC_PROTOCOL_ERROR on the updater path.
+// Force the updater and renderer onto the reliable TCP-based HTTP path so a
+// broken UDP/443/QUIC route cannot strand the update check or download.
+app.commandLine.appendSwitch('disable-quic');
+
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.NEXFIX_DEV_URL || 'http://localhost:5173/';
 let autoUpdater = null;
