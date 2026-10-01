@@ -217,7 +217,7 @@ export async function encryptBackupState(
   exportedAt: string,
 ): Promise<EncryptedBackupEnvelopeV2> {
   assertCrypto();
-  const recoveryKey = ensureRecoveryKey();
+  const recoveryKey = ensureRecoveryKey(shopId);
   const plaintext = new TextEncoder().encode(JSON.stringify(state));
   const packed = await compress(plaintext);
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -271,7 +271,7 @@ export async function decryptBackupEnvelope(envelope: EncryptedBackupEnvelope): 
   try {
     let plaintext: ArrayBuffer;
     if (envelope.v === 2) {
-      const recoveryKey = getRecoveryKey();
+      const recoveryKey = getRecoveryKey(envelope.shopId);
       if (!recoveryKey) throw new Error('Recovery Key is required for this automatic encrypted backup.');
       const iv = base64ToBytes(envelope.iv);
       if (iv.length !== IV_BYTES) throw new Error('Encrypted backup metadata is invalid.');
