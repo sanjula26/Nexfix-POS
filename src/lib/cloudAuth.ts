@@ -92,12 +92,13 @@ async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void
 
 const UPDATER_AUTH_TIMEOUT_MS = 12000;
 
-async function issueDesktopUpdaterDeviceToken(shopId: string): Promise<string> {
+async function issueDesktopUpdaterDeviceToken(shopId: string, currentToken = ''): Promise<string> {
   const desktop = getDesktopUpdaterApi();
   if (!desktop?.saveCloudUpdaterDeviceToken || !supabase) return '';
   const rpcPromise = supabase.rpc('authorize_pos_updater_device', {
     p_shop_id: shopId,
     p_device_id: getMachineId(),
+    p_current_token: currentToken,
   });
   const { data, error } = await Promise.race([
     rpcPromise,
@@ -126,10 +127,13 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
   // cashier/admin switching, refresh-token rotation, and future app updates do
   // not require the cloud email/password again.
   const storedDeviceToken = await desktop.loadCloudUpdaterDeviceToken?.();
-  if (storedDeviceToken?.ok && storedDeviceToken.found && storedDeviceToken.token) {
+  const storedDeviceTokenValue = storedDeviceToken?.ok && storedDeviceToken.found && storedDeviceToken.token
+    ? storedDeviceToken.token.trim()
+    : '';
+  if (storedDeviceTokenValue) {
     const storedDeviceId = storedDeviceToken.deviceId?.trim() || currentDeviceId;
     const result = await desktop.setUpdateCredentials({
-      token: storedDeviceToken.token,
+      token: storedDeviceTokenValue,
       deviceId: storedDeviceId,
       mode: 'device',
     });
@@ -179,7 +183,7 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
     return false;
   }
 
-  const token = await issueDesktopUpdaterDeviceToken(shop.shopId);
+  const token = await issueDesktopUpdaterDeviceToken(shop.shopId, storedDeviceTokenValue);
   if (!token) {
     await desktop.clearUpdateCredentials?.();
     return false;
