@@ -518,12 +518,18 @@ function writeShopInfoText(folder, shopId, metadata) {
 function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
   var key = validateRecoveryKey(recoveryKey);
   var files = folder.getFilesByName('RECOVERY_KEY.txt');
-  if (!files.hasNext()) return;
-  var file = files.next();
-  var existing = String(file.getBlob().getDataAsString() || '');
-  var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
-  if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
-  if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+  var found = false;
+  var validCount = 0;
+  while (files.hasNext()) {
+    var file = files.next();
+    var existing = String(file.getBlob().getDataAsString() || '');
+    var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+    if (!match) continue;
+    validCount++;
+    if (match[1] === key) found = true;
+  }
+  if (!validCount) return;
+  if (!found) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
 }
 
 function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
@@ -572,13 +578,28 @@ function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
   var fileName = 'RECOVERY_KEY.txt';
   var files = folder.getFilesByName(fileName);
   if (files.hasNext()) {
-    var file = files.next();
-    var existing = String(file.getBlob().getDataAsString() || '');
-    var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
-    if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid; automatic backup was stopped to protect existing backups.');
-    if (match[1] !== key) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
-    file.setContent(content);
-    while (files.hasNext()) { try { files.next().setTrashed(true); } catch (ignoreDuplicate) {} }
+    var matchingFile = null;
+    var validCount = 0;
+    while (files.hasNext()) {
+      var candidate = files.next();
+      var existing = String(candidate.getBlob().getDataAsString() || '');
+      var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+      if (match) {
+        validCount++;
+        if (match[1] === key && !matchingFile) matchingFile = candidate;
+      }
+    }
+    if (validCount && !matchingFile) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+    if (matchingFile) {
+      matchingFile.setContent(content);
+      var duplicates = folder.getFilesByName(fileName);
+      while (duplicates.hasNext()) {
+        var duplicate = duplicates.next();
+        if (duplicate.getId() !== matchingFile.getId()) { try { duplicate.setTrashed(true); } catch (ignoreDuplicate) {} }
+      }
+    } else {
+      folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
+    }
   } else {
     folder.createFile(Utilities.newBlob(content, 'text/plain', fileName));
   }
