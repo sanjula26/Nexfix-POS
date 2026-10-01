@@ -9,7 +9,7 @@ import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
   isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId,
 } from '../lib/driveSync';
-import { decryptBackupEnvelope, getBackupSecurityMessage, getRecoveryKey, hasRecoveryKey, isEncryptedBackupEnvelope, setRecoveryKey, sha256Hex } from '../lib/backupCrypto';
+import { clearRecoveryKey, decryptBackupEnvelope, getBackupSecurityMessage, getRecoveryKey, hasRecoveryKey, isEncryptedBackupEnvelope, setRecoveryKey, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
@@ -31,6 +31,7 @@ export default function Settings() {
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
   const [autoHours, setAutoHours] = useState(backupMeta.autoBackupHours ?? 6);
   const gEnabled = isGoogleSyncEnabled();
+  const recoveryScope = getLocalShopId();
   const [gMsg, setGMsg] = useState('');
   const [gRestoreBusy, setGRestoreBusy] = useState(false);
   const [confirmGoogleRestore, setConfirmGoogleRestore] = useState<{
@@ -142,7 +143,7 @@ export default function Settings() {
   const [accountMsg, setAccountMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [recoveryKeyInput, setRecoveryKeyInput] = useState('');
   const [recoveryKeyMsg, setRecoveryKeyMsg] = useState('');
-  const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey());
+  const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey(recoveryScope));
   const [recoveryKeyCopied, setRecoveryKeyCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -382,7 +383,7 @@ export default function Settings() {
       // fully validated, decrypted, persisted, and the restore has succeeded.
       // Otherwise a failed/mismatched key file could strand this browser from
       // its existing automatic backups.
-      const previousRecoveryKey = getRecoveryKey();
+      const previousRecoveryKey = getRecoveryKey(recoveryScope);
       let importedRecoveryKey: string | undefined;
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
@@ -393,7 +394,7 @@ export default function Settings() {
         }
       }
       if (importedRecoveryKey) {
-        const result = setRecoveryKey(importedRecoveryKey);
+        const result = setRecoveryKey(importedRecoveryKey, recoveryScope);
         if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
       }
 
@@ -451,9 +452,9 @@ export default function Settings() {
         // A failed restore must not leave a newly imported Recovery Key active.
         // Restore the key that was already working on this browser.
         if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
-          if (previousRecoveryKey) setRecoveryKey(previousRecoveryKey);
+          if (previousRecoveryKey) setRecoveryKey(previousRecoveryKey, recoveryScope);
           else {
-            try { localStorage.removeItem('nexfix_backup_recovery_key_v1'); } catch { /* ignore */ }
+            clearRecoveryKey(recoveryScope);
           }
           setRecoveryKeyReady(Boolean(previousRecoveryKey));
         }
@@ -503,7 +504,7 @@ export default function Settings() {
     try {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
       if (result.cloud) {
-        setRecoveryKeyReady(hasRecoveryKey());
+        setRecoveryKeyReady(hasRecoveryKey(recoveryScope));
         setGMsg('Google Drive backup completed successfully.');
       } else {
         setGMsg(result.error || 'Google Drive backup failed. No backup was uploaded.');
@@ -520,7 +521,7 @@ export default function Settings() {
     if (!gEnabled) return setGMsg('Google Drive backup is not available in this build');
     if (connectivity !== 'online') return setGMsg('Google restore requires an online connection');
     if (!getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not configured');
-    if (!hasRecoveryKey()) return setGMsg('Recovery Key is required for automatic encrypted restore. Paste the Recovery Key from RECOVERY_KEY.txt in the Shop Backup Identity section first.');
+    if (!hasRecoveryKey(recoveryScope)) return setGMsg('Recovery Key is required for automatic encrypted restore. Paste the Recovery Key from RECOVERY_KEY.txt in the Shop Backup Identity section first.');
     const currentShopId = getLocalShopId();
     if (!currentShopId) return setGMsg('Shop Backup ID is missing. Set one before restoring Google Drive data.');
     setGRestoreBusy(true);
@@ -747,9 +748,9 @@ export default function Settings() {
             </div>
             <Field label="Recovery Key" hint="Generated automatically on the first Google backup. Keep a private copy outside the PC.">
               <div className="flex gap-2">
-                <input type="text" className="input flex-1 font-mono text-xs" value={getRecoveryKey()} readOnly placeholder="Will be generated automatically on first backup" />
-                <button type="button" className="btn btn-soft shrink-0" disabled={!getRecoveryKey()} onClick={async () => {
-                  const key = getRecoveryKey();
+                <input type="text" className="input flex-1 font-mono text-xs" value={getRecoveryKey(recoveryScope)} readOnly placeholder="Will be generated automatically on first backup" />
+                <button type="button" className="btn btn-soft shrink-0" disabled={!getRecoveryKey(recoveryScope)} onClick={async () => {
+                  const key = getRecoveryKey(recoveryScope);
                   if (!key) return;
                   try {
                     await navigator.clipboard.writeText(key);
@@ -767,7 +768,7 @@ export default function Settings() {
                 <div className="flex gap-2">
                   <input type="text" className="input flex-1 font-mono text-xs" value={recoveryKeyInput} onChange={e => { setRecoveryKeyInput(e.target.value.trim()); setRecoveryKeyMsg(''); }} placeholder="Paste the existing Recovery Key" maxLength={64} />
                   <button type="button" className="btn btn-primary shrink-0" disabled={!recoveryKeyInput} onClick={() => {
-                    const result = setRecoveryKey(recoveryKeyInput);
+                    const result = setRecoveryKey(recoveryKeyInput, recoveryScope);
                     if (!result.ok) { setRecoveryKeyMsg(result.error || 'Invalid Recovery Key'); return; }
                     setRecoveryKeyInput('');
                     setRecoveryKeyReady(true);
