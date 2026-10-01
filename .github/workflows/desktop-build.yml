@@ -428,13 +428,12 @@ jobs:
           Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
           Write-Host "Superseded chunks to remove: $($removePaths.Count)"
           if ($removePaths.Count -gt 0) {
-            $deletedCount = 0
-            foreach ($path in $removePaths) {
-              $deleteBody = @{ prefixes = @([string]$path) } | ConvertTo-Json -Compress
-              Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
-              $deletedCount++
-            }
-            Write-Host "Requested deletion of $deletedCount superseded storage chunk(s)."
+            # Delete superseded chunks in one Storage API request instead of one
+            # request per object. This reduces unnecessary Storage API traffic while
+            # keeping the same post-delete verification below.
+            $deleteBody = @{ prefixes = @($removePaths | ForEach-Object { [string]$_ }) } | ConvertTo-Json -Compress
+            Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
+            Write-Host "Requested deletion of $($removePaths.Count) superseded storage chunk(s) in one batch."
           }
 
           $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
