@@ -131,7 +131,7 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
     ? storedDeviceToken.token.trim()
     : '';
   if (storedDeviceTokenValue) {
-    const storedDeviceId = storedDeviceToken.deviceId?.trim() || currentDeviceId;
+    const storedDeviceId = storedDeviceToken?.deviceId?.trim() || currentDeviceId;
     const result = await desktop.setUpdateCredentials({
       token: storedDeviceTokenValue,
       deviceId: storedDeviceId,
