@@ -372,14 +372,22 @@ jobs:
           # portable build as a CI artifact, but do not store a second ~120 MB copy in
           # Supabase Storage because electron-updater never requests it.
           #
-          # Publish the fully uploaded/verified release before retiring the previous
-          # active row. If the metadata insert fails, the old release remains active;
-          # this avoids leaving the updater with zero active releases.
-          $release = @{ version=$version; channel='latest'; platform='win32'; installer_path="win32/latest/$($installer.Name)"; installer_name=$installer.Name; installer_sha512=(Get-Sha512Base64 $installer.FullName); installer_size=[int64]$installer.Length; portable_path=$null; portable_name=$null; release_notes="Nexfix POS Windows release $version"; is_active=$true } | ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases" -Method Post -Headers $headers -Body $release | Out-Null
-          Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&version=neq.$version" -Method Patch -Headers $headers -Body '{"is_active":false}' | Out-Null
+          # Publish metadata through one database transaction. The database
+          # deactivates the previous release and inserts the new active release
+          # atomically, protected by a one-active-release unique index.
+          $rpc = @{
+            p_version = $version
+            p_channel = 'latest'
+            p_platform = 'win32'
+            p_installer_path = "win32/latest/$($installer.Name)"
+            p_installer_name = $installer.Name
+            p_installer_sha512 = Get-Sha512Base64 $installer.FullName
+            p_installer_size = [int64]$installer.Length
+            p_release_notes = "Nexfix POS Windows release $version"
+          } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "$projectUrl/rest/v1/rpc/publish_desktop_release" -Method Post -Headers $headers -Body $rpc | Out-Null
 
-          Write-Host "Private Windows release chunks published and verified: $version (installer $installerParts parts; byte total exact)"
+          Write-Host "Private Windows release chunks published and verified atomically: $version (installer $installerParts parts; byte total exact)"
 
       - name: Remove superseded private release chunks
         shell: pwsh
