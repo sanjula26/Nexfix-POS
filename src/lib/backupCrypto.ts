@@ -176,6 +176,19 @@ export function setRecoveryKey(value: string, scope?: string): { ok: boolean; er
 
 export function hasRecoveryKey(scope?: string): boolean { return !!getRecoveryKey(scope); }
 
+export function clearRecoveryKey(scope?: string): void {
+  const normalizedScope = normalizeRecoveryScope(scope);
+  try {
+    if (normalizedScope) {
+      const map = readRecoveryKeyMap();
+      if (map[normalizedScope]) delete map[normalizedScope];
+      writeRecoveryKeyMap(map);
+    } else {
+      localStorage.removeItem(RECOVERY_KEY_STORAGE);
+    }
+  } catch { /* ignore */ }
+}
+
 export function ensureRecoveryKey(scope?: string): string {
   const normalizedScope = normalizeRecoveryScope(scope);
   const existing = getRecoveryKey(normalizedScope);
