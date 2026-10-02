@@ -24,7 +24,8 @@ function readRecoveryKeyMap(): Record<string, string> {
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([k, v]) => k && typeof v === 'string'));
+    const entries = Object.entries(parsed).filter(([k, v]) => k && typeof v === 'string') as Array<[string, string]>;
+    return Object.fromEntries(entries) as Record<string, string>;
   } catch { return {}; }
 }
 
