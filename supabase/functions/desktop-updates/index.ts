@@ -1,8 +1,20 @@
 /* global EdgeRuntime */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { S3Client, GetObjectCommand } from "npm:@aws-sdk/client-s3@3.901.0";
+import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner@3.901.0";
 const SUPABASE_URL=Deno.env.get("SUPABASE_URL")!, KEYS=JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS")||"{}"), SECRET=KEYS.default||"";
+const R2_ACCOUNT_ID=(Deno.env.get("R2_ACCOUNT_ID")||"").trim();
+const R2_ACCESS_KEY_ID=(Deno.env.get("R2_ACCESS_KEY_ID")||"").trim();
+const R2_SECRET_ACCESS_KEY=(Deno.env.get("R2_SECRET_ACCESS_KEY")||"").trim();
+const R2_BUCKET=(Deno.env.get("R2_BUCKET")||"").trim();
 const admin=createClient(SUPABASE_URL,SECRET,{auth:{persistSession:false}});
+const r2=(R2_ACCOUNT_ID&&R2_ACCESS_KEY_ID&&R2_SECRET_ACCESS_KEY&&R2_BUCKET) ? new S3Client({region:"auto",endpoint:"https://"+R2_ACCOUNT_ID+".r2.cloudflarestorage.com",credentials:{accessKeyId:R2_ACCESS_KEY_ID,secretAccessKey:R2_SECRET_ACCESS_KEY}}) : null;
+const R2_SIGNED_URL_SECONDS=15*60;
+const getR2DownloadUrl=async(key:string,name:string)=>{
+  if(!r2||!R2_BUCKET) throw new Error("Private installer storage is not configured");
+  return await getSignedUrl(r2,new GetObjectCommand({Bucket:R2_BUCKET,Key:key,ResponseContentType:"application/octet-stream",ResponseContentDisposition:"attachment; filename=\"" + name.replace(/"/g,"") + "\"",ResponseCacheControl:"no-store"}),{expiresIn:R2_SIGNED_URL_SECONDS});
+};
 const headers={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization,apikey,content-type,x-nexfix-device,x-nexfix-update-token","Access-Control-Allow-Methods":"GET,OPTIONS"};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...headers,"Content-Type":"application/json"}});
 const bearer=(r:Request)=>{const v=r.headers.get("authorization")||"";return v.startsWith("Bearer ")?v.slice(7).trim():"";};
@@ -107,84 +119,18 @@ Deno.serve(async req=>{
     if(role!=="admin") return json({ok:false,error:"Only the shop admin can use private Windows updater authorization"},403);
     const {data:r,error:re}=await admin.from("desktop_releases").select("version,installer_path,installer_name,installer_sha512,installer_size,published_at").eq("platform","win32").eq("channel","latest").eq("is_active",true).order("published_at",{ascending:false}).limit(1).maybeSingle();
     if(re||!r)return json({ok:false,error:"No authorized Windows update is published"},404);
-    const STREAM_CHUNK_BYTES=40*1024*1024;
-    const chunkCount=Math.ceil(Number(r.installer_size)/STREAM_CHUNK_BYTES);
-    const chunkPaths=Array.from({length:chunkCount},(_,i)=>`${r.installer_path}.part${String(i+1).padStart(4,"0")}`);
-    const {data:signed,error:se}=await admin.storage.from("nexfix-desktop-updates").createSignedUrls(chunkPaths,900);
-    if(se||!signed?.length||signed.length!==chunkCount||signed.some(x=>!x.signedUrl))return json({ok:false,error:"Could not authorize the complete update download"},500);
-    // The updater expects the manifest file URL to have an installer-like filename.
-    // A query-only stream URL can be treated as a cache filename such as
-    // `temp-desktop-updates?download=stream`, which breaks electron-updater on Windows.
-    const streamUrl=new URL(`${SUPABASE_URL}/functions/v1/desktop-updates/download/${encodeURIComponent(r.installer_name)}`);
+    const r2Url=await getR2DownloadUrl(String(r.installer_path),String(r.installer_name));
     const wantsChunkManifest=wantsDownload && requestUrl.searchParams.get("mode")==="chunks";
     if(wantsChunkManifest){
-      // Large installer payloads must go directly from Storage to the authorized
-      // client. Streaming the full EXE through this Edge Function adds another
-      // large egress hop and is unnecessary now that the client can reconstruct
-      // the already-verified 40 MB Storage parts locally.
-      const chunks=signed.map((item,index)=>({
-        index:index+1,
-        path:chunkPaths[index],
-        url:item.signedUrl,
-      }));
-      return json({
-        ok:true,
-        mode:"chunks",
-        expiresIn:900,
-        version:r.version,
-        name:r.installer_name,
-        size:Number(r.installer_size),
-        sha512:r.installer_sha512,
-        chunks,
-      });
+      return json({ok:true,mode:"object",expiresIn:R2_SIGNED_URL_SECONDS,version:r.version,name:r.installer_name,size:Number(r.installer_size),sha512:r.installer_sha512,url:r2Url});
     }
     if(wantsDownload){
-      const claims={deviceId,shopId,userId:authenticatedUserId,version:r.version,exp:Math.floor(Date.now()/1000)+600};
-      const downloadToken=await createDownloadToken(claims);
-      const privateUrl=new URL(streamUrl.toString());
-      privateUrl.searchParams.set("token",downloadToken);
-      return json({ok:true,url:privateUrl.toString(),expiresIn:600,version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
+      return json({ok:true,mode:"object",url:r2Url,expiresIn:R2_SIGNED_URL_SECONDS,version:r.version,name:r.installer_name,size:r.installer_size,sha512:r.installer_sha512});
     }
     if(isStreamDownload){
-      // Keep the edge worker explicitly alive for the entire downstream stream.
-      // A detached ReadableStream producer can be retired while Electron is still
-      // downloading, which surfaces as a network/QUIC protocol error mid-file.
-      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-      const streamTask = (async () => {
-        const writer = writable.getWriter();
-        try {
-          for(const item of signed){
-            const upstream = await fetch(item.signedUrl, { cache: "no-store" });
-            if(!upstream.ok || !upstream.body) throw new Error(`Update chunk download failed (${upstream.status})`);
-            const reader = upstream.body.getReader();
-            try {
-              while(true){
-                const {done,value}=await reader.read();
-                if(done) break;
-                await writer.write(value);
-              }
-            } finally {
-              reader.releaseLock();
-            }
-          }
-          await writer.close();
-        } catch(error) {
-          try { await writer.abort(error); } catch (abortError) { console.error("Private updater stream abort failed:", abortError); }
-          throw error;
-        }
-      })();
-      EdgeRuntime.waitUntil(streamTask.catch(error => console.error("Private updater stream failed:", error)));
-      return new Response(readable,{
-        headers:{
-          ...headers,
-          "Content-Type":"application/octet-stream",
-          "Content-Length":String(r.installer_size),
-          "Content-Disposition":`attachment; filename="${r.installer_name.replace(/"/g,"")}"`,
-          "Cache-Control":"no-store"
-        }
-      });
+      return Response.redirect(r2Url,307);
     }
-    const yaml="version: "+r.version+"\nfiles:\n  - url: "+streamUrl.toString()+"\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
+    const yaml="version: "+r.version+"\nfiles:\n  - url: "+r2Url\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:"Update request failed"},500);}
 });
