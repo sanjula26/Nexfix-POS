@@ -111,6 +111,7 @@ export default function POS() {
 
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
   const [reprintOpen, setReprintOpen] = useState(false);
+  const [reprintSearch, setReprintSearch] = useState('');
   const [finishingSale, setFinishingSale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
@@ -675,6 +676,18 @@ export default function POS() {
     .filter(s => dkey(s.date) === dkey(new Date()))
     .sort((a, b) => +new Date(b.date) - +new Date(a.date)), [state.sales]);
 
+  const reprintBills = useMemo(() => {
+    const q = reprintSearch.trim().toLowerCase();
+    if (!q) return todayBills;
+    return todayBills.filter(s => {
+      const phone = s.customerId ? state.customers.find(c => c.id === s.customerId)?.phone || '' : '';
+      return s.billNo.toLowerCase().includes(q)
+        || (s.customerName || '').toLowerCase().includes(q)
+        || (s.cashierName || '').toLowerCase().includes(q)
+        || phone.toLowerCase().includes(q);
+    });
+  }, [todayBills, reprintSearch, state.customers]);
+
   const openReprintSale = (sale: Sale) => {
     setReprintOpen(false);
     setDoneSale(sale);
@@ -752,7 +765,7 @@ export default function POS() {
             <button
               className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs disabled:opacity-40"
               onClick={() => {
-                if (todayBills.length) setReprintOpen(true);
+                if (todayBills.length) { setReprintSearch(''); setReprintOpen(true); }
                 else toast('No completed bills were found for today', 'rose');
               }}
               disabled={!todayBills.length}
@@ -1766,9 +1779,14 @@ export default function POS() {
         })()}
       </Modal>
 
-      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} completed bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
-        <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
-          {todayBills.map((sale, index) => {
+      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <SearchInput value={reprintSearch} onChange={setReprintSearch} placeholder="Find bill #, customer, cashier or WhatsApp number…" className="flex-1 min-w-[240px]" />
+            <span className="text-[11px] text-faint num">{reprintBills.length} shown</span>
+          </div>
+          <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
+          {reprintBills.map((sale, index) => {
             const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
             return (
               <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -1788,6 +1806,8 @@ export default function POS() {
               </div>
             );
           })}
+          {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
+          </div>
         </div>
       </Modal>
 
