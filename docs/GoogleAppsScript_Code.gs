@@ -1192,7 +1192,14 @@ function getTable(ss, table, shopId) {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (p.action === 'ping' || !p.action) return json(ok({ message: 'Nexfix POS Direct Google Backup API is running' }));
+  if (p.action === 'ping' || !p.action) {
+    var pingResult = ok({ message: 'Nexfix POS Direct Google Backup API is running' });
+    var pingCallback = String(p.callback || '').trim();
+    if (pingCallback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(pingCallback)) {
+      return ContentService.createTextOutput(pingCallback + '(' + JSON.stringify(pingResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return json(pingResult);
+  }
 
   if (p.action === 'backupStatus') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
