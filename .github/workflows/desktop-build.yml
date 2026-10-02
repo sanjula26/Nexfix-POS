@@ -173,7 +173,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # The source repository is public, so GitHub Release assets are public too.
           # Delete releases by database ID, including old untagged releases whose
-          # tag no longer exists. Supabase remains the only installer distribution channel.
+          # tag no longer exists. Cloudflare R2 is the primary installer distribution channel; temporary Supabase chunks remain only for legacy installed clients.
           $ids = gh api --paginate "repos/sanjula26/Nexfix-POS/releases?per_page=100" --jq '.[].id' |
             Where-Object { $_ -and $_.Trim() } |
             Sort-Object -Unique
@@ -185,7 +185,7 @@ jobs:
               Write-Warning "GitHub release id $id was already absent or could not be removed; continuing cleanup."
             }
           }
-          Write-Host 'Public GitHub installer release cleanup complete. Supabase is the only Windows installer distribution channel.'
+          Write-Host 'Public GitHub installer release cleanup complete. Cloudflare R2 is the primary Windows installer distribution channel.'
       - name: Publish Windows release to private Cloudflare R2
         shell: pwsh
         env:
@@ -575,16 +575,27 @@ jobs:
           Write-Host "R2 cleanup verified: exactly one current installer remains: $currentKey"
 
       - name: Verify private Windows release
-
         shell: pwsh
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           $ErrorActionPreference = 'Stop'
           $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
-          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_size" -Headers $headers
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
           if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
           if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
           if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
-          Write-Host "Private Supabase release verified: $($rows[0].version) / $($rows[0].installer_name)"
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
+          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
+          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
