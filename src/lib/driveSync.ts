@@ -261,7 +261,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       );
       if (status === true) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
-        const rateMatch = /retry in about (\\d+) seconds/i.exec(status.error || '');
+        const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
         const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
         if (retryAfterSeconds && attempt < 1) {
           await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
