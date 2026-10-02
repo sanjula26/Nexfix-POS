@@ -145,6 +145,7 @@ export default function Settings() {
   const [recoveryKeyMsg, setRecoveryKeyMsg] = useState('');
   const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey(recoveryScope));
   const [recoveryKeyCopied, setRecoveryKeyCopied] = useState(false);
+  const recoveryKeyFileRef = useRef<HTMLInputElement>(null);
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -495,6 +496,24 @@ export default function Settings() {
     });
   };
 
+  const importRecoveryKeyFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const match = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+      if (!match) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
+      const result = setRecoveryKey(match[1], recoveryScope);
+      if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key.');
+      setRecoveryKeyReady(true);
+      setRecoveryKeyMsg('Existing Recovery Key imported for this shop. You can try Google Backup again.');
+      setGMsg('');
+    } catch (error) {
+      setRecoveryKeyMsg(error instanceof Error ? error.message : 'Could not import the Recovery Key.');
+    } finally {
+      if (recoveryKeyFileRef.current) recoveryKeyFileRef.current.value = '';
+    }
+  };
+
   const runGoogleBackupNow = async () => {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
@@ -776,6 +795,9 @@ export default function Settings() {
                   }}>Use Key</button>
                 </div>
               </Field>
+              <input ref={recoveryKeyFileRef} type="file" accept=".txt,text/plain" className="hidden" onChange={e => { void importRecoveryKeyFile(e.target.files?.[0]); }} />
+              <button type="button" className="btn btn-soft mt-2" onClick={() => recoveryKeyFileRef.current?.click()}><Upload size={14} /> Import RECOVERY_KEY.txt</button>
+              <p className="text-[11px] text-faint mt-2">If Backup now says “Recovery Key mismatch”, import the original RECOVERY_KEY.txt from this shop instead of generating a new key.</p>
             </div>
             {recoveryKeyMsg && <p className="text-[12px] font-medium mt-3 text-emerald-500">{recoveryKeyMsg}</p>}
             <p className="text-[11px] text-faint mt-3">{recoveryKeyReady ? 'Automatic encrypted Google backup is ready on this browser.' : 'The Recovery Key will be generated automatically when the first encrypted Google backup is created.'}</p>
