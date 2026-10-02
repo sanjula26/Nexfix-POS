@@ -366,7 +366,12 @@ export async function getGoogleScriptHealth(force = false): Promise<GoogleScript
 async function getGoogleDeploymentError(): Promise<string | undefined> {
   const health = await getGoogleScriptHealth(true);
   if (!health) {
-    return 'Google Backup API health check could not be verified. Check the Apps Script Web App deployment and access settings, then try again.';
+    // Health is an advisory JSONP preflight. A browser/CSP/Apps Script redirect
+    // can prevent that probe from being readable even when the actual form POST
+    // transport is available. Do not block a real backup on an unreadable probe;
+    // postGoogleBackup() and its status verification are the authoritative path.
+    console.warn('[Google Backup] health probe could not be verified; continuing with the real backup request');
+    return undefined;
   }
   if (health.version && health.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
     return `Google Backup API is outdated (live version ${health.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs before backing up.`;
