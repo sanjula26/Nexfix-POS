@@ -186,20 +186,28 @@ jobs:
             }
           }
           Write-Host 'Public GitHub installer release cleanup complete. Supabase is the only Windows installer distribution channel.'
-      - name: Publish Windows release to private Supabase Storage
+      - name: Publish Windows release to private Cloudflare R2
         shell: pwsh
         env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)) { throw 'SUPABASE_SERVICE_ROLE_KEY secret is empty.' }
-          $projectRef = 'ocmzgamnehwbkuwkjdrr'
-          $projectUrl = "https://$projectRef.supabase.co"
-          $storageUrl = "https://$projectRef.storage.supabase.co"
-          $bucket = 'nexfix-desktop-updates'
+          foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET','SUPABASE_SERVICE_ROLE_KEY')) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) { throw "$name secret is empty." }
+          }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          aws --version
+
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $version = $env:BUILD_VERSION
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
           if (-not $installer) { throw 'Installer artifact not found.' }
+          $objectKey = "win32/latest/$($installer.Name)"
 
           function Get-Sha512Base64([string]$path) {
             $hex = (Get-FileHash -Algorithm SHA512 -Path $path).Hash
@@ -208,271 +216,76 @@ jobs:
             return [Convert]::ToBase64String($bytes)
           }
 
-          # Free Supabase projects enforce a 50 MB global object limit.
-          # Keep each private release chunk safely below that limit and reconstruct
-          # the original installer only inside the authorized update gateway.
-          $chunkBytes = 40 * 1024 * 1024
-          npm install --no-save --no-package-lock tus-js-client@4
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
 
-          @'
-          const fs = require('fs');
-          const tus = require('tus-js-client');
+          Write-Host "Uploading $($installer.Name) to private R2 object: $objectKey"
+          aws s3 cp $installer.FullName "s3://$env:R2_BUCKET/$objectKey" --endpoint-url $r2Endpoint --region auto --content-type 'application/octet-stream' --cache-control 'no-store' --content-disposition "attachment; filename=$($installer.Name)" --only-show-errors
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 installer upload failed.' }
 
-          const [, , filePath, objectPrefix, chunkBytesText] = process.argv;
-          const endpoint = process.env.SUPABASE_TUS_ENDPOINT;
-          const token = process.env.SUPABASE_SERVICE_ROLE_KEY;
-          const bucketName = process.env.SUPABASE_BUCKET;
-          const chunkBytes = Number(chunkBytesText);
+          $headJson = aws s3api head-object --bucket $env:R2_BUCKET --key $objectKey --endpoint-url $r2Endpoint --region auto --output json
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 object verification failed: head-object failed.' }
+          $head = $headJson | ConvertFrom-Json
+          if ([int64]$head.ContentLength -ne [int64]$installer.Length) { throw "R2 object size mismatch: $($head.ContentLength) != $($installer.Length)" }
 
-          if (!filePath || !objectPrefix || !endpoint || !token || !bucketName || !Number.isFinite(chunkBytes) || chunkBytes <= 0) {
-            throw new Error('Missing TUS upload arguments/environment.');
-          }
+          $verifyPath = Join-Path $env:RUNNER_TEMP 'nexfix-r2-installer-verify.exe'
+          Remove-Item $verifyPath -Force -ErrorAction SilentlyContinue
+          aws s3 cp "s3://$env:R2_BUCKET/$objectKey" $verifyPath --endpoint-url $r2Endpoint --region auto --only-show-errors
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 installer download verification failed.' }
+          $sourceHash = Get-Sha512Base64 $installer.FullName
+          $servedHash = Get-Sha512Base64 $verifyPath
+          if ($sourceHash -ne $servedHash) { throw 'R2 installer SHA-512 verification failed.' }
+          Remove-Item $verifyPath -Force -ErrorAction SilentlyContinue
 
-          function uploadBuffer(buffer, objectPath) {
-            return new Promise((resolve, reject) => {
-              const upload = new tus.Upload(buffer, {
-                endpoint,
-                headers: {
-                  apikey: token,
-                  'x-upsert': 'true',
-                },
-                metadata: {
-                  bucketName,
-                  objectName: objectPath,
-                  contentType: 'application/octet-stream',
-                  cacheControl: '31536000',
-                },
-                chunkSize: 6 * 1024 * 1024,
-                uploadDataDuringCreation: true,
-                removeFingerprintOnSuccess: true,
-                retryDelays: [0, 3000, 5000, 10000, 20000],
-                onProgress(bytesUploaded, bytesTotal) {
-                  const percent = ((bytesUploaded / bytesTotal) * 100).toFixed(1);
-                  process.stdout.write(`\rUploading ${objectPath}: ${percent}%`);
-                },
-                onError(error) {
-                  reject(error);
-                },
-                onSuccess() {
-                  process.stdout.write('\n');
-                  resolve();
-                },
-              });
-              upload.start();
-            });
-          }
-
-          async function main() {
-            const stat = fs.statSync(filePath);
-            const fd = fs.openSync(filePath, 'r');
-            let index = 1;
-            try {
-              for (let offset = 0; offset < stat.size; offset += chunkBytes) {
-                const length = Math.min(chunkBytes, stat.size - offset);
-                const buffer = Buffer.allocUnsafe(length);
-                let read = 0;
-                while (read < length) {
-                  const n = fs.readSync(fd, buffer, read, length - read, offset + read);
-                  if (!n) throw new Error(`Unexpected EOF while reading ${filePath}`);
-                  read += n;
-                }
-                const objectPath = `${objectPrefix}.part${String(index).padStart(4, '0')}`;
-                await uploadBuffer(buffer, objectPath);
-                index++;
-              }
-              console.log(`Uploaded ${index - 1} private chunks for ${filePath}`);
-            } finally {
-              fs.closeSync(fd);
-            }
-          }
-
-          main().catch((error) => {
-            console.error(error);
-            process.exitCode = 1;
-          });
-          '@ | Set-Content -Path "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" -Encoding utf8
-
-          $env:SUPABASE_TUS_ENDPOINT = "$storageUrl/storage/v1/upload/resumable"
-          $env:SUPABASE_BUCKET = $bucket
-          $env:NODE_PATH = "$PWD\node_modules"
-
-          node "$env:RUNNER_TEMP\supabase-tus-chunk-upload.cjs" $installer.FullName "win32/latest/$($installer.Name)" $chunkBytes
-          if ($LASTEXITCODE -ne 0) { throw "TUS chunk upload failed for $($installer.Name)." }
-
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
-
-          # Verify uploaded objects through the Supabase Storage API before changing the
-          # active release pointer. The Storage Data API does not expose the internal
-          # storage.objects table through /rest/v1, so use the supported object-list endpoint.
-          $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
-          $storageHeaders = @{
-            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
-            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
-            'Content-Type' = 'application/json'
-            'User-Agent' = 'Nexfix-GitHub-Action/1.0'
-          }
-
-          function Get-StorageObjectSize([string]$path) {
-            $lastSlash = $path.LastIndexOf('/')
-            if ($lastSlash -lt 0) {
-              $prefix = ''
-              $filename = $path
-            } else {
-              $prefix = $path.Substring(0, $lastSlash + 1)
-              $filename = $path.Substring($lastSlash + 1)
-            }
-
-            $listUrl = "$storageUrl/storage/v1/object/list/$bucket"
-
-            # Storage's list API supports server-side search within a prefix. This is
-            # important because this bucket contains many historical release chunks and
-            # the target version is not guaranteed to be on the first paginated page.
-            $body = @{
-              prefix = $prefix
-              search = $filename
-              limit = 10
-              offset = 0
-            } | ConvertTo-Json -Compress
-            $rows = @(Invoke-RestMethod -Uri $listUrl -Method Post -Headers $storageHeaders -Body $body)
-
-            # Results may use names relative to the prefix or full object keys.
-            $matches = @($rows | Where-Object {
-              $_.name -eq $filename -or
-              $_.name -eq $path -or
-              $_.name -eq "$prefix$filename"
-            })
-
-            if ($matches.Count -ne 1) {
-              Write-Host "Storage search verification returned $($rows.Count) row(s) for prefix '$prefix', search '$filename'."
-              Write-Host "Raw Storage search response:"
-              ($rows | ConvertTo-Json -Depth 20) | Write-Host
-              throw "Expected exactly one uploaded storage object: $path (found $($matches.Count))"
-            }
-
-            $metadata = $matches[0].metadata
-            if ($null -eq $metadata) { throw "Storage object metadata is missing: $path" }
-            if ($metadata -is [string]) { $metadata = $metadata | ConvertFrom-Json }
-            if ($null -eq $metadata.size) { throw "Storage object metadata size is missing: $path" }
-            return [int64]$metadata.size
-          }
-
-          $installerUploadedBytes = [int64]0
-          foreach ($i in 1..$installerParts) {
-            $path = "win32/latest/$($installer.Name).part$('{0:D4}' -f $i)"
-            $size = Get-StorageObjectSize $path
-            $expected = [int64][math]::Min($chunkBytes, $installer.Length - (($i - 1) * $chunkBytes))
-            if ($size -ne $expected) { throw "Installer chunk size mismatch: $path => $size != $expected" }
-            $installerUploadedBytes += $size
-          }
-          if ($installerUploadedBytes -ne [int64]$installer.Length) {
-            throw "Installer chunk byte total mismatch: $installerUploadedBytes != $($installer.Length)"
-          }
-
-          # The private updater distributes only the signed NSIS installer. Keep the
-          # portable build as a CI artifact, but do not store a second ~120 MB copy in
-          # Supabase Storage because electron-updater never requests it.
-          #
-          # Publish metadata through one database transaction. The database
-          # deactivates the previous release and inserts the new active release
-          # atomically, protected by a one-active-release unique index.
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
           $rpc = @{
             p_version = $version
             p_channel = 'latest'
             p_platform = 'win32'
-            p_installer_path = "win32/latest/$($installer.Name)"
+            p_installer_path = $objectKey
             p_installer_name = $installer.Name
-            p_installer_sha512 = Get-Sha512Base64 $installer.FullName
+            p_installer_sha512 = $sourceHash
             p_installer_size = [int64]$installer.Length
             p_release_notes = "Nexfix POS Windows release $version"
           } | ConvertTo-Json -Compress
           Invoke-RestMethod -Uri "$projectUrl/rest/v1/rpc/publish_desktop_release" -Method Post -Headers $headers -Body $rpc | Out-Null
+          Write-Host "R2 release published and byte-verified: $version / $objectKey / $($installer.Length) bytes"
 
-          Write-Host "Private Windows release chunks published and verified atomically: $version (installer $installerParts parts; byte total exact)"
-
-      - name: Remove superseded private release chunks
+      - name: Clean superseded R2 installer objects
         shell: pwsh
         env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $bucket = 'nexfix-desktop-updates'
-          $version = $env:BUILD_VERSION
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
-          if (-not $installer) { throw 'Current installer artifact is missing during storage cleanup.' }
+          if (-not $installer) { throw 'Current installer artifact is missing during R2 cleanup.' }
+          $currentKey = "win32/latest/$($installer.Name)"
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
 
-          $storageUrl = "$projectUrl/storage/v1"
-          $headers = @{
-            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
-            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
-            'Content-Type' = 'application/json'
-            'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+          $rows = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
+          $keys = @($rows | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
+          foreach ($key in $keys) {
+            if ($key -ne $currentKey) {
+              Write-Host "Removing superseded R2 installer: $key"
+              aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output none
+              if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
+            }
           }
 
-          $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,is_active&order=published_at.desc" -Headers $headers)
-          if ($active.Count -ne 1) { throw "Expected exactly one active private Windows release after publish; found $($active.Count)." }
-          if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
+          $remaining = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 cleanup.' }
+          $remainingKeys = @($remaining | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
+          if ($remainingKeys.Count -ne 1 -or $remainingKeys[0] -ne $currentKey) { throw "R2 cleanup verification failed. Expected exactly one current installer, found: $($remainingKeys -join ', ')" }
+          Write-Host "R2 cleanup verified: exactly one current installer remains: $currentKey"
 
-          $currentNames = @($installer.Name)
-          $listBody = @{ prefix='win32/latest/'; limit=1000; with_delimiter=$false } | ConvertTo-Json -Compress
-          $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $releasePaths = @(
-            $listResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
-          $removePaths = @(
-            $releasePaths |
-              Where-Object {
-                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
-                -not ($currentNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
-              }
-          )
-
-          Write-Host "Current release: $version"
-          Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
-          Write-Host "Superseded chunks to remove: $($removePaths.Count)"
-          if ($removePaths.Count -gt 0) {
-            # Delete superseded chunks in one Storage API request instead of one
-            # request per object. This reduces unnecessary Storage API traffic while
-            # keeping the same post-delete verification below.
-            $deleteBody = @{ prefixes = @($removePaths | ForEach-Object { [string]$_ }) } | ConvertTo-Json -Compress
-            Invoke-RestMethod -Uri "$storageUrl/object/$bucket" -Method Delete -Headers $headers -Body $deleteBody | Out-Null
-            Write-Host "Requested deletion of $($removePaths.Count) superseded storage chunk(s) in one batch."
-          }
-
-          $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $remaining = @(
-            $verifyResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
-          $bad = @(
-            $remaining |
-              Where-Object {
-                $leaf = $_.Substring($_.LastIndexOf('/') + 1)
-                -not ($currentNames | Where-Object { $leaf.StartsWith($_ + '.part', [StringComparison]::Ordinal) })
-              }
-          )
-          if ($bad.Count -gt 0) { throw "Storage cleanup verification failed; unexpected release objects remain: $($bad -join ', ')" }
-
-          $expectedInstallerParts = [math]::Ceiling([double]$installer.Length / (40 * 1024 * 1024))
-          $expectedTotal = $expectedInstallerParts
-          if ($remaining.Count -ne $expectedTotal) {
-            throw "Storage cleanup verification failed; expected $expectedTotal current chunks but found $($remaining.Count). Remaining: $($remaining -join ', ')"
-          }
-          Write-Host "Storage cleanup verified: $($remaining.Count) current release chunks remain for $version."
-          
       - name: Verify private Windows release
 
         shell: pwsh
