@@ -142,6 +142,7 @@ export default function CashierBalances() {
   };
 
   const submitDayClose = () => {
+    if (!window.confirm('Close the full business day now? All open cashier drawers will be locked and Nexfix POS will exit automatically.')) return;
     const counts: Record<string, number> = {};
     for (const session of openSessions) {
       const value = Number(dayCounts[session.cashierId]);
