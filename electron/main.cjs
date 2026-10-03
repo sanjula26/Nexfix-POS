@@ -393,11 +393,29 @@ function setupAutoUpdater(){
         updateInstallScheduled = true;
         sendUpdateEvent('downloaded', { version: direct.version });
         // The verified NSIS installer lives only in the updater temp directory.
-        // Launch it after the POS exits so locked application files are released.
+        // Use a detached PowerShell handoff so the helper survives app.quit(),
+        // waits for the silent NSIS installer to finish, and then starts the
+        // installed executable again. This is important because /S is silent
+        // and the normal NSIS "run after finish" UI path is not guaranteed when
+        // the installer is launched outside electron-updater.
         setTimeout(() => {
+          const quotePs = (value) => String(value).replace(/'/g, "''");
+          const installerPath = quotePs(direct.installerPath);
+          const targetPath = quotePs(process.execPath);
+          const ps = [
+            "$ErrorActionPreference='Stop'",
+            "$installer='" + installerPath + "'",
+            "$target='" + targetPath + "'",
+            "Start-Process -FilePath $installer -ArgumentList '/S' -Wait",
+            "if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target }"
+          ].join('; ');
           try {
-            const child = spawn(direct.installerPath, ['/S'], { detached: true, stdio: 'ignore', windowsHide: true });
-            child.unref();
+            const helper = spawn(
+              'powershell.exe',
+              ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+              { detached: true, stdio: 'ignore', windowsHide: true }
+            );
+            helper.unref();
           } finally {
             app.quit();
           }
