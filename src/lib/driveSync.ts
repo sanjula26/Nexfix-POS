@@ -272,7 +272,8 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         // after Drive has already committed the backup. Verify the actual latest
         // shop-scoped backup before surfacing a failure to the operator.
         if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
-        return { ok: false, error: status.error, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+        const statusError = status.error;
+        return { ok: false, error: isGenericGoogleBackupError(statusError) ? await explainGenericGoogleBackupError(requestId) : statusError, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
       pollDelay = Math.min(4000, Math.round(pollDelay * 1.4));
     }
@@ -291,7 +292,8 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         return postGoogleBackup(body, shopId, attempt + 1);
       }
       if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
-      return { ok: false, error: finalStatus.error || 'Google Drive backup request failed.', ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
+      const finalError = finalStatus.error;
+      return { ok: false, error: isGenericGoogleBackupError(finalError) ? await explainGenericGoogleBackupError(requestId) : (finalError || await explainGenericGoogleBackupError(requestId)), ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
 
     // Last-resort verification is read-only and still authenticated with the
@@ -306,6 +308,24 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     console.error('[Google Backup] direct request failed', error);
     return { ok: false, error: message };
   }
+}
+
+function isGenericGoogleBackupError(message: string | undefined): boolean {
+  const value = String(message || '').trim().toLowerCase();
+  return !value || value === 'backup request failed' || value === 'google drive backup request failed.' || value === 'google drive backup failed';
+}
+
+async function explainGenericGoogleBackupError(requestId: string): Promise<string> {
+  try {
+    const health = await getGoogleScriptHealth(true);
+    if (health?.version && health.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
+      return `Google Backup API is outdated (live version ${health.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs.`;
+    }
+    if (health?.ok === true) {
+      return `Google Apps Script returned a generic backup failure (request ${requestId}). The server did not provide a diagnostic; check the Apps Script execution log for this request and verify Drive access.`;
+    }
+  } catch { /* keep the actionable client-side fallback below */ }
+  return `Google Drive backup could not be confirmed (request ${requestId}). Check the Apps Script deployment, Script Property NEXFIX_BACKUP_API_KEY, and Drive access, then retry.`;
 }
 
 async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string, backupId = '', exportedAt = '', dayKey = ''): Promise<boolean | { ok: false; error: string } | null> {
