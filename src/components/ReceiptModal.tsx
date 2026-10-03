@@ -17,7 +17,43 @@ export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolea
   </div></div>;
 }
 
-export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: string }): string { const L:string[]=[]; L.push(`*${shop.shopName}*`); L.push(`Bill: ${sale.billNo}`); L.push(`Date: ${fmtDateTime(sale.date)}`); L.push(`Cashier: ${sale.cashierName}`); L.push('--------------------------------'); sale.items.forEach(it=>{const net=it.price*it.qty-(it.discount||0);L.push(`${it.name} x${it.qty} — Rs. ${net.toLocaleString('en-US',{minimumFractionDigits:2})}`);}); L.push('--------------------------------'); if(sale.discount>0)L.push(`Discount: -Rs. ${sale.discount.toLocaleString()}`); if(sale.tax)L.push(`Tax: Rs. ${sale.tax.toLocaleString()}`); if(sale.shipping)L.push(`Delivery: Rs. ${sale.shipping.toLocaleString()}`); L.push(`*TOTAL: Rs. ${sale.total.toLocaleString('en-US',{minimumFractionDigits:2})}*`); if(sale.note)L.push(`Note: ${sale.note}`); L.push(''); L.push('Thank you for shopping with us!'); L.push(shop.phone); return L.join('\n'); }
+export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: string }): string {
+  const lines: string[] = [];
+  const subtotal = sale.items.reduce((sum, item) => sum + item.price * item.qty - (item.discount || 0), 0);
+  lines.push(`*\${shop.shopName}*`);
+  lines.push(`Bill: \${sale.billNo}`);
+  lines.push(`Date: \${fmtDateTime(sale.date)}`);
+  lines.push(`Cashier: \${sale.cashierName}`);
+  if (sale.customerName) lines.push(`Customer: \${sale.customerName}`);
+  lines.push('--------------------------------');
+  sale.items.forEach(item => {
+    const net = item.price * item.qty - (item.discount || 0);
+    lines.push(`• \${item.name} ×\${item.qty} — Rs. \${net.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+    if (item.imeis?.length) lines.push(`  IMEI: \${item.imeis.join(', ')}`);
+    if (item.serials?.length) lines.push(`  S/N: \${item.serials.join(', ')}`);
+    if (item.warrantyMonths) lines.push(`  Warranty: \${item.warrantyMonths} months`);
+  });
+  lines.push('--------------------------------');
+  lines.push(`Subtotal: Rs. \${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if (sale.discount > 0) lines.push(`Discount: -Rs. \${sale.discount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if ((sale.tradeIn?.value || 0) > 0) lines.push(`Trade-in: -Rs. \${Number(sale.tradeIn?.value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if (sale.tax) lines.push(`Tax: Rs. \${sale.tax.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if (sale.shipping) lines.push(`Delivery: Rs. \${sale.shipping.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if ((sale.pointsRedeemed || 0) > 0) lines.push(`Points redeemed: \${sale.pointsRedeemed}`);
+  lines.push(`*TOTAL: Rs. \${sale.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}*`);
+  if (sale.payments && sale.payments.length > 1) {
+    salePayments(sale).forEach(payment => lines.push(`Paid (\${PAYMENT_LABEL[payment.method]}): Rs. \${payment.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`));
+  } else {
+    lines.push(`Paid (\${PAYMENT_LABEL[sale.payment]}): Rs. \${sale.amountPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  }
+  if (sale.change > 0) lines.push(`Change: Rs. \${sale.change.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if (sale.payment === 'credit' && sale.total - sale.amountPaid > 0) lines.push(`Balance due: Rs. \${(sale.total - sale.amountPaid).toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+  if (sale.note) lines.push(`Note: \${sale.note}`);
+  lines.push('');
+  lines.push('Thank you for shopping with us!');
+  if (shop.phone) lines.push(shop.phone);
+  return lines.join('\\n');
+}
 export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;onClose:()=>void;onNewSale?:()=>void;}){
   const { state } = usePOS();
   const [whatsappOpen,setWhatsappOpen]=useState(false);
