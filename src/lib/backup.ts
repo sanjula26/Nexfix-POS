@@ -159,7 +159,7 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     }
   }
   const successful = local || cloud;
-  if (successful) {
+  if (successful || errorMessage) {
     const now = new Date().toISOString();
     const meta = await idbGetMeta();
     await idbSetMeta(kind === 'auto'
