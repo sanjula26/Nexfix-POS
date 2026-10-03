@@ -130,7 +130,7 @@ Deno.serve(async req=>{
     if(isStreamDownload){
       return Response.redirect(r2Url,307);
     }
-    const yaml="version: "+r.version+"\nfiles:\n  - url: "+r2Url\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
+    const yaml="version: "+r.version+"\nfiles:\n  - url: "+r2Url+"\n    sha512: "+r.installer_sha512+"\n    size: "+r.installer_size+"\nreleaseDate: "+new Date(r.published_at).toISOString()+"\n";
     return new Response(yaml,{headers:{...headers,"Content-Type":"text/yaml; charset=utf-8","Cache-Control":"no-store"}});
   }catch(e){return json({ok:false,error:e instanceof Error?e.message:"Update request failed"},500);}
 });
