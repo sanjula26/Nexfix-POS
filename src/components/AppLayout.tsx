@@ -40,6 +40,7 @@ const NAV: NavDef[] = [
   { to: '/price-tags', label: 'Price Tags', icon: Tags, perm: 'page:pricetags', group: 'Operations' },
   { to: '/users', label: 'Users', icon: UserCog, group: 'Administration', adminOnly: true },
   { to: '/cashier-balances', label: 'Day Cash & Drawer', icon: Landmark, group: 'Administration', adminOnly: true },
+  { to: '/day-close-report', label: 'Day Close Report', icon: BarChart3, group: 'Administration', adminOnly: true },
   { to: '/permissions', label: 'Permissions', icon: KeyRound, group: 'Administration', adminOnly: true },
   { to: '/audit-log', label: 'Audit Log', icon: ScrollText, group: 'Administration', adminOnly: true },
   { to: '/csv-import', label: 'CSV Import', icon: FileText, group: 'Administration', adminOnly: true },
