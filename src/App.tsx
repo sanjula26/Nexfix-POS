@@ -30,6 +30,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const PriceTags = lazy(() => import('./pages/PriceTags'));
 const Users = lazy(() => import('./pages/Users'));
 const CashierBalances = lazy(() => import('./pages/CashierBalances'));
+const DayCloseReport = lazy(() => import('./pages/DayCloseReport'));
 const Permissions = lazy(() => import('./pages/Permissions'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Units = lazy(() => import('./pages/Units'));
@@ -321,6 +322,7 @@ function AppRoutes() {
           <Route path="/audit-log" element={<PermissionProtected adminOnly><AuditLog /></PermissionProtected>} />
           <Route path="/users" element={<PermissionProtected adminOnly><Users /></PermissionProtected>} />
           <Route path="/cashier-balances" element={<PermissionProtected adminOnly><CashierBalances /></PermissionProtected>} />
+          <Route path="/day-close-report" element={<PermissionProtected adminOnly><DayCloseReport /></PermissionProtected>} />
           <Route path="/permissions" element={<PermissionProtected adminOnly><Permissions /></PermissionProtected>} />
           <Route path="/settings" element={<PermissionProtected adminOnly><Settings /></PermissionProtected>} />
         </Route>
