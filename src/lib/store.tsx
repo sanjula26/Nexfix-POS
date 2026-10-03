@@ -147,6 +147,8 @@ interface StoreCtx {
   setPermission: (role: Role, key: string, value: boolean) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   closeSession: (cashierId: string, counted: number, note: string) => void;
+  /** Close every open cashier drawer for today after counted-cash reconciliation. */
+  closeDay: (counts: Record<string, number>, note: string) => boolean;
   logAudit: (action: string, entity: string, details: string) => void;
   clearAudit: () => void;
   exportData: () => string;
@@ -2534,6 +2536,82 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${amount.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
     }
   }, [pushAudit, user, state.sessions]);
+
+  const closeDay = useCallback((counts: Record<string, number>, note: string) => {
+    if (!user || user.role !== 'admin') {
+      pushAudit('DENIED', 'DayClose', 'Blocked full day close without admin access');
+      return false;
+    }
+    const today = dkey(new Date());
+    const openSessions = state.sessions.filter(x => x.date === today && !x.closed);
+    if (!openSessions.length) {
+      pushAudit('DENIED', 'DayClose', 'Blocked day close: no open cashier sessions');
+      return false;
+    }
+    if (state.held.length) {
+      pushAudit('DENIED', 'DayClose', 'Blocked day close: held sales must be completed or cleared first');
+      return false;
+    }
+    if ((state.reverseRequests || []).some(r => r.status === 'pending')) {
+      pushAudit('DENIED', 'DayClose', 'Blocked day close: pending bill reverse approvals exist');
+      return false;
+    }
+    const cleanNote = String(note || '').trim();
+    const expectedByCashier = new Map<string, number>();
+    let anyVariance = false;
+    for (const session of openSessions) {
+      const counted = Number(counts[session.cashierId]);
+      if (!Number.isFinite(counted) || counted < 0) {
+        pushAudit('DENIED', 'DayClose', `Blocked day close: counted cash missing for ${session.cashierName}`);
+        return false;
+      }
+      const mine = state.sales.filter(s =>
+        dkey(s.date) === today &&
+        s.cashierId === session.cashierId &&
+        (s.status === 'completed' || s.status === 'exchanged')
+      );
+      const cashSales = mine.reduce((sum, sale) =>
+        sum + salePayments(sale).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0), 0);
+      const refunds = state.sales
+        .filter(s => s.status === 'refunded' && dkey(s.date) === today && s.cashierId === session.cashierId)
+        .reduce((sum, sale) => {
+          const cashPart = salePayments(sale).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
+          return sum + (cashPart > 0 ? cashPart : sale.total);
+        }, 0);
+      const expenses = state.expenses
+        .filter(e => dkey(e.date) === today && (e.paymentMethod || 'cash') === 'cash' && e.by === session.cashierName)
+        .reduce((sum, e) => sum + e.amount, 0);
+      const expected = Math.round((session.opening + cashSales - refunds - expenses) * 100) / 100;
+      const variance = Math.round((counted - expected) * 100) / 100;
+      expectedByCashier.set(session.cashierId, expected);
+      if (variance !== 0) anyVariance = true;
+    }
+    if (anyVariance && !cleanNote) {
+      pushAudit('DENIED', 'DayClose', 'Blocked day close: variance note is required');
+      return false;
+    }
+    let closed = false;
+    setState(s => {
+      const currentOpen = s.sessions.filter(x => x.date === today && !x.closed);
+      if (!currentOpen.length) return s;
+      closed = true;
+      return {
+        ...s,
+        sessions: s.sessions.map(x => {
+          if (x.date !== today || x.closed) return x;
+          const counted = Math.round(Number(counts[x.cashierId]) * 100) / 100;
+          return { ...x, closed: true, closing: counted, note: cleanNote || undefined };
+        }),
+      };
+    });
+    if (closed) {
+      const totalExpected = [...expectedByCashier.values()].reduce((a, v) => a + v, 0);
+      const totalCounted = openSessions.reduce((a, s) => a + Math.round(Number(counts[s.cashierId]) * 100) / 100, 0);
+      const variance = Math.round((totalCounted - totalExpected) * 100) / 100;
+      pushAudit('DAY-CLOSE', 'DayClose', `Full day closed · ${openSessions.length} drawer(s) · expected Rs. ${totalExpected.toLocaleString()} · counted Rs. ${totalCounted.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    }
+    return closed;
+  }, [pushAudit, user, state.sessions, state.sales, state.expenses, state.held, state.reverseRequests]);
 
   // auto-open today's drawer session once per cashier
   useEffect(() => {
