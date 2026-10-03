@@ -383,20 +383,52 @@ export async function getGoogleScriptHealth(force = false): Promise<GoogleScript
   }
 }
 
-async function getGoogleDeploymentError(): Promise<string | undefined> {
+async function getGoogleDeploymentError(shopId: string, shopProof: string): Promise<string | undefined> {
   const health = await getGoogleScriptHealth(true);
   if (!health) {
-    // Health is an advisory JSONP preflight. A browser/CSP/Apps Script redirect
-    // can prevent that probe from being readable even when the actual form POST
-    // transport is available. Do not block a real backup on an unreadable probe;
-    // postGoogleBackup() and its status verification are the authoritative path.
     console.warn('[Google Backup] health probe could not be verified; continuing with the real backup request');
     return undefined;
   }
   if (health.version && health.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
     return `Google Backup API is outdated (live version ${health.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs before backing up.`;
   }
-  return undefined;
+
+  try {
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'diagnostics');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('shopProof', shopProof);
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
+    const result = await getJsonp<{
+      ok?: boolean;
+      status?: string;
+      message?: string;
+      version?: string;
+      driveAccess?: boolean;
+      shopAuthorization?: string;
+    }>(url, 10000);
+
+    if (!result) return undefined;
+    if (result.version && result.version !== EXPECTED_GOOGLE_SCRIPT_VERSION) {
+      return `Google Backup API is outdated (live version ${result.version}; expected ${EXPECTED_GOOGLE_SCRIPT_VERSION}). Redeploy the current google-apps-script/Code.gs before backing up.`;
+    }
+    if (result.ok !== true) {
+      const message = String(result.message || 'Google Backup API diagnostics failed.');
+      if (/api key mismatch/i.test(message)) {
+        return 'Google Backup API key mismatch: the live Apps Script NEXFIX_BACKUP_API_KEY does not match the key compiled into this production build.';
+      }
+      return message;
+    }
+    if (result.driveAccess !== true) {
+      return 'Google Drive backup is not available: the live Apps Script account cannot access the configured backup root folder.';
+    }
+    // A new shop has no SHOP_AUTH.json yet; the first real backup is allowed
+    // to initialize it. Existing shops are verified read-only here.
+    return undefined;
+  } catch (error) {
+    console.warn('[Google Backup] deployment diagnostics failed; continuing with real backup', error);
+    return undefined;
+  }
 }
 
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
@@ -406,9 +438,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
 
   try {
-    const deploymentError = await getGoogleDeploymentError();
-    if (deploymentError) return { ok: false, error: deploymentError };
-
     const source = state && typeof state === 'object' && !Array.isArray(state)
       ? state as Record<string, unknown>
       : {};
@@ -419,6 +448,8 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     const exportedAt = new Date().toISOString();
     const recoveryKey = ensureRecoveryKey(shopId);
     const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
+    const deploymentError = await getGoogleDeploymentError(shopId, shopProof);
+    if (deploymentError) return { ok: false, error: deploymentError };
     const envelope = await encryptBackupState(safeState, shopId, kind, exportedAt);
     const serialized = JSON.stringify(envelope);
     const totalBytes = utf8Bytes(serialized);
