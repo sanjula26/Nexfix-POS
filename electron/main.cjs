@@ -402,10 +402,13 @@ function setupAutoUpdater(){
           const quotePs = (value) => String(value).replace(/'/g, "''");
           const installerPath = quotePs(direct.installerPath);
           const targetPath = quotePs(process.execPath);
+          const parentPid = Number(process.pid);
           const ps = [
             "$ErrorActionPreference='Stop'",
             "$installer='" + installerPath + "'",
             "$target='" + targetPath + "'",
+            "$parentPid=" + parentPid,
+            "while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
             "Start-Process -FilePath $installer -ArgumentList '/S' -Wait",
             "if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target }"
           ].join('; ');
@@ -483,6 +486,7 @@ function createWindow(){
 ipcMain.handle('app:version',()=>app.getVersion());
 ipcMain.handle('app:copy-text',(_event,text)=>{if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
 ipcMain.handle('app:open-external',async(_event,url)=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
+ipcMain.handle('app:exit',()=>{ app.quit(); return true; });
 app.whenReady().then(()=>{
   if(process.platform==='win32' && app.isPackaged){
     try{ app.setAsDefaultProtocolClient(AUTH_PROTOCOL); }catch{}
