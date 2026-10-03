@@ -7,7 +7,7 @@ const SUPABASE_URL=Deno.env.get("SUPABASE_URL")!, KEYS=JSON.parse(Deno.env.get("
 const R2_ACCOUNT_ID=(Deno.env.get("R2_ACCOUNT_ID")||"").trim();
 const R2_ACCESS_KEY_ID=(Deno.env.get("R2_ACCESS_KEY_ID")||"").trim();
 const R2_SECRET_ACCESS_KEY=(Deno.env.get("R2_SECRET_ACCESS_KEY")||"").trim();
-const R2_BUCKET=(Deno.env.get("R2_BUCKET")||"").trim();
+const R2_BUCKET=(Deno.env.get("R2_BUCKET")||"nexfix-desktop-updates").trim();
 const R2_CONFIG_PRESENCE={accountId:Boolean(R2_ACCOUNT_ID),accessKeyId:Boolean(R2_ACCESS_KEY_ID),secretAccessKey:Boolean(R2_SECRET_ACCESS_KEY),bucket:Boolean(R2_BUCKET)};
 console.log("desktop-updates R2 configuration presence",R2_CONFIG_PRESENCE);
 const admin=createClient(SUPABASE_URL,SECRET,{auth:{persistSession:false}});
