@@ -13,7 +13,7 @@ This direct backup path does **not** require Supabase, and the backup Google She
 1. Open Google Apps Script using the Google account that should own the backups.
 2. Create or open the Apps Script project.
 3. Paste the approved `google-apps-script/Code.gs` from this repository.
-4. Save it.
+4. Save it. The approved server version is **3.3.0**.
 5. The repository already contains the master Drive folder ID:
    `1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK`
 6. Set Script Property `NEXFIX_BACKUP_API_KEY` to a long random value and keep it private in Apps Script. The released POS build must use the same value as `VITE_GOOGLE_BACKUP_API_KEY`.
@@ -21,7 +21,7 @@ This direct backup path does **not** require Supabase, and the backup Google She
 8. Deploy as **Web app**:
    - **Execute as:** Me
    - **Who has access:** choose an access setting that allows the POS browser to reach the deployment. For a direct browser deployment this is commonly **Anyone**, subject to the Google account's deployment policy.
-10. Copy the deployed **`/macros/s/.../exec`** URL.
+9. Copy the deployed **`/macros/s/.../exec`** URL.
 
 After changing `Code.gs`, update/create the deployment version. Editing the GitHub file alone does not update an already deployed Apps Script Web App.
 
