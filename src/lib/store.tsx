@@ -2590,27 +2590,19 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: variance note is required');
       return false;
     }
-    let closed = false;
-    setState(s => {
-      const currentOpen = s.sessions.filter(x => x.date === today && !x.closed);
-      if (!currentOpen.length) return s;
-      closed = true;
-      return {
-        ...s,
-        sessions: s.sessions.map(x => {
-          if (x.date !== today || x.closed) return x;
-          const counted = Math.round(Number(counts[x.cashierId]) * 100) / 100;
-          return { ...x, closed: true, closing: counted, note: cleanNote || undefined };
-        }),
-      };
-    });
-    if (closed) {
-      const totalExpected = [...expectedByCashier.values()].reduce((a, v) => a + v, 0);
-      const totalCounted = openSessions.reduce((a, s) => a + Math.round(Number(counts[s.cashierId]) * 100) / 100, 0);
-      const variance = Math.round((totalCounted - totalExpected) * 100) / 100;
-      pushAudit('DAY-CLOSE', 'DayClose', `Full day closed · ${openSessions.length} drawer(s) · expected Rs. ${totalExpected.toLocaleString()} · counted Rs. ${totalCounted.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
-    }
-    return closed;
+    setState(s => ({
+      ...s,
+      sessions: s.sessions.map(x => {
+        if (x.date !== today || x.closed) return x;
+        const counted = Math.round(Number(counts[x.cashierId]) * 100) / 100;
+        return { ...x, closed: true, closing: counted, note: cleanNote || undefined };
+      }),
+    }));
+    const totalExpected = [...expectedByCashier.values()].reduce((a, v) => a + v, 0);
+    const totalCounted = openSessions.reduce((a, s) => a + Math.round(Number(counts[s.cashierId]) * 100) / 100, 0);
+    const variance = Math.round((totalCounted - totalExpected) * 100) / 100;
+    pushAudit('DAY-CLOSE', 'DayClose', `Full day closed · ${openSessions.length} drawer(s) · expected Rs. ${totalExpected.toLocaleString()} · counted Rs. ${totalCounted.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    return true;
   }, [pushAudit, user, state.sessions, state.sales, state.expenses, state.held, state.reverseRequests]);
 
   // auto-open today's drawer session once per cashier
