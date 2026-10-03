@@ -12,7 +12,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
-import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, normalizeWhatsAppPhone } from '../lib/utils';
+import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
 
