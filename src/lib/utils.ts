@@ -36,6 +36,21 @@ export const waLink=(phone:string,text:string):string=>{
   return`https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 };
 
+/** Open WhatsApp through Electron's external browser handler when available.
+ * This avoids Chromium popup/window-handler issues in the packaged POS while
+ * keeping the normal wa.me fallback for the web/PWA build.
+ */
+export const openWhatsAppLink=(phone:string,text:string):boolean=>{
+  const url=waLink(phone,text);
+  const desktop=(window as Window & { nexfixDesktop?: { openExternal?: (url:string)=>Promise<boolean> } }).nexfixDesktop;
+  if(desktop?.openExternal){
+    void desktop.openExternal(url).catch(()=>{ window.open(url,'_blank','noopener,noreferrer'); });
+    return true;
+  }
+  const win=window.open(url,'_blank','noopener,noreferrer');
+  return Boolean(win);
+};
+
 const AUTH_SALT='nexfix::v2::auth::';
 // PBKDF2-HMAC-SHA256. 600,000 iterations is the current OWASP recommendation for PBKDF2-SHA256.
 const PBKDF2_ITERATIONS=600_000;
