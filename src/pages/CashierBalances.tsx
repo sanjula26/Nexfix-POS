@@ -8,8 +8,9 @@ import { Badge, Modal, Field, Avatar, PageHeading } from '../components/ui';
 import { fmtRs, dkey, salePayments } from '../lib/utils';
 
 export default function CashierBalances() {
-  const { state, closeSession, openSession, user } = usePOS() as ReturnType<typeof usePOS> & {
+  const { state, closeSession, closeDay, openSession, user } = usePOS() as ReturnType<typeof usePOS> & {
     openSession: (cashierId: string, opening: number) => void;
+    closeDay: (counts: Record<string, number>, note: string) => boolean;
   };
   const today = dkey(new Date());
   const [settling, setSettling] = useState<string | null>(null);
@@ -17,6 +18,10 @@ export default function CashierBalances() {
   const [note, setNote] = useState('');
   const [openFloatId, setOpenFloatId] = useState<string | null>(null);
   const [openingInput, setOpeningInput] = useState('');
+  const [dayCloseOpen, setDayCloseOpen] = useState(false);
+  const [dayCounts, setDayCounts] = useState<Record<string, string>>({});
+  const [dayCloseNote, setDayCloseNote] = useState('');
+  const [dayCloseError, setDayCloseError] = useState('');
 
   const cashiers = state.users.filter(u => u.role === 'cashier' || u.role === 'admin');
 
@@ -123,6 +128,51 @@ export default function CashierBalances() {
     .reduce((a, e) => a + e.amount, 0);
   const shopExpected = Math.round((openingTotal + cashSales - cashRefundsShop - cashExpensesShop) * 100) / 100;
 
+  const openSessions = state.sessions.filter(s => s.date === today && !s.closed);
+  const openDayClose = () => {
+    if (!openSessions.length) return;
+    const initial: Record<string, string> = {};
+    openSessions.forEach(s => {
+      initial[s.cashierId] = String(Math.max(0, rowFor(s.cashierId).expected));
+    });
+    setDayCounts(initial);
+    setDayCloseNote('');
+    setDayCloseError('');
+    setDayCloseOpen(true);
+  };
+
+  const submitDayClose = () => {
+    const counts: Record<string, number> = {};
+    for (const session of openSessions) {
+      const value = Number(dayCounts[session.cashierId]);
+      if (!Number.isFinite(value) || value < 0) {
+        setDayCloseError(`Enter counted cash for ${session.cashierName}.`);
+        return;
+      }
+      counts[session.cashierId] = Math.round(value * 100) / 100;
+    }
+    const varianceExists = openSessions.some(session => {
+      const expected = rowFor(session.cashierId).expected;
+      return Math.round((counts[session.cashierId] - expected) * 100) / 100 !== 0;
+    });
+    if (varianceExists && !dayCloseNote.trim()) {
+      setDayCloseError('A variance note is required when counted cash differs from expected cash.');
+      return;
+    }
+    const ok = closeDay(counts, dayCloseNote.trim());
+    if (!ok) {
+      setDayCloseError('Day close was blocked. Check for held bills, pending reverse approvals, or another open-session issue.');
+      return;
+    }
+    setDayCloseOpen(false);
+    const desktop = (window as Window & { nexfixDesktop?: { exitApp?: () => Promise<boolean> } }).nexfixDesktop;
+    if (desktop?.exitApp) {
+      void desktop.exitApp();
+    } else {
+      window.close();
+    }
+  };
+
   const cards = [
     { label: 'Opening float', value: fmtRs(openingTotal), icon: Wallet, tone: 'violet' },
     { label: "Today's sales", value: fmtRs(grossSales), icon: TrendingUp, tone: 'emerald' },
@@ -141,19 +191,24 @@ export default function CashierBalances() {
         title="Day cash & drawer"
         sub={`Today · ${today} — opening float, sales, credit, returns in one place`}
         actions={
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => {
-              const id = user?.id || cashiers[0]?.id;
-              if (!id) return;
-              const sess = state.sessions.find(x => x.cashierId === id && x.date === today);
-              setOpenFloatId(id);
-              setOpeningInput(String(sess?.opening ?? state.settings.openingFloat ?? 0));
-            }}
-          >
-            <Unlock size={15} /> Set opening cash
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn btn-soft"
+              onClick={() => {
+                const id = user?.id || cashiers[0]?.id;
+                if (!id) return;
+                const sess = state.sessions.find(x => x.cashierId === id && x.date === today);
+                setOpenFloatId(id);
+                setOpeningInput(String(sess?.opening ?? state.settings.openingFloat ?? 0));
+              }}
+            >
+              <Unlock size={15} /> Set opening cash
+            </button>
+            <button type="button" className="btn btn-primary" onClick={openDayClose} disabled={!openSessions.length}>
+              <Lock size={15} /> Close full day
+            </button>
+          </div>
         }
       />
 
@@ -318,6 +373,45 @@ export default function CashierBalances() {
             </button>
           </div>
         </div>
+      <Modal open={dayCloseOpen} onClose={() => setDayCloseOpen(false)} title="Close full day" sub={`Today · ${today} · ${openSessions.length} open drawer(s)`} wide>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm text-sub">
+            Close the complete business day only after all sales are finished. Each open cashier drawer must be counted and reconciled. Held bills and pending reverse approvals are blocked from day close.
+          </div>
+          <div className="space-y-2">
+            {openSessions.map(session => {
+              const row = rowFor(session.cashierId);
+              const counted = Number(dayCounts[session.cashierId]);
+              const variance = Number.isFinite(counted) ? Math.round((counted - row.expected) * 100) / 100 : null;
+              return (
+                <div key={session.id} className="rounded-xl border border-line bg-raised p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <div>
+                      <div className="font-bold text-ink">{session.cashierName}</div>
+                      <div className="text-[11px] text-faint">Opening {fmtRs(session.opening)} · Cash sales {fmtRs(row.cash)} · Expected {fmtRs(row.expected)}</div>
+                    </div>
+                    <div className={`text-sm font-extrabold num ${variance == null || variance === 0 ? 'text-emerald-600' : variance > 0 ? 'text-sky-600' : 'text-rose-500'}`}>
+                      {variance == null ? 'Variance —' : `Variance ${fmtRs(variance)}`}
+                    </div>
+                  </div>
+                  <Field label="Counted cash in drawer (Rs.)">
+                    <input className="input num" type="number" min={0} step={0.01} value={dayCounts[session.cashierId] ?? ''} onChange={e => setDayCounts(v => ({ ...v, [session.cashierId]: e.target.value }))} />
+                  </Field>
+                </div>
+              );
+            })}
+          </div>
+          {dayCloseError && <div className="rounded-xl border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-sm font-semibold text-rose-600">{dayCloseError}</div>}
+          <Field label="Day-close note (required if any variance)">
+            <input className="input" value={dayCloseNote} onChange={e => setDayCloseNote(e.target.value)} placeholder="Optional unless there is a variance" />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-soft" onClick={() => setDayCloseOpen(false)}>Cancel</button>
+            <button type="button" className="btn btn-primary" onClick={submitDayClose} disabled={!openSessions.length}><Lock size={15} /> Close day & Exit POS</button>
+          </div>
+        </div>
+      </Modal>
+
       </Modal>
     </div>
   );
