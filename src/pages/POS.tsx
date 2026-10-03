@@ -112,6 +112,8 @@ export default function POS() {
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
   const [reprintOpen, setReprintOpen] = useState(false);
   const [reprintSearch, setReprintSearch] = useState('');
+  const [reprintWhatsAppSale, setReprintWhatsAppSale] = useState<Sale | null>(null);
+  const [reprintWhatsAppPhone, setReprintWhatsAppPhone] = useState('');
   const [finishingSale, setFinishingSale] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
@@ -694,10 +696,18 @@ export default function POS() {
   };
 
   const sendReprintWhatsApp = (sale: Sale) => {
-    const phone = normalizeWhatsAppPhone(sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '');
-    const entered = phone || normalizeWhatsAppPhone(window.prompt(`WhatsApp number for ${sale.billNo}:`, '') || '');
-    if (entered.length < 9 || entered.length > 15) return;
-    window.open(waLink(entered, buildWhatsAppText(sale, state.settings)), '_blank', 'noopener,noreferrer');
+    const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
+    setReprintWhatsAppSale(sale);
+    setReprintWhatsAppPhone(customerPhone);
+  };
+
+  const confirmReprintWhatsApp = () => {
+    if (!reprintWhatsAppSale) return;
+    const digits = normalizeWhatsAppPhone(reprintWhatsAppPhone);
+    if (digits.length < 9 || digits.length > 15) return;
+    openWhatsAppLink(digits, buildWhatsAppText(reprintWhatsAppSale, state.settings));
+    setReprintWhatsAppSale(null);
+    setReprintWhatsAppPhone('');
   };
 
   const payState: 'idle' | 'short' | 'exact' | 'change' | 'due' =
@@ -1807,6 +1817,33 @@ export default function POS() {
             );
           })}
           {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!reprintWhatsAppSale} onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }} title="Send reprint via WhatsApp" sub={reprintWhatsAppSale?.billNo || ''}>
+        <div className="space-y-4">
+          <div className="text-sm text-sub">
+            Enter the customer's WhatsApp number. The bill message will be prepared for this number in WhatsApp.
+          </div>
+          <input
+            className="input w-full"
+            type="tel"
+            inputMode="tel"
+            autoFocus
+            value={reprintWhatsAppPhone}
+            onChange={e => setReprintWhatsAppPhone(e.target.value)}
+            placeholder="e.g. 0771234567 or +94771234567"
+            onKeyDown={e => { if (e.key === 'Enter') confirmReprintWhatsApp(); }}
+          />
+          <div className="rounded-xl bg-raised border border-line p-3 text-[11px] text-faint">
+            WhatsApp will open with the selected bill and number. Press <b className="text-ink">Send</b> in WhatsApp to deliver it.
+          </div>
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-soft flex-1" onClick={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}>Cancel</button>
+            <button type="button" className="btn !text-white flex-1" disabled={normalizeWhatsAppPhone(reprintWhatsAppPhone).length < 9 || normalizeWhatsAppPhone(reprintWhatsAppPhone).length > 15} onClick={confirmReprintWhatsApp} style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}>
+              <MessageCircle size={15} /> Open WhatsApp
+            </button>
           </div>
         </div>
       </Modal>
