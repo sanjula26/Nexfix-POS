@@ -1067,7 +1067,7 @@ function doPost(e) {
   try {
     lock.waitLock(30000);
     var contents = parsePostBody(e);
-    try { requireBackupApiKey(contents.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    try { requireBackupApiKey(contents.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var shopId;
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId;
