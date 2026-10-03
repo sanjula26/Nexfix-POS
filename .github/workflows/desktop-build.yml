@@ -220,8 +220,11 @@ jobs:
           $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
           $env:AWS_DEFAULT_REGION = 'auto'
 
-          Write-Host "Uploading $($installer.Name) to private R2 object: $objectKey"
-          aws s3 cp $installer.FullName "s3://$env:R2_BUCKET/$objectKey" --endpoint-url $r2Endpoint --region auto --content-type 'application/octet-stream' --cache-control 'no-store' --content-disposition "attachment; filename=$($installer.Name)" --only-show-errors
+          Write-Host "Uploading $($installer.Name) to private R2 object with a single S3 PutObject request: $objectKey"
+          # The installer is well below R2's 5 GiB single-PUT limit. Use PutObject here
+          # instead of the AWS CLI's multipart CreateMultipartUpload path so the release
+          # publisher has one deterministic SigV4 request against the R2 S3 API.
+          aws s3api put-object --bucket $env:R2_BUCKET --key $objectKey --body $installer.FullName --endpoint-url $r2Endpoint --region auto --content-type 'application/octet-stream' --cache-control 'no-store' --content-disposition "attachment; filename=$($installer.Name)" --no-cli-pager
           if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 installer upload failed.' }
 
           $headJson = aws s3api head-object --bucket $env:R2_BUCKET --key $objectKey --endpoint-url $r2Endpoint --region auto --output json
