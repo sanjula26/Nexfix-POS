@@ -562,11 +562,15 @@ jobs:
 
           $rows = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
           if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
-          $keys = @($rows | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
+          $keys = @(
+            $rows |
+              ForEach-Object { [string]$_ -split '\\s+' } |
+              Where-Object { $_ -and $_ -ne 'None' }
+          )
           foreach ($key in $keys) {
             if ($key -ne $currentKey) {
               Write-Host "Removing superseded R2 installer: $key"
-              aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output none
+              aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output text | Out-Null
               if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
             }
           }
