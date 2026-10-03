@@ -432,6 +432,8 @@ export default function POS() {
   const finish = async () => {
     if (finishingSale) return;
     setError('');
+    const todaySession = state.sessions.find(s => s.cashierId === user?.id && s.date === dkey(new Date()));
+    if (!todaySession || todaySession.closed) return setError('Day cash session is closed. Open today\'s cash drawer before making a sale.');
     if (lines.length === 0) return setError('Add at least one item to the cart');
 
     // Validate the aggregate quantity per product before calling Supabase.
