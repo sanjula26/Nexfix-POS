@@ -3172,7 +3172,7 @@ const deletePurchase = useCallback((id: string) => {
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
     saveUser, toggleUserActive, deleteUser,
-    setPermission, updateSettings, closeSession, logAudit, clearAudit,
+    setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
     connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
