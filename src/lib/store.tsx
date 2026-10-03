@@ -3088,9 +3088,18 @@ const deletePurchase = useCallback((id: string) => {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
           return s;
         }
-        // Once a live session exists, its opening float is the accounting anchor.
-        // Do not silently rewrite it from a second "Set opening cash" action.
-        return s;
+        const hasSales = s.sales.some(sale => dkey(sale.date) === today && sale.cashierId === cashierId);
+        const hasCashExpenses = s.expenses.some(exp => dkey(exp.date) === today && (exp.paymentMethod || 'cash') === 'cash' && exp.by === u.name);
+        if (hasSales || hasCashExpenses) {
+          pushAudit('DENIED', 'Session', `Blocked opening-float change after activity for ${u.name}`);
+          return s;
+        }
+        if (existing.opening === normalizedOpening) return s;
+        opened = true;
+        return {
+          ...s,
+          sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: normalizedOpening } : x),
+        };
       }
       const ns: DaySession = {
         id: uid(),
