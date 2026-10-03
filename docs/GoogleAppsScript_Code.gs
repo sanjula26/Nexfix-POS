@@ -47,12 +47,16 @@ function ok(extra) {
 }
 
 function fail(err) {
-  var msg = 'Backup request failed';
-  if (err && typeof err.message === 'string' && err.message.length > 0 && err.message.length < 240) {
-    msg = err.message;
-  } else if (typeof err === 'string' && err.length > 0 && err.length < 240) {
-    msg = err;
+  var msg = '';
+  if (err && typeof err.message === 'string') msg = err.message.trim();
+  else if (typeof err === 'string') msg = err.trim();
+  // Never hide an actionable Apps Script/Drive validation error behind the
+  // historical generic string. Only use the generic fallback when Google
+  // itself supplied no usable diagnostic at all.
+  if (!msg || msg === 'Exception: undefined' || msg === 'undefined' || msg === 'null') {
+    msg = 'Google Drive backup failed without a diagnostic. Check the Apps Script deployment and Drive access.';
   }
+  if (msg.length > 240) msg = msg.slice(0, 237) + '...';
   var out = { ok: false, status: 'error', version: VERSION, message: msg };
   if (err && err.retryAfterSeconds) out.retryAfterSeconds = Number(err.retryAfterSeconds);
   return out;
@@ -1068,7 +1072,7 @@ function doPost(e) {
     try { shopId = normalizeShopId(contents.shopId); } catch (shopError) { return json(fail('A valid shopId is required')); }
     var requestId;
     try { requestId = validateRequestId(contents.requestId); } catch (requestError) { return json(fail(requestError)); }
-    try { validateShopProof(contents.shopProof); } catch (proofError) { return json(unauthorized('Unauthorized')); }
+    try { validateShopProof(contents.shopProof); } catch (proofError) { return json(unauthorized('Unauthorized: invalid shop proof')); }
     try { validateBackupContents(contents); } catch (payloadError) { return json(fail(payloadError)); }
 
     var statusKey = backupStatusKey(shopId, requestId);
@@ -1202,7 +1206,7 @@ function doGet(e) {
   }
 
   if (p.action === 'backupStatus') {
-    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var statusShopId;
     try {
       statusShopId = normalizeShopId(p.shopId);
@@ -1212,7 +1216,7 @@ function doGet(e) {
       // already binds this request to the same shop proof and API key.
       if (!isBackupStatusProofAuthorized(statusShopId, p.requestId, p.shopProof)) throw new Error('Unauthorized');
     } catch (err) {
-      return json(unauthorized('Unauthorized'));
+      return json(unauthorized(err && err.message ? 'Unauthorized: ' + err.message : 'Unauthorized: backup status authorization failed'));
     }
     var statusResult = getCachedBackupStatus(p.requestId, statusShopId);
     var statusCallback = String(p.callback || '').trim();
@@ -1223,7 +1227,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getLatestBackup') {
-    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var shopId;
     try {
       shopId = normalizeShopId(p.shopId);
@@ -1240,7 +1244,7 @@ function doGet(e) {
   }
 
   if (p.action === 'hasBackupPart') {
-    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var existsShopId;
     try {
       existsShopId = normalizeShopId(p.shopId);
@@ -1260,7 +1264,7 @@ function doGet(e) {
   }
 
   if (p.action === 'getBackupPart') {
-    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized')); }
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var partShopId;
     try {
       partShopId = normalizeShopId(p.shopId);
