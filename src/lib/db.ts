@@ -25,6 +25,7 @@ export interface BackupMeta {
   lastAutoBackupAt?: string;
   lastManualBackupAt?: string;
   lastCloudBackupAt?: string;
+  lastCloudBackupError?: string;
   pendingAutoBackupAt?: string;
   nextAutoBackupRetryAt?: string;
   autoBackupFailureCount?: number;
