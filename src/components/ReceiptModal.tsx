@@ -2,7 +2,7 @@ import { Printer, Plus, Globe, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Modal } from './ui';
 import { usePOS } from '../lib/store';
-import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, waLink, normalizeWhatsAppPhone } from '../lib/utils';
+import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolean }) {
@@ -27,7 +27,7 @@ export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;
   const openWhatsApp=()=>{
     const phone=normalizeWhatsAppPhone(customer?.phone||'');
     if(phone.length>=9&&phone.length<=15){
-      window.open(waLink(phone,buildWhatsAppText(sale,state.settings)),'_blank','noopener,noreferrer');
+      openWhatsAppLink(phone,buildWhatsAppText(sale,state.settings));
       return;
     }
     setWhatsappPhone(customer?.phone||'');
@@ -36,7 +36,7 @@ export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;
   const sendWhatsApp=()=>{
     const phone=normalizeWhatsAppPhone(whatsappPhone);
     if(phone.length<9||phone.length>15)return;
-    window.open(waLink(phone,buildWhatsAppText(sale,state.settings)),'_blank','noopener,noreferrer');
+    openWhatsAppLink(phone,buildWhatsAppText(sale,state.settings));
     setWhatsappOpen(false);
   };
   return <><Modal open={!!sale} onClose={onClose} title="Sale completed" sub={`Bill ${sale.billNo} saved to sales history`}>
