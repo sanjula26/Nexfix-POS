@@ -21,9 +21,11 @@ This direct backup path does **not** require Supabase, and the backup Google She
 8. Deploy as **Web app**:
    - **Execute as:** Me
    - **Who has access:** choose an access setting that allows the POS browser to reach the deployment. For a direct browser deployment this is commonly **Anyone**, subject to the Google account's deployment policy.
-9. Copy the deployed **`/macros/s/.../exec`** URL.
+10. Copy the deployed **`/macros/s/.../exec`** URL.
 
 After changing `Code.gs`, update/create the deployment version. Editing the GitHub file alone does not update an already deployed Apps Script Web App.
+
+**Required for the next production release:** paste/deploy the current `Code.gs` as a new Web App version, keep `NEXFIX_BACKUP_API_KEY` exactly equal to the build secret `VITE_GOOGLE_BACKUP_API_KEY`, and keep the existing `/exec` URL if the deployment is updated in place. Shop operators never need to enter these values.
 
 ## 2. Nexfix POS endpoint configuration
 
@@ -65,7 +67,7 @@ A successful POS cloud backup means:
 3. Apps Script cached a success result for that request.
 4. POS confirmed the result through `backupStatus`.
 
-If confirmation times out or the server reports an error, POS does not mark the cloud backup as successful.
+If confirmation times out or the server reports an error, POS does not mark the cloud backup as successful. The next client release also preserves the last cloud failure reason in Settings, and the transport converts generic legacy errors into an actionable diagnostic when possible.
 
 ## 6. Automatic backup
 
