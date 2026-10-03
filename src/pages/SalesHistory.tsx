@@ -312,7 +312,7 @@ export default function SalesHistory() {
                 onClick={() => {
                   const digits = normalizeWhatsAppPhone(whatsappPhone);
                   if (digits.length < 9 || digits.length > 15) return;
-                  window.open(waLink(whatsappPhone, buildWhatsAppText(whatsappSale, state.settings)), '_blank', 'noopener,noreferrer');
+                  openWhatsAppLink(whatsappPhone, buildWhatsAppText(whatsappSale, state.settings));
                   setWhatsappSale(null);
                 }}
               ><MessageCircle size={15} /> Open WhatsApp</button>
