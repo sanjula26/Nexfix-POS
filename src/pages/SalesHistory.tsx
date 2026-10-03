@@ -5,7 +5,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, EmptyState, PageHeading, Avatar } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
-import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
+import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 type RangeKey = 'today' | 'custom' | 'week' | 'month' | 'all';
