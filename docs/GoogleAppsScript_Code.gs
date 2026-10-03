@@ -1205,6 +1205,57 @@ function doGet(e) {
     return json(pingResult);
   }
 
+  if (p.action === 'diagnostics') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) {
+      return json(unauthorized('Unauthorized: API key mismatch'));
+    }
+    try {
+      var diagnostics = {
+        action: 'diagnostics',
+        apiKeyAccepted: true,
+        driveAccess: false,
+        rootFolder: '',
+        shopAuthorization: 'not_checked'
+      };
+      var root = getRootBackupFolder();
+      diagnostics.driveAccess = true;
+      diagnostics.rootFolder = root.getName();
+
+      // If a shop identity is supplied, verify its authorization without
+      // creating or modifying SHOP_AUTH.json. This is a read-only preflight.
+      if (p.shopId) {
+        var diagnosticShopId = normalizeShopId(p.shopId);
+        if (p.shopProof) {
+          validateShopProof(p.shopProof);
+          var diagnosticFolder = findShopBackupFolder(diagnosticShopId);
+          if (!diagnosticFolder) {
+            diagnostics.shopAuthorization = 'not_initialized';
+          } else {
+            var authFiles = diagnosticFolder.getFilesByName(SHOP_AUTH_FILENAME);
+            if (!authFiles.hasNext()) {
+              diagnostics.shopAuthorization = 'not_initialized';
+            } else {
+              var authRaw = authFiles.next().getBlob().getDataAsString();
+              var authRecord;
+              try { authRecord = JSON.parse(authRaw); } catch (authParseError) {
+                throw new Error('Shop backup authorization record is invalid');
+              }
+              if (String(authRecord.shopId || '') !== diagnosticShopId
+                  || String(authRecord.shopPartition || '') !== shopPartitionKey(diagnosticShopId)
+                  || !constantTimeApiKeyEqual(String(authRecord.proofDigest || ''), shopAuthDigest(p.shopProof))) {
+                throw new Error('Shop backup authorization failed: Recovery Key / Shop Backup ID does not match this shop');
+              }
+              diagnostics.shopAuthorization = 'authorized';
+            }
+          }
+        }
+      }
+      return json(ok(diagnostics));
+    } catch (diagnosticError) {
+      return json(fail(diagnosticError));
+    }
+  }
+
   if (p.action === 'backupStatus') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var statusShopId;
