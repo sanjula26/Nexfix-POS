@@ -2,7 +2,7 @@ import { Printer, Plus, Globe, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Modal } from './ui';
 import { usePOS } from '../lib/store';
-import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
+import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolean }) {
