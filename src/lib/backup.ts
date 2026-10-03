@@ -169,9 +169,9 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
           pendingAutoBackupAt: undefined,
           nextAutoBackupRetryAt: undefined,
           autoBackupFailureCount: 0,
-          ...(cloud ? { lastCloudBackupAt: now } : {}),
+          ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})),
         }
-      : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now } : {}) });
+      : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})) });
   }
   return { local, cloud, ...(errorMessage ? { error: errorMessage } : {}) };
 }
