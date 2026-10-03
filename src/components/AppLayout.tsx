@@ -208,15 +208,33 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         </div>
 
-        <button
-          onClick={() => { signOut(); navigate('/login'); }}
-          className="nav-item !text-[#b9bce0] hover:!text-rose-300 hover:!bg-rose-500/10"
-        >
-          <span className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
-            <LogOut size={16} strokeWidth={2.1} />
-          </span>
-          Sign out
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => { signOut(); navigate('/login'); }}
+            className="nav-item !text-[#b9bce0] hover:!text-rose-300 hover:!bg-rose-500/10"
+          >
+            <span className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
+              <LogOut size={16} strokeWidth={2.1} />
+            </span>
+            Sign out
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const desktop = (window as Window & { nexfixDesktop?: { exitApp?: () => Promise<boolean> } }).nexfixDesktop;
+              if (desktop?.exitApp) void desktop.exitApp();
+              else window.close();
+            }}
+            className="nav-item !text-[#b9bce0] hover:!text-amber-300 hover:!bg-amber-500/10"
+            title="Close Nexfix POS"
+          >
+            <span className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
+              <X size={16} strokeWidth={2.1} />
+            </span>
+            Exit POS
+          </button>
+        </div>
       </div>
     </aside>
   );
