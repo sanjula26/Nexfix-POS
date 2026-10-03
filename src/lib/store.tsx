@@ -1196,6 +1196,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked sale completion without POS access');
       return null;
     }
+    const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()));
+    if (!todaySession || todaySession.closed) {
+      pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open');
+      return null;
+    }
     const s = state;
     const saleLines = applyCategoryPromotions(input.lines, s.products, s.settings);
     const items: SaleItem[] = [];
