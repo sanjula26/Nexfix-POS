@@ -173,7 +173,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           # The source repository is public, so GitHub Release assets are public too.
           # Delete releases by database ID, including old untagged releases whose
-          # tag no longer exists. Supabase remains the only installer distribution channel.
+          # tag no longer exists. Cloudflare R2 is the primary installer distribution channel; temporary Supabase chunks remain only for legacy installed clients.
           $ids = gh api --paginate "repos/sanjula26/Nexfix-POS/releases?per_page=100" --jq '.[].id' |
             Where-Object { $_ -and $_.Trim() } |
             Sort-Object -Unique
@@ -185,8 +185,74 @@ jobs:
               Write-Warning "GitHub release id $id was already absent or could not be removed; continuing cleanup."
             }
           }
-          Write-Host 'Public GitHub installer release cleanup complete. Supabase is the only Windows installer distribution channel.'
-      - name: Publish Windows release to private Supabase Storage
+          Write-Host 'Public GitHub installer release cleanup complete. Cloudflare R2 is the primary Windows installer distribution channel.'
+      - name: Publish Windows release to private Cloudflare R2
+        shell: pwsh
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET','SUPABASE_SERVICE_ROLE_KEY')) {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) { throw "$name secret is empty." }
+          }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          aws --version
+
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $version = $env:BUILD_VERSION
+          $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
+          if (-not $installer) { throw 'Installer artifact not found.' }
+          $objectKey = "win32/latest/$($installer.Name)"
+
+          function Get-Sha512Base64([string]$path) {
+            $hex = (Get-FileHash -Algorithm SHA512 -Path $path).Hash
+            $bytes = [byte[]]::new($hex.Length / 2)
+            for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [Convert]::ToByte($hex.Substring($i * 2, 2), 16) }
+            return [Convert]::ToBase64String($bytes)
+          }
+
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+
+          Write-Host "Uploading $($installer.Name) to private R2 object: $objectKey"
+          aws s3 cp $installer.FullName "s3://$env:R2_BUCKET/$objectKey" --endpoint-url $r2Endpoint --region auto --content-type 'application/octet-stream' --cache-control 'no-store' --content-disposition "attachment; filename=$($installer.Name)" --only-show-errors
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 installer upload failed.' }
+
+          $headJson = aws s3api head-object --bucket $env:R2_BUCKET --key $objectKey --endpoint-url $r2Endpoint --region auto --output json
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 object verification failed: head-object failed.' }
+          $head = $headJson | ConvertFrom-Json
+          if ([int64]$head.ContentLength -ne [int64]$installer.Length) { throw "R2 object size mismatch: $($head.ContentLength) != $($installer.Length)" }
+
+          $verifyPath = Join-Path $env:RUNNER_TEMP 'nexfix-r2-installer-verify.exe'
+          Remove-Item $verifyPath -Force -ErrorAction SilentlyContinue
+          aws s3 cp "s3://$env:R2_BUCKET/$objectKey" $verifyPath --endpoint-url $r2Endpoint --region auto --only-show-errors
+          if ($LASTEXITCODE -ne 0) { throw 'Cloudflare R2 installer download verification failed.' }
+          $sourceHash = Get-Sha512Base64 $installer.FullName
+          $servedHash = Get-Sha512Base64 $verifyPath
+          if ($sourceHash -ne $servedHash) { throw 'R2 installer SHA-512 verification failed.' }
+          Remove-Item $verifyPath -Force -ErrorAction SilentlyContinue
+
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rpc = @{
+            p_version = $version
+            p_channel = 'latest'
+            p_platform = 'win32'
+            p_installer_path = $objectKey
+            p_installer_name = $installer.Name
+            p_installer_sha512 = $sourceHash
+            p_installer_size = [int64]$installer.Length
+            p_release_notes = "Nexfix POS Windows release $version"
+          } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Uri "$projectUrl/rest/v1/rpc/publish_desktop_release" -Method Post -Headers $headers -Body $rpc | Out-Null
+          Write-Host "R2 release published and byte-verified: $version / $objectKey / $($installer.Length) bytes"
+
+      - name: Publish legacy compatibility chunks to private Supabase Storage
         shell: pwsh
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -473,17 +539,63 @@ jobs:
           }
           Write-Host "Storage cleanup verified: $($remaining.Count) current release chunks remain for $version."
           
-      - name: Verify private Windows release
 
+      - name: Clean superseded R2 installer objects
+        shell: pwsh
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
+          if (-not $installer) { throw 'Current installer artifact is missing during R2 cleanup.' }
+          $currentKey = "win32/latest/$($installer.Name)"
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+
+          $rows = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
+          $keys = @($rows | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
+          foreach ($key in $keys) {
+            if ($key -ne $currentKey) {
+              Write-Host "Removing superseded R2 installer: $key"
+              aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output none
+              if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
+            }
+          }
+
+          $remaining = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 cleanup.' }
+          $remainingKeys = @($remaining | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
+          if ($remainingKeys.Count -ne 1 -or $remainingKeys[0] -ne $currentKey) { throw "R2 cleanup verification failed. Expected exactly one current installer, found: $($remainingKeys -join ', ')" }
+          Write-Host "R2 cleanup verified: exactly one current installer remains: $currentKey"
+
+      - name: Verify private Windows release
         shell: pwsh
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
         run: |
           $ErrorActionPreference = 'Stop'
           $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/1.0' }
-          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_size" -Headers $headers
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
           if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
           if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
           if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
-          Write-Host "Private Supabase release verified: $($rows[0].version) / $($rows[0].installer_name)"
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
+          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
+          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"

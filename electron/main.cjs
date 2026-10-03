@@ -22,8 +22,6 @@ let updateAuthMode = 'bearer';
 let updateCheckPromise = null;
 const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
-const DIRECT_UPDATE_CHUNKS_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-download-chunks';
-const DIRECT_UPDATE_CHUNK_BYTES = 40 * 1024 * 1024;
 const AUTH_PROTOCOL = 'nexfix';
 let pendingAuthCallback = null;
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -140,21 +138,19 @@ async function downloadDirectPrivateUpdate() {
   if (updateAuthMode === 'device') headers['X-Nexfix-Update-Token'] = updateAuthToken;
   else headers.Authorization = `Bearer ${updateAuthToken}`;
 
-  const manifestResponse = await fetch(DIRECT_UPDATE_CHUNKS_URL, { headers });
+  const manifestResponse = await fetch(`${UPDATE_FEED_URL}?download=1`, { headers });
   const manifestText = await manifestResponse.text();
   let manifest;
   try { manifest = JSON.parse(manifestText); } catch { manifest = null; }
-  if (!manifestResponse.ok || !manifest?.ok || manifest.mode !== 'chunks') {
+  if (!manifestResponse.ok || !manifest?.ok || typeof manifest.url !== 'string' || !manifest.url) {
     throw new Error(manifest?.error || 'Could not authorize the direct private update download.');
   }
 
   const expectedSize = Number(manifest.size);
   const expectedHash = String(manifest.sha512 || '').trim();
-  const chunks = Array.isArray(manifest.chunks) ? manifest.chunks : [];
   if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) throw new Error('Invalid installer size from the private update gateway.');
-  if (!/^[a-f0-9]{128}$/i.test(expectedHash) && !/^[A-Za-z0-9+/]{86}==$/.test(expectedHash)) throw new Error('Invalid installer SHA-512 from the private update gateway.');
-  if (!chunks.length || chunks.length !== Math.ceil(expectedSize / DIRECT_UPDATE_CHUNK_BYTES)) {
-    throw new Error('Private update chunk metadata is inconsistent with the installer size.');
+  if (!/^[a-f0-9]{128}$/i.test(expectedHash) && !/^[A-Za-z0-9+/]{86}==$/.test(expectedHash)) {
+    throw new Error('Invalid installer SHA-512 from the private update gateway.');
   }
 
   const safeName = path.basename(String(manifest.name || 'Nexfix-POS-update.exe')).replace(/[^A-Za-z0-9._-]/g, '_');
@@ -165,26 +161,33 @@ async function downloadDirectPrivateUpdate() {
   try { fs.rmSync(tempPath, { force: true }); } catch {}
   try { fs.rmSync(installerPath, { force: true }); } catch {}
 
+  const response = await fetch(manifest.url);
+  if (!response.ok || !response.body) {
+    throw new Error(`Private installer download failed (HTTP ${response.status}).`);
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength && contentLength !== expectedSize) {
+    throw new Error(`Installer Content-Length mismatch. Expected ${expectedSize} bytes, received ${contentLength}.`);
+  }
+
   const handle = await fs.promises.open(tempPath, 'w');
   const hash = crypto.createHash('sha512');
+  const reader = response.body.getReader();
   let total = 0;
   try {
-    for (let i = 0; i < chunks.length; i++) {
-      const response = await fetch(String(chunks[i]?.url || ''));
-      if (!response.ok) throw new Error(`Update chunk ${i + 1} failed (HTTP ${response.status}).`);
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const expectedChunkSize = i === chunks.length - 1
-        ? expectedSize - DIRECT_UPDATE_CHUNK_BYTES * (chunks.length - 1)
-        : DIRECT_UPDATE_CHUNK_BYTES;
-      if (buffer.length !== expectedChunkSize) {
-        throw new Error(`Update chunk ${i + 1} size mismatch. Expected ${expectedChunkSize} bytes, received ${buffer.length}.`);
-      }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const buffer = Buffer.from(value);
+      if (!buffer.length) continue;
       await handle.write(buffer, 0, buffer.length, total);
       hash.update(buffer);
       total += buffer.length;
       sendUpdateEvent('progress', { percent: Math.min(99, (total / expectedSize) * 100) });
     }
   } finally {
+    try { reader.releaseLock(); } catch {}
     await handle.close();
   }
 
@@ -192,7 +195,10 @@ async function downloadDirectPrivateUpdate() {
   const actualHex = digest.toString('hex');
   const actualBase64 = digest.toString('base64');
   if (total !== expectedSize) throw new Error(`Installer size verification failed. Expected ${expectedSize} bytes, received ${total}.`);
-  if (actualHex.toLowerCase() !== expectedHash.toLowerCase() && actualBase64 !== expectedHash) throw new Error('Installer SHA-512 verification failed. The update was NOT installed.');
+  if (actualHex.toLowerCase() !== expectedHash.toLowerCase() && actualBase64 !== expectedHash) {
+    throw new Error('Installer SHA-512 verification failed. The update was NOT installed.');
+  }
+
   fs.renameSync(tempPath, installerPath);
   sendUpdateEvent('progress', { percent: 100 });
   return { version: String(manifest.version || ''), installerPath, installerName: safeName };
@@ -379,9 +385,9 @@ function setupAutoUpdater(){
         }
         updateDownloadActive=true;
         sendUpdateEvent('progress',{percent:0});
-        // Download the protected installer chunks directly from Supabase Storage.
-        // This avoids streaming the 100+ MB installer through the Edge Function,
-        // which otherwise adds another egress leg and is the main bandwidth hotspot.
+        // Download the protected installer directly from Cloudflare R2 using a
+        // short-lived presigned URL returned only after Supabase authorization.
+        // The EXE bytes never pass through Supabase Storage or the Edge Function.
         const direct = await downloadDirectPrivateUpdate();
         pendingUpdateInfo = { ...(pendingUpdateInfo || {}), version: direct.version };
         updateInstallScheduled = true;
