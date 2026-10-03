@@ -564,7 +564,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
           $keys = @(
             $rows |
-              ForEach-Object { [string]$_ -split '\\s+' } |
+              ForEach-Object { [string]$_ -split '\s+' } |
               Where-Object { $_ -and $_ -ne 'None' }
           )
           foreach ($key in $keys) {
