@@ -27,6 +27,21 @@ After changing `Code.gs`, update/create the deployment version. Editing the GitH
 
 **Required for the next production release:** paste/deploy the current `Code.gs` as a new Web App version, keep `NEXFIX_BACKUP_API_KEY` exactly equal to the build secret `VITE_GOOGLE_BACKUP_API_KEY`, and keep the existing `/exec` URL if the deployment is updated in place. Shop operators never need to enter these values.
 
+### Production preflight
+
+The current server exposes an authenticated, read-only `diagnostics` action. The released POS calls it immediately before the real backup request.
+
+A healthy preflight proves:
+
+- live Apps Script `VERSION` is `3.3.0`;
+- the API key compiled into the production build is accepted by the live Script Property;
+- the Apps Script execution account can access the configured root Drive folder;
+- an existing shop's `SHOP_AUTH.json` still matches its Recovery Key / Shop Backup ID.
+
+If the live Script Property does not match the build key, the POS reports **Google Backup API key mismatch** instead of falling through to a generic backup error.
+
+If a shop has never backed up before, `SHOP_AUTH.json` is intentionally created by the first real backup; `not_initialized` is therefore not a preflight failure.
+
 ## 2. Nexfix POS endpoint configuration
 
 The released POS build contains the central `/exec` endpoint and the matching transport API key. Shop users do **not** enter, save, or toggle the Apps Script URL or API key in Settings.
