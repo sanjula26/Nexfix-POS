@@ -402,14 +402,17 @@ function setupAutoUpdater(){
           const quotePs = (value) => String(value).replace(/'/g, "''");
           const installerPath = quotePs(direct.installerPath);
           const targetPath = quotePs(process.execPath);
+          const targetDir = quotePs(path.dirname(process.execPath));
           const parentPid = Number(process.pid);
           const ps = [
             "$ErrorActionPreference='Stop'",
             "$installer='" + installerPath + "'",
             "$target='" + targetPath + "'",
+            "$targetDir='" + targetDir + "'",
             "$parentPid=" + parentPid,
             "while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
-            "Start-Process -FilePath $installer -ArgumentList '/S' -Wait",
+            "$args='/S /D=\\\"' + $targetDir + '\\\"'",
+            "Start-Process -FilePath $installer -ArgumentList $args -Wait",
             "if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target }"
           ].join('; ');
           try {
@@ -420,7 +423,7 @@ function setupAutoUpdater(){
             );
             helper.unref();
           } finally {
-            app.quit();
+            app.exit(0);
           }
         }, 700);
         return{supported:true,started:true};
