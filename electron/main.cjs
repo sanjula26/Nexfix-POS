@@ -411,7 +411,7 @@ function setupAutoUpdater(){
             "$targetDir='" + targetDir + "'",
             "$parentPid=" + parentPid,
             "while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
-            "$args='/S /D=\\\"' + $targetDir + '\\\"'",
+            "$args='/S /D=\"' + $targetDir + '\"'",
             "Start-Process -FilePath $installer -ArgumentList $args -Wait",
             "if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target }"
           ].join('; ');
