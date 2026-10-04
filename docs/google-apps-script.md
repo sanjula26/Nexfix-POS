@@ -79,10 +79,10 @@ A successful POS cloud backup means:
 
 1. POS submitted the backup request.
 2. Apps Script accepted and processed the request.
-3. Apps Script cached a success result for that request.
-4. POS confirmed the result through `backupStatus`.
+3. Apps Script persists the request result durably and the Drive artifact is committed.
+4. POS confirms through `backupStatus`; if status is pending/missing/error, Apps Script verifies the exact Drive artifact by shop + backup ID, and POS has an additional authenticated `verifyBackup` fallback.
 
-If confirmation times out or the server reports an error, POS does not mark the cloud backup as successful. The next client release also preserves the last cloud failure reason in Settings, and the transport converts generic legacy errors into an actionable diagnostic when possible.
+If confirmation is temporarily unreadable, POS keeps verifying within its confirmation window. A Drive file that matches the current shop and backup identity is authoritative and is reported as success; real authorization, proof, rate-limit, offline, or Drive failures remain failures. The next client release also preserves the last cloud failure reason in Settings, and the transport converts generic legacy errors into an actionable diagnostic when possible.
 
 ## 6. Automatic backup
 
