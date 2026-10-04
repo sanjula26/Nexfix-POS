@@ -65,14 +65,15 @@ Backup files are filtered by the same shop partition, and restore reads only the
 ## Supported web actions
 
 - `backupState` — writes a complete POS state snapshot to Drive.
-- `backupStatus` — returns the server-side status for a submitted backup request.
+- `backupStatus` — returns the server-side status for a submitted backup request and self-heals confirmation from the committed Drive artifact when status state/cache is missing or stale.
+- `verifyBackup` — authenticated exact-artifact verification by shopId + backupId + dayKey/exportedAt; used as the final confirmation path when JSONP status is delayed or unreadable.
 - `getLatestBackup` — reads the newest valid Drive snapshot for the requested shop.
 
 Direct table synchronization is not part of this direct Drive endpoint.
 
 ## Client confirmation
 
-The browser POST uses a CORS-safe request. Because the browser cannot read a `no-cors` response body, Nexfix POS follows the POST with a JSONP `backupStatus` check. The POS reports cloud success only after Apps Script confirms that the backup request completed successfully.
+The browser POST uses a CORS-safe request. Because the browser cannot read a `no-cors` response body, Nexfix POS follows the POST with authenticated JSONP confirmation. `backupStatus` first checks its durable request record and then verifies the exact committed Drive artifact when the record is pending/missing/error. The POS also has a `verifyBackup` exact-artifact fallback, so a successful Drive write cannot be surfaced as a client failure merely because the status cache or JSONP response was delayed.
 
 ## Security note
 
