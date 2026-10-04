@@ -1044,6 +1044,69 @@ function hasBackupPart(shopId, backupId, partName) {
   return false;
 }
 
+function findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, partName) {
+  var normalizedShopId = normalizeShopId(shopId);
+  var safeBackupId = String(backupId || '').trim();
+  var safeDayKey = String(dayKey || '').trim();
+  var safePartName = String(partName || '').trim();
+  if (!safeBackupId || !/^[A-Za-z0-9._:-]+$/.test(safeBackupId)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeDayKey)) return null;
+  var partition = shopPartitionKey(normalizedShopId);
+  var expectedPrefix = getBackupFilePrefix(normalizedShopId, safeDayKey);
+  var root = getRootBackupFolder();
+  var folders = root.getFolders();
+  var incomingMillis = parseExportedAtMillis(exportedAt);
+
+  while (folders.hasNext()) {
+    var shopFolder = folders.next();
+    if (shopFolder.getName().indexOf('Shop_' + partition + ' - ') !== 0) continue;
+    var backups = shopFolder.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
+    while (backups.hasNext()) {
+      var backupFolder = backups.next();
+
+      // Multipart part verification: a part is an upload artifact, not the
+      // final daily backup. It is still valid for confirming that part POST.
+      if (safePartName) {
+        if (safePartName.indexOf(expectedPrefix + '.part') !== 0) continue;
+        var part = findMultipartPart(backupFolder, safePartName, safeBackupId);
+        if (part) return { fileId: part.getId(), fileName: part.getName(), backupId: safeBackupId, shopId: normalizedShopId, shopPartition: partition, multipartPart: true };
+        continue;
+      }
+
+      var files = backupFolder.getFiles();
+      while (files.hasNext()) {
+        var file = files.next();
+        var name = file.getName();
+        if (name.indexOf(expectedPrefix) !== 0 || name.indexOf('.part') > 0) continue;
+        try {
+          var raw = file.getBlob().getDataAsString();
+          var parsed = JSON.parse(raw);
+
+          if (name === expectedPrefix + '.json') {
+            var meta = parsed && parsed._meta ? parsed._meta : {};
+            if (meta.app !== 'Nexfix POS' || meta.encrypted !== true) continue;
+            if (String(meta.shopId || '') !== normalizedShopId || String(meta.shopPartition || '') !== partition) continue;
+            if (String(meta.backupId || '') !== safeBackupId) continue;
+            if (safeDayKey && String(meta.dayKey || '') !== safeDayKey) continue;
+            if (incomingMillis && Math.abs(parseExportedAtMillis(meta.exportedAt) - incomingMillis) > 180000) continue;
+            return { fileId: file.getId(), fileName: name, backupId: safeBackupId, shopId: normalizedShopId, shopPartition: partition, exportedAt: String(meta.exportedAt || '') };
+          }
+
+          if (name === expectedPrefix + '.manifest.json') {
+            if (!parsed || parsed.app !== 'Nexfix POS' || parsed.encrypted !== true) continue;
+            if (String(parsed.shopId || '') !== normalizedShopId || String(parsed.shopPartition || '') !== partition) continue;
+            if (String(parsed.backupId || '') !== safeBackupId) continue;
+            if (String(parsed.dayKey || '') !== safeDayKey) continue;
+            if (incomingMillis && Math.abs(parseExportedAtMillis(parsed.exportedAt) - incomingMillis) > 180000) continue;
+            return { fileId: file.getId(), fileName: name, backupId: safeBackupId, shopId: normalizedShopId, shopPartition: partition, exportedAt: String(parsed.exportedAt || ''), multipart: true };
+          }
+        } catch (ignore) {}
+      }
+    }
+  }
+  return null;
+}
+
 function backupStatusKey(shopId, requestId) {
   return 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
 }
@@ -1160,24 +1223,39 @@ function isBackupStatusProofAuthorized(shopId, requestId, shopProof) {
   }
 }
 
-function getCachedBackupStatus(requestId, shopId) {
+function getCachedBackupStatus(requestId, shopId, backupId, exportedAt, dayKey) {
   var id = String(requestId || '').trim();
   if (!id || id.length > REQUEST_ID_MAX_LENGTH || !/^[A-Za-z0-9._:-]+$/.test(id)) return { ok: false, status: 'error', version: VERSION, message: 'Valid requestId is required' };
 
   var shopPartition = shopPartitionKey(shopId);
   var statusKey = backupStatusKey(shopId, id);
   var raw = readBackupStatusRecord(statusKey);
-  if (!raw) return { ok: false, status: 'pending', version: VERSION, pending: true };
 
-  try {
-    var record = JSON.parse(raw);
-    var result = record && record.result ? record.result : record;
-    if (result && result.status === 'pending') return { ok: false, status: 'pending', version: VERSION, pending: true };
-    if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
-    return { ok: false, status: 'error', version: VERSION, message: (result && result.message) || 'Backup request failed' };
-  } catch (err) {
-    return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
+  if (raw) {
+    try {
+      var record = JSON.parse(raw);
+      var result = record && record.result ? record.result : record;
+      if (result && result.ok === true && result.action === 'backupState' && result.shopPartition === shopPartition) return result;
+      // A pending/error record is inconclusive if Drive already contains the
+      // exact artifact. Self-heal the confirmation result from Drive.
+      var committed = findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, '');
+      if (committed) return ok({ action: 'backupState', backupId: committed.backupId, driveFileId: committed.fileId, driveFileName: committed.fileName, shopPartition: shopPartition, verifiedBy: 'drive' });
+      if (result && result.status === 'pending') return { ok: false, status: 'pending', version: VERSION, pending: true };
+      return { ok: false, status: 'error', version: VERSION, message: (result && result.message) || 'Backup request failed' };
+    } catch (err) {
+      var committedAfterParseError = findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, '');
+      if (committedAfterParseError) return ok({ action: 'backupState', backupId: committedAfterParseError.backupId, driveFileId: committedAfterParseError.fileId, driveFileName: committedAfterParseError.fileName, shopPartition: shopPartition, verifiedBy: 'drive' });
+      return { ok: false, status: 'error', version: VERSION, message: 'Invalid cached backup result' };
+    }
   }
+
+  // Cache/Properties can miss while the Drive write has already committed.
+  // For an authenticated request with a concrete backupId, inspect the exact
+  // shop partition before telling the client to keep waiting.
+  var committedMissingStatus = findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, '');
+  if (committedMissingStatus) return ok({ action: 'backupState', backupId: committedMissingStatus.backupId, driveFileId: committedMissingStatus.fileId, driveFileName: committedMissingStatus.fileName, shopPartition: shopPartition, verifiedBy: 'drive' });
+
+  return { ok: false, status: 'pending', version: VERSION, pending: true };
 }
 
 function getTable(ss, table, shopId) {
@@ -1269,12 +1347,33 @@ function doGet(e) {
     } catch (err) {
       return json(unauthorized(err && err.message ? 'Unauthorized: ' + err.message : 'Unauthorized: backup status authorization failed'));
     }
-    var statusResult = getCachedBackupStatus(p.requestId, statusShopId);
+    var statusResult = getCachedBackupStatus(p.requestId, statusShopId, p.backupId, p.exportedAt, p.dayKey);
     var statusCallback = String(p.callback || '').trim();
     if (statusCallback && /^__nexfixGoogleBackupStatus_[0-9]+_[A-Za-z0-9]+$/.test(statusCallback)) {
       return ContentService.createTextOutput(statusCallback + '(' + JSON.stringify(statusResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
     }
     return json(statusResult);
+  }
+
+  if (p.action === 'verifyBackup') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
+    try {
+      var verifyShopId = normalizeShopId(p.shopId);
+      var verifyRequestId = validateRequestId(p.requestId);
+      var verifyProof = validateShopProof(p.shopProof);
+      authorizeShopAccess(verifyShopId, verifyProof, false);
+      var artifact = findCommittedBackupArtifact(verifyShopId, p.backupId, p.exportedAt, p.dayKey, p.partName);
+      var verifyResult = artifact
+        ? ok({ action: 'backupState', backupId: artifact.backupId, driveFileId: artifact.fileId, driveFileName: artifact.fileName, shopId: artifact.shopId, shopPartition: artifact.shopPartition, exportedAt: artifact.exportedAt || p.exportedAt || '', verifiedBy: 'drive' })
+        : { ok: false, status: 'pending', version: VERSION, pending: true, action: 'backupState' };
+      var verifyCallback = String(p.callback || '').trim();
+      if (verifyCallback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(verifyCallback)) {
+        return ContentService.createTextOutput(verifyCallback + '(' + JSON.stringify(verifyResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return json(verifyResult);
+    } catch (verifyError) {
+      return json(fail(verifyError));
+    }
   }
 
   if (p.action === 'getLatestBackup') {
