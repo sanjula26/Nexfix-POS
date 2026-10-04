@@ -36,7 +36,7 @@ The backup endpoint has two independent boundaries:
 
 Every backup write and sensitive read requires shopId, requestId, valid transport API key, and valid per-shop proof.
 
-Sensitive reads are backupStatus, getLatestBackup, and getBackupPart. The public ping endpoint remains intentionally unauthenticated and returns no business data.
+Sensitive reads are backupStatus, verifyBackup, getLatestBackup, and getBackupPart. The public ping endpoint remains intentionally unauthenticated and returns no business data.
 
 Each shop is partitioned by a deterministic SHA-256-derived Drive folder name. A SHOP_AUTH.json authorization record is created inside the shop folder on the first legitimate backup and stores only a proof digest, not the recovery key itself.
 
@@ -104,7 +104,7 @@ Verify:
 - Shop A shopId + Shop B proof is rejected.
 - Correct shop proof + missing/wrong API key is rejected.
 - Correct API key + another shop's proof is rejected.
-- backupStatus, getLatestBackup, and getBackupPart reject missing/wrong proof.
+- backupStatus, verifyBackup, getLatestBackup, and getBackupPart reject missing/wrong proof.
 
 ### Two-device cloud drill
 Use two physical PCs with two registered devices.
