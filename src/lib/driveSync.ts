@@ -175,9 +175,28 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
 async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unknown>): Promise<boolean> {
+  // First verify the exact upload artifact by shop/backup identity. This is
+  // stronger than "latest backup" matching and survives status-cache/JSONP
+  // misses during first-time shop initialization.
+  try {
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'verifyBackup');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', makeRequestId());
+    url.searchParams.set('shopProof', String(body.shopProof || ''));
+    url.searchParams.set('backupId', String(body.backupId || ''));
+    url.searchParams.set('exportedAt', String(body.exportedAt || ''));
+    url.searchParams.set('dayKey', String(body.dayKey || ''));
+    if (String(body.partName || '')) url.searchParams.set('partName', String(body.partName));
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
+    const result = await getJsonp<{ ok?: boolean; status?: string; action?: string; verifiedBy?: string }>(url, 8000);
+    if (result?.ok === true && result.action === 'backupState') return true;
+  } catch {
+    // Continue to the existing authenticated latest-backup fallback.
+  }
+
   // Multipart parts do not create the latest backup record until the final
-  // manifest arrives. Never download/decrypt an older full backup just to
-  // verify an individual part after a transient status read failure.
+  // manifest arrives. Verify the exact part as a secondary fallback.
   const format = String(body.format || '');
   if (format === 'encrypted-part') {
     try {
@@ -195,6 +214,7 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
       return false;
     }
   }
+
   try {
     const latest = await fetchLatestGoogleBackup(8000);
     if (!latest || latest.shopId !== shopId) return false;
@@ -260,6 +280,13 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         String(body.backupId || ''), String(body.exportedAt || ''), String(body.dayKey || ''),
       );
       if (status === true) return { ok: true };
+      // If status is pending/unknown or JSONP is temporarily unreadable,
+      // directly verify the exact Drive artifact. A successful Drive write is
+      // authoritative for the operator-facing result.
+      if (status === null && await verifyGoogleBackupArtifact(
+        shopId, String(body.shopProof || ''), String(body.backupId || ''),
+        String(body.exportedAt || ''), String(body.dayKey || ''), String(body.partName || ''),
+      )) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
         const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
         const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
@@ -284,6 +311,10 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       String(body.backupId || ''), String(body.exportedAt || ''), String(body.dayKey || ''),
     );
     if (finalStatus === true) return { ok: true };
+    if (await verifyGoogleBackupArtifact(
+      shopId, String(body.shopProof || ''), String(body.backupId || ''),
+      String(body.exportedAt || ''), String(body.dayKey || ''), String(body.partName || ''),
+    )) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
       const rateMatch = /retry in about (\d+) seconds/i.exec(finalStatus.error || '');
       const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
@@ -326,6 +357,26 @@ async function explainGenericGoogleBackupError(requestId: string): Promise<strin
     }
   } catch { /* keep the actionable client-side fallback below */ }
   return `Google Drive backup could not be confirmed (request ${requestId}). Check the Apps Script deployment, Script Property NEXFIX_BACKUP_API_KEY, and Drive access, then retry.`;
+}
+
+async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, backupId: string, exportedAt: string, dayKey: string, partName = ''): Promise<boolean> {
+  if (!backupId) return false;
+  try {
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'verifyBackup');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', makeRequestId());
+    url.searchParams.set('shopProof', shopProof);
+    url.searchParams.set('backupId', backupId);
+    if (exportedAt) url.searchParams.set('exportedAt', exportedAt);
+    if (dayKey) url.searchParams.set('dayKey', dayKey);
+    if (partName) url.searchParams.set('partName', partName);
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
+    const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 8000);
+    return result?.ok === true && result.action === 'backupState';
+  } catch {
+    return false;
+  }
 }
 
 async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string, backupId = '', exportedAt = '', dayKey = ''): Promise<boolean | { ok: false; error: string } | null> {
