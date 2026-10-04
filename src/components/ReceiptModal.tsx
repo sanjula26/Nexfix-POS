@@ -17,26 +17,69 @@ export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolea
   </div></div>;
 }
 
-export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: string }): string {
+export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: string; email: string }): string {
   const lines: string[] = [];
+  const money = (value: number) => `Rs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  const lineDiscountTotal = sale.items.reduce((sum, item) => sum + (item.discount || 0), 0);
+  const totalDiscount = lineDiscountTotal + Math.max(0, sale.discount || 0);
+  const payments = salePayments(sale);
+  const isSplitPayment = !!sale.payments && sale.payments.length > 1;
 
   lines.push(`*${shop.shopName}*`);
   lines.push(`Bill: ${sale.billNo}`);
   lines.push(`Date: ${fmtDateTime(sale.date)}`);
+  lines.push(`Customer: ${sale.customerName || 'Walk-in customer'}`);
   lines.push(`Cashier: ${sale.cashierName.split(' ')[0]}`);
   lines.push('--------------------------------');
 
   sale.items.forEach(item => {
-    const net = item.price * item.qty - (item.discount || 0);
-    lines.push(`• ${item.name} ×${item.qty} — Rs. ${net.toLocaleString('en-US', { minimumFractionDigits: 2 })}`);
+    const gross = item.price * item.qty;
+    const discount = item.discount || 0;
+    const amount = gross - discount;
+    lines.push(`• ${item.name}`);
+    lines.push(`  Price: ${money(item.price)}`);
+    lines.push(`  Qty: ${item.qty}`);
+    lines.push(`  Discount: ${money(discount)}`);
+    lines.push(`  Amount: ${money(amount)}`);
   });
 
   lines.push('--------------------------------');
-  lines.push(`*TOTAL: Rs. ${sale.total.toLocaleString('en-US', { minimumFractionDigits: 2 })}*`);
-  lines.push('');
-  lines.push('Thank you for shopping with us!');
+  lines.push(`Subtotal: ${money(sale.subtotal)}`);
+  lines.push(`Total Discount: ${money(totalDiscount)}`);
 
-  if (shop.phone) lines.push(shop.phone);
+  if ((sale.tradeIn?.value || 0) > 0) {
+    lines.push(`Trade-in: - ${money(sale.tradeIn?.value || 0)}`);
+  }
+  if ((sale.tax || 0) > 0) {
+    lines.push(`Tax: ${money(sale.tax)}`);
+  }
+  if ((sale.shipping || 0) > 0) {
+    lines.push(`Delivery / other: ${money(sale.shipping || 0)}`);
+  }
+  if ((sale.pointsRedeemed || 0) > 0) {
+    lines.push(`Points redeemed: ${sale.pointsRedeemed}`);
+  }
+
+  lines.push(`*TOTAL: ${money(sale.total)}*`);
+  if (isSplitPayment) {
+    lines.push('Payment: Split');
+    payments.forEach(payment => {
+      lines.push(`  ${PAYMENT_LABEL[payment.method]}: ${money(payment.amount)}`);
+    });
+  } else {
+    lines.push(`Payment: ${PAYMENT_LABEL[sale.payment]}`);
+  }
+  lines.push(`Paid: ${money(sale.amountPaid)}`);
+  if (sale.change > 0) lines.push(`Change: ${money(sale.change)}`);
+  if (sale.payment === 'credit' && sale.total - sale.amountPaid > 0) {
+    lines.push(`Balance Due: ${money(sale.total - sale.amountPaid)}`);
+  }
+
+  lines.push('--------------------------------');
+  lines.push('Thank you for shopping with us!');
+  lines.push('Powered by NEXFIX POS');
+  if (shop.email) lines.push(`Email: ${shop.email}`);
+  if (shop.phone) lines.push(`Contact: ${shop.phone}`);
 
   return lines.join('\n');
 }
