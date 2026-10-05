@@ -209,8 +209,8 @@ function setupAutoUpdater(){
   try{
     ({autoUpdater}=require('electron-updater'));
     // Restore the encrypted per-device updater credential before the renderer
-    // starts. This removes the restart-time renderer race while keeping the
-    // token protected by Windows safeStorage.
+    // starts. The device token is the persistent authorization source of truth;
+    // normal cloud login/session state must not be required on every restart or update.
     restoreStoredUpdaterCredentials();
     // Always point the updater at the private Supabase gateway. Never fall back
     // to the build-time GitHub provider before a signed-in session supplies
@@ -414,7 +414,17 @@ function setupAutoUpdater(){
       return {ok};
     });
     ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
-    ipcMain.handle('update:status',()=>({supported:true,authorized:Boolean(updateAuthToken&&updateDeviceId),authorizationMode:updateAuthMode,available:Boolean(pendingUpdateInfo),version:pendingUpdateInfo?.version||null,downloading:updateDownloadActive}));
+    ipcMain.handle('update:status',()=>{
+      const authorized=Boolean(updateAuthToken&&updateDeviceId);
+      return {
+        supported:true,
+        authorized,
+        authorizationMode:authorized?updateAuthMode:'none',
+        available:Boolean(pendingUpdateInfo),
+        version:pendingUpdateInfo?.version||null,
+        downloading:updateDownloadActive,
+      };
+    });
     const checkForUpdatesWithTimeout = async()=>{
       if(updateCheckPromise)return updateCheckPromise;
       updateCheckPromise=(async()=>{
