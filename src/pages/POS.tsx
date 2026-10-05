@@ -508,7 +508,10 @@ export default function POS() {
         return base;
       }),
       customerId: customerId || undefined,
-      discount: discCart + promoDiscount,
+      // Promotions are already materialized into each line by the sale engine.
+      // Only the cashier-entered cart-level discount belongs in input.discount;
+      // sending promoDiscount here would apply the promotion twice.
+      discount: discCart,
       tradeIn: tradeInOpen ? { productId: tradeIn.productId, value: tradeInValue, imei: tradeIn.imei.trim() || undefined, serial: tradeIn.serial.trim() || undefined, addToInventory: tradeIn.addToInventory } : undefined,
       taxPct: parseFloat(taxPct) || 0,
       shipping: shipAmt,
