@@ -150,7 +150,7 @@ export default function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importMsg, setImportMsg] = useState('');
-  const [appVersion, setAppVersion] = useState('3.0.6');
+  const [appVersion, setAppVersion] = useState(() => String(import.meta.env.VITE_APP_VERSION || ''));
   const [updateState, setUpdateState] = useState<{status:'idle'|'checking'|'available'|'downloading'|'downloaded'|'not-available'|'error';version?:string;percent?:number;message?:string}>({status:'idle'});
   const [cloudSetupEmail, setCloudSetupEmail] = useState(() => {
     try { return localStorage.getItem('nexfix_cloud_updater_email')?.trim() || ''; } catch { return ''; }
