@@ -1486,7 +1486,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         imei: tradeIn.imei?.trim() || undefined,
         serial: tradeIn.serial?.trim() || undefined,
       });
-      if (!tradeInCloud.ok) return null;
+      if (!tradeInCloud.ok) throw new Error(tradeInCloud.error || 'Cloud trade-in could not be registered. The sale is committed; retry the bill to finish trade-in reconciliation.');
     }
 
     const row = committed.sale;
