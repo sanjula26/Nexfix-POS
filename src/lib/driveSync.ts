@@ -10,6 +10,7 @@ import {
   sha256Hex,
   ensureRecoveryKey,
 } from './backupCrypto';
+import { ensureCloudShop } from './cloudSync';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
