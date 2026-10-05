@@ -393,27 +393,55 @@ function setupAutoUpdater(){
         updateInstallScheduled = true;
         sendUpdateEvent('downloaded', { version: direct.version });
         // The verified NSIS installer lives only in the updater temp directory.
-        // Use a detached PowerShell handoff so the helper survives app.quit(),
-        // waits for the silent NSIS installer to finish, and then starts the
-        // installed executable again. This is important because /S is silent
-        // and the normal NSIS "run after finish" UI path is not guaranteed when
-        // the installer is launched outside electron-updater.
+        // Hand the install to a detached PowerShell process. The handoff is deliberately
+        // more defensive than a plain "run installer then launch": NSIS requires /D to be
+        // the LAST command-line parameter and its value must NOT be quoted. The previous
+        // implementation sent /D="C:\\path with spaces", which can make NSIS ignore the
+        // requested install directory. That can install the new build into the default
+        // directory while the old build is relaunched from process.execPath — exactly the
+        // failure mode where both old and new POS installations appear.
         setTimeout(() => {
           const quotePs = (value) => String(value).replace(/'/g, "''");
           const installerPath = quotePs(direct.installerPath);
           const targetPath = quotePs(process.execPath);
           const targetDir = quotePs(path.dirname(process.execPath));
+          const expectedVersion = quotePs(String(direct.version || pendingUpdateInfo?.version || ''));
           const parentPid = Number(process.pid);
+          const logPath = quotePs(path.join(app.getPath('temp'), 'Nexfix-POS-Updater', 'update-install.log'));
           const ps = [
             "$ErrorActionPreference='Stop'",
             "$installer='" + installerPath + "'",
             "$target='" + targetPath + "'",
             "$targetDir='" + targetDir + "'",
+            "$expected='" + expectedVersion + "'",
             "$parentPid=" + parentPid,
+            "$log='" + logPath + "'",
+            "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $log) | Out-Null",
+            "function Log($m){ Add-Content -LiteralPath $log -Value ((Get-Date -Format o) + ' ' + $m) }",
+            "Log ('Starting updater handoff. Installer=' + $installer + ' Target=' + $target + ' ExpectedVersion=' + $expected)",
             "while (Get-Process -Id $parentPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }",
-            "$args='/S /D=\"' + $targetDir + '\"'",
-            "Start-Process -FilePath $installer -ArgumentList $args -Wait",
-            "if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target }"
+            "Start-Sleep -Milliseconds 1200",
+            "Log 'Parent POS exited; waiting for target executable to become writable.'",
+            "$ready=$false",
+            "for($i=0;$i -lt 80;$i++){ try { $s=[IO.File]::Open($target,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); $s.Close(); $ready=$true; break } catch { Start-Sleep -Milliseconds 250 } }",
+            "if(-not $ready){ throw 'Target executable did not become writable after POS exit.' }",
+            "if(-not (Test-Path -LiteralPath $installer)){ throw 'Verified updater installer is missing.' }",
+            "$arguments='/S /D=' + $targetDir",
+            "Log ('Launching NSIS installer with arguments: ' + $arguments)",
+            "$install=Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden",
+            "Log ('NSIS installer exit code: ' + $install.ExitCode)",
+            "if($install.ExitCode -ne 0){ throw ('NSIS installer failed with exit code ' + $install.ExitCode) }",
+            "$installedVersion=''",
+            "for($i=0;$i -lt 80;$i++){ if(Test-Path -LiteralPath $target){ try { $installedVersion=(Get-Item -LiteralPath $target).VersionInfo.ProductVersion; if($installedVersion){ break } } catch {} }; Start-Sleep -Milliseconds 250 }",
+            "Log ('Target file version after install: ' + $installedVersion)",
+            "if($expected -and $installedVersion -and -not ([string]$installedVersion).StartsWith($expected + '.')){ Log 'Installed version mismatch; retrying the same verified installer once.'; $retry=Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden; Log ('Retry installer exit code: ' + $retry.ExitCode); if($retry.ExitCode -ne 0){ throw ('Retry NSIS installer failed with exit code ' + $retry.ExitCode) }; Start-Sleep -Milliseconds 1000; $installedVersion=(Get-Item -LiteralPath $target).VersionInfo.ProductVersion; Log ('Target file version after retry: ' + $installedVersion) }",
+            "if(-not (Test-Path -LiteralPath $target)){ throw 'Updated POS executable was not found at the original install path.' }",
+            "if($expected -and $installedVersion -and -not ([string]$installedVersion).StartsWith($expected + '.')){ throw ('Installed POS version mismatch. Expected ' + $expected + ' but found ' + $installedVersion) }",
+            "Log 'Starting the verified updated POS executable.'",
+            "$started=Start-Process -FilePath $target -WorkingDirectory $targetDir -PassThru",
+            "Start-Sleep -Milliseconds 2500",
+            "try { $started.Refresh(); $runningVersion=$started.MainModule.FileVersionInfo.ProductVersion; Log ('Relaunched process version: ' + $runningVersion); if($expected -and -not ([string]$runningVersion).StartsWith($expected + '.')){ throw ('Relaunched POS version mismatch. Expected ' + $expected + ' but found ' + $runningVersion) } } catch { Log ('Relaunch verification warning: ' + $_.Exception.Message) }",
+            "Log 'Updater handoff completed.'"
           ].join('; ');
           try {
             const helper = spawn(
