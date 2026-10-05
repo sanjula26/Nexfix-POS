@@ -209,16 +209,17 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2.5">
           <button
             type="button"
             onClick={() => { signOut(); navigate('/login'); }}
-            className="nav-item !text-[#b9bce0] hover:!text-rose-300 hover:!bg-rose-500/10"
+            className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.10] px-2.5 py-3 text-rose-200 shadow-[0_8px_24px_rgba(244,63,94,0.10)] transition-all hover:border-rose-300/60 hover:bg-rose-500/[0.18] hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+            title="Sign out of the current POS account"
           >
-            <span className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
-              <LogOut size={16} strokeWidth={2.1} />
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-rose-500/15 text-rose-300 transition-colors group-hover:bg-rose-500/25">
+              <LogOut size={17} strokeWidth={2.2} />
             </span>
-            Sign out
+            <span className="text-[11px] font-extrabold tracking-wide">SIGN OUT</span>
           </button>
           <button
             type="button"
@@ -227,13 +228,13 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               if (desktop?.exitApp) void desktop.exitApp();
               else window.close();
             }}
-            className="nav-item !text-[#b9bce0] hover:!text-amber-300 hover:!bg-amber-500/10"
+            className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/[0.10] px-2.5 py-3 text-amber-200 shadow-[0_8px_24px_rgba(245,158,11,0.10)] transition-all hover:border-amber-300/70 hover:bg-amber-500/[0.18] hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-400/40"
             title="Close Nexfix POS"
           >
-            <span className="w-8 h-8 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0">
-              <X size={16} strokeWidth={2.1} />
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/15 text-amber-300 transition-colors group-hover:bg-amber-500/25">
+              <X size={17} strokeWidth={2.2} />
             </span>
-            Exit POS
+            <span className="text-[11px] font-extrabold tracking-wide">EXIT POS</span>
           </button>
         </div>
       </div>
