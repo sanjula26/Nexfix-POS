@@ -2094,12 +2094,6 @@ function CartLine({
           </button>
         </div>
 
-        <div className="w-[86px] text-right shrink-0">
-          {(line.discount > 0 || overridden) && <div className="text-[10px] text-faint line-through num">{fmtRs(line.product.price * line.qty, false)}</div>}
-          <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
-        </div>
-
-        {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
         <div className="w-[104px] shrink-0">
           {canDiscount ? (
             <div className="relative">
@@ -2141,6 +2135,12 @@ function CartLine({
             </button>
           )}
         </div>
+        <div className="w-[86px] text-right shrink-0">
+          {(line.discount > 0 || overridden) && <div className="text-[10px] text-faint line-through num">{fmtRs(line.product.price * line.qty, false)}</div>}
+          <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
+        </div>
+
+        {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
         <button className="icon-btn !w-7 !h-7 shrink-0 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={onRemove} title="Remove">
           <X size={13} />
         </button>
