@@ -53,12 +53,20 @@ async function read(req:Request) {
   // public.sales stores tenant ownership; machineId is a local POS-state field,
   // not a physical sales-table column. Keep this API query strictly scoped
   // by the authorized shop and requested date.
-  const {data:sales,error:se}=await admin.from("sales")
+  let salesQuery=admin.from("sales")
     .select("id,shop_id,bill_no,customer_id,customer_name,cashier_id,cashier_name,subtotal,discount,tax,shipping,total,amount_paid,change_amount,profit,points_earned,points_redeemed,status,note,created_at")
     .eq("shop_id",g.shop_id).gte("created_at",start).lte("created_at",end)
-    .order("created_at",{ascending:false}).limit(2000);
+    .order("created_at",{ascending:false}).order("id",{ascending:false});
+  if(cursorDate && cursorId){
+    if(!/^\d{4}-\d{2}-\d{2}T/.test(cursorDate) || cursorId.length>100) return json({ok:false,error:"Invalid sales cursor"},400);
+    salesQuery=salesQuery.or(`created_at.lt.${cursorDate},and(created_at.eq.${cursorDate},id.lt.${cursorId})`);
+  }
+  const {data:sales,error:se}=await salesQuery.limit(pageSize + 1);
   if(se)return json({ok:false,error:se.message},500);
-  const ids=(sales||[]).map(s=>s.id);
+  const pageSales=(sales||[]).slice(0,pageSize);
+  const hasMore=(sales||[]).length>pageSize;
+  const next=hasMore && pageSales.length ? pageSales[pageSales.length-1] : null;
+  const ids=pageSales.map(s=>s.id);
   const items=ids.length?(await admin.from("sale_items").select("id,sale_id,product_id,name,qty,price,cost,discount,price_overridden,warranty_months,unit_ids").in("sale_id",ids)).data||[]:[];
   const pays=ids.length?(await admin.from("sale_payments").select("id,sale_id,method,amount").in("sale_id",ids)).data||[]:[];
   const im=new Map<string,any[]>(), pm=new Map<string,any[]>();
