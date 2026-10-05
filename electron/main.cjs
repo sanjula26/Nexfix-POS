@@ -222,10 +222,16 @@ function setupAutoUpdater(){
     // gateway does not publish.
     autoUpdater.disableDifferentialDownload=true;
     autoUpdater.autoInstallOnAppQuit=false;
+    // Keep the Windows NSIS installer visible during this explicit update handoff.
+    // Silent NSIS launches can be blocked by Windows process/security policy without
+    // giving the user a visible installer, which looks exactly like "POS closed and
+    // never reopened". Force the installed app to launch again after setup finishes.
+    autoUpdater.autoRunAppAfterInstall=true;
     autoUpdater.on('checking-for-update',()=>sendUpdateEvent('checking'));
     autoUpdater.on('update-available',info=>{pendingUpdateInfo=info;sendUpdateEvent('available',{version:info.version});});
     autoUpdater.on('update-not-available',info=>{pendingUpdateInfo=null;sendUpdateEvent('not-available',{version:info?.version||app.getVersion()});});
     autoUpdater.on('download-progress',info=>sendUpdateEvent('progress',{percent:Number(info.percent||0)}));
+    autoUpdater.on('before-quit-for-update',()=>sendUpdateEvent('installing',{version:pendingUpdateInfo?.version||''}));
     autoUpdater.on('update-downloaded',info=>{
       pendingUpdateInfo=info; updateDownloadActive=false;
       sendUpdateEvent('downloaded',{version:info?.version||''});
@@ -234,7 +240,7 @@ function setupAutoUpdater(){
       if(!updateInstallScheduled){
         updateInstallScheduled=true;
         setTimeout(()=>{
-          try{ autoUpdater.quitAndInstall(true,true); }
+          try{ autoUpdater.quitAndInstall(false,true); }
           catch(error){
             updateInstallScheduled=false;
             sendUpdateEvent('error',{message:error?.message||String(error)});
