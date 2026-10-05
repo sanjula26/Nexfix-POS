@@ -488,12 +488,14 @@ export default function POS() {
     } else if (!hasCredit && paidNum < total) {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
-    /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
-    setFinishingSale(true);
+    /* Validate the explicitly entered billing WhatsApp number before entering the finishing state. */
     const whatsappDigits = normalizeWhatsAppPhone(billingWhatsApp || customer?.phone || custQuery);
     if (billingWhatsApp.trim() && (whatsappDigits.length < 9 || whatsappDigits.length > 15)) {
       return setError('Enter a valid WhatsApp number before completing this bill.');
     }
+
+    /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
+    setFinishingSale(true);
     const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
     if (whatsappWindow) {
