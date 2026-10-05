@@ -442,7 +442,7 @@ function setupAutoUpdater(){
             "Log 'Starting the verified updated POS executable.'",
             "$started=Start-Process -FilePath $target -WorkingDirectory $targetDir -PassThru",
             "Start-Sleep -Milliseconds 2500",
-            "try { $started.Refresh(); $runningVersion=$started.MainModule.FileVersionInfo.ProductVersion; Log ('Relaunched process version: ' + $runningVersion); if($expected -and -not ([string]$runningVersion).StartsWith($expected + '.')){ throw ('Relaunched POS version mismatch. Expected ' + $expected + ' but found ' + $runningVersion) } } catch { Log ('Relaunch verification warning: ' + $_.Exception.Message) }",
+            "try { $started.Refresh(); $runningVersion=$started.MainModule.FileVersionInfo.ProductVersion; Log ('Relaunched process version: ' + $runningVersion); if($expected -and -not ([string]$runningVersion).Equals($expected,[StringComparison]::OrdinalIgnoreCase) -and -not ([string]$runningVersion).StartsWith($expected + '.',[StringComparison]::OrdinalIgnoreCase)){ throw ('Relaunched POS version mismatch. Expected ' + $expected + ' but found ' + $runningVersion) } } catch { Log ('Relaunch verification warning: ' + $_.Exception.Message) }",
             "Log 'Updater handoff completed.'"
           ].join('; ');
           try {
