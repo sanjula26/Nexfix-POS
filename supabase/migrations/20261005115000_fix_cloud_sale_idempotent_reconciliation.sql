@@ -27,6 +27,9 @@ begin
   where n.nspname='private' and p.proname='complete_sale_atomic'
   order by p.oid desc limit 1;
   if d is null then raise exception 'private.complete_sale_atomic not found'; end if;
+  if position('''items'',coalesce((select jsonb_agg(to_jsonb(si) order by si.id) from public.sale_items si where si.sale_id=v_existing.id),''[]''::jsonb)' in d) > 0 then
+    return;
+  end if;
   if position(old_block in d)=0 then raise exception 'Existing-sale idempotency block not found'; end if;
   d:=replace(d,old_block,new_block);
   execute d;
