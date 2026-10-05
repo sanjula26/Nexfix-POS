@@ -71,6 +71,20 @@ export function getLocalShopId(): string {
   } catch { return ''; }
 }
 
+async function resolveAuthorizedBackupShopId(): Promise<string> {
+  // Production backup identity comes from the authenticated cloud shop
+  // membership. A local/recovery override must never redirect a provisioned
+  // shop's backup into another tenant's Drive partition.
+  const cloud = await ensureCloudShop('Nexfix Shop');
+  if (cloud.ok && cloud.shopId) return String(cloud.shopId).trim();
+
+  // Keep the legacy fallback only for installations that have not yet been
+  // provisioned for cloud tenancy. Normal production shops take the branch above.
+  const legacy = getLocalShopId();
+  if (legacy) return legacy;
+  throw new Error(cloud.error || 'Cloud shop membership is not provisioned for this POS.');
+}
+
 export function getDriveShopId(): string {
   try {
     return (
@@ -486,8 +500,13 @@ async function getGoogleDeploymentError(shopId: string, shopProof: string): Prom
 export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
-  const shopId = getLocalShopId();
-  if (!shopId) return { ok: false, error: 'Shop Backup ID is missing. Set one before backing up to Google Drive.' };
+  let shopId = '';
+  try {
+    shopId = await resolveAuthorizedBackupShopId();
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'The active cloud shop could not be verified for Google Drive backup.' };
+  }
+  if (!shopId) return { ok: false, error: 'The active shop identity is missing. Cloud shop membership is required for production Google Drive backup.' };
 
   try {
     const source = state && typeof state === 'object' && !Array.isArray(state)
@@ -658,7 +677,12 @@ function getJsonp<T>(url: URL, timeoutMs = 30000): Promise<T | null> {
 
 export async function fetchLatestGoogleBackup(timeoutMs = 30000): Promise<LatestGoogleBackup | null> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return null;
-  const shopId = getLocalShopId();
+  let shopId = '';
+  try {
+    shopId = await resolveAuthorizedBackupShopId();
+  } catch {
+    return null;
+  }
   if (!shopId) return null;
 
   try {
