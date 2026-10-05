@@ -56,8 +56,16 @@ export interface Expense { id:string; date:string; category:string; note:string;
 export interface ExchangeItem { productId:string; name:string; qty:number; amount:number; itemIdx?:number }
 export interface Exchange { id:string; exNo:string; date:string; billNo:string; customerName:string; reason:string; items:ExchangeItem[]; refund:number; additional:number; by:string; }
 export interface AuditEntry { id:string; time:string; user:string; action:string; entity:string; details:string; }
-export interface HeldLine { productId:string; qty:number; unitIds?:string[] }
-export interface HeldSale { id:string; label:string; heldAt:string; customerId?:string; lines:HeldLine[]; discount:number; taxPct:number; }
+export interface HeldLine { productId:string; qty:number; discount?:number; price?:number; unitIds?:string[] }
+export interface HeldSale {
+  id:string; label:string; heldAt:string; customerId?:string; lines:HeldLine[];
+  discount:number; taxPct:number;
+  discountMode?: 'rs'|'pct';
+  shipping?:number; points?:number; redeemOn?:boolean;
+  payment?:PaymentMethod; paid?:number; splitOn?:boolean; legs?:PaymentLeg[];
+  note?:string; salesmanId?:string; billingWhatsApp?:string;
+  tradeIn?:TradeIn;
+}
 export interface DaySession { id:string; cashierId:string; cashierName:string; date:string; opening:number; closed:boolean; closing?:number; note?:string; }
 export type RepairStatus='received'|'diagnosed'|'waiting_parts'|'in_repair'|'ready'|'delivered'|'cancelled';
 export interface RepairPart { productId?:string; name:string; qty:number; cost:number; }
