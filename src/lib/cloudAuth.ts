@@ -61,7 +61,7 @@ let cloudLoginPromise: Promise<{ ok: boolean; error?: string }> | null = null;
 async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void> {
   const desktop = getDesktopUpdaterApi();
   const deviceId = getMachineId();
-  if (!desktop) return;
+  if (!desktop || !accessToken) return;
   // The persistent device updater credential is intentionally independent of
   // the interactive Supabase session. Signing out of cloud Auth must never
   // revoke the native updater credential; it remains valid until the device is
