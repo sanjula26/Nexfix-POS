@@ -549,20 +549,64 @@ export default function POS() {
     if (lines.length === 0) return;
     holdSale({
       label: `Held · ${itemCount} item(s)`,
-      lines: lines.map(l => ({ productId: l.productId, qty: l.qty })),
+      lines: lines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount, price: l.price, unitIds: l.unitIds })),
       customerId: customerId || undefined,
       discount: discCart, taxPct: parseFloat(taxPct) || 0,
+      discountMode: discMode,
+      shipping: shipAmt || undefined,
+      points: redeemedPts || undefined,
+      redeemOn,
+      payment,
+      paid: paidNum || undefined,
+      splitOn,
+      legs: splitOn ? legs : undefined,
+      note: note.trim() || undefined,
+      salesmanId: salesmanId || undefined,
+      billingWhatsApp: billingWhatsApp || undefined,
+      tradeIn: tradeInOpen && tradeInValue > 0 ? {
+        ...tradeIn,
+        value: tradeInValue,
+        imei: tradeIn.imei.trim() || undefined,
+        serial: tradeIn.serial.trim() || undefined,
+      } : undefined,
     });
-    toast('Sale parked — resume it from Held', 'amber');
+    toast('Sale parked safely — all bill details were saved', 'amber');
     reset();
   };
   const resume = (id: string) => {
     const h = resumeHold(id);
     if (!h) return;
-    setLines(h.lines.map(l => ({ ...l, discount: 0 })));
+    setLines(h.lines.map(l => ({ ...l, discount: l.discount || 0, price: l.price, unitIds: l.unitIds })));
     setCustomerId(h.customerId || '');
     setDiscount(h.discount ? String(h.discount) : '');
+    setDiscMode(h.discountMode || 'rs');
     setTaxPct(h.taxPct ? String(h.taxPct) : '');
+    setShipOpen(Boolean(h.shipping));
+    setShipping(h.shipping ? String(h.shipping) : '');
+    setRedeemOn(Boolean(h.redeemOn));
+    setPoints(h.points ? String(h.points) : '');
+    setPayment(h.payment || 'cash');
+    setPaid(h.paid ? String(h.paid) : '');
+    setPaidAuto(false);
+    setSplitOn(Boolean(h.splitOn));
+    setLegs(h.legs?.length ? h.legs : [{ method: h.payment || 'cash', amount: h.paid || 0 }]);
+    setNote(h.note || '');
+    setNoteOpen(Boolean(h.note));
+    setSalesmanId(h.salesmanId || user?.id || '');
+    setBillingWhatsApp(h.billingWhatsApp || '');
+    if (h.tradeIn) {
+      setTradeInOpen(true);
+      setTradeIn({
+        productId: h.tradeIn.productId || '',
+        imei: h.tradeIn.imei || '',
+        serial: h.tradeIn.serial || '',
+        value: String(h.tradeIn.value || ''),
+        addToInventory: h.tradeIn.addToInventory !== false,
+      });
+    } else {
+      setTradeInOpen(false);
+      setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
+    }
     setHeldOpen(false);
     billingRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
