@@ -1138,7 +1138,7 @@ export default function POS() {
             </div>
 
             {/* C. cart items */}
-            <div className="hidden md:grid grid-cols-[minmax(0,1fr)_92px_86px_86px_38px] gap-3 items-center px-5 sm:px-6 py-2 bg-violet-500/[0.055] border-b border-line text-[9.5px] font-extrabold uppercase tracking-wider text-faint">
+            <div className="hidden md:grid grid-cols-[minmax(0,1fr)_92px_104px_86px_38px] gap-3 items-center px-5 sm:px-6 py-2 bg-violet-500/[0.055] border-b border-line text-[9.5px] font-extrabold uppercase tracking-wider text-faint">
               <span>Item / code · price</span>
               <span className="text-center">Qty</span>
               <span className="text-right">Discount</span>
@@ -2100,21 +2100,40 @@ function CartLine({
         </div>
 
         {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
-        <div className="w-[92px] shrink-0">
+        <div className="w-[104px] shrink-0">
           {canDiscount ? (
-            <input
-              aria-label={`Discount for ${line.product.name}`}
-              className={`input !w-full !py-1.5 !px-2 num !text-[11px] text-right ${line.discount > 0 ? '!border-violet-400 !text-violet-600 font-bold' : ''}`}
-              value={line.discount > 0 ? line.discount : ''}
-              placeholder="0.00"
-              inputMode="decimal"
-              onChange={e => onDisc(parseFloat(e.target.value.replace(/[^\\d.]/g, '')) || 0)}
-              title="Item discount (Rs.)"
-            />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-extrabold text-faint">Rs.</span>
+              <input
+                aria-label={`Discount in rupees for ${line.product.name}`}
+                className={`input !w-full !h-9 !py-1 !pl-7 !pr-2 num !text-[12px] text-right !rounded-lg focus:!border-violet-500 focus:!ring-2 focus:!ring-violet-500/15 ${line.discount > 0 ? "!border-violet-400 !text-violet-600 font-extrabold !bg-violet-500/[0.04]" : ""}`}
+                value={line.discount > 0 ? String(line.discount) : ""}
+                placeholder="0"
+                inputMode="decimal"
+                type="text"
+                autoComplete="off"
+                onFocus={e => e.currentTarget.select()}
+                onChange={e => {
+                  const raw = e.target.value.replace(/[^\d.]/g, "");
+                  const parts = raw.split(".");
+                  const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join("")}` : raw;
+                  if (normalized === "" || normalized === ".") onDisc(0);
+                  else {
+                    const value = Number(normalized);
+                    if (Number.isFinite(value)) onDisc(value);
+                  }
+                }}
+                onKeyDown={e => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") { onDisc(0); e.currentTarget.blur(); }
+                }}
+                title="Item discount (Rs.) — click and type"
+              />
+            </div>
           ) : (
             <button
               type="button"
-              className="w-full flex justify-end items-center gap-1 text-[10px] text-faint"
+              className="w-full h-9 flex justify-end items-center gap-1 text-[10px] text-faint"
               title="Item discount needs permission"
               onClick={onAskUnlock}
             >
