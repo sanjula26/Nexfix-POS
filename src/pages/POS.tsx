@@ -2097,44 +2097,37 @@ function CartLine({
           <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
         </div>
 
-        {canDiscount && (
-          <button
-            className={`icon-btn !w-7 !h-7 shrink-0 ${discOpen || line.discount > 0 ? '!bg-violet-500/10 !text-violet-500 !border-violet-300/50' : ''}`}
-            title="Item discount"
-            onClick={() => setDiscOpen(o => !o)}
-          >
-            <Tag size={12} />
-          </button>
-        )}
+        {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
+        <div className="w-[92px] shrink-0">
+          {canDiscount ? (
+            <input
+              aria-label={`Discount for ${line.product.name}`}
+              className={`input !w-full !py-1.5 !px-2 num !text-[11px] text-right ${line.discount > 0 ? '!border-violet-400 !text-violet-600 font-bold' : ''}`}
+              value={line.discount > 0 ? line.discount : ''}
+              placeholder="0.00"
+              inputMode="decimal"
+              onChange={e => onDisc(parseFloat(e.target.value.replace(/[^\\d.]/g, '')) || 0)}
+              title="Item discount (Rs.)"
+            />
+          ) : (
+            <button
+              type="button"
+              className="w-full flex justify-end items-center gap-1 text-[10px] text-faint"
+              title="Item discount needs permission"
+              onClick={onAskUnlock}
+            >
+              <Lock size={10} className="text-amber-500" /> Locked
+            </button>
+          )}
+        </div>
         <button className="icon-btn !w-7 !h-7 shrink-0 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={onRemove} title="Remove">
           <X size={13} />
         </button>
       </div>
 
-      <AnimatePresence>
-        {discOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="flex items-center gap-2 mt-2 ml-1 rounded-lg bg-raised/70 border border-line px-2.5 py-2">
-              <Tag size={11} className="text-violet-500 shrink-0" />
-              <span className="text-[10.5px] font-bold text-sub">Item discount (Rs.)</span>
-              <input
-                className="input !w-24 !py-1 !px-2 num !text-[11.5px] text-right"
-                value={line.discount || ''}
-                placeholder="0"
-                inputMode="decimal"
-                onChange={e => onDisc(parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0)}
-              />
-              {line.discount > 0 && (
-                <button className="text-[10px] font-bold text-rose-500" onClick={() => onDisc(0)}>Clear</button>
-              )}
-              <span className="ml-auto text-[10.5px] num font-semibold text-violet-500">− {fmtRs(line.discount || 0, false)}</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {line.discount > 0 && (
+        <div className="mt-1 ml-auto w-fit text-[10px] font-semibold text-violet-500 num">Item discount − {fmtRs(line.discount, false)}</div>
+      )}
     </motion.div>
   );
     }
