@@ -120,18 +120,45 @@ async function loadCloudSalesData({
 
 }
 
-async function loadTokenSalesData(token: string, date: string, timeZone: string, setSales: Dispatch<SetStateAction<Sale[] | null>>, setError: Dispatch<SetStateAction<string>>, setLoading: Dispatch<SetStateAction<boolean>>): Promise<void> {
+type PhoneSalesCursor = { date: string; id: string };
+
+async function loadTokenSalesData(
+  token: string,
+  date: string,
+  timeZone: string,
+  setSales: Dispatch<SetStateAction<Sale[] | null>>,
+  setError: Dispatch<SetStateAction<string>>,
+  setLoading: Dispatch<SetStateAction<boolean>>,
+  cursor: PhoneSalesCursor | null = null,
+  append = false,
+  setCursor?: Dispatch<SetStateAction<PhoneSalesCursor | null>>,
+  setHasMore?: Dispatch<SetStateAction<boolean>>,
+): Promise<void> {
   if (!token) return;
   setLoading(true);
   setError('');
   try {
-    const params = new URLSearchParams({ token, date, tz: timeZone });
+    const params = new URLSearchParams({ token, date, tz: timeZone, limit: '200' });
+    if (cursor) {
+      params.set('cursorDate', cursor.date);
+      params.set('cursorId', cursor.id);
+    }
     const response = await fetch(`https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/phone-sales?${params.toString()}`, { headers: { Accept: 'application/json' } });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.error || 'This phone sales link is not authorized.');
-    setSales(Array.isArray(data.sales) ? data.sales as Sale[] : []);
+    const incoming = Array.isArray(data.sales) ? data.sales as Sale[] : [];
+    setSales(current => {
+      if (!append) return incoming;
+      const merged = new Map((current || []).map(sale => [sale.id, sale]));
+      for (const sale of incoming) merged.set(sale.id, sale);
+      return Array.from(merged.values()).sort((a, b) => +new Date(b.date) - +new Date(a.date));
+    });
+    setCursor?.(data.nextCursor && typeof data.nextCursor.date === 'string' && typeof data.nextCursor.id === 'string'
+      ? { date: data.nextCursor.date, id: data.nextCursor.id }
+      : null);
+    setHasMore?.(data.hasMore === true);
   } catch (error) {
-    setSales(null);
+    if (!append) setSales(null);
     setError(error instanceof Error ? error.message : 'Unable to load authorized phone sales.');
   } finally {
     setLoading(false);
@@ -158,6 +185,9 @@ export default function MobileTodaySales() {
   const requestedTimeZone = query.get('tz')?.trim() || '';
   const [activeShopId, setActiveShopId] = useState(getCloudShopId());
   const [tokenSales, setTokenSales] = useState<Sale[] | null>(requestedToken ? [] : null);
+  const [tokenCursor, setTokenCursor] = useState<PhoneSalesCursor | null>(null);
+  const [tokenHasMore, setTokenHasMore] = useState(false);
+  const [tokenLoadingMore, setTokenLoadingMore] = useState(false);
   const [shopReady, setShopReady] = useState(requestedToken ? true : (!requestedMachineId && (!requestedShopId || requestedShopId === getCloudShopId())));
   const [shopError, setShopError] = useState('');
   const [remoteState, setRemoteState] = useState<POSState | null>(null);
@@ -290,6 +320,24 @@ export default function MobileTodaySales() {
   const shopId = activeShopId;
   const machine = getMachineIdentity();
   const machineId = requestedMachineId || machine.id;
+  useEffect(() => {
+    if (!requestedToken) return;
+    setTokenCursor(null);
+    setTokenHasMore(false);
+    void loadTokenSalesData(
+      requestedToken,
+      selectedDate,
+      requestedTimeZone,
+      setTokenSales,
+      setRemoteError,
+      setRemoteLoading,
+      null,
+      false,
+      setTokenCursor,
+      setTokenHasMore,
+    );
+  }, [requestedToken, selectedDate, requestedTimeZone]);
+
   const submitPin = () => {
     const value = pin.trim();
     if (!value) { setPinError('Enter the Admin PIN.'); return; }
@@ -303,7 +351,9 @@ export default function MobileTodaySales() {
 
   const refreshCloudSales = () => {
     if (requestedToken) {
-      void loadTokenSalesData(requestedToken, selectedDate, requestedTimeZone, setTokenSales, setRemoteError, setRemoteLoading);
+      setTokenCursor(null);
+      setTokenHasMore(false);
+      void loadTokenSalesData(requestedToken, selectedDate, requestedTimeZone, setTokenSales, setRemoteError, setRemoteLoading, null, false, setTokenCursor, setTokenHasMore);
       return;
     }
     void loadCloudSalesData({
@@ -466,6 +516,31 @@ export default function MobileTodaySales() {
                 );
               })}
             </div>
+          )}
+          {requestedToken && tokenHasMore && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!tokenCursor || tokenLoadingMore || remoteLoading) return;
+                setTokenLoadingMore(true);
+                void loadTokenSalesData(
+                  requestedToken,
+                  selectedDate,
+                  requestedTimeZone,
+                  setTokenSales,
+                  setRemoteError,
+                  setTokenLoadingMore,
+                  tokenCursor,
+                  true,
+                  setTokenCursor,
+                  setTokenHasMore,
+                );
+              }}
+              disabled={!tokenCursor || tokenLoadingMore || remoteLoading}
+              className="mt-4 min-h-11 w-full rounded-xl border border-line bg-raised px-4 text-sm font-extrabold text-ink disabled:opacity-50"
+            >
+              {tokenLoadingMore ? 'Loading older sales…' : 'Load older sales'}
+            </button>
           )}
         </section>
 
