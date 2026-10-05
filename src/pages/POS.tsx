@@ -796,8 +796,8 @@ export default function POS() {
               <div className="text-[11px] text-violet-200 num">{itemCount} items · {detailed.length} lines</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button className="btn !py-2 !px-3 bg-white text-violet-700 hover:bg-violet-50 !text-xs font-extrabold shadow-sm" onClick={hold} disabled={lines.length === 0} title="Hold sale (F5)">
+          <div className="flex items-center gap-2 min-w-0 max-w-[72%] overflow-x-auto no-scrollbar">
+            <button className="btn shrink-0 !py-2 !px-3 bg-white text-violet-700 hover:bg-violet-50 !text-xs font-extrabold shadow-sm" onClick={hold} disabled={lines.length === 0} title="Hold sale (F5)">
               <PauseCircle size={14} /> HOLD <span className="hidden sm:inline">F5</span>
             </button>
             <button className="btn !py-2 !px-3 bg-white/15 text-white hover:bg-white/25 !text-xs" onClick={() => navigate('/exchanges')} title="Start a return / exchange">
