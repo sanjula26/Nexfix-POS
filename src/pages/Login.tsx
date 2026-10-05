@@ -80,7 +80,7 @@ function migrateLegacyRememberedLogin() {
   }
 }
 
-function BrandingHero() {
+function BrandingHero({ appVersion }: { appVersion: string }) {
   return (
     <section className="relative flex min-h-[360px] w-full flex-1 flex-col justify-center overflow-hidden px-6 py-10 sm:px-10 lg:min-h-screen lg:px-12 xl:px-16">
       <div
@@ -342,7 +342,7 @@ export default function Login() {
         <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="absolute right-5 top-5 z-30 grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-white/85 text-slate-600 shadow-lg backdrop-blur transition hover:border-sky-400 hover:text-sky-600 dark:border-white/10 dark:bg-[#0b1930]/90 dark:text-slate-300 dark:hover:border-cyan-400 dark:hover:text-cyan-300">
           {dark ? <Sun size={17} /> : <Moon size={17} />}
         </button>
-        <BrandingHero />
+        <BrandingHero appVersion={appVersion} />
         {state.users.length === 0 ? (
           <AuthCard setup>
             <div className="p-6 sm:p-8">
