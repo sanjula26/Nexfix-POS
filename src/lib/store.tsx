@@ -1582,7 +1582,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         sales: [sale, ...prev.sales], counters: { ...prev.counters, bill: Math.max(prev.counters.bill, maxSaleSeq, Number.isFinite(billSeq) ? billSeq : 0) + 1 },
       };
     });
-    // The pending marker is cleared only after durable local persistence.
+    // The pending marker is only for crash/retry idempotency. Once the sale
+    // has been reconciled into local state, never reuse its saleId for a later
+    // identical-looking bill.
+    try { localStorage.removeItem(pendingKey); } catch { /* optional cleanup */ }
     syncToGoogleDrive('SalesHistory', [sale]);
     syncToGoogleDrive('Products', committed.products);
     scheduleGoogleBackup(() => stateRef.current, 'sale');
