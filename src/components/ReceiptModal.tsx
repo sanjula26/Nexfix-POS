@@ -83,19 +83,19 @@ export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: s
 
   return lines.join('\n');
 }
-export default function ReceiptModal({ sale,onClose,onNewSale }:{sale:Sale|null;onClose:()=>void;onNewSale?:()=>void;}){
+export default function ReceiptModal({ sale, preferredWhatsAppPhone, onClose, onNewSale }:{sale:Sale|null;preferredWhatsAppPhone?:string;onClose:()=>void;onNewSale?:()=>void;}){
   const { state } = usePOS();
   const [whatsappOpen,setWhatsappOpen]=useState(false);
   const [whatsappPhone,setWhatsappPhone]=useState('');
   if(!sale)return null;
   const customer=sale.customerId?state.customers.find(c=>c.id===sale.customerId):undefined;
   const openWhatsApp=()=>{
-    const phone=normalizeWhatsAppPhone(customer?.phone||'');
+    const phone=normalizeWhatsAppPhone(preferredWhatsAppPhone||customer?.phone||'');
     if(phone.length>=9&&phone.length<=15){
       openWhatsAppLink(phone,buildWhatsAppText(sale,state.settings));
       return;
     }
-    setWhatsappPhone(customer?.phone||'');
+    setWhatsappPhone(preferredWhatsAppPhone||customer?.phone||'');
     setWhatsappOpen(true);
   };
   const sendWhatsApp=()=>{

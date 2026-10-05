@@ -110,6 +110,7 @@ export default function POS() {
   const [gateShow, setGateShow] = useState(false);
 
   const [doneSale, setDoneSale] = useState<Sale | null>(null);
+  const [doneSaleWhatsApp, setDoneSaleWhatsApp] = useState('');
   const [reprintOpen, setReprintOpen] = useState(false);
   const [reprintSearch, setReprintSearch] = useState('');
   const [reprintWhatsAppSale, setReprintWhatsAppSale] = useState<Sale | null>(null);
@@ -489,7 +490,10 @@ export default function POS() {
     }
     /* Reserve the WhatsApp tab during the user click so popup blockers do not block it after the async sale completes. */
     setFinishingSale(true);
-    const whatsappDigits = normalizeWhatsAppPhone(customer?.phone || billingWhatsApp || custQuery);
+    const whatsappDigits = normalizeWhatsAppPhone(billingWhatsApp || customer?.phone || custQuery);
+    if (billingWhatsApp.trim() && (whatsappDigits.length < 9 || whatsappDigits.length > 15)) {
+      return setError('Enter a valid WhatsApp number before completing this bill.');
+    }
     const autoWhatsApp = whatsappDigits.length >= 9 && (waReceipt || state.settings.whatsappReceipts);
     const whatsappWindow = autoWhatsApp ? window.open('about:blank', '_blank') : null;
     if (whatsappWindow) {
@@ -532,6 +536,7 @@ export default function POS() {
     }
     if (sale) {
       setDoneSale(sale);
+      setDoneSaleWhatsApp(whatsappDigits);
       /* WhatsApp receipt — navigate the user-approved tab after the sale is confirmed. */
       if (whatsappWindow && whatsappDigits.length >= 9) {
         whatsappWindow.location.href = waLink(whatsappDigits, buildWhatsAppText(sale, state.settings));
@@ -1951,7 +1956,7 @@ export default function POS() {
         </div>
       </Modal>
 
-      <ReceiptModal sale={doneSale} onClose={() => { setDoneSale(null); setTimeout(focusSearch, 120); }} />
+      <ReceiptModal sale={doneSale} preferredWhatsAppPhone={doneSaleWhatsApp} onClose={() => { setDoneSale(null); setDoneSaleWhatsApp(''); setTimeout(focusSearch, 120); }} />
     </div>
   );
 }
