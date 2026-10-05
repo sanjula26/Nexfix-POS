@@ -56,7 +56,7 @@ export interface Expense { id:string; date:string; category:string; note:string;
 export interface ExchangeItem { productId:string; name:string; qty:number; amount:number; itemIdx?:number }
 export interface Exchange { id:string; exNo:string; date:string; billNo:string; customerName:string; reason:string; items:ExchangeItem[]; refund:number; additional:number; by:string; }
 export interface AuditEntry { id:string; time:string; user:string; action:string; entity:string; details:string; }
-export interface HeldLine { productId:string; qty:number; unitIds?:string[] }
+export interface HeldLine { productId:string; qty:number; discount?:number; price?:number; unitIds?:string[] }
 export interface HeldSale {
   id:string; label:string; heldAt:string; customerId?:string; lines:HeldLine[];
   discount:number; taxPct:number;
