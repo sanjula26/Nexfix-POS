@@ -232,19 +232,81 @@ function setupAutoUpdater(){
     autoUpdater.on('update-not-available',info=>{pendingUpdateInfo=null;sendUpdateEvent('not-available',{version:info?.version||app.getVersion()});});
     autoUpdater.on('download-progress',info=>sendUpdateEvent('progress',{percent:Number(info.percent||0)}));
     autoUpdater.on('before-quit-for-update',()=>sendUpdateEvent('installing',{version:pendingUpdateInfo?.version||''}));
+    const updaterInstallLogFile=()=>path.join(app.getPath('userData'),'nexfix-secure','update-install.log');
+    const logUpdaterInstall=(message)=>{
+      try{
+        const file=updaterInstallLogFile();
+        fs.mkdirSync(path.dirname(file),{recursive:true});
+        fs.appendFileSync(file,'['+new Date().toISOString()+'] '+message+'\n','utf8');
+      }catch{}
+    };
+    const spawnInstallerAndWaitForSpawn=({command,args,label})=>new Promise((resolve,reject)=>{
+      logUpdaterInstall('Launching '+label+': '+command+' '+args.join(' '));
+      let settled=false;
+      let child;
+      try{
+        child=spawn(command,args,{detached:true,stdio:'ignore',windowsHide:true});
+        child.once('spawn',()=>{
+          if(settled)return;
+          settled=true;
+          child.unref();
+          logUpdaterInstall(label+' process spawned successfully (pid='+child.pid+').');
+          resolve(true);
+        });
+        child.once('error',error=>{
+          if(settled)return;
+          settled=true;
+          logUpdaterInstall(label+' spawn failed: '+(error?.code||'')+' '+(error?.message||String(error)));
+          reject(error);
+        });
+      }catch(error){
+        if(!settled){
+          settled=true;
+          logUpdaterInstall(label+' synchronous spawn failed: '+(error?.message||String(error)));
+          reject(error);
+        }
+      }
+    });
+    const handoffDownloadedInstaller=async()=>{
+      if(!autoUpdater)throw new Error('Windows updater is unavailable.');
+      const installerPath=typeof autoUpdater.installerPath==='string'?autoUpdater.installerPath:'';
+      if(!installerPath)throw new Error('Downloaded update installer path is unavailable.');
+      if(!fs.existsSync(installerPath))throw new Error('Downloaded update installer is missing: '+installerPath);
+      const stat=fs.statSync(installerPath);
+      if(!stat.isFile()||stat.size<=0)throw new Error('Downloaded update installer is empty or invalid.');
+      const args=['--updated','/S','--force-run'];
+      logUpdaterInstall('Verified downloaded installer: '+installerPath+' ('+stat.size+' bytes).');
+      try{
+        await spawnInstallerAndWaitForSpawn({command:installerPath,args,label:'NSIS updater'});
+      }catch(firstError){
+        // electron-updater itself falls back to elevate.exe for EACCES/UNKNOWN,
+        // but its normal detached spawn resolves before a later async spawn error.
+        // Do that fallback here while the POS is still alive, so a failed handoff
+        // can never silently close the POS.
+        const elevatePath=path.join(process.resourcesPath,'elevate.exe');
+        if(!fs.existsSync(elevatePath))throw new Error('Windows installer launch failed: '+(firstError?.message||String(firstError)));
+        try{
+          await spawnInstallerAndWaitForSpawn({command:elevatePath,args:[installerPath,...args],label:'NSIS elevated fallback'});
+        }catch(secondError){
+          throw new Error('Windows installer launch failed. Direct launch: '+(firstError?.message||String(firstError))+'. Elevated fallback: '+(secondError?.message||String(secondError))+'.');
+        }
+      }
+      sendUpdateEvent('installing',{version:pendingUpdateInfo?.version||''});
+      logUpdaterInstall('Installer handoff confirmed. Quitting POS so NSIS can replace the installed files and relaunch the new version.');
+      setImmediate(()=>app.quit());
+    };
     autoUpdater.on('update-downloaded',info=>{
       pendingUpdateInfo=info; updateDownloadActive=false;
       sendUpdateEvent('downloaded',{version:info?.version||''});
-      // Install the downloaded NSIS update silently and relaunch the POS.
-      // No installer is copied to the user's Downloads folder.
       if(!updateInstallScheduled){
         updateInstallScheduled=true;
         setTimeout(()=>{
-          try{ autoUpdater.quitAndInstall(false,true); }
-          catch(error){
+          void handoffDownloadedInstaller().catch(error=>{
             updateInstallScheduled=false;
-            sendUpdateEvent('error',{message:error?.message||String(error)});
-          }
+            const message=error?.message||String(error);
+            logUpdaterInstall('INSTALL HANDOFF FAILED: '+message);
+            sendUpdateEvent('error',{message});
+          });
         },600);
       }
     });
