@@ -2088,6 +2088,12 @@ function CartLine({
         </div>
 
         <div className="w-[86px] text-right shrink-0">
+          <div className={`text-[11px] num font-bold ${line.discount > 0 ? 'text-violet-600 dark:text-violet-400' : 'text-faint'}`}>
+            {line.discount > 0 ? `− ${fmtRs(line.discount, false)}` : '—'}
+          </div>
+        </div>
+
+        <div className="w-[86px] text-right shrink-0">
           {(line.discount > 0 || overridden) && <div className="text-[10px] text-faint line-through num">{fmtRs(line.product.price * line.qty, false)}</div>}
           <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
         </div>
@@ -2101,9 +2107,11 @@ function CartLine({
             <Tag size={12} />
           </button>
         )}
+        <div className="flex items-center gap-1 shrink-0 w-[62px] justify-end">
         <button className="icon-btn !w-7 !h-7 shrink-0 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={onRemove} title="Remove">
           <X size={13} />
         </button>
+        </div>
       </div>
 
       <AnimatePresence>
