@@ -62,10 +62,10 @@ async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void
   const desktop = getDesktopUpdaterApi();
   const deviceId = getMachineId();
   if (!desktop) return;
-  if (!accessToken || !deviceId) {
-    await desktop.clearUpdateCredentials?.();
-    return;
-  }
+  // The persistent device updater credential is intentionally independent of
+  // the interactive Supabase session. Signing out of cloud Auth must never
+  // revoke the native updater credential; it remains valid until the device is
+  // explicitly revoked server-side.
 
   // A token alone is not enough for the private updater: the device must be
   // registered to the same authenticated user and active shop first.
@@ -360,7 +360,9 @@ export async function ensureCloudSession(
   }
 }
 export async function signOutFromCloud(): Promise<void> {
-  try { await syncDesktopUpdaterCredentials(); } catch { /* local sign-out must remain non-blocking */ }
+  // Do not clear native updater credentials here. The updater is authorized
+  // once per Windows device and is intentionally independent of POS/cloud
+  // login sessions.
   if (!supabase) return;
   try { await supabase.auth.signOut(); } catch { /* local session remains authoritative offline */ }
 }
