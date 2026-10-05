@@ -215,8 +215,11 @@ export default function Settings() {
     return Promise.race([desktopApi?.checkForUpdates?.(),new Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>((_,reject)=>window.setTimeout(()=>reject(new Error('Update check timed out after 35 seconds. Please check your internet connection and try again.')),35000))]);
   };
   const ensureUpdaterReady=async()=>{
-    // Authorization is single-flight and has a bounded timeout in cloudAuth.
-    // Never keep a Settings action in an indefinite retry loop.
+    // The native Windows updater keeps a durable per-device credential in
+    // OS-protected storage. Once that credential is present, a normal POS
+    // restart/login must not require another cloud Admin authorization.
+    const nativeStatus=await desktopApi?.getUpdateStatus?.();
+    if(nativeStatus?.authorized) return true;
     return refreshDesktopUpdaterCredentials();
   };
   const checkForAppUpdates=async()=>{if(!desktopApi?.isPackaged){setUpdateState({status:'error',message:'App updates are available in the installed POS only.'});return;}setUpdateState({status:'checking'});const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}try{const result=await runUpdateCheck();if(result?.error)setUpdateState({status:'error',message:result.error});else if(result?.available&&result.version)setUpdateState({status:'available',version:result.version});else if(result?.supported===false)setUpdateState({status:'error',message:'App updates are not available in this edition.'});else setUpdateState({status:'not-available'});}catch(error){setUpdateState({status:'error',message:error instanceof Error?error.message:'The update check could not be completed.'});}};
