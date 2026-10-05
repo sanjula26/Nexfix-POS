@@ -131,13 +131,21 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
     ? storedDeviceToken.token.trim()
     : '';
   if (storedDeviceTokenValue) {
-    const storedDeviceId = storedDeviceToken?.deviceId?.trim() || currentDeviceId;
-    const result = await desktop.setUpdateCredentials({
-      token: storedDeviceTokenValue,
-      deviceId: storedDeviceId,
-      mode: 'device',
-    });
-    if ((result as { ok?: boolean } | null)?.ok) return true;
+    const storedDeviceId = storedDeviceToken?.deviceId?.trim() || '';
+    // A token is bound to one Windows device identity. Never silently reuse a
+    // token with a different local machine identity (for example after a
+    // restored profile or machine-id reset); fall through to the authenticated
+    // provisioning path so the server can issue a token for this device.
+    if (storedDeviceId && storedDeviceId === currentDeviceId) {
+      const result = await desktop.setUpdateCredentials({
+        token: storedDeviceTokenValue,
+        deviceId: currentDeviceId,
+        mode: 'device',
+      });
+      if ((result as { ok?: boolean } | null)?.ok) return true;
+    } else {
+      await desktop.clearUpdateCredentials?.();
+    }
   }
 
   if (!supabaseConfigured || !supabase) {
