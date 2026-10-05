@@ -50,12 +50,13 @@ async function read(req:Request) {
   if(!g||g.revoked_at||(g.expires_at&&new Date(g.expires_at).getTime()<=Date.now()))return json({ok:false,error:"This phone sales link is expired or revoked"},401);
   await admin.from("phone_sales_tokens").update({last_used_at:new Date().toISOString()}).eq("id",g.id);
   const {start,end}=bounds((u.searchParams.get("date")||"").trim(),(u.searchParams.get("tz")||"").trim());
-  let salesQuery=admin.from("sales").select("id,shop_id,bill_no,customer_id,customer_name,cashier_id,cashier_name,subtotal,discount,tax,shipping,total,amount_paid,change_amount,profit,points_earned,points_redeemed,status,note,created_at,machine_id").eq("shop_id",g.shop_id).gte("created_at",start).lte("created_at",end);
-  // A phone-sales link is issued for one POS device. Keep the read scope bound
-  // to both the shop and the issuing device so one machine link cannot expose
-  // another register's sales.
-  if (g.device_id) salesQuery=salesQuery.eq("machine_id",g.device_id);
-  const {data:sales,error:se}=await salesQuery.order("created_at",{ascending:false}).limit(2000);
+  // public.sales stores tenant ownership; machineId is a local POS-state field,
+  // not a physical sales-table column. Keep this API query strictly scoped
+  // by the authorized shop and requested date.
+  const {data:sales,error:se}=await admin.from("sales")
+    .select("id,shop_id,bill_no,customer_id,customer_name,cashier_id,cashier_name,subtotal,discount,tax,shipping,total,amount_paid,change_amount,profit,points_earned,points_redeemed,status,note,created_at")
+    .eq("shop_id",g.shop_id).gte("created_at",start).lte("created_at",end)
+    .order("created_at",{ascending:false}).limit(2000);
   if(se)return json({ok:false,error:se.message},500);
   const ids=(sales||[]).map(s=>s.id);
   const items=ids.length?(await admin.from("sale_items").select("id,sale_id,product_id,name,qty,price,cost,discount,price_overridden,warranty_months,unit_ids").in("sale_id",ids)).data||[]:[];
