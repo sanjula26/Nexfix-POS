@@ -132,7 +132,7 @@ function DesktopUpdateNotice() {
     nexfixDesktop?: {
       isPackaged?: boolean;
       isPortable?: boolean;
-      getUpdateStatus?: () => Promise<{supported?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;
+      getUpdateStatus?: () => Promise<{supported?:boolean;authorized?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;
       checkForUpdates?: () => Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;
       downloadAndInstallUpdate?: () => Promise<{supported?:boolean;started?:boolean;error?:string}>;
       onUpdateEvent?: (listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>()=>void;
