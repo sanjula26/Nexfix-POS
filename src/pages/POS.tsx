@@ -766,6 +766,16 @@ export default function POS() {
       : change > 0.009 ? 'change'
       : 'exact';
 
+  // A preview only: the authoritative invoice number is returned by the
+  // cloud/local sale transaction after SAVE. This keeps the terminal clear
+  // without pretending a multi-machine cloud sequence is already reserved.
+  const maxBillSeq = state.sales.reduce((m, s) => {
+    const n = parseInt(s.billNo.split('-').pop() || '0', 10);
+    return Number.isFinite(n) ? Math.max(m, n) : m;
+  }, 0);
+  const nextBillSeq = Math.max(state.counters.bill || 1, maxBillSeq + 1);
+  const nextBillPreview = `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(nextBillSeq).slice(-4).padStart(4, '0')}`;
+
   return (
     <div className="pb-24">
 
@@ -832,6 +842,28 @@ export default function POS() {
             >
               <Printer size={14} /> REPRINT
             </button>
+          </div>
+        </div>
+
+        {/* terminal-style bill summary: the important identifiers stay visible while billing */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-line border-b border-line">
+          <div className="bg-surface px-4 sm:px-5 py-2.5">
+            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Invoice No · next</div>
+            <div className="num text-[14px] font-extrabold text-violet-600 dark:text-violet-400 mt-0.5">{nextBillPreview}</div>
+          </div>
+          <div className="bg-surface px-4 sm:px-5 py-2.5">
+            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Customer</div>
+            <div className="text-[12.5px] font-bold text-ink truncate mt-0.5">{customer?.name || 'Walk-in Customer'}</div>
+          </div>
+          <div className="bg-surface px-4 sm:px-5 py-2.5">
+            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Mobile / WhatsApp</div>
+            <div className="num text-[12.5px] font-bold text-ink truncate mt-0.5">{customer?.phone || billingWhatsApp || '—'}</div>
+          </div>
+          <div className="bg-surface px-4 sm:px-5 py-2.5">
+            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Customer Balance</div>
+            <div className={`num text-[14px] font-extrabold mt-0.5 ${customer?.creditBalance ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {fmtRs(customer?.creditBalance || 0)}
+            </div>
           </div>
         </div>
 
@@ -1099,6 +1131,13 @@ export default function POS() {
             </div>
 
             {/* C. cart items */}
+            <div className="hidden md:grid grid-cols-[minmax(0,1fr)_92px_86px_86px_38px] gap-3 items-center px-5 sm:px-6 py-2 bg-violet-500/[0.055] border-b border-line text-[9.5px] font-extrabold uppercase tracking-wider text-faint">
+              <span>Item / code · price</span>
+              <span className="text-center">Qty</span>
+              <span className="text-right">Discount</span>
+              <span className="text-right">Amount</span>
+              <span className="text-center">Action</span>
+            </div>
             <div className="min-h-[190px] max-h-[400px] overflow-y-auto">
               {detailed.length === 0 ? (
                 <div className="flex flex-col items-center py-12 text-center px-6">
@@ -1195,12 +1234,12 @@ export default function POS() {
               </div>
             </div>
 
-            {/* shipping / other */}
+            {/* service / delivery charge — always obvious at checkout */}
             {shipOpen ? (
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[12.5px] text-sub flex items-center gap-1.5">
-                  <Truck size={12} className="text-faint" /> Delivery / other
-                  <button className="text-faint hover:text-rose-500" onClick={() => { setShipOpen(false); setShipping(''); }}><X size={11} /></button>
+              <div className="flex items-center justify-between gap-3 rounded-xl bg-sky-500/[0.04] border border-sky-500/20 px-2.5 py-2">
+                <span className="text-[12.5px] text-sub flex items-center gap-1.5 font-semibold">
+                  <Truck size={12} className="text-sky-500" /> Service / Delivery
+                  <button className="text-faint hover:text-rose-500 ml-0.5" onClick={() => { setShipOpen(false); setShipping(''); }} title="Remove service charge"><X size={11} /></button>
                 </span>
                 <div className="flex items-center gap-1.5">
                   <input
@@ -1208,12 +1247,13 @@ export default function POS() {
                     value={shipping} onChange={e => setShipping(e.target.value.replace(/[^\d.]/g, ''))}
                     placeholder="0" inputMode="decimal"
                   />
-                  <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{shipAmt > 0 ? fmtRs(shipAmt, false) : '—'}</span>
+                  <span className="w-24 text-right num text-[12.5px] font-semibold text-sky-600 dark:text-sky-400">{shipAmt > 0 ? fmtRs(shipAmt, false) : '—'}</span>
                 </div>
               </div>
             ) : (
-              <button className="text-[11.5px] font-semibold text-violet-500 hover:text-violet-600 flex items-center gap-1" onClick={() => setShipOpen(true)}>
-                <Plus size={11} /> Add delivery / other charge
+              <button className="w-full flex items-center justify-between rounded-xl border border-dashed border-line bg-raised/30 px-3 py-2 text-[11.5px] font-semibold text-sub hover:text-violet-600 hover:border-violet-300 transition-colors" onClick={() => setShipOpen(true)}>
+                <span className="flex items-center gap-1.5"><Truck size={12} /> Add service / delivery charge</span>
+                <Plus size={13} />
               </button>
             )}
 
@@ -1276,6 +1316,20 @@ export default function POS() {
                 <div className="text-[10px] text-faint">Trade-in value is deducted from this bill. When added to inventory, the device is recorded at the trade-in value.</div>
               </div>
             )}
+
+            {/* full amount before payment */}
+            <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[11.5px] font-bold text-sub">Full Amount</span>
+                <span className="num text-[15px] font-extrabold text-ink">{fmtRs(preTotal)}</span>
+              </div>
+              {pointsVal > 0 && (
+                <div className="flex items-center justify-between mt-1 text-[10.5px]">
+                  <span className="text-amber-600 dark:text-amber-400">Loyalty points applied</span>
+                  <span className="num font-bold text-amber-600 dark:text-amber-400">− {fmtRs(pointsVal, false)}</span>
+                </div>
+              )}
+            </div>
 
             {/* grand total */}
             <div className="!mt-3.5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-4 flex items-end justify-between shadow-lg shadow-violet-600/30">
