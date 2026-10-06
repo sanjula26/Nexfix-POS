@@ -822,9 +822,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
   }, [user, pushAudit]);
-  const signOut = useCallback(() => {
-    // Ignore spurious signOut calls in the first 8s after login (boot/effect race)
-    if (loginAtRef.current && Date.now() - loginAtRef.current < 8000) {
+  const signOut = useCallback((force = false) => {
+    // Ignore only spurious/effect-driven signOut calls during the first 8s after login.
+    // An explicit user action can always sign out immediately.
+    if (!force && loginAtRef.current && Date.now() - loginAtRef.current < 8000) {
       return;
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
