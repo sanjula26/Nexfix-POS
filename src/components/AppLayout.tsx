@@ -213,15 +213,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <button
             type="button"
             onClick={() => { signOut(); navigate('/login'); }}
-            className="group relative min-w-0 overflow-hidden rounded-xl border border-emerald-300/35 bg-gradient-to-br from-emerald-500/25 via-emerald-500/10 to-slate-950/20 px-2 py-2.5 text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_5px_0_rgba(6,78,59,0.42),0_10px_18px_rgba(16,185,129,0.14)] transition-all duration-150 hover:-translate-y-0.5 hover:border-emerald-200/70 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.24),0_6px_0_rgba(6,78,59,0.42),0_14px_22px_rgba(16,185,129,0.2)] active:translate-y-0.5 active:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_3px_0_rgba(6,78,59,0.45),0_7px_12px_rgba(16,185,129,0.12)] focus:outline-none focus:ring-2 focus:ring-emerald-300/50"
+            className="min-w-0 rounded-xl border border-emerald-400/40 bg-emerald-600 px-2 py-2.5 text-white shadow-none transition-colors duration-150 hover:bg-emerald-700 hover:border-emerald-300/70 active:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
             title="Sign out of the current POS account"
           >
-            <span className="pointer-events-none absolute inset-x-3 top-0 h-px bg-white/35" />
-            <span className="mx-auto grid h-8 w-8 place-items-center rounded-lg border border-white/15 bg-gradient-to-br from-emerald-400/35 to-emerald-700/25 text-emerald-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_4px_8px_rgba(0,0,0,0.22)] transition-transform duration-150 group-hover:scale-105 group-active:scale-95">
-              <LogOut size={15} strokeWidth={2.5} />
-            </span>
+            <LogOut size={15} strokeWidth={2.5} className="mx-auto" />
             <span className="mt-1.5 block text-[10px] font-black tracking-[0.08em]">SIGN OUT</span>
-            <span className="mt-0.5 block text-[8px] font-semibold text-emerald-200/65">CURRENT USER</span>
           </button>
           <button
             type="button"
@@ -230,15 +226,11 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               if (desktop?.exitApp) void desktop.exitApp();
               else window.close();
             }}
-            className="group relative min-w-0 overflow-hidden rounded-xl border border-red-300/40 bg-gradient-to-br from-red-500/30 via-red-500/12 to-slate-950/20 px-2 py-2.5 text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_5px_0_rgba(127,29,29,0.45),0_10px_18px_rgba(239,68,68,0.14)] transition-all duration-150 hover:-translate-y-0.5 hover:border-red-200/75 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.24),0_6px_0_rgba(127,29,29,0.45),0_14px_22px_rgba(239,68,68,0.2)] active:translate-y-0.5 active:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_3px_0_rgba(127,29,29,0.5),0_7px_12px_rgba(239,68,68,0.12)] focus:outline-none focus:ring-2 focus:ring-red-300/50"
+            className="min-w-0 rounded-xl border border-red-700/50 bg-red-700 px-2 py-2.5 text-white shadow-none transition-colors duration-150 hover:bg-red-800 hover:border-red-500/80 active:bg-red-900 focus:outline-none focus:ring-2 focus:ring-red-400/70"
             title="Close Nexfix POS"
           >
-            <span className="pointer-events-none absolute inset-x-3 top-0 h-px bg-white/35" />
-            <span className="mx-auto grid h-8 w-8 place-items-center rounded-lg border border-white/15 bg-gradient-to-br from-red-400/35 to-red-800/25 text-red-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_4px_8px_rgba(0,0,0,0.22)] transition-transform duration-150 group-hover:scale-105 group-active:scale-95">
-              <X size={15} strokeWidth={2.5} />
-            </span>
+            <X size={15} strokeWidth={2.5} className="mx-auto" />
             <span className="mt-1.5 block text-[10px] font-black tracking-[0.08em]">EXIT POS</span>
-            <span className="mt-0.5 block text-[8px] font-semibold text-red-200/65">CLOSE APPLICATION</span>
           </button>
         </div>
       </div>
