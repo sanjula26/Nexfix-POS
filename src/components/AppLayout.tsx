@@ -212,7 +212,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <div className="grid grid-cols-2 gap-2.5">
           <button
             type="button"
-            onClick={() => { signOut(); navigate('/login'); }}
+            onClick={() => { signOut(true); navigate('/login'); }}
             className="min-w-0 rounded-xl border border-emerald-400/40 bg-emerald-600 px-2 py-2.5 text-white shadow-none transition-colors duration-150 hover:bg-emerald-700 hover:border-emerald-300/70 active:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
             title="Sign out of the current POS account"
           >
