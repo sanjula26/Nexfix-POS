@@ -213,13 +213,15 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <button
             type="button"
             onClick={() => { signOut(); navigate('/login'); }}
-            className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl border border-rose-400/30 bg-rose-500/[0.10] px-2.5 py-3 text-rose-200 shadow-[0_8px_24px_rgba(244,63,94,0.10)] transition-all hover:border-rose-300/60 hover:bg-rose-500/[0.18] hover:text-white focus:outline-none focus:ring-2 focus:ring-rose-400/40"
+            className="group relative min-w-0 overflow-hidden rounded-2xl border border-rose-300/35 bg-gradient-to-br from-rose-500/25 via-rose-500/10 to-slate-950/20 px-2.5 py-3.5 text-rose-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_10px_0_rgba(127,29,29,0.38),0_18px_30px_rgba(244,63,94,0.16)] transition-all duration-150 hover:-translate-y-0.5 hover:border-rose-200/70 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.24),0_12px_0_rgba(127,29,29,0.38),0_24px_38px_rgba(244,63,94,0.24)] active:translate-y-1 active:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_5px_0_rgba(127,29,29,0.45),0_10px_18px_rgba(244,63,94,0.16)] focus:outline-none focus:ring-2 focus:ring-rose-300/50"
             title="Sign out of the current POS account"
           >
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-rose-500/15 text-rose-300 transition-colors group-hover:bg-rose-500/25">
-              <LogOut size={17} strokeWidth={2.2} />
+            <span className="pointer-events-none absolute inset-x-3 top-0 h-px bg-white/35" />
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-white/15 bg-gradient-to-br from-rose-400/35 to-rose-700/25 text-rose-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_7px_14px_rgba(0,0,0,0.24)] transition-transform duration-150 group-hover:scale-105 group-active:scale-95">
+              <LogOut size={19} strokeWidth={2.4} />
             </span>
-            <span className="text-[11px] font-extrabold tracking-wide">SIGN OUT</span>
+            <span className="mt-2 block text-[11px] font-black tracking-[0.08em]">SIGN OUT</span>
+            <span className="mt-0.5 block text-[9px] font-semibold text-rose-200/65">CURRENT USER</span>
           </button>
           <button
             type="button"
@@ -228,13 +230,15 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               if (desktop?.exitApp) void desktop.exitApp();
               else window.close();
             }}
-            className="group flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/[0.10] px-2.5 py-3 text-amber-200 shadow-[0_8px_24px_rgba(245,158,11,0.10)] transition-all hover:border-amber-300/70 hover:bg-amber-500/[0.18] hover:text-white focus:outline-none focus:ring-2 focus:ring-amber-400/40"
+            className="group relative min-w-0 overflow-hidden rounded-2xl border border-amber-300/40 bg-gradient-to-br from-amber-400/25 via-orange-500/10 to-slate-950/20 px-2.5 py-3.5 text-amber-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_10px_0_rgba(120,53,15,0.42),0_18px_30px_rgba(245,158,11,0.16)] transition-all duration-150 hover:-translate-y-0.5 hover:border-amber-200/75 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.24),0_12px_0_rgba(120,53,15,0.42),0_24px_38px_rgba(245,158,11,0.24)] active:translate-y-1 active:shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_5px_0_rgba(120,53,15,0.48),0_10px_18px_rgba(245,158,11,0.16)] focus:outline-none focus:ring-2 focus:ring-amber-300/50"
             title="Close Nexfix POS"
           >
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/15 text-amber-300 transition-colors group-hover:bg-amber-500/25">
-              <X size={17} strokeWidth={2.2} />
+            <span className="pointer-events-none absolute inset-x-3 top-0 h-px bg-white/35" />
+            <span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-white/15 bg-gradient-to-br from-amber-300/35 to-orange-700/25 text-amber-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.25),0_7px_14px_rgba(0,0,0,0.24)] transition-transform duration-150 group-hover:scale-105 group-active:scale-95">
+              <X size={19} strokeWidth={2.4} />
             </span>
-            <span className="text-[11px] font-extrabold tracking-wide">EXIT POS</span>
+            <span className="mt-2 block text-[11px] font-black tracking-[0.08em]">EXIT POS</span>
+            <span className="mt-0.5 block text-[9px] font-semibold text-amber-200/65">CLOSE APPLICATION</span>
           </button>
         </div>
       </div>
