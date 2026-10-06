@@ -75,6 +75,16 @@ jobs:
           grep -q "revoke all on function private.upsert_pos_snapshot_impl" "$snap"
           grep -q "A sale item can appear only once" "$ret"
           grep -RInE "revoke all on function private\.(complete_sale_atomic|process_sale_return_atomic|register_trade_in_atomic).*authenticated" supabase/migrations >/dev/null
+          # Invoker wrappers need EXECUTE on their private SECURITY DEFINER implementation.
+          # The private schema is not exposed through the Data API, so these grants are not direct RPC endpoints.
+          wrapper='supabase/migrations/20261006063000_restore_transaction_wrapper_private_execute_grants.sql'
+          test -f "$wrapper"
+          grep -q "grant execute on function private.complete_sale_atomic" supabase/migrations/20261006060000_restore_complete_sale_private_execute_grant.sql
+          grep -q "grant execute on function private.register_trade_in_atomic" supabase/migrations/20261006061000_restore_trade_in_private_execute_grant.sql
+          grep -q "grant execute on function private.process_sale_return_atomic" "$wrapper"
+          grep -q "grant execute on function private.receive_purchase_atomic" "$wrapper"
+          grep -q "grant execute on function private.process_purchase_return_atomic" "$wrapper"
+          grep -q "grant execute on function private.process_repair_delivery_atomic" "$wrapper"
 
       - name: Syntax-check Google Apps Script source
         shell: bash
