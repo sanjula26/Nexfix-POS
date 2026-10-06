@@ -96,7 +96,7 @@ interface StoreCtx {
   createInitialAdmin: (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => Promise<{ ok: boolean; error?: string }>;
   changePassword: (nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
   changeManagedPassword: (targetUserId: string, nextPassword: string) => Promise<{ ok: boolean; error?: string }>;
-  signOut: () => void;
+  signOut: (force?: boolean) => void;
   /** Switching to the other POS role always authenticates the target account; admin → cashier uses cashier credentials, cashier → admin accepts the admin unlock PIN or admin login password. */
   switchRole: (role: Role, credential?: string, email?: string) => Promise<{ ok: boolean; error?: string }>;
   changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
