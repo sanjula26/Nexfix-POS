@@ -3,7 +3,7 @@ import { FileText, Plus, Trash2, ShoppingCart, Printer, Eye, Copy, X } from 'luc
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import { fmtDate, fmtRs, uid } from '../lib/utils';
-import type { Quotation, QuotationItem, QuoteStatus } from '../lib/types';
+import type { Quotation, QuotationItem, QuoteStatus, Product } from '../lib/types';
 
 const STATUS_TONE: Record<QuoteStatus, 'slate' | 'blue' | 'emerald' | 'rose' | 'amber' | 'violet'> = {
   draft: 'slate', sent: 'blue', accepted: 'emerald', rejected: 'rose', expired: 'amber', converted: 'violet',
@@ -14,14 +14,14 @@ function esc(value: string) {
 }
 
 function ProductCombobox({ value, products, onSelect, onFreeText }: {
-  value: string; products: any[]; onSelect: (product: any) => void; onFreeText: (text: string) => void;
+  value: string; products: Product[]; onSelect: (product: Product) => void; onFreeText: (text: string) => void;
 }) {
   const [open, setOpen] = useState(false); const [term, setTerm] = useState(value); const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => setTerm(value), [value]);
   useEffect(() => { const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); }; document.addEventListener('mousedown', close); return () => document.removeEventListener('mousedown', close); }, []);
   const matches = useMemo(() => { const needle = term.trim().toLowerCase(); return products.filter(p => !needle || [p.name, p.sku, p.barcode].some(v => String(v || '').toLowerCase().includes(needle))).slice(0, 50); }, [products, term]);
-  const choose = (product: any | null) => { setOpen(false); if (product) { setTerm(product.name); onSelect(product); } else { onFreeText(term); } };
+  const choose = (product: Product | null) => { setOpen(false); if (product) { setTerm(product.name); onSelect(product); } else { onFreeText(term); } };
   return <div ref={ref} className="relative">
     <input className="input" value={term} placeholder="Type to search products…" onFocus={() => { setOpen(true); setActive(0); }} onChange={e => { const text = e.target.value; setTerm(text); setOpen(true); setActive(0); onFreeText(text); }} onKeyDown={e => { if (!open) return; if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, matches.length)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); } else if (e.key === 'Enter') { e.preventDefault(); choose(active < matches.length ? matches[active] : null); } else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } }} aria-autocomplete="list" aria-expanded={open} />
     {open && <div className="absolute left-0 right-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl">
