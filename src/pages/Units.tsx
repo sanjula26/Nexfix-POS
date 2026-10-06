@@ -3,7 +3,7 @@ import { Cpu, Plus, Trash2, Smartphone, ClipboardList } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import { fmtDate, uid } from '../lib/utils';
-import type { InventoryUnit, UnitStatus } from '../lib/types';
+import type { InventoryUnit, UnitStatus, Product } from '../lib/types';
 
 const STATUS_TONE: Record<UnitStatus, 'emerald'|'slate'|'amber'|'violet'|'rose'> = { in_stock:'emerald', sold:'slate', returned:'amber', reserved:'violet', defective:'rose', in_repair:'amber' };
 const STATUS_LABEL: Record<UnitStatus,string> = { in_stock:'In stock', sold:'Sold', returned:'Returned', reserved:'Reserved', defective:'Defective', in_repair:'In repair' };
@@ -28,7 +28,7 @@ export default function Units() {
   </div>;
 }
 
-function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:InventoryUnit|null;products:any[];units:InventoryUnit[];isNew:boolean;onSave:(u:InventoryUnit)=>void;onClose:()=>void}){
+function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:InventoryUnit|null;products:Product[];units:InventoryUnit[];isNew:boolean;onSave:(u:InventoryUnit)=>void;onClose:()=>void}){
  const [productId,setProductId]=useState(value?.productId||products[0]?.id||''); const product=products.find(p=>p.id===productId); const [imei,setImei]=useState(value?.imei||''); const [serial,setSerial]=useState(value?.serial||''); const [status,setStatus]=useState<UnitStatus>(value?.status||'in_stock'); const [note,setNote]=useState(value?.note||''); const [error,setError]=useState('');
  const submit=()=>{
    const product=products.find(p=>p.id===productId);
@@ -55,7 +55,7 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
 </div><Field label="Status"><select className="input" value={status} onChange={e=>setStatus(e.target.value as UnitStatus)} disabled={isNew||!!value}><option value="in_stock">In stock</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).filter(s=>s!=='in_stock').map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select>{isNew?<div className="mt-1 text-xs text-sub">New units use an existing received stock unit when one is waiting for its IMEI/serial; otherwise stock increases by 1.</div>:<div className="mt-1 text-xs text-sub">Unit status is changed automatically by sales, returns, repairs and stock workflows.</div>}</Field><Field label="Note"><textarea className="input min-h-24" value={note} onChange={e=>setNote(e.target.value)}/></Field>{error&&<p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}<div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end"><button type="button" className="btn btn-soft w-full !px-5 !py-2.5 sm:w-auto" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary w-full !px-5 !py-2.5 sm:w-auto" onClick={submit}>Save</button></div></div>;
 }
 
-function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product:any;productId:string;setProductId:(v:string)=>void;products:any[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>{ok:boolean;added:number;errors:string[]}}){
+function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product?:Product;productId:string;setProductId:(v:string)=>void;products:Product[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>{ok:boolean;added:number;errors:string[]}}){
  const submit=()=>{
    if(!product){onResult({msg:'Select a tracked product.',errors:[]});return;}
    const lines=text.split(/\r?\n/); const units:InventoryUnit[]=[]; const parseErrors:string[]=[];
