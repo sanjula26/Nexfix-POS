@@ -374,7 +374,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         // Older/slow Apps Script deployments can report a generic status error
         // after Drive has already committed the backup. Verify the actual latest
         // shop-scoped backup before surfacing a failure to the operator.
-        if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
+        if (await confirmDriveArtifact(shopId, body)) return { ok: true };
         const statusError = status.error;
         return { ok: false, error: isGenericGoogleBackupError(statusError) ? await explainGenericGoogleBackupError(requestId) : statusError, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
@@ -395,7 +395,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         await new Promise((resolve) => window.setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
         return postGoogleBackup(body, shopId, attempt + 1);
       }
-      if (await verifyRecentGoogleBackup(shopId, body)) return { ok: true };
+      if (await confirmDriveArtifact(shopId, body)) return { ok: true };
       const finalError = finalStatus.error;
       return { ok: false, error: isGenericGoogleBackupError(finalError) ? await explainGenericGoogleBackupError(requestId) : (finalError || await explainGenericGoogleBackupError(requestId)), ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
     }
