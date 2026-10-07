@@ -1387,6 +1387,48 @@ function doGet(e) {
     }
   }
 
+  if (p.action === 'updateShopMetadata') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) {
+      return json(unauthorized('Unauthorized: API key mismatch'));
+    }
+    try {
+      var metadataShopId = normalizeShopId(p.shopId);
+      validateRequestId(p.requestId);
+      var metadataProof = validateShopProof(p.shopProof);
+      var metadataRecoveryKey = validateRecoveryKey(p.recoveryKey);
+      var metadata = {};
+      try { metadata = JSON.parse(String(p.metadata || '{}')); } catch (parseError) {
+        throw new Error('Shop metadata is invalid JSON');
+      }
+      var metadataFolder = authorizeShopAccess(metadataShopId, metadataProof, true);
+      assertRecoveryKeyMatchesExisting(metadataFolder, metadataRecoveryKey);
+      var metadataName = sanitizeDriveName(metadata.shopName || 'Shop');
+      metadataFolder = getShopBackupFolder(metadataShopId, metadataName, true);
+      commitShopMetadata(
+        metadataFolder,
+        metadataShopId,
+        metadataName,
+        true,
+        Object.assign({}, metadata, {
+          shopId: metadataShopId,
+          shopPartition: shopPartitionKey(metadataShopId),
+          recoveryKey: metadataRecoveryKey,
+          kind: metadata.kind === 'auto' ? 'auto' : 'manual'
+        }),
+        metadataRecoveryKey
+      );
+      return json(ok({
+        action: 'updateShopMetadata',
+        shopId: metadataShopId,
+        shopPartition: shopPartitionKey(metadataShopId),
+        folderName: metadataFolder.getName(),
+        updatedAt: new Date().toISOString()
+      }));
+    } catch (metadataError) {
+      return json(fail(metadataError));
+    }
+  }
+
   if (p.action === 'backupStatus') {
     try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
     var statusShopId;
