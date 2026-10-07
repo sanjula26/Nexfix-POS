@@ -56,10 +56,13 @@ export function getLocalShopId(): string {
   try {
     const recoveryOverride = (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || '').trim();
     if (recoveryOverride.length > 0 && recoveryOverride.length <= 100 && SHOP_ID_PATTERN.test(recoveryOverride)) return recoveryOverride;
-    const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
-    if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
+    // Once a Drive shop identity exists, it is the stable backup partition for
+    // this browser. Prefer it over a later/different cloud shop id so the
+    // scoped Recovery Key remains paired with the same Drive authorization.
     const existingDriveId = (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
     if (existingDriveId.length > 0 && existingDriveId.length <= 100) return existingDriveId;
+    const cloudId = (localStorage.getItem(SHOP_KEY) || '').trim();
+    if (cloudId.length > 0 && cloudId.length <= 100) return cloudId;
 
     let driveId = '';
     try {
@@ -79,6 +82,12 @@ async function resolveAuthorizedBackupShopId(): Promise<string> {
   const override = (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || '').trim();
   if (override && SHOP_ID_PATTERN.test(override)) return override;
 
+  // A previously provisioned Drive shop is the stable backup identity.
+  // Keep it paired with its local scoped Recovery Key. The server-side
+  // SHOP_AUTH proof still rejects an incorrect key or cross-shop identity.
+  const existingDriveId = (localStorage.getItem(DRIVE_SHOP_KEY) || '').trim();
+  if (existingDriveId && SHOP_ID_PATTERN.test(existingDriveId)) return existingDriveId;
+
   // New/provisioned installations use the authenticated cloud shop identity.
   const cloud = await ensureCloudShop('Nexfix Shop');
   if (cloud.ok && cloud.shopId) return String(cloud.shopId).trim();
@@ -92,8 +101,8 @@ export function getDriveShopId(): string {
   try {
     return (
       localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY)
-      || localStorage.getItem(SHOP_KEY)
       || localStorage.getItem(DRIVE_SHOP_KEY)
+      || localStorage.getItem(SHOP_KEY)
       || ''
     ).trim();
   } catch { return ''; }
