@@ -595,17 +595,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const { flushed, pending } = await flushSyncQueue();
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
-        // Automatic cloud backup is a system operation, not a manual export.
-        // It must continue even when the active cashier/technician lacks export permission.
+        // startAutoBackup() owns the interval/due decision. Reconnect only
+        // flushes the durable queue here; it must not force an extra cloud
+        // snapshot merely because the network became available.
         if (user) {
           try {
-            const latestMeta = await idbGetMeta();
-            if ((Number(latestMeta.autoBackupHours) || 0) > 0) {
-              await downloadBackup(stateRef.current, 'auto', {
-                download: false,
-                cloud: true,
-              });
-            }
             const meta = await idbGetMeta();
             setBackupMeta(meta);
           } catch { /* ignore */ }
