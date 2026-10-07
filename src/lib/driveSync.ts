@@ -27,6 +27,7 @@ const DRIVE_SHOP_OVERRIDE_KEY = 'nexfix_drive_shop_id_override';
 const CLOUD_SAFE_MARKER = '__nexfixCloudSafe';
 const SINGLE_LIMIT_BYTES = 1.5 * 1024 * 1024; // 1.5 MB — safer for form POST to Apps Script
 const PART_SIZE_BYTES = 6 * 1024 * 1024;
+const DRIVE_ARTIFACT_CONFIRMATION_WINDOW_MS = 15 * 60 * 1000;
 
 function isAllowedScriptUrl(value: string): boolean {
   try {
@@ -289,8 +290,8 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
     const sameDay = !attemptDayKey || !latestDayKey || latestDayKey === attemptDayKey
       || (Number.isFinite(attemptAt) && Math.abs(latestAt - attemptAt) <= 12 * 60 * 60 * 1000);
     const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
-      && latestAt >= attemptAt - 15 * 60 * 1000
-      && latestAt <= attemptAt + 15 * 60 * 1000;
+      && latestAt >= attemptAt - DRIVE_ARTIFACT_CONFIRMATION_WINDOW_MS
+      && latestAt <= attemptAt + DRIVE_ARTIFACT_CONFIRMATION_WINDOW_MS;
     if (sameDay && ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough)) return true;
   }
   return false;
