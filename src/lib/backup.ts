@@ -274,6 +274,15 @@ function scheduleGoogleBackupEnabled(getState: () => POSState): void {
 
     scheduledGoogleBackupRunning = true;
     try {
+      // Re-check immediately before the upload so a timer queued while
+      // automatic backups were enabled cannot fire after the operator switches
+      // the interval to OFF.
+      const latestMeta = await idbGetMeta();
+      if ((Number(latestMeta.autoBackupHours) || 0) <= 0) {
+        scheduledGoogleBackupGetter = undefined;
+        scheduledGoogleBackupFirstQueuedAt = 0;
+        return;
+      }
       const result = await downloadBackup(getter(), 'auto', { download: false, cloud: true });
       scheduledGoogleBackupLastRunAt = Date.now();
 
