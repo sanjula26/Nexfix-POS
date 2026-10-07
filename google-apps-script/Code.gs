@@ -1404,7 +1404,7 @@ function doGet(e) {
       assertRecoveryKeyMatchesExisting(metadataFolder, metadataRecoveryKey);
       var metadataName = sanitizeDriveName(metadata.shopName || 'Shop');
       metadataFolder = getShopBackupFolder(metadataShopId, metadataName, true);
-      commitShopMetadata(
+      var metadataWarnings = commitShopMetadata(
         metadataFolder,
         metadataShopId,
         metadataName,
@@ -1417,6 +1417,7 @@ function doGet(e) {
         }),
         metadataRecoveryKey
       );
+      if (metadataWarnings.length) throw new Error('Google Drive shop metadata update was incomplete: ' + metadataWarnings.join(' | '));
       return json(ok({
         action: 'updateShopMetadata',
         shopId: metadataShopId,
