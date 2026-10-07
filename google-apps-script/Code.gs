@@ -5,7 +5,7 @@
  * The supplied master Drive folder remains separate from any Google Sheet.
  */
 var BACKUP_SHEET = 'FullBackup';
-var VERSION = '3.3.0';
+var VERSION = '3.3.1';
 var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
@@ -140,7 +140,7 @@ function authorizeShopAccess(shopId, shopProof, allowInitialize) {
   if (String(record.shopId || '') !== String(shopId)
       || String(record.shopPartition || '') !== shopPartitionKey(shopId)
       || !constantTimeApiKeyEqual(String(record.proofDigest || ''), expectedDigest)) {
-    throw new Error('Shop backup authorization failed');
+    throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
   }
   return folder;
 }
