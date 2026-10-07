@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
-import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo, ensureCloudShop } from '../lib/cloudSync';
+import { processSaleReturnAtomic, resolveSaleReturnLines, ensureCloudShop } from '../lib/cloudSync';
 import { queueReturnCreate } from '../lib/offline';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 
@@ -56,41 +56,27 @@ export default function Exchanges() {
     setBill(found || null);
     setSelected(restore ? selected : []);
     setReturnQty(restore ? returnQty : {});
-    setConfirm(false); setError(''); resetPendingReturn();
-    let resolvedCloudSaleId = found?.id || '';
-    let resolvedCloudShopId = '';
-    if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
-      const { data: cloudSession } = await supabase.auth.getSession();
-      if (!cloudSession.session) {
-        // Local POS login is authoritative. Cashier accounts may not have a
-        // cloud Auth account, so an online local exchange must remain usable
-        // and continue through the durable offline return queue.
-        setCloudSaleId('');
-        setCloudShopId('');
-        saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: '', cloudShopId: '', selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
-        return;
-      }
-      const cloudShop = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
-      if (!cloudShop.ok || !cloudShop.shopId) {
-        // Authenticated cloud users without an active shop membership are
-        // still valid local POS users. Keep the return in the durable queue.
-        setCloudSaleId('');
-        setCloudShopId('');
-        saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: '', cloudShopId: '', selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
-        return;
-      }
-      const remote = await resolveCloudSaleIdByBillNo({ billNo: found?.billNo || raw, shopId: cloudShop.shopId });
-      if (remote.ok && remote.saleId && remote.shopId) {
-        resolvedCloudSaleId = remote.saleId;
-        resolvedCloudShopId = remote.shopId;
-      } else {
-        resolvedCloudSaleId = '';
-        setError(remote.error === 'Sale not found' ? 'Sale not found in the cloud for this bill number.' : (remote.error || 'Cloud bill lookup failed'));
-      }
-    }
-    setCloudSaleId(resolvedCloudSaleId);
-    setCloudShopId(resolvedCloudShopId);
-    saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: resolvedCloudSaleId, cloudShopId: resolvedCloudShopId, selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
+    setConfirm(false);
+    setError('');
+    resetPendingReturn();
+
+    // Bill search is intentionally local-first. The local POS database is the
+    // authoritative UI source, and cloud Auth/membership availability must
+    // never turn a valid local bill into a visible "Sale not found" error.
+    // Cloud sale resolution is performed only at commit time, immediately
+    // before the atomic return transaction.
+    setCloudSaleId('');
+    setCloudShopId('');
+    saveDraft({
+      query: raw,
+      billId: found?.id || '',
+      billNo: found?.billNo || raw,
+      cloudSaleId: '',
+      cloudShopId: '',
+      selected: restore ? selected : [],
+      returnQty: restore ? returnQty : {},
+      searched: true,
+    });
   };
 
   useEffect(() => {
@@ -110,16 +96,9 @@ export default function Exchanges() {
         const restoredSelected = Array.isArray(parsed.selected) ? parsed.selected.filter(i => Number.isInteger(i) && i >= 0 && i < found.items.length) : [];
         const restoredQty = parsed.returnQty && typeof parsed.returnQty === 'object' ? parsed.returnQty : {};
         setBill(found); setSearched(true); setSelected(restoredSelected); setReturnQty(restoredQty);
-        setCloudSaleId(parsed.cloudSaleId || found.id);
-        void (async () => {
-          if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
-            const remote = await resolveCloudSaleIdByBillNo({ billNo: found.billNo });
-            if (remote.ok && remote.saleId && remote.shopId) {
-              setCloudSaleId(remote.saleId);
-              setCloudShopId(remote.shopId);
-            }
-          }
-        })();
+        // Persisted cloud IDs are deliberately not trusted across sessions or
+        // shop changes. Re-resolve the cloud sale only when committing the
+        // return, after the active cloud shop has been authorized.
       } else {
         void search(draftQuery, false);
       }
@@ -193,22 +172,30 @@ export default function Exchanges() {
         // Always re-resolve from the bill number immediately before committing.
         // Persisted IDs can be stale after a shop switch, restored draft, or an
         // earlier failed attempt; the bill number is the authoritative lookup key.
-        const remote = await resolveCloudSaleIdByBillNo({ billNo: bill.billNo });
+        const remote = await resolveCloudSaleIdByBillNo({ billNo: bill.billNo, shopId: cloudShop.shopId });
         if (!remote.ok || !remote.saleId || !remote.shopId) {
-          throw new Error(remote.error || 'Sale not found in the cloud for this bill number.');
+          // A local bill can legitimately exist before its normalized cloud
+          // transaction exists. Queue it instead of surfacing a false "Sale not
+          // found" failure or blocking the cashier.
+          await queueReturnCreate(returnId, {
+            saleId: bill.id, reason, mode,
+            paymentMethod: mode === 'refund' ? 'cash' : undefined,
+            lines: returnLines,
+          });
+        } else {
+          const authoritativeSaleId = remote.saleId;
+          const authoritativeShopId = remote.shopId;
+          setCloudSaleId(authoritativeSaleId);
+          setCloudShopId(authoritativeShopId);
+          const resolve = await resolveSaleReturnLines({ shopId: authoritativeShopId, saleId: authoritativeSaleId, lines: returnLines });
+          if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
+          const cloud = await processSaleReturnAtomic({
+            shopId: authoritativeShopId, returnId, saleId: authoritativeSaleId, reason, mode,
+            paymentMethod: mode === 'refund' ? 'cash' : undefined,
+            lines: resolve.lines,
+          });
+          if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
         }
-        const authoritativeSaleId = remote.saleId;
-        const authoritativeShopId = remote.shopId;
-        setCloudSaleId(authoritativeSaleId);
-        setCloudShopId(authoritativeShopId);
-        const resolve = await resolveSaleReturnLines({ shopId: authoritativeShopId, saleId: authoritativeSaleId, lines: returnLines });
-        if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
-        const cloud = await processSaleReturnAtomic({
-          shopId: authoritativeShopId, returnId, saleId: authoritativeSaleId, reason, mode,
-          paymentMethod: mode === 'refund' ? 'cash' : undefined,
-          lines: resolve.lines,
-        });
-        if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
           }
         }
       } else {
