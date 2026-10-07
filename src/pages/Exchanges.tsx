@@ -86,11 +86,19 @@ export default function Exchanges() {
       if (parsed.cloudSaleId) setCloudSaleId(parsed.cloudSaleId);
       const found = state.sales.find(s => s.id === parsed.billId) || state.sales.find(s => s.billNo.toLowerCase() === draftQuery.toLowerCase());
       if (found) {
-        setBill(found); setSearched(true);
-        setSelected(Array.isArray(parsed.selected) ? parsed.selected.filter(i => Number.isInteger(i) && i >= 0 && i < found.items.length) : []);
-        setReturnQty(parsed.returnQty && typeof parsed.returnQty === 'object' ? parsed.returnQty : {});
-        if (!parsed.cloudSaleId) setCloudSaleId(found.id);
-        void search(found.billNo, true);
+        const restoredSelected = Array.isArray(parsed.selected) ? parsed.selected.filter(i => Number.isInteger(i) && i >= 0 && i < found.items.length) : [];
+        const restoredQty = parsed.returnQty && typeof parsed.returnQty === 'object' ? parsed.returnQty : {};
+        setBill(found); setSearched(true); setSelected(restoredSelected); setReturnQty(restoredQty);
+        setCloudSaleId(parsed.cloudSaleId || found.id);
+        void (async () => {
+          if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
+            const shop = await ensureCloudShop('Nexfix Shop');
+            if (shop.ok && shop.shopId) {
+              const remote = await resolveCloudSaleIdByBillNo({ shopId: shop.shopId, billNo: found.billNo });
+              if (remote.ok && remote.saleId) setCloudSaleId(remote.saleId);
+            }
+          }
+        })();
       } else {
         void search(draftQuery, false);
       }
