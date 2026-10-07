@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
-import { processSaleReturnAtomic, resolveSaleReturnLines, ensureCloudShop } from '../lib/cloudSync';
+import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo, ensureCloudShop } from '../lib/cloudSync';
 import { queueReturnCreate } from '../lib/offline';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 
