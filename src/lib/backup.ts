@@ -213,6 +213,23 @@ export function scheduleGoogleBackup(
   getState: () => POSState,
   _reason: GoogleBackupReason,
 ): void {
+  // OFF means no automatic cloud snapshots. Manual Backup now is independent.
+  void idbGetMeta().then(meta => {
+    const intervalHours = Number(meta.autoBackupHours) || 0;
+    if (intervalHours <= 0) {
+      scheduledGoogleBackupGetter = undefined;
+      scheduledGoogleBackupFirstQueuedAt = 0;
+      if (scheduledGoogleBackupTimer !== undefined) {
+        window.clearTimeout(scheduledGoogleBackupTimer);
+        scheduledGoogleBackupTimer = undefined;
+      }
+      return;
+    }
+    scheduleGoogleBackupEnabled(getState);
+  }).catch(() => {});
+}
+
+function scheduleGoogleBackupEnabled(getState: () => POSState): void {
   scheduledGoogleBackupGetter = getState;
   const now = Date.now();
   if (!scheduledGoogleBackupFirstQueuedAt) scheduledGoogleBackupFirstQueuedAt = now;
