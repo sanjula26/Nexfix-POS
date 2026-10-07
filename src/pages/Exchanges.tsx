@@ -15,6 +15,7 @@ export default function Exchanges() {
   const [query, setQuery] = useState('');
   const [bill, setBill] = useState<Sale | null>(null);
   const [cloudSaleId, setCloudSaleId] = useState('');
+  const [cloudShopId, setCloudShopId] = useState('');
   const [selected, setSelected] = useState<number[]>([]);
   const [returnQty, setReturnQty] = useState<Record<number, number>>({});
   const [reason, setReason] = useState('Defective item');
@@ -28,12 +29,12 @@ export default function Exchanges() {
   const resetPendingReturn = () => { pendingReturnId.current = null; };
 
   const saveDraft = (patch: Partial<{
-    query: string; billId: string; billNo: string; cloudSaleId: string; selected: number[];
+    query: string; billId: string; billNo: string; cloudSaleId: string; cloudShopId: string; selected: number[];
     returnQty: Record<number, number>; reason: string; mode: 'refund' | 'replace'; searched: boolean;
   }> = {}) => {
     try {
       const current = {
-        query, billId: bill?.id || '', billNo: bill?.billNo || '', cloudSaleId,
+        query, billId: bill?.id || '', billNo: bill?.billNo || '', cloudSaleId, cloudShopId,
         selected, returnQty, reason, mode, searched,
         ...patch,
       };
@@ -57,28 +58,26 @@ export default function Exchanges() {
     setReturnQty(restore ? returnQty : {});
     setConfirm(false); setError(''); resetPendingReturn();
     let resolvedCloudSaleId = found?.id || '';
+    let resolvedCloudShopId = '';
     if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
-      const shop = await ensureCloudShop('Nexfix Shop');
-      if (shop.ok && shop.shopId) {
-        const remote = await resolveCloudSaleIdByBillNo({ shopId: shop.shopId, billNo: found?.billNo || raw });
-        if (remote.ok && remote.saleId) resolvedCloudSaleId = remote.saleId;
-        else {
-          resolvedCloudSaleId = '';
-          setError(remote.error === 'Sale not found' ? 'Sale not found in the cloud for this bill number.' : (remote.error || 'Cloud bill lookup failed'));
-        }
+      const remote = await resolveCloudSaleIdByBillNo({ billNo: found?.billNo || raw });
+      if (remote.ok && remote.saleId && remote.shopId) {
+        resolvedCloudSaleId = remote.saleId;
+        resolvedCloudShopId = remote.shopId;
       } else {
         resolvedCloudSaleId = '';
-        setError(shop.error || 'Cloud shop is unavailable');
+        setError(remote.error === 'Sale not found' ? 'Sale not found in the cloud for this bill number.' : (remote.error || 'Cloud bill lookup failed'));
       }
     }
     setCloudSaleId(resolvedCloudSaleId);
-    saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: resolvedCloudSaleId, selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
+    setCloudShopId(resolvedCloudShopId);
+    saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: resolvedCloudSaleId, cloudShopId: resolvedCloudShopId, selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
   };
 
   useEffect(() => {
     let raw = '';
     try { raw = localStorage.getItem('nexfix_exchange_draft_v2') || ''; } catch { /* optional */ }
-    const parsed = raw ? (() => { try { return JSON.parse(raw) as Partial<{ query: string; billId: string; billNo: string; cloudSaleId: string; selected: number[]; returnQty: Record<number, number>; reason: string; mode: 'refund' | 'replace'; searched: boolean }>; } catch { return {}; } })() : {};
+    const parsed = raw ? (() => { try { return JSON.parse(raw) as Partial<{ query: string; billId: string; billNo: string; cloudSaleId: string; cloudShopId: string; selected: number[]; returnQty: Record<number, number>; reason: string; mode: 'refund' | 'replace'; searched: boolean }>; } catch { return {}; } })() : {};
     const paramBill = params.get('bill');
     const draftQuery = paramBill || parsed.query || '';
     if (draftQuery) {
@@ -86,6 +85,7 @@ export default function Exchanges() {
       if (parsed.reason) setReason(parsed.reason);
       if (parsed.mode === 'refund' || parsed.mode === 'replace') setMode(parsed.mode);
       if (parsed.cloudSaleId) setCloudSaleId(parsed.cloudSaleId);
+      if (parsed.cloudShopId) setCloudShopId(parsed.cloudShopId);
       const found = state.sales.find(s => s.id === parsed.billId) || state.sales.find(s => s.billNo.toLowerCase() === draftQuery.toLowerCase());
       if (found) {
         const restoredSelected = Array.isArray(parsed.selected) ? parsed.selected.filter(i => Number.isInteger(i) && i >= 0 && i < found.items.length) : [];
@@ -94,10 +94,10 @@ export default function Exchanges() {
         setCloudSaleId(parsed.cloudSaleId || found.id);
         void (async () => {
           if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
-            const shop = await ensureCloudShop('Nexfix Shop');
-            if (shop.ok && shop.shopId) {
-              const remote = await resolveCloudSaleIdByBillNo({ shopId: shop.shopId, billNo: found.billNo });
-              if (remote.ok && remote.saleId) setCloudSaleId(remote.saleId);
+            const remote = await resolveCloudSaleIdByBillNo({ billNo: found.billNo });
+            if (remote.ok && remote.saleId && remote.shopId) {
+              setCloudSaleId(remote.saleId);
+              setCloudShopId(remote.shopId);
             }
           }
         })();
@@ -113,7 +113,7 @@ export default function Exchanges() {
     if (!bill) return;
     saveDraft();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, bill?.id, bill?.billNo, cloudSaleId, selected, returnQty, reason, mode, searched]);
+  }, [query, bill?.id, bill?.billNo, cloudSaleId, cloudShopId, selected, returnQty, reason, mode, searched]);
 
   const withinPolicy = bill ? Date.now() - new Date(bill.date).getTime() <= state.settings.exchangeDays * 86400000 : false;
   const toggle = (i: number) => {
@@ -151,14 +151,23 @@ export default function Exchanges() {
       }));
 
       if (online && supabaseConfigured && supabase) {
-        const shop = await ensureCloudShop('Nexfix Shop');
-        if (!shop.ok || !shop.shopId) throw new Error(shop.error || 'Cloud shop is unavailable');
-        const authoritativeSaleId = cloudSaleId;
+        let authoritativeSaleId = cloudSaleId;
+        let authoritativeShopId = cloudShopId;
+        if (!authoritativeSaleId || !authoritativeShopId) {
+          const remote = await resolveCloudSaleIdByBillNo({ billNo: bill.billNo });
+          if (!remote.ok || !remote.saleId || !remote.shopId) {
+            throw new Error(remote.error || 'Sale not found in the cloud for this bill number.');
+          }
+          authoritativeSaleId = remote.saleId;
+          authoritativeShopId = remote.shopId;
+          setCloudSaleId(authoritativeSaleId);
+          setCloudShopId(authoritativeShopId);
+        }
         if (!authoritativeSaleId) throw new Error('This bill is not available in the cloud yet. Keep the POS online and search the bill again.');
-        const resolve = await resolveSaleReturnLines({ shopId: shop.shopId, saleId: authoritativeSaleId, lines: returnLines });
+        const resolve = await resolveSaleReturnLines({ shopId: authoritativeShopId, saleId: authoritativeSaleId, lines: returnLines });
         if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
         const cloud = await processSaleReturnAtomic({
-          shopId: shop.shopId, returnId, saleId: authoritativeSaleId, reason, mode,
+          shopId: authoritativeShopId, returnId, saleId: authoritativeSaleId, reason, mode,
           paymentMethod: mode === 'refund' ? 'cash' : undefined,
           lines: resolve.lines,
         });
@@ -174,7 +183,7 @@ export default function Exchanges() {
         ...x,
         unitIds: bill.items[x.itemIdx].unitIds && x.qty === bill.items[x.itemIdx].qty ? bill.items[x.itemIdx].unitIds : undefined,
       })), reason, mode);
-      setBill(null); setCloudSaleId(''); setQuery(''); setSearched(false); setConfirm(false); setSelected([]); setReturnQty({}); resetPendingReturn(); clearDraft();
+      setBill(null); setCloudSaleId(''); setCloudShopId(''); setQuery(''); setSearched(false); setConfirm(false); setSelected([]); setReturnQty({}); resetPendingReturn(); clearDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Return could not be completed');
     } finally { setProcessing(false); }
