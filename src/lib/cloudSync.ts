@@ -393,25 +393,28 @@ export async function registerTradeInAtomic(input: {
 }
 
 export async function resolveCloudSaleIdByBillNo(input: {
-  shopId: string;
+  shopId?: string;
   billNo: string;
-}): Promise<{ ok: boolean; saleId?: string; error?: string }> {
+}): Promise<{ ok: boolean; saleId?: string; shopId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
   const billNo = input.billNo.trim().toUpperCase();
-  if (!input.shopId || !billNo) return { ok: false, error: 'Shop and bill number are required' };
+  if (!billNo) return { ok: false, error: 'Bill number is required' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const { data, error } = await supabase
-    .from('sales')
-    .select('id')
-    .eq('shop_id', input.shopId)
-    .eq('bill_no', billNo)
-    .maybeSingle();
+
+  const { data, error } = await supabase.rpc('resolve_sale_return_target', { p_bill_no: billNo });
   if (error) return { ok: false, error: error.message };
-  if (!data?.id) return { ok: false, error: 'Sale not found' };
-  return { ok: true, saleId: String(data.id) };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok || !row.sale_id || !row.shop_id) return { ok: false, error: row?.error || 'Sale not found' };
+
+  // If a caller supplied a shop, reject a cross-shop resolution rather than
+  // silently processing a bill from a different active shop.
+  if (input.shopId && String(row.shop_id) !== input.shopId) {
+    return { ok: false, error: 'Bill belongs to a different shop' };
+  }
+  return { ok: true, saleId: String(row.sale_id), shopId: String(row.shop_id) };
 }
 
 export async function resolveSaleReturnLines(input: {
