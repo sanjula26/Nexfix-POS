@@ -601,6 +601,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         // snapshot merely because the network became available.
         if (user) {
           try {
+            // A settings edit can happen while this PC is offline. Once it
+            // reconnects, repair the Drive folder name + shop.json +
+            // SHOP_INFO.txt + RECOVERY_KEY.txt before merely refreshing UI meta.
+            const metadataResult = await syncShopMetadataToGoogleDrive(stateRef.current);
+            if (!metadataResult.ok) {
+              console.warn('[Google Backup] reconnect shop metadata sync failed:', metadataResult.error);
+            }
             const meta = await idbGetMeta();
             setBackupMeta(meta);
           } catch { /* ignore */ }
