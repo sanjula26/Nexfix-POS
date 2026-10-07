@@ -737,8 +737,7 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
         url.searchParams.set('apiKey', BACKUP_API_KEY);
 
         const result = await getJsonp<{ ok?: boolean; message?: string; folderName?: string }>(url, 15000);
-        const expectedFolder = `Shop_${(await sha256Hex(shopId)).slice(0, 24)} - ${metadata.shopName.trim() || 'Shop'}`;
-        if (result?.ok === true && (!result.folderName || result.folderName === expectedFolder)) return { ok: true };
+        if (result?.ok === true && result.folderName) return { ok: true };
         lastError = String(result?.message || 'Google Drive shop details could not be updated.');
       } catch (error) {
         lastError = error instanceof Error ? error.message : lastError;
