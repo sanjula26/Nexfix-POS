@@ -398,7 +398,7 @@ export async function resolveCloudSaleIdByBillNo(input: {
 }): Promise<{ ok: boolean; saleId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
-  const billNo = input.billNo.trim();
+  const billNo = input.billNo.trim().toUpperCase();
   if (!input.shopId || !billNo) return { ok: false, error: 'Shop and bill number are required' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
