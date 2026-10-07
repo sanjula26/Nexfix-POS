@@ -161,6 +161,7 @@ interface StoreCtx {
   ready: boolean; // false while IndexedDB is loading
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<void>;
+  refreshBackupMeta: () => Promise<void>;
   setAutoBackupHours: (hours: number) => Promise<void>;
   flushOfflineQueue: () => Promise<number>;
   pendingQueueCount: number;
@@ -3151,6 +3152,11 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
   }, [state, pushAudit, user, can]);
 
+  const refreshBackupMeta = useCallback(async () => {
+    const meta = await idbGetMeta();
+    setBackupMeta(meta);
+  }, []);
+
   const setAutoBackupHours = useCallback(async (hours: number) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
@@ -3181,7 +3187,7 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, backupMeta, runManualBackup, setAutoBackupHours,
+    connectivity, ready, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
