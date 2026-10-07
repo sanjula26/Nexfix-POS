@@ -60,6 +60,16 @@ export default function Exchanges() {
     let resolvedCloudSaleId = found?.id || '';
     let resolvedCloudShopId = '';
     if ((typeof navigator === 'undefined' || navigator.onLine) && supabaseConfigured && supabase) {
+      const { data: cloudSession } = await supabase.auth.getSession();
+      if (!cloudSession.session) {
+        // Local POS login is authoritative. Cashier accounts may not have a
+        // cloud Auth account, so an online local exchange must remain usable
+        // and continue through the durable offline return queue.
+        setCloudSaleId('');
+        setCloudShopId('');
+        saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: '', cloudShopId: '', selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
+        return;
+      }
       const remote = await resolveCloudSaleIdByBillNo({ billNo: found?.billNo || raw });
       if (remote.ok && remote.saleId && remote.shopId) {
         resolvedCloudSaleId = remote.saleId;
@@ -151,6 +161,18 @@ export default function Exchanges() {
       }));
 
       if (online && supabaseConfigured && supabase) {
+        const { data: cloudSession } = await supabase.auth.getSession();
+        if (!cloudSession.session) {
+          // No cloud Auth session (for example a local cashier account):
+          // commit locally and let the durable return queue sync when a
+          // provisioned cloud session is available. Never show a misleading
+          // "Sale not found" just because cloud Auth is unavailable.
+          await queueReturnCreate(returnId, {
+            saleId: bill.id, reason, mode,
+            paymentMethod: mode === 'refund' ? 'cash' : undefined,
+            lines: returnLines,
+          });
+        } else {
         // Always re-resolve from the bill number immediately before committing.
         // Persisted IDs can be stale after a shop switch, restored draft, or an
         // earlier failed attempt; the bill number is the authoritative lookup key.
@@ -170,6 +192,7 @@ export default function Exchanges() {
           lines: resolve.lines,
         });
         if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
+        }
       } else {
         await queueReturnCreate(returnId, {
           saleId: bill.id, reason, mode,
