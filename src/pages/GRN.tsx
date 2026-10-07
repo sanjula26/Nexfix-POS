@@ -111,6 +111,8 @@ export default function GRN() {
         const ids = item.unitIdentifiers || [];
         if (ids.length !== item.qty) return product.trackImei && product.trackSerial ? `${item.name}: enter one IMEI and Serial pair for every unit.` : product.trackImei ? `${item.name}: enter one IMEI for every unit.` : `${item.name}: enter one Serial number for every unit.`;
         if (ids.some(u => (product.trackImei && !u.imei?.trim()) || (product.trackSerial && !u.serial?.trim()))) return `${item.name}: every tracked unit must have the required identifier.`;
+        const identifierKeys = ids.map(u => [u.imei, u.serial].filter(Boolean).map(v => String(v).trim().toLowerCase()).join('|'));
+        if (new Set(identifierKeys).size !== identifierKeys.length) return `${item.name}: duplicate IMEI/Serial values were pasted in this line set.`;
       }
     }
     const validationPurchase: Purchase = { id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), supplierId, supplierName: state.suppliers.find(s => s.id === supplierId)?.name || '', items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0), status: 'pending' };
@@ -437,8 +439,8 @@ export default function GRN() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
                           <div className="rounded-lg border border-line bg-raised p-3">
                             <div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-2">IMEI / Serial</div>
-                            {tracked ? <textarea className="input min-h-24 text-xs" rows={4} value={r.unitText} onChange={e => setRow(i, { unitText: e.target.value })} placeholder={p?.trackImei && p?.trackSerial ? 'IMEI,SERIAL — one pair per line' : p?.trackImei ? 'IMEI — one per line' : 'SERIAL — one per line'} disabled={actionRunning} /> : <div className="text-xs text-faint py-4">This product is not IMEI / Serial tracked.</div>}
-                            {tracked && <div className="text-[11px] text-sub mt-1">Expected: {r.qty > 0 ? r.qty : 0} line{r.qty === 1 ? '' : 's'}</div>}
+                            {tracked ? <textarea className="input min-h-24 text-xs" rows={4} value={r.unitText} onChange={e => setRow(i, { unitText: e.target.value })} placeholder={p?.trackImei && p?.trackSerial ? 'Paste one IMEI,SERIAL pair per line…' : p?.trackImei ? 'Paste one IMEI per line…' : 'Paste one Serial per line…'} disabled={actionRunning} /> : <div className="text-xs text-faint py-4">This product is not IMEI / Serial tracked.</div>}
+                            {tracked && <div className="text-[11px] text-sub mt-1">Expected: {r.qty > 0 ? r.qty : 0} line{r.qty === 1 ? '' : 's'} · blank lines ignored · duplicates rejected</div>}
                           </div>
                           <div className="rounded-lg border border-line bg-raised p-3">
                             <label className="flex items-center gap-2 text-sm font-semibold text-sub"><input type="checkbox" checked={r.updateSellingPrice} onChange={e => setRow(i, { updateSellingPrice: e.target.checked })} disabled={actionRunning} /> Update sell price</label>
