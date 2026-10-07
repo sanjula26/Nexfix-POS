@@ -210,96 +210,13 @@ let scheduledGoogleBackupGetter: (() => POSState) | undefined;
  * - The latest full POS state is read only when the upload starts.
  */
 export function scheduleGoogleBackup(
-  getState: () => POSState,
+  _getState: () => POSState,
   _reason: GoogleBackupReason,
 ): void {
-  // OFF means no automatic cloud snapshots. Manual Backup now is independent.
-  void idbGetMeta().then(meta => {
-    const intervalHours = Number(meta.autoBackupHours) || 0;
-    if (intervalHours <= 0) {
-      scheduledGoogleBackupGetter = undefined;
-      scheduledGoogleBackupFirstQueuedAt = 0;
-      if (scheduledGoogleBackupTimer !== undefined) {
-        window.clearTimeout(scheduledGoogleBackupTimer);
-        scheduledGoogleBackupTimer = undefined;
-      }
-      return;
-    }
-    scheduleGoogleBackupEnabled(getState);
-  }).catch(() => {});
-}
-
-function scheduleGoogleBackupEnabled(getState: () => POSState): void {
-  scheduledGoogleBackupGetter = getState;
-  const now = Date.now();
-  if (!scheduledGoogleBackupFirstQueuedAt) scheduledGoogleBackupFirstQueuedAt = now;
-
-  if (scheduledGoogleBackupTimer !== undefined) return;
-
-  const DEBOUNCE_MS = 30 * 1000;
-  const MAX_QUEUE_MS = 90 * 1000;
-  const RETRY_MS = 15 * 1000;
-  const MIN_GAP_MS = 5 * 1000;
-
-  const age = now - scheduledGoogleBackupFirstQueuedAt;
-  const untilMax = Math.max(0, MAX_QUEUE_MS - age);
-  const sinceLastRun = now - scheduledGoogleBackupLastRunAt;
-  const untilRate = Math.max(0, MIN_GAP_MS - sinceLastRun);
-  const delay = Math.max(0, Math.min(DEBOUNCE_MS, untilMax, untilRate));
-
-  scheduledGoogleBackupTimer = window.setTimeout(async () => {
-    scheduledGoogleBackupTimer = undefined;
-
-    if (scheduledGoogleBackupRunning) {
-      scheduledGoogleBackupTimer = window.setTimeout(() => {
-        scheduledGoogleBackupTimer = undefined;
-        if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
-      }, 1000);
-      return;
-    }
-
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      scheduledGoogleBackupTimer = window.setTimeout(() => {
-        scheduledGoogleBackupTimer = undefined;
-        if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
-      }, RETRY_MS);
-      return;
-    }
-
-    const getter = scheduledGoogleBackupGetter;
-    if (!getter) {
-      scheduledGoogleBackupFirstQueuedAt = 0;
-      return;
-    }
-
-    scheduledGoogleBackupRunning = true;
-    try {
-      // Re-check immediately before the upload so a timer queued while
-      // automatic backups were enabled cannot fire after the operator switches
-      // the interval to OFF.
-      const latestMeta = await idbGetMeta();
-      if ((Number(latestMeta.autoBackupHours) || 0) <= 0) {
-        scheduledGoogleBackupGetter = undefined;
-        scheduledGoogleBackupFirstQueuedAt = 0;
-        return;
-      }
-      const result = await downloadBackup(getter(), 'auto', { download: false, cloud: true });
-      scheduledGoogleBackupLastRunAt = Date.now();
-
-      if (!result.cloud) {
-        // Keep the latest state queued. Temporary endpoint/rate/network failures
-        // must never turn an event-driven backup into a lost update.
-        scheduledGoogleBackupTimer = window.setTimeout(() => {
-          scheduledGoogleBackupTimer = undefined;
-          if (scheduledGoogleBackupGetter) scheduleGoogleBackup(scheduledGoogleBackupGetter, 'settings');
-        }, RETRY_MS);
-      } else {
-        scheduledGoogleBackupFirstQueuedAt = 0;
-      }
-    } finally {
-      scheduledGoogleBackupRunning = false;
-    }
-  }, delay);
+  // Automatic Google backups are interval-driven by startAutoBackup().
+  // State changes may wake the app, but they must not bypass the operator's
+  // selected 15m/30m/1h/... interval and create surprise cloud uploads.
+  // Keep this function as a compatibility hook for existing callers.
 }
 
 export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void): () => void {
@@ -359,7 +276,9 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       } catch { /* metadata is best-effort */ }
     } finally { running = false; }
   };
-  const onOnline = () => { void tick(true); };
+  // Re-check the normal due/pending rules after reconnect; do not force
+  // an immediate upload when the configured interval has not elapsed.
+  const onOnline = () => { void tick(false); };
   window.addEventListener('online', onOnline);
   const t0 = window.setTimeout(() => { void tick(false); }, 5_000);
   const interval = window.setInterval(() => { void tick(false); }, 15_000);
