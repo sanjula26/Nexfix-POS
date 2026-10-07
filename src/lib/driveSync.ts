@@ -15,7 +15,7 @@ import { ensureCloudShop } from './cloudSync';
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
 const BUILT_IN_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby1z0HyyJ2Nzs7hhyUFGedd_wjKoKT-FpWAikjJBRGPRNZrUt5ZF8Q5s04UwcNF7pNxRQ/exec';
-const EXPECTED_GOOGLE_SCRIPT_VERSION = '3.3.0';
+const EXPECTED_GOOGLE_SCRIPT_VERSION = '3.3.1';
 let cachedGoogleHealth: { checkedAt: number; health: GoogleScriptHealth | null } | null = null;
 // This is a transport credential, not a frontend secret. Any value compiled
 // into an Electron/Vite bundle can be extracted; Apps Script still rejects
@@ -72,14 +72,17 @@ export function getLocalShopId(): string {
 }
 
 async function resolveAuthorizedBackupShopId(): Promise<string> {
-  // Production backup identity comes from the authenticated cloud shop
-  // membership. A local/recovery override must never redirect a provisioned
-  // shop's backup into another tenant's Drive partition.
+  // An explicit recovery override is the operator's deliberate instruction to
+  // reconnect this PC to an existing Drive shop partition. The server-side
+  // SHOP_AUTH proof remains authoritative, so an override cannot access a
+  // different shop unless the matching Recovery Key is also supplied.
+  const override = (localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY) || '').trim();
+  if (override && SHOP_ID_PATTERN.test(override)) return override;
+
+  // New/provisioned installations use the authenticated cloud shop identity.
   const cloud = await ensureCloudShop('Nexfix Shop');
   if (cloud.ok && cloud.shopId) return String(cloud.shopId).trim();
 
-  // Keep the legacy fallback only for installations that have not yet been
-  // provisioned for cloud tenancy. Normal production shops take the branch above.
   const legacy = getLocalShopId();
   if (legacy) return legacy;
   throw new Error(cloud.error || 'Cloud shop membership is not provisioned for this POS.');
