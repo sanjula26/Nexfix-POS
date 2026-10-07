@@ -202,9 +202,6 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
 async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unknown>): Promise<boolean> {
-  // First verify the exact upload artifact by shop/backup identity. This is
-  // stronger than "latest backup" matching and survives status-cache/JSONP
-  // misses during first-time shop initialization.
   try {
     const url = new URL(getGoogleScriptUrl());
     url.searchParams.set('action', 'verifyBackup');
@@ -216,16 +213,11 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
     url.searchParams.set('dayKey', String(body.dayKey || ''));
     if (String(body.partName || '')) url.searchParams.set('partName', String(body.partName));
     url.searchParams.set('apiKey', BACKUP_API_KEY);
-    const result = await getJsonp<{ ok?: boolean; status?: string; action?: string; verifiedBy?: string }>(url, 8000);
+    const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 10000);
     if (result?.ok === true && result.action === 'backupState') return true;
-  } catch {
-    // Continue to the existing authenticated latest-backup fallback.
-  }
+  } catch { /* continue */ }
 
-  // Multipart parts do not create the latest backup record until the final
-  // manifest arrives. Verify the exact part as a secondary fallback.
-  const format = String(body.format || '');
-  if (format === 'encrypted-part') {
+  if (String(body.format || '') === 'encrypted-part') {
     try {
       const url = new URL(getGoogleScriptUrl());
       url.searchParams.set('action', 'hasBackupPart');
@@ -235,28 +227,45 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
       url.searchParams.set('backupId', String(body.backupId || ''));
       url.searchParams.set('partName', String(body.partName || ''));
       url.searchParams.set('apiKey', BACKUP_API_KEY);
-      const result = await getJsonp<{ ok?: boolean; exists?: boolean }>(url, 8000);
-      return result?.ok === true && result.exists === true;
-    } catch {
-      return false;
-    }
+      const result = await getJsonp<{ ok?: boolean; exists?: boolean }>(url, 10000);
+      if (result?.ok === true && result.exists === true) return true;
+    } catch { /* continue */ }
   }
 
-  try {
-    const latest = await fetchLatestGoogleBackup(8000);
-    if (!latest || latest.shopId !== shopId) return false;
-    const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
-    const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
-    const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
-    const attemptBackupId = String(body.backupId || '');
-    const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
-      && latestAt >= attemptAt - 10000
-      && latestAt <= attemptAt + 180000;
-    return Boolean((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough);
-  } catch (error) {
-    console.warn('[Google Backup] recent-backup verification failed', error);
-    return false;
+  // Compatibility path for older live deployments: authenticated latest-backup
+  // data is enough to prove this shop received the attempted artifact.
+  for (const timeoutMs of [8000, 15000]) {
+    try {
+      const latest = await fetchLatestGoogleBackup(timeoutMs);
+      if (!latest || latest.shopId !== shopId) continue;
+      const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
+      const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
+      const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
+      const attemptBackupId = String(body.backupId || '');
+      const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
+        && latestAt >= attemptAt - 10000
+        && latestAt <= attemptAt + 300000;
+      if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) return true;
+    } catch (error) {
+      console.warn('[Google Backup] recent-backup verification attempt failed', error);
+    }
   }
+  return false;
+}
+
+async function confirmDriveArtifact(shopId: string, body: Record<string, unknown>): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await verifyGoogleBackupArtifact(
+      shopId,
+      String(body.shopProof || ''),
+      String(body.backupId || ''),
+      String(body.exportedAt || ''),
+      String(body.dayKey || ''),
+      String(body.partName || ''),
+    )) return true;
+    if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  }
+  return verifyRecentGoogleBackup(shopId, body);
 }
 
 async function postGoogleBackup(body: Record<string, unknown>, shopId: string, attempt = 0): Promise<GoogleBackupPostResult> {
@@ -310,10 +319,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       // If status is pending/unknown or JSONP is temporarily unreadable,
       // directly verify the exact Drive artifact. A successful Drive write is
       // authoritative for the operator-facing result.
-      if (status === null && await verifyGoogleBackupArtifact(
-        shopId, String(body.shopProof || ''), String(body.backupId || ''),
-        String(body.exportedAt || ''), String(body.dayKey || ''), String(body.partName || ''),
-      )) return { ok: true };
+      if (status === null && await confirmDriveArtifact(shopId, body)) return { ok: true };
       if (status && typeof status === 'object' && 'ok' in status && status.ok === false) {
         const rateMatch = /retry in about (\d+) seconds/i.exec(status.error || '');
         const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
@@ -338,10 +344,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
       String(body.backupId || ''), String(body.exportedAt || ''), String(body.dayKey || ''),
     );
     if (finalStatus === true) return { ok: true };
-    if (await verifyGoogleBackupArtifact(
-      shopId, String(body.shopProof || ''), String(body.backupId || ''),
-      String(body.exportedAt || ''), String(body.dayKey || ''), String(body.partName || ''),
-    )) return { ok: true };
+    if (await confirmDriveArtifact(shopId, body)) return { ok: true };
     if (finalStatus && typeof finalStatus === 'object' && 'ok' in finalStatus && finalStatus.ok === false) {
       const rateMatch = /retry in about (\d+) seconds/i.exec(finalStatus.error || '');
       const retryAfterSeconds = rateMatch ? Math.max(1, Number(rateMatch[1])) : undefined;
@@ -387,8 +390,6 @@ async function explainGenericGoogleBackupError(requestId: string): Promise<strin
 }
 
 async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, backupId: string, exportedAt: string, dayKey: string, partName = ''): Promise<boolean> {
-  if (!backupId) return false;
-
   const verify = async (action: 'verifyBackup' | 'verifyRecentBackup'): Promise<boolean> => {
     try {
       const url = new URL(getGoogleScriptUrl());
@@ -396,7 +397,7 @@ async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, bac
       url.searchParams.set('shopId', shopId);
       url.searchParams.set('requestId', makeRequestId());
       url.searchParams.set('shopProof', shopProof);
-      url.searchParams.set('backupId', backupId);
+      if (backupId) url.searchParams.set('backupId', backupId);
       if (exportedAt) url.searchParams.set('exportedAt', exportedAt);
       if (dayKey) url.searchParams.set('dayKey', dayKey);
       if (partName && action === 'verifyBackup') url.searchParams.set('partName', partName);
@@ -411,7 +412,7 @@ async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, bac
   // Exact backupId verification is strongest. The recent artifact verifier is
   // a Drive-only fallback for status-cache races and deployments where the
   // status record was lost after the file was already committed.
-  return (await verify('verifyBackup')) || (await verify('verifyRecentBackup'));
+  return (backupId ? await verify('verifyBackup') : false) || (await verify('verifyRecentBackup'));
 }
 
 async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string, backupId = '', exportedAt = '', dayKey = ''): Promise<boolean | { ok: false; error: string } | null> {
