@@ -62,10 +62,12 @@ export default function Exchanges() {
       if (shop.ok && shop.shopId) {
         const remote = await resolveCloudSaleIdByBillNo({ shopId: shop.shopId, billNo: found?.billNo || raw });
         if (remote.ok && remote.saleId) resolvedCloudSaleId = remote.saleId;
-        else if (!found) {
-          setError(remote.error === 'Sale not found' ? 'Sale not found for this bill number.' : (remote.error || 'Cloud bill lookup failed'));
+        else {
+          resolvedCloudSaleId = '';
+          setError(remote.error === 'Sale not found' ? 'Sale not found in the cloud for this bill number.' : (remote.error || 'Cloud bill lookup failed'));
         }
-      } else if (!found) {
+      } else {
+        resolvedCloudSaleId = '';
         setError(shop.error || 'Cloud shop is unavailable');
       }
     }
@@ -151,7 +153,8 @@ export default function Exchanges() {
       if (online && supabaseConfigured && supabase) {
         const shop = await ensureCloudShop('Nexfix Shop');
         if (!shop.ok || !shop.shopId) throw new Error(shop.error || 'Cloud shop is unavailable');
-        const authoritativeSaleId = cloudSaleId || bill.id;
+        const authoritativeSaleId = cloudSaleId;
+        if (!authoritativeSaleId) throw new Error('This bill is not available in the cloud yet. Keep the POS online and search the bill again.');
         const resolve = await resolveSaleReturnLines({ shopId: shop.shopId, saleId: authoritativeSaleId, lines: returnLines });
         if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
         const cloud = await processSaleReturnAtomic({
