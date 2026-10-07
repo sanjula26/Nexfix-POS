@@ -313,12 +313,12 @@ export default function Settings() {
     if (promotions.some(p => !p.name || !p.category || !Number.isFinite(p.discountPct) || p.discountPct <= 0 || p.discountPct > 100 || (p.startDate && p.endDate && p.endDate < p.startDate))) return setBackupMsg('Check promotion name, category, discount (1–100%) and dates');
     setBackupMsg('');
     const nextSettings = { ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, promotions };
+    // updateSettings() owns the authenticated Drive metadata sync. Do not
+    // call syncShopMetadataToGoogleDrive(nextSettings) here: nextSettings is
+    // the Settings object itself, not { settings: nextSettings }, and sending
+    // that shape would make the metadata sync fall back to "Shop" / blank
+    // values and overwrite the real Drive shop details.
     updateSettings(nextSettings);
-    if (gEnabled) {
-      void syncShopMetadataToGoogleDrive(nextSettings).then((result) => {
-        if (!result.ok) setBackupMsg(`Local settings saved, but Google Drive shop details were not updated: ${result.error || 'unknown error'}`);
-      });
-    }
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
