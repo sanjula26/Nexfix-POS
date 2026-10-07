@@ -200,7 +200,7 @@ function AuthCard({
         <div className="absolute right-[18%] top-[24%] h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_18px_5px_rgba(14,165,233,0.22)] dark:bg-cyan-300 dark:shadow-[0_0_18px_5px_rgba(103,232,249,0.35)]" />
         <div className="absolute right-[30%] bottom-[24%] h-1.5 w-1.5 rounded-full bg-sky-400 shadow-[0_0_15px_4px_rgba(14,165,233,0.18)] dark:bg-sky-300 dark:shadow-[0_0_15px_4px_rgba(125,211,252,0.3)]" />
       </div>
-      <div className={`relative w-full max-w-[460px] overflow-hidden rounded-[28px] border border-slate-200 bg-surface shadow-[0_25px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-cyan-300/20 dark:bg-[#071225]/90 dark:shadow-[0_25px_80px_rgba(2,8,23,0.55)] ${setup ? 'my-2' : 'lg:my-10'}`}>
+      <div className={`relative w-full max-w-[460px] overflow-hidden rounded-[28px] border border-slate-200 bg-surface shadow-[0_25px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-cyan-300/20 dark:bg-surface dark:shadow-[0_25px_80px_rgba(2,8,23,0.55)] ${setup ? 'my-2' : 'lg:my-10'}`}>
         <div className="h-1 bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-500" />
         {children}
       </div>
@@ -227,7 +227,7 @@ export default function Login() {
   const [setupCashierEmail, setSetupCashierEmail] = useState('');
   const [setupCashierPassword, setSetupCashierPassword] = useState('');
   const [setupCashierConfirm, setSetupCashierConfirm] = useState('');
-  const [appVersion, setAppVersion] = useState(() => String(import.meta.env.VITE_APP_VERSION || ''));
+  const [appVersion, setAppVersion] = useState(() => String(import.meta.env.VITE_APP_VERSION || '3.0.1449'));
 
   const nextPath = (() => {
     const next = new URLSearchParams(location.search).get('next') || '';
@@ -330,7 +330,7 @@ export default function Login() {
 
   if (user) {
     return (
-      <div className="min-h-screen grid place-items-center bg-[#030a18] text-slate-100">
+      <div className="min-h-screen grid place-items-center bg-base text-ink">
         <Loader2 size={30} className="animate-spin text-cyan-300" />
       </div>
     );
@@ -339,7 +339,7 @@ export default function Login() {
   const page = (
     <main className="relative min-h-screen overflow-x-hidden bg-base text-ink">
       <div className="min-h-screen lg:grid lg:grid-cols-[1.05fr_0.95fr]">
-        <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="absolute right-5 top-5 z-30 grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-surface text-sub shadow-lg backdrop-blur transition hover:border-sky-400 hover:text-sky-600 dark:border-white/10 dark:bg-[#0b1930]/90 dark:text-slate-300 dark:hover:border-cyan-400 dark:hover:text-cyan-300">
+        <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="absolute right-5 top-5 z-30 grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-surface text-sub shadow-lg backdrop-blur transition hover:border-sky-400 hover:text-sky-600 dark:border-line dark:bg-surface dark:text-sub dark:hover:border-cyan-400 dark:hover:text-cyan-300">
           {dark ? <Sun size={17} /> : <Moon size={17} />}
         </button>
         <BrandingHero appVersion={appVersion} />
@@ -354,8 +354,8 @@ export default function Login() {
                 </div>
               </div>
               <form onSubmit={setupAdmin} className="space-y-3.5">
-                <input required value={setupName} onChange={e => setSetupName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator name" autoComplete="name" />
-                <input required type="text" inputMode="email" value={setupEmail} onChange={e => setSetupEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                <input required value={setupName} onChange={e => setSetupName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-line dark:!bg-raised dark:!text-ink dark:placeholder:!text-faint dark:focus:!border-cyan-400/60" placeholder="Administrator name" autoComplete="name" />
+                <input required type="text" inputMode="email" value={setupEmail} onChange={e => setSetupEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-line dark:!bg-raised dark:!text-ink dark:placeholder:!text-faint dark:focus:!border-cyan-400/60" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
                 <input required type="password" minLength={12} value={setupPassword} onChange={e => setSetupPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
                 <input required type="password" minLength={12} value={setupConfirm} onChange={e => setSetupConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm password" autoComplete="new-password" />
                 <div className="my-2 border-t border-slate-200 pt-3 dark:border-white/10">
