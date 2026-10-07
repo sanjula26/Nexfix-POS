@@ -198,6 +198,22 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       if (error) return { ok: false, error: `Products: ${error.message}` };
     }
 
+    // Reconcile catalog metadata edits without ever overwriting cloud stock.
+    // Transactional stock changes remain authoritative in the database.
+    const existingProductRows = productRows.filter(row => existingIds.has(row.id));
+    if (existingProductRows.length) {
+      for (const row of existingProductRows) {
+        const { error } = await supabase.from('products').update({
+          name: row.name, sku: row.sku, barcode: row.barcode, cost: row.cost, price: row.price,
+          reorder_level: row.reorder_level, track_imei: row.track_imei, track_serial: row.track_serial,
+          track_expiry: row.track_expiry, warranty_months: row.warranty_months, is_kit: row.is_kit,
+          is_service: row.is_service, active: row.active, attributes: row.attributes,
+          supplier_id: row.supplier_id, updated_at: row.updated_at,
+        }).eq('id', row.id).eq('shop_id', shopId);
+        if (error) return { ok: false, error: `Products update: ${error.message}` };
+      }
+    }
+
     // The first full-shop stock entry is created locally before later purchases
     // move through GRN. Missing cloud products now receive their initial stock
     // directly on insert. Existing products created by an older build may have
@@ -248,6 +264,41 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     if (missing.length) {
       const { error } = await supabase.from('customers').insert(missing);
       if (error) return { ok: false, error: `Customers: ${error.message}` };
+    }
+
+    // Reconcile editable customer identity/contact fields only. Credit balance
+    // and loyalty points are transaction-owned and must never be overwritten
+    // from an offline snapshot.
+    for (const row of customerRows.filter(item => existingIds.has(item.id))) {
+      const { error } = await supabase.from('customers').update({
+        name: row.name, phone: row.phone, email: row.email, nic: row.nic,
+        address: row.address, credit_limit: row.credit_limit, updated_at: row.updated_at,
+      }).eq('id', row.id).eq('shop_id', shopId);
+      if (error) return { ok: false, error: `Customers update: ${error.message}` };
+    }
+  }
+
+  const supplierRows = state.suppliers.map(s => ({
+    id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
+    phone: s.phone || null, email: s.email || null, address: s.address || null,
+    created_at: s.createdAt || new Date().toISOString(),
+  }));
+  if (supplierRows.length) {
+    const ids = supplierRows.map(s => s.id);
+    const { data: existing, error: existingError } = await supabase.from('suppliers').select('id').eq('shop_id', shopId).in('id', ids);
+    if (existingError) return { ok: false, error: `Suppliers lookup: ${existingError.message}` };
+    const existingIds = new Set((existing || []).map(row => row.id));
+    const missing = supplierRows.filter(row => !existingIds.has(row.id));
+    if (missing.length) {
+      const { error } = await supabase.from('suppliers').insert(missing);
+      if (error) return { ok: false, error: `Suppliers: ${error.message}` };
+    }
+    for (const row of supplierRows.filter(item => existingIds.has(item.id))) {
+      const { error } = await supabase.from('suppliers').update({
+        name: row.name, contact_person: row.contact_person, phone: row.phone,
+        email: row.email, address: row.address,
+      }).eq('id', row.id).eq('shop_id', shopId);
+      if (error) return { ok: false, error: `Suppliers update: ${error.message}` };
     }
   }
 
