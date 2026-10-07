@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, PackageCheck } from 'lucide-react';
+import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
