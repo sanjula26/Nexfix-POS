@@ -309,9 +309,9 @@ export default function Inventory() {
             </div>
             {currentTracked && !tracked && inStockUnits > 0 && <p className="text-xs font-medium text-rose-600">Tracking cannot be disabled while in-stock units remain. Reconcile those units first.</p>}
             {isNew && tracked && (
-              <div className="rounded-xl border-2 border-violet-300 bg-violet-50/70 p-4 space-y-3 shadow-sm">
+              <div className="rounded-xl border border-violet-500/25 bg-violet-500/[0.07] p-4 space-y-3 shadow-sm">
                 <div>
-                  <div className="flex items-center gap-2"><ClipboardCheck size={16} className="text-violet-600" /><div className="text-sm font-bold text-ink">Initial IMEI / Serial numbers</div></div>
+                  <div className="flex items-center gap-2"><ClipboardCheck size={16} className="text-violet-500" /><div className="text-sm font-bold text-ink">Initial IMEI / Serial numbers</div></div>
                   <p className="text-xs text-sub mt-0.5">
                     Add one unit per line. {editing.trackImei && editing.trackSerial
                       ? 'For both, use IMEI,SERIAL on each line.'
