@@ -1107,6 +1107,58 @@ function findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, partN
   return null;
 }
 
+function findRecentCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey) {
+  var normalizedShopId = normalizeShopId(shopId);
+  var safeBackupId = String(backupId || '').trim();
+  var safeDayKey = String(dayKey || '').trim();
+  if (!safeBackupId || !/^[A-Za-z0-9._:-]+$/.test(safeBackupId)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(safeDayKey)) return null;
+  var partition = shopPartitionKey(normalizedShopId);
+  var expectedPrefix = getBackupFilePrefix(normalizedShopId, safeDayKey);
+  var incomingMillis = parseExportedAtMillis(exportedAt);
+  if (!incomingMillis) return null;
+  var root = getRootBackupFolder();
+  var folders = root.getFolders();
+
+  while (folders.hasNext()) {
+    var shopFolder = folders.next();
+    if (shopFolder.getName().indexOf('Shop_' + partition + ' - ') !== 0) continue;
+    var backups = shopFolder.getFoldersByName(DRIVE_BACKUP_SUBFOLDER_NAME);
+    while (backups.hasNext()) {
+      var backupFolder = backups.next();
+      var files = backupFolder.getFiles();
+      while (files.hasNext()) {
+        var file = files.next();
+        var name = file.getName();
+        if (name.indexOf(expectedPrefix) !== 0 || name.indexOf('.part') > 0) continue;
+        try {
+          var parsed = JSON.parse(file.getBlob().getDataAsString());
+          var meta = name === expectedPrefix + '.json'
+            ? (parsed && parsed._meta ? parsed._meta : {})
+            : (name === expectedPrefix + '.manifest.json' ? parsed : null);
+          if (!meta || meta.app !== 'Nexfix POS' || meta.encrypted !== true) continue;
+          if (String(meta.shopId || '') !== normalizedShopId || String(meta.shopPartition || '') !== partition) continue;
+          if (String(meta.dayKey || '') !== safeDayKey) continue;
+          var artifactBackupId = String(meta.backupId || '');
+          var artifactMillis = parseExportedAtMillis(meta.exportedAt);
+          if (!artifactMillis || Math.abs(artifactMillis - incomingMillis) > 180000) continue;
+          if (artifactBackupId !== safeBackupId && artifactMillis < incomingMillis - 10000) continue;
+          return {
+            fileId: file.getId(),
+            fileName: name,
+            backupId: artifactBackupId,
+            shopId: normalizedShopId,
+            shopPartition: partition,
+            exportedAt: String(meta.exportedAt || ''),
+            multipart: name.indexOf('.manifest.json') > 0
+          };
+        } catch (ignore) {}
+      }
+    }
+  }
+  return null;
+}
+
 function backupStatusKey(shopId, requestId) {
   return 'nexfix_req_' + shopPartitionKey(shopId) + '_' + requestId;
 }
@@ -1373,6 +1425,27 @@ function doGet(e) {
       return json(verifyResult);
     } catch (verifyError) {
       return json(fail(verifyError));
+    }
+  }
+
+  if (p.action === 'verifyRecentBackup') {
+    try { requireBackupApiKey(p.apiKey); } catch (authError) { return json(unauthorized('Unauthorized: API key mismatch')); }
+    try {
+      var recentShopId = normalizeShopId(p.shopId);
+      var recentRequestId = validateRequestId(p.requestId);
+      var recentProof = validateShopProof(p.shopProof);
+      authorizeShopAccess(recentShopId, recentProof, false);
+      var recentArtifact = findRecentCommittedBackupArtifact(recentShopId, p.backupId, p.exportedAt, p.dayKey);
+      var recentResult = recentArtifact
+        ? ok({ action: 'backupState', backupId: recentArtifact.backupId, driveFileId: recentArtifact.fileId, driveFileName: recentArtifact.fileName, shopId: recentArtifact.shopId, shopPartition: recentArtifact.shopPartition, exportedAt: recentArtifact.exportedAt, multipart: recentArtifact.multipart, verifiedBy: 'drive-recent' })
+        : { ok: false, status: 'pending', version: VERSION, pending: true, action: 'backupState' };
+      var recentCallback = String(p.callback || '').trim();
+      if (recentCallback && /^__nexfixGoogleBackup_[0-9]+_[A-Za-z0-9]+$/.test(recentCallback)) {
+        return ContentService.createTextOutput(recentCallback + '(' + JSON.stringify(recentResult) + ');').setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return json(recentResult);
+    } catch (recentError) {
+      return json(fail(recentError));
     }
   }
 
