@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
+import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { Purchase, PurchaseItem } from '../lib/types';
 import { validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
+import SearchableSelect from '../components/SearchableSelect';
 
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
 const emptyRow = (): Row => ({ productId: '', qty: 1, cost: 0, sellingPrice: 0, updateSellingPrice: false, unitText: '' });
@@ -404,10 +405,7 @@ export default function GRN() {
             <>
               <div className="grid md:grid-cols-2 gap-4">
                 <Field label="Supplier">
-                  <select className="input" value={supplierId} onChange={e => setSupplierId(e.target.value)} disabled={actionRunning}>
-                    <option value="">Select supplier...</option>
-                    {state.suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  <SearchableSelect value={supplierId} options={state.suppliers} onChange={setSupplierId} disabled={actionRunning} placeholder="Search supplier by name or phone…" ariaLabel="Supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{[s.phone,s.email].filter(Boolean).join(' · ')}</div></>} />
                 </Field>
                 <Field label="Supplier invoice number">
                   <input className={`input ${invoiceWarning ? 'border-amber-500/50' : ''}`} value={invoiceNo} onChange={e => { setInvoiceNo(e.target.value); setInvoiceWarning(false); }} placeholder="Supplier invoice / reference (recommended)" disabled={actionRunning} />
@@ -580,15 +578,4 @@ export default function GRN() {
       </Modal>
     </div>
   );
-}
-function ProductSearchSelect({ value, products, onChange }: { value: string; products: Array<{ id: string; name: string; sku: string; barcode: string; brand: string }>; onChange: (id: string) => void }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const selected = products.find(p => p.id === value);
-  const q = query.trim().toLowerCase();
-  const matches = products.filter(p => !q || (p.name + ' ' + p.sku + ' ' + p.barcode + ' ' + p.brand).toLowerCase().includes(q)).slice(0, 30);
-  return <div className="relative">
-    <div className="relative"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint"/><input className="input pl-9" value={open ? query : (selected?.name || '')} placeholder="Search product, SKU or barcode..." onFocus={()=>{setOpen(true);setQuery('')}} onChange={e=>{setQuery(e.target.value);setOpen(true)}}/></div>
-    {open && <><button type="button" aria-label="Close product search" className="fixed inset-0 z-20 cursor-default" onClick={()=>setOpen(false)}/><div className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl">{matches.length===0?<div className="p-3 text-sm text-sub">No matching products</div>:matches.map(p=><button type="button" key={p.id} className={"w-full text-left px-3 py-2.5 hover:bg-raised border-b border-line last:border-0 "+(p.id===value?'bg-violet-50 dark:bg-violet-900/20':'')} onClick={()=>{onChange(p.id);setQuery('');setOpen(false)}}><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{p.sku} · {p.barcode}{p.brand ? ' · '+p.brand : ''}</div></button>)}</div></>}
-  </div>;
 }
