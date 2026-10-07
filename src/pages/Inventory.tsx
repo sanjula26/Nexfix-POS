@@ -7,6 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
+import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
@@ -294,7 +295,7 @@ export default function Inventory() {
             </div>
             <div className="grid sm:grid-cols-2 gap-4">
               <Field label="Category"><select className="input" value={editing.category} onChange={e => setEditing({ ...editing, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select></Field>
-              <Field label="Supplier"><select className="input" value={editing.supplierId || ''} onChange={e => setEditing({ ...editing, supplierId: e.target.value || undefined })}><option value="">— None —</option>{state.suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+              <Field label="Supplier"><SearchableSelect value={editing.supplierId || ''} options={state.suppliers} onChange={v => setEditing({ ...editing, supplierId: v || undefined })} placeholder="Search supplier by name or phone…" ariaLabel="Product supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{s.phone}</div></>} /></Field>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Field label="Cost (Rs.)"><input className="input num" value={editing.cost || ''} onChange={e => setEditing({ ...editing, cost: num(e.target.value) })} /></Field>
