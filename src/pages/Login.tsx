@@ -111,8 +111,8 @@ function BrandingHero({ appVersion }: { appVersion: string }) {
               <span className="text-ink">NEXFIX</span>{' '}
               <span className="bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">SOLUTION</span>
             </h1>
-            <p className="mt-3 text-sm font-medium tracking-wide text-sub sm:text-base">
-              POS &amp; Inventory Management System · v{appVersion || "—"}
+            <p className="mt-3 text-sm font-semibold tracking-wide text-slate-600 dark:text-slate-300 sm:text-base">
+              POS &amp; Inventory Management System · v{appVersion}
             </p>
           </div>
         </div>
@@ -227,7 +227,7 @@ export default function Login() {
   const [setupCashierEmail, setSetupCashierEmail] = useState('');
   const [setupCashierPassword, setSetupCashierPassword] = useState('');
   const [setupCashierConfirm, setSetupCashierConfirm] = useState('');
-  const [appVersion, setAppVersion] = useState(() => String(import.meta.env.VITE_APP_VERSION || '3.0.1449'));
+  const [appVersion] = useState(() => '3.0.1459');
 
   const nextPath = (() => {
     const next = new URLSearchParams(location.search).get('next') || '';
@@ -420,7 +420,7 @@ export default function Login() {
               <p className="mt-7 text-center text-[11px] leading-5 text-faint">
                 Your password is never stored in Remember me data.
               </p>
-              {appVersion && <p className="mt-2 text-center text-[10px] font-semibold tracking-[0.16em] text-faint">NEXFIX POS v{appVersion}</p>}
+              <p className="mt-2 text-center text-[10px] font-bold tracking-[0.16em] text-slate-500 dark:text-slate-400">NEXFIX POS v{appVersion}</p>
             </div>
           </AuthCard>
         )}
