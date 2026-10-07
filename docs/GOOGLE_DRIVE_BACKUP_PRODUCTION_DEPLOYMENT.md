@@ -2,7 +2,7 @@
 
 ## Production contract
 
-- Client expected Apps Script version: **3.3.0**
+- Client expected Apps Script version: **3.3.1**
 - Source of truth: `google-apps-script/Code.gs`
 - Documentation copy: `docs/GoogleAppsScript_Code.gs`
 - Production web-app URL must remain the centrally managed `script.google.com/macros/s/.../exec` URL already embedded in `src/lib/driveSync.ts`.
@@ -32,7 +32,7 @@
 
 Open the production `/exec?action=ping` endpoint. The response must report:
 
-`version: "3.3.0"`
+`version: "3.3.1"`
 
 If it reports **3.2.0** (or 3.0.1), the old deployment is still active and must be updated to a new Apps Script deployment version.
 
@@ -57,7 +57,7 @@ The rename is performed only after the backup artifact has passed freshness/inte
 
 ## Already-installed POS verification
 
-After deploying Apps Script 3.3.0, an already-installed POS does not need a new EXE solely because of the Apps Script change **if that installed build already contains the current driveSync.ts code**.
+After deploying Apps Script 3.3.1, an already-installed POS does not need a new EXE solely because of the Apps Script change **if that installed build already contains the current driveSync.ts code**.
 
 In the POS:
 
@@ -70,6 +70,6 @@ In the POS:
 7. Change the POS shop name.
 8. Run another manual backup.
 9. Confirm the same partition folder is renamed to `Shop_<partition> - <newName>`.
-10. Confirm `shop.json` and `SHOP_INFO.txt` contain the new name and version 3.3.0.
+10. Confirm `shop.json` and `SHOP_INFO.txt` contain the new name and version 3.3.1.
 
 If the installed EXE predates the current `driveSync.ts` verification logic, build/install the current POS release after the Apps Script deployment. The Apps Script redeploy is mandatory for the new server-side `verifyRecentBackup` action.
