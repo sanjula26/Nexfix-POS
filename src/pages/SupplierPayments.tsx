@@ -4,6 +4,7 @@ import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading, SearchInput } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
 import { getSupplierOutstanding, type SupplierPaymentMethod } from '../lib/supplierPayments';
+import SearchableSelect from '../components/SearchableSelect';
 
 const METHODS: Array<{ value: SupplierPaymentMethod; label: string; icon: typeof Banknote }> = [
   { value: 'cash', label: 'Cash', icon: Banknote },
@@ -78,7 +79,7 @@ export default function SupplierPayments() {
       </div>
       <div className="card p-4 mb-5">
         <div className="grid md:grid-cols-2 gap-4">
-          <Field label="Supplier"><select className="input" value={supplierId} onChange={e => { setSupplierId(e.target.value); setPurchaseId(''); setError(''); }}><option value="">Select supplier...</option>{state.suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+          <Field label="Supplier"><SearchableSelect value={supplierId} options={state.suppliers} onChange={v => { setSupplierId(v); setPurchaseId(''); setError(''); }} placeholder="Search supplier by name or phone…" ariaLabel="Payment supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{s.phone}</div></>} /></Field>
           <Field label="Amount (Rs.)" hint={supplier ? (purchaseId && selectedPurchase ? `Purchase outstanding: ${fmtRs(selectedPurchaseOutstanding)}` : `Outstanding: ${fmtRs(outstanding)}`) : undefined}><input className="input num" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></Field>
           <Field label="Payment method"><div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{METHODS.map(m => { const Icon = m.icon; return <button key={m.value} type="button" className={`btn !px-2 ${method === m.value ? 'btn-primary' : 'btn-soft'}`} onClick={() => setMethod(m.value)}><Icon size={13} /> {m.label}</button>; })}</div></Field>
           <Field label="Against purchase (optional)"><select className="input" value={purchaseId} onChange={e => { setPurchaseId(e.target.value); setError(''); }} disabled={!supplier}><option value="">General supplier payment</option>{supplierPurchases.map(p => <option key={p.id} value={p.id}>{p.poNo} · {fmtRs(p.total)}</option>)}</select></Field>
