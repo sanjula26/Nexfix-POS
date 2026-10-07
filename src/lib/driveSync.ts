@@ -376,22 +376,30 @@ async function explainGenericGoogleBackupError(requestId: string): Promise<strin
 
 async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, backupId: string, exportedAt: string, dayKey: string, partName = ''): Promise<boolean> {
   if (!backupId) return false;
-  try {
-    const url = new URL(getGoogleScriptUrl());
-    url.searchParams.set('action', 'verifyBackup');
-    url.searchParams.set('shopId', shopId);
-    url.searchParams.set('requestId', makeRequestId());
-    url.searchParams.set('shopProof', shopProof);
-    url.searchParams.set('backupId', backupId);
-    if (exportedAt) url.searchParams.set('exportedAt', exportedAt);
-    if (dayKey) url.searchParams.set('dayKey', dayKey);
-    if (partName) url.searchParams.set('partName', partName);
-    url.searchParams.set('apiKey', BACKUP_API_KEY);
-    const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 8000);
-    return result?.ok === true && result.action === 'backupState';
-  } catch {
-    return false;
-  }
+
+  const verify = async (action: 'verifyBackup' | 'verifyRecentBackup'): Promise<boolean> => {
+    try {
+      const url = new URL(getGoogleScriptUrl());
+      url.searchParams.set('action', action);
+      url.searchParams.set('shopId', shopId);
+      url.searchParams.set('requestId', makeRequestId());
+      url.searchParams.set('shopProof', shopProof);
+      url.searchParams.set('backupId', backupId);
+      if (exportedAt) url.searchParams.set('exportedAt', exportedAt);
+      if (dayKey) url.searchParams.set('dayKey', dayKey);
+      if (partName && action === 'verifyBackup') url.searchParams.set('partName', partName);
+      url.searchParams.set('apiKey', BACKUP_API_KEY);
+      const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 8000);
+      return result?.ok === true && result.action === 'backupState';
+    } catch {
+      return false;
+    }
+  };
+
+  // Exact backupId verification is strongest. The recent artifact verifier is
+  // a Drive-only fallback for status-cache races and deployments where the
+  // status record was lost after the file was already committed.
+  return (await verify('verifyBackup')) || (await verify('verifyRecentBackup'));
 }
 
 async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, requestId: string, shopProof: string, backupId = '', exportedAt = '', dayKey = ''): Promise<boolean | { ok: false; error: string } | null> {
