@@ -599,10 +599,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         // It must continue even when the active cashier/technician lacks export permission.
         if (user) {
           try {
-            await downloadBackup(stateRef.current, 'auto', {
-              download: false,
-              cloud: true,
-            });
+            const latestMeta = await idbGetMeta();
+            if ((Number(latestMeta.autoBackupHours) || 0) > 0) {
+              await downloadBackup(stateRef.current, 'auto', {
+                download: false,
+                cloud: true,
+              });
+            }
             const meta = await idbGetMeta();
             setBackupMeta(meta);
           } catch { /* ignore */ }
