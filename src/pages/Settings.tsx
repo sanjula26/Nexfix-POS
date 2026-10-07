@@ -25,7 +25,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const {
     state, user, updateSettings, resetData, can, changeAdminPin, changeManagedPassword,
-    connectivity, backupMeta, runManualBackup, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
+    connectivity, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
   const [phoneLinkMsg, setPhoneLinkMsg] = useState('');
@@ -542,10 +542,12 @@ export default function Settings() {
     setGMsg('Uploading / confirming Google Drive backup…');
     try {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
+      // downloadBackup() persists lastCloudBackupAt/lastCloudBackupError.
+      // Refresh the in-memory Settings metadata immediately so a successful
+      // Drive artifact cannot leave the UI showing an old/sticky status.
+      await refreshBackupMeta();
       if (result.cloud) {
         setRecoveryKeyReady(hasRecoveryKey(recoveryScope));
-        const latestMeta = await idbGetMeta();
-        setBackupMeta(latestMeta);
         setGMsg('Google Drive backup completed successfully.');
       } else {
         setGMsg(result.error || 'Google Drive backup failed. No backup was uploaded.');
