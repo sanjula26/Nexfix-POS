@@ -544,6 +544,8 @@ export default function Settings() {
       const result = await downloadBackup(state, 'manual', { download: false, cloud: true });
       if (result.cloud) {
         setRecoveryKeyReady(hasRecoveryKey(recoveryScope));
+        const latestMeta = await idbGetMeta();
+        setBackupMeta(latestMeta);
         setGMsg('Google Drive backup completed successfully.');
       } else {
         setGMsg(result.error || 'Google Drive backup failed. No backup was uploaded.');
