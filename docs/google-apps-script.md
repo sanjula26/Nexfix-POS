@@ -13,7 +13,7 @@ This direct backup path does **not** require Supabase, and the backup Google She
 1. Open Google Apps Script using the Google account that should own the backups.
 2. Create or open the Apps Script project.
 3. Paste the approved `google-apps-script/Code.gs` from this repository.
-4. Save it. The approved server version is **3.3.0**.
+4. Save it. The approved server version is **3.3.1**.
 5. The repository already contains the master Drive folder ID:
    `1CQZ746hm3pTKOOx2BDVj3NEmTj82yEeK`
 6. Set Script Property `NEXFIX_BACKUP_API_KEY` to a long random value and keep it private in Apps Script. The released POS build must use the same value as `VITE_GOOGLE_BACKUP_API_KEY`.
@@ -33,7 +33,7 @@ The current server exposes an authenticated, read-only `diagnostics` action. The
 
 A healthy preflight proves:
 
-- live Apps Script `VERSION` is `3.3.0`;
+- live Apps Script `VERSION` is `3.3.1`;
 - the API key compiled into the production build is accepted by the live Script Property;
 - the Apps Script execution account can access the configured root Drive folder;
 - an existing shop's `SHOP_AUTH.json` still matches its Recovery Key / Shop Backup ID.
