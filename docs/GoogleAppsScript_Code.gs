@@ -6,6 +6,7 @@
  */
 var BACKUP_SHEET = 'FullBackup';
 var VERSION = '3.3.1';
+var CONFIRMATION_WINDOW_MS = 15 * 60 * 1000;
 var MAX_MULTIPART_PART_BYTES = 8 * 1024 * 1024;
 var SHOP_ID_MAX_LENGTH = 100;
 var REQUEST_ID_MAX_LENGTH = 200;
@@ -1088,7 +1089,7 @@ function findCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey, partN
             if (String(meta.shopId || '') !== normalizedShopId || String(meta.shopPartition || '') !== partition) continue;
             if (String(meta.backupId || '') !== safeBackupId) continue;
             if (safeDayKey && String(meta.dayKey || '') !== safeDayKey) continue;
-            if (incomingMillis && Math.abs(parseExportedAtMillis(meta.exportedAt) - incomingMillis) > 180000) continue;
+            if (incomingMillis && Math.abs(parseExportedAtMillis(meta.exportedAt) - incomingMillis) > CONFIRMATION_WINDOW_MS) continue;
             return { fileId: file.getId(), fileName: name, backupId: safeBackupId, shopId: normalizedShopId, shopPartition: partition, exportedAt: String(meta.exportedAt || '') };
           }
 
@@ -1141,8 +1142,8 @@ function findRecentCommittedBackupArtifact(shopId, backupId, exportedAt, dayKey)
           if (String(meta.dayKey || '') !== safeDayKey) continue;
           var artifactBackupId = String(meta.backupId || '');
           var artifactMillis = parseExportedAtMillis(meta.exportedAt);
-          if (!artifactMillis || Math.abs(artifactMillis - incomingMillis) > 180000) continue;
-          if (artifactBackupId !== safeBackupId && artifactMillis < incomingMillis - 10000) continue;
+          if (!artifactMillis || Math.abs(artifactMillis - incomingMillis) > CONFIRMATION_WINDOW_MS) continue;
+          if (artifactBackupId !== safeBackupId && artifactMillis < incomingMillis - CONFIRMATION_WINDOW_MS) continue;
           return {
             fileId: file.getId(),
             fileName: name,
