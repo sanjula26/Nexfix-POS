@@ -213,7 +213,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <button
             type="button"
             onClick={() => { signOut(true); navigate('/login'); }}
-            className="min-w-0 rounded-xl border border-emerald-400/40 bg-emerald-600 px-2 py-2.5 text-white shadow-none transition-colors duration-150 hover:bg-emerald-700 hover:border-emerald-300/70 active:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
+            className="min-w-0 rounded-xl border border-emerald-300/40 bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-700 px-2 py-2.5 text-white shadow-md shadow-emerald-950/25 transition-all duration-150 hover:brightness-105 hover:border-emerald-200/80 hover:shadow-lg active:brightness-95 focus:outline-none focus:ring-2 focus:ring-emerald-300/60"
             title="Sign out of the current POS account"
           >
             <LogOut size={15} strokeWidth={2.5} className="mx-auto" />
@@ -226,7 +226,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               if (desktop?.exitApp) void desktop.exitApp();
               else window.close();
             }}
-            className="min-w-0 rounded-xl border border-red-700/50 bg-red-700 px-2 py-2.5 text-white shadow-none transition-colors duration-150 hover:bg-red-800 hover:border-red-500/80 active:bg-red-900 focus:outline-none focus:ring-2 focus:ring-red-400/70"
+            className="min-w-0 rounded-xl border border-red-400/40 bg-gradient-to-r from-red-400 via-red-500 to-red-700 px-2 py-2.5 text-white shadow-md shadow-red-950/25 transition-all duration-150 hover:brightness-105 hover:border-red-300/80 hover:shadow-lg active:brightness-95 focus:outline-none focus:ring-2 focus:ring-red-300/70"
             title="Close Nexfix POS"
           >
             <X size={15} strokeWidth={2.5} className="mx-auto" />
