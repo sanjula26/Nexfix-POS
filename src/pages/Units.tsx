@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Cpu, Plus, Trash2, Smartphone, ClipboardList } from 'lucide-react';
+import { Cpu, Plus, Trash2, Smartphone, ClipboardList, Printer } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import SearchableSelect from '../components/SearchableSelect';
@@ -8,6 +8,27 @@ import type { InventoryUnit, UnitStatus, Product } from '../lib/types';
 
 const STATUS_TONE: Record<UnitStatus, 'emerald'|'slate'|'amber'|'violet'|'rose'> = { in_stock:'emerald', sold:'slate', returned:'amber', reserved:'violet', defective:'rose', in_repair:'amber' };
 const STATUS_LABEL: Record<UnitStatus,string> = { in_stock:'In stock', sold:'Sold', returned:'Returned', reserved:'Reserved', defective:'Defective', in_repair:'In repair' };
+function escHtml(value: string) { return value.replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch] || ch)); }
+
+function printWarrantyCard(unit: InventoryUnit, product: Product, shopName: string, sale?: { billNo?: string; customerName?: string }) {
+  const months = Math.max(0, Number(product.warrantyMonths) || 0);
+  const warrantyText = months > 0 ? months + ' month' + (months === 1 ? '' : 's') : 'Warranty period not configured';
+  const identifier = unit.imei || unit.serial || unit.id;
+  const rows = [
+    ['Product', product.name],
+    ['IMEI / Serial', identifier],
+    ['Warranty', warrantyText],
+    ['Sold date', unit.soldAt ? new Date(unit.soldAt).toLocaleDateString() : '—'],
+    ['Bill', sale?.billNo || unit.saleBillNo || '—'],
+    ['Customer', sale?.customerName || '—'],
+  ].map(([label,value]) => '<div class="row"><span class="label">' + escHtml(label) + '</span><span class="value">' + escHtml(value) + '</span></div>').join('');
+  const html = '<!doctype html><html><head><title>Warranty - ' + escHtml(product.name) + '</title><style>@page{size:A6;margin:10mm}body{font-family:Arial,sans-serif;color:#111;margin:0}.card{border:1px solid #222;border-radius:10px;padding:18px}.brand{font-size:20px;font-weight:800}.title{font-size:15px;font-weight:700;margin-top:14px;border-bottom:1px solid #ddd;padding-bottom:8px}.row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #eee;font-size:12px}.label{color:#666}.value{font-weight:700;text-align:right}.foot{margin-top:14px;font-size:10px;color:#666;text-align:center}</style></head><body><div class="card"><div class="brand">' + escHtml(shopName) + '</div><div class="title">Warranty Card</div>' + rows + '<div class="foot">Keep this card with your purchase receipt. Warranty terms are subject to shop policy.</div></div><script>window.onload=function(){window.print();}</script></body></html>';
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=480,height=700');
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+}
+
 
 export default function Units() {
   const { state, saveUnit, saveUnitsBulk, deleteUnit, can } = usePOS();
@@ -21,7 +42,7 @@ export default function Units() {
   return <div className="space-y-6">
     <PageHeading title="Units / IMEI & Serial" sub="Track individual sellable units and warranty status." actions={can('act:manageStock')&&trackedProducts.length>0?<div className="flex items-center gap-3 shrink-0"><button type="button" className="btn btn-soft !px-4 !py-2.5" onClick={openBulk}><ClipboardList size={16}/> Bulk add</button><button type="button" className="btn btn-primary !px-4 !py-2.5 shadow-sm" onClick={()=>{setEditing(null);setIsNew(true)}}><Plus size={16}/> Add unit</button></div>:undefined}/>
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3"><SearchInput value={q} onChange={setQ} placeholder="Search IMEI, serial or product"/><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All statuses</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select><div className="rounded-xl border border-line bg-raised px-4 py-3 text-sm text-sub">Showing {rows.length} of {units.length} units</div></div>
-    <div className="card overflow-hidden">{rows.length===0?<EmptyState icon={<Smartphone size={28}/>} title="No units found" sub="Add a unit or change the search filter."/>:<div className="divide-y divide-line">{rows.map(u=>{const p=products.find(x=>x.id===u.productId);return <div key={u.id} className="flex items-center justify-between gap-4 px-4 py-3"><div><div className="font-medium text-ink">{p?.name||'Unknown product'}</div><div className="text-xs text-sub">{u.imei||u.serial||'No IMEI/serial'} · Added {fmtDate(u.createdAt)}</div></div><div className="flex items-center gap-3"><Badge tone={STATUS_TONE[u.status]}>{STATUS_LABEL[u.status]}</Badge>{can('act:manageStock')&&<button className="btn-ghost" onClick={()=>{setEditing(u);setIsNew(false)}} aria-label="Edit unit"><Cpu size={16}/></button>}{can('act:manageStock')&&can('act:deleteRecords')&&u.status==='in_stock'&&<button className="btn-ghost text-rose-600" onClick={()=>deleteUnit(u.id)} aria-label="Delete unit"><Trash2 size={16}/></button>}</div></div>})}</div>}</div>
+    <div className="card overflow-hidden">{rows.length===0?<EmptyState icon={<Smartphone size={28}/>} title="No units found" sub="Add a unit or change the search filter."/>:<div className="divide-y divide-line">{rows.map(u=>{const p=products.find(x=>x.id===u.productId);return <div key={u.id} className="flex items-center justify-between gap-4 px-4 py-3"><div className="min-w-0"><div className="font-medium text-ink">{p?.name||'Unknown product'}</div><div className="text-xs text-sub">{u.imei||u.serial||'No IMEI/serial'} · Added {fmtDate(u.createdAt)}</div>{u.status==='sold'&&<div className="text-[11px] text-sub mt-0.5">Bill: {u.saleBillNo || (u.saleId ? state.sales.find(s=>s.id===u.saleId)?.billNo : '') || '—'} · Customer: {u.saleId ? (state.sales.find(s=>s.id===u.saleId)?.customerName || 'Walk-in customer') : '—'}</div>}{u.note&&<div className="text-[11px] text-faint mt-0.5 truncate">Note: {u.note}</div>}</div><div className="flex items-center gap-2 shrink-0"><Badge tone={STATUS_TONE[u.status]}>{STATUS_LABEL[u.status]}</Badge>{u.status==='sold'&&p&&<button type="button" className="btn-ghost" onClick={()=>printWarrantyCard(u,p,state.settings.shopName,state.sales.find(s=>s.id===u.saleId))} aria-label="Print warranty card" title="Print warranty card"><Printer size={15}/></button>}{can('act:manageStock')&&<button className="btn-ghost" onClick={()=>{setEditing(u);setIsNew(false)}} aria-label="Edit unit"><Cpu size={16}/></button>}{can('act:manageStock')&&can('act:deleteRecords')&&u.status==='in_stock'&&<button className="btn-ghost text-rose-600" onClick={()=>deleteUnit(u.id)} aria-label="Delete unit"><Trash2 size={16}/></button>}</div></div>})}</div>}</div>
     <Modal open={bulkOpen} onClose={()=>setBulkOpen(false)} title="Bulk add IMEI / Serial" sub="Paste one identifier per line; use IMEI,SERIAL when both are tracked." wide>
       <BulkUnitEditor product={trackedProducts.find(p=>p.id===bulkProductId)} productId={bulkProductId} setProductId={setBulkProductId} products={trackedProducts} text={bulkText} setText={setBulkText} msg={bulkMsg} errors={bulkErrors} onResult={(result)=>{setBulkMsg(result.msg);setBulkErrors(result.errors)}} onClose={()=>setBulkOpen(false)} saveUnitsBulk={saveUnitsBulk}/>
     </Modal>
