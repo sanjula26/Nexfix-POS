@@ -131,7 +131,7 @@ function CloudSyncStateBridge() {
       };
     }
     return () => cancelScheduledCloudSync();
-  }, [cloudSnapshotTrigger, user, connectivity, state]);
+  }, [cloudSnapshotTrigger, user, connectivity]);
 
   return null;
 }
