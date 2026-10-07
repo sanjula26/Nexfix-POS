@@ -61,6 +61,15 @@ export default function Inventory() {
   const retail = state.products.reduce((a, p) => a + p.stock * p.price, 0);
   const low = state.products.filter(p => p.stock <= p.reorderLevel).map(p => ({ ...p, suggestedReorderQty: Math.max(0, p.reorderLevel * 2 - p.stock) }));
 
+  const setProductAttribute = (key: string, value: string) => {
+    if (!editing) return;
+    const attributes = { ...(editing.attributes || {}) };
+    const trimmed = value.trim();
+    if (trimmed) attributes[key] = trimmed;
+    else delete attributes[key];
+    setEditing({ ...editing, attributes: Object.keys(attributes).length ? attributes : undefined });
+  };
+
   const save = () => {
     if (!editing || !editing.name.trim()) return;
     const current = isNew ? null : state.products.find(p => p.id === editing.id);
@@ -296,6 +305,18 @@ export default function Inventory() {
             <div className="grid sm:grid-cols-2 gap-4">
               <Field label="Category"><select className="input" value={editing.category} onChange={e => setEditing({ ...editing, category: e.target.value })}>{categoryOptions.map(c => <option key={c}>{c}</option>)}</select></Field>
               <Field label="Supplier"><SearchableSelect value={editing.supplierId || ''} options={state.suppliers} onChange={v => setEditing({ ...editing, supplierId: v || undefined })} placeholder="Search supplier by name or phone…" ariaLabel="Product supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{s.phone}</div></>} /></Field>
+            </div>
+            <div className="rounded-xl border border-line bg-raised/40 p-4 space-y-3">
+              <div>
+                <div className="text-sm font-bold text-ink">Device attributes <span className="text-xs font-normal text-faint">optional</span></div>
+                <div className="text-[11px] text-sub mt-0.5">Useful for phone and laptop identification. Existing custom attributes are preserved.</div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Field label="Storage"><input className="input" value={String(editing.attributes?.storage ?? '')} onChange={e => setProductAttribute('storage', e.target.value)} placeholder="128GB / 512GB" /></Field>
+                <Field label="RAM"><input className="input" value={String(editing.attributes?.ram ?? '')} onChange={e => setProductAttribute('ram', e.target.value)} placeholder="8GB / 16GB" /></Field>
+                <Field label="Color"><input className="input" value={String(editing.attributes?.color ?? '')} onChange={e => setProductAttribute('color', e.target.value)} placeholder="Black / Blue" /></Field>
+                <Field label="CPU"><input className="input" value={String(editing.attributes?.cpu ?? '')} onChange={e => setProductAttribute('cpu', e.target.value)} placeholder="Core i5 / Ryzen 5" /></Field>
+              </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Field label="Cost (Rs.)"><input className="input num" value={editing.cost || ''} onChange={e => setEditing({ ...editing, cost: num(e.target.value) })} /></Field>
