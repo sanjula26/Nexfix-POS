@@ -13,7 +13,7 @@ import {
   getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
-import { syncToGoogleDrive } from './driveSync';
+import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
@@ -2496,10 +2496,17 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);
       return;
     }
-    setState(s => ({ ...s, settings: { ...s.settings, ...patch } }));
-    // Queue a debounced full-state Drive snapshot. This intentionally reads the
-    // latest state when the debounce expires, so a shop-name change also reaches
-    // Apps Script and triggers the existing Shop_<partition> folder rename.
+    const nextState = {
+      ...stateRef.current,
+      settings: { ...stateRef.current.settings, ...patch },
+    };
+    setState(s => ({ ...s, settings: nextState.settings }));
+    // Shop identity/display metadata is synced immediately and separately from
+    // the configured full-backup interval. This keeps Drive folder/shop files
+    // current without turning every settings edit into an unexpected snapshot.
+    void syncShopMetadataToGoogleDrive(nextState).then(result => {
+      if (!result.ok) console.warn('[Google Backup] shop metadata sync failed', result.error);
+    });
     scheduleGoogleBackup(() => stateRef.current, 'settings');
     pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`);
   }, [pushAudit, user]);
