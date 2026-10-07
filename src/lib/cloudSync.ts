@@ -183,7 +183,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     track_imei: !!p.trackImei, track_serial: !!p.trackSerial, track_expiry: !!p.trackExpiry,
     warranty_months: p.warrantyMonths ?? 0, is_kit: !!p.isKit, is_service: !!p.isService,
     active: p.active !== false, attributes: p.attributes || {}, image_url: null,
-    category_id: null, brand_id: null, supplier_id: null, created_at: p.createdAt || new Date().toISOString(),
+    category_id: null, brand_id: null, supplier_id: p.supplierId || null, created_at: p.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }));
   if (productRows.length) {
