@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Cpu, Plus, Trash2, Smartphone, ClipboardList } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
+import SearchableSelect from '../components/SearchableSelect';
 import { fmtDate, uid } from '../lib/utils';
 import type { InventoryUnit, UnitStatus, Product } from '../lib/types';
 
@@ -42,7 +43,7 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
    const unit:InventoryUnit={id:value?.id||uid(),productId:isNew?productId:(value?.productId||productId),imei:normalizedImei||undefined,serial:normalizedSerial||undefined,status:isNew?'in_stock':(value?.status||status),note:note.trim()||undefined,createdAt:value?.createdAt||new Date().toISOString()};
    setError(''); onSave(unit); onClose();
  };
- return <div className="space-y-4"><Field label="Product"><select className="input" value={productId} onChange={e=>{setProductId(e.target.value);setError('')}} disabled={!isNew}>{products.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field><div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+ return <div className="space-y-4"><Field label="Product"><SearchableSelect value={productId} options={products} onChange={v=>{setProductId(v);setError('')}} disabled={!isNew} placeholder="Search product, SKU or barcode…" ariaLabel="Product" getLabel={p=>p.name} getSearchText={p=>[p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p=><><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')}</div></>} /></Field><div className="grid grid-cols-1 gap-4 md:grid-cols-2">
   <Field label={product?.trackImei ? 'IMEI *' : 'IMEI'} hint={product?.trackImei ? 'Required for this product' : 'Not required'}>
     <input className={`input ${product?.trackImei && !imei.trim() ? 'border-amber-500/40' : ''}`} value={imei} onChange={e=>{setImei(e.target.value);setError('')}} placeholder={product?.trackImei ? 'Enter IMEI' : 'Optional'} />
   </Field>
@@ -81,7 +82,7 @@ function BulkUnitEditor({product,productId,setProductId,products,text,setText,ms
    if(result.added>0) setText('');
  };
  return <div className="space-y-4">
-   <Field label="Product"><select className="input" value={productId} onChange={e=>setProductId(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name} · {p.trackImei&&p.trackSerial?'IMEI + Serial':p.trackImei?'IMEI':'Serial'}</option>)}</select></Field>
+   <Field label="Product"><SearchableSelect value={productId} options={products} onChange={setProductId} placeholder="Search tracked product…" ariaLabel="Bulk product" getLabel={p=>p.name} getSearchText={p=>[p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p=><><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')} · {p.trackImei&&p.trackSerial?'IMEI + Serial':p.trackImei?'IMEI':'Serial'}</div></>} /></Field>
    <Field label={product?.trackImei&&product?.trackSerial?'IMEI,SERIAL per line':'One IMEI or serial per line'} hint={product?.trackImei&&product?.trackSerial?'Example: 356789012345678,ABC123':'Blank lines are ignored; duplicates are rejected.'}><textarea className="input min-h-[220px] font-mono text-sm" value={text} onChange={e=>setText(e.target.value)} placeholder={product?.trackImei&&product?.trackSerial?'356789012345678,ABC123\n356789012345679,ABC124':'356789012345678\n356789012345679'} /></Field>
    {msg&&<p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{msg}</p>}
    {errors.length>0&&<div className="max-h-40 overflow-auto rounded-xl border border-rose-500/25 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400"><div className="font-bold mb-1">Errors</div>{errors.map((e,i)=><div key={i}>{e}</div>)}</div>}
