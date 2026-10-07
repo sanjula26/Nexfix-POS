@@ -89,8 +89,7 @@ export default function Exchanges() {
       setQuery(draftQuery);
       if (parsed.reason) setReason(parsed.reason);
       if (parsed.mode === 'refund' || parsed.mode === 'replace') setMode(parsed.mode);
-      if (parsed.cloudSaleId) setCloudSaleId(parsed.cloudSaleId);
-      if (parsed.cloudShopId) setCloudShopId(parsed.cloudShopId);
+      // Ignore persisted cloud IDs; they are re-authorized/resolved at commit time.
       const found = state.sales.find(s => s.id === parsed.billId) || state.sales.find(s => s.billNo.toLowerCase() === draftQuery.toLowerCase());
       if (found) {
         const restoredSelected = Array.isArray(parsed.selected) ? parsed.selected.filter(i => Number.isInteger(i) && i >= 0 && i < found.items.length) : [];
