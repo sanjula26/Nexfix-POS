@@ -503,12 +503,29 @@ export default function Settings() {
     if (!file) return;
     try {
       const text = await file.text();
-      const match = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
-      if (!match) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
-      const result = setRecoveryKey(match[1], recoveryScope);
+      const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+      if (!keyMatch) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
+
+      // RECOVERY_KEY.txt is the one-time disaster/new-PC reconnect artifact.
+      // If it contains the Shop Backup ID, adopt both values together so the
+      // key is stored under the correct scoped Drive identity automatically.
+      const idMatch = text.match(/^Shop Backup ID Copy:\\s*([A-Za-z0-9._:-]{1,100})\\s*$/m);
+      let scope = recoveryScope;
+      if (idMatch?.[1]) {
+        const idResult = saveExistingDriveShopId(idMatch[1]);
+        if (!idResult.ok) throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
+        scope = idMatch[1].trim();
+        setDriveShopId(scope);
+      }
+
+      const result = setRecoveryKey(keyMatch[1], scope);
       if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key.');
       setRecoveryKeyReady(true);
-      setRecoveryKeyMsg('Existing Recovery Key imported for this shop. You can try Google Backup again.');
+      setRecoveryKeyMsg(
+        idMatch?.[1]
+          ? 'Shop Backup ID + Recovery Key imported once. Future automatic and manual Google backups will reuse them without another paste.'
+          : 'Existing Recovery Key imported for this shop. Future automatic and manual Google backups will reuse it without another paste.',
+      );
       setGMsg('');
     } catch (error) {
       setRecoveryKeyMsg(error instanceof Error ? error.message : 'Could not import the Recovery Key.');
