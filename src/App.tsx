@@ -4,6 +4,7 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
+import { syncNormalizedCatalog } from './lib/cloudSync';
 import { refreshDesktopUpdaterCredentials, signOutFromCloud } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
@@ -107,13 +108,30 @@ function CloudSyncStateBridge() {
     sales: state.sales.map(s => [s.id, s.status, s.date, s.total]),
     purchases: state.purchases.map(p => [p.id, p.status, p.date]),
     repairs: state.repairs.map(r => [r.id, r.status, r.receivedAt, r.completedAt, r.deliveredAt]),
-  }), [state.sales, state.purchases, state.repairs]);
+    // Catalog metadata is also a cloud dependency for cashier sales. Track
+    // these fields so admin/manager edits are reconciled before another POS
+    // machine tries to transact against the normalized catalog.
+    products: state.products.map(p => [p.id, p.name, p.sku, p.barcode, p.cost, p.price, p.reorderLevel, p.trackImei, p.trackSerial, p.trackExpiry, p.warrantyMonths, p.isKit, p.isService, p.active, p.supplierId]),
+    customers: state.customers.map(c => [c.id, c.name, c.phone, c.email, c.nic, c.address, c.creditLimit]),
+    suppliers: state.suppliers.map(s => [s.id, s.name, s.contactPerson, s.phone, s.email, s.address]),
+    kits: (state.kitItems || []).map(k => [k.id, k.kitProductId, k.componentProductId, k.qty]),
+    units: (state.units || []).map(u => [u.id, u.productId, u.imei, u.serial, u.expiryDate, u.status, u.cost]),
+  }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.suppliers, state.kitItems, state.units]);
 
   useEffect(() => {
     if (!user || connectivity !== 'online') return;
     scheduleCloudSync();
+    if (user.role === 'admin' || user.role === 'manager') {
+      const timer = window.setTimeout(() => {
+        void syncNormalizedCatalog(state).catch(() => {});
+      }, 500);
+      return () => {
+        window.clearTimeout(timer);
+        cancelScheduledCloudSync();
+      };
+    }
     return () => cancelScheduledCloudSync();
-  }, [cloudSnapshotTrigger, user, connectivity]);
+  }, [cloudSnapshotTrigger, user, connectivity, state]);
 
   return null;
 }
