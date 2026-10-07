@@ -201,6 +201,46 @@ interface GoogleBackupPostResult { ok: boolean; error?: string; retryAfterSecond
 
 export interface GoogleScriptHealth { ok: boolean; version?: string; message?: string; }
 
+async function fetchLatestGoogleBackupArtifact(timeoutMs = 10000): Promise<{
+  shopId: string;
+  shopPartition: string;
+  backupId: string;
+  exportedAt: string;
+} | null> {
+  try {
+    const shopId = await resolveAuthorizedBackupShopId();
+    if (!shopId || !BACKUP_API_KEY) return null;
+    const recoveryKey = ensureRecoveryKey(shopId);
+    const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'getLatestBackup');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', makeRequestId());
+    url.searchParams.set('shopProof', shopProof);
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
+    const result = await getJsonp<{
+      ok?: boolean;
+      backup?: {
+        timestamp?: unknown;
+        shopId?: unknown;
+        shopPartition?: unknown;
+        backupId?: unknown;
+      };
+    }>(url, timeoutMs);
+    const backup = result?.ok === true ? result.backup : undefined;
+    if (!backup || String(backup.shopId || '') !== shopId || typeof backup.shopPartition !== 'string') return null;
+    return {
+      shopId,
+      shopPartition: String(backup.shopPartition),
+      backupId: String(backup.backupId || ''),
+      exportedAt: String(backup.timestamp || ''),
+    };
+  } catch (error) {
+    console.warn('[Google Backup] latest Drive artifact metadata check failed', error);
+    return null;
+  }
+}
+
 async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unknown>): Promise<boolean> {
   try {
     const url = new URL(getGoogleScriptUrl());
@@ -232,23 +272,26 @@ async function verifyRecentGoogleBackup(shopId: string, body: Record<string, unk
     } catch { /* continue */ }
   }
 
-  // Compatibility path for older live deployments: authenticated latest-backup
-  // data is enough to prove this shop received the attempted artifact.
+  // Compatibility path for older live deployments: query only the latest
+  // shop-scoped artifact metadata. Do NOT use fetchLatestGoogleBackup() here
+  // because that path downloads/decrypts the backup and can fail for reasons
+  // unrelated to whether the Drive artifact exists.
+  const expectedPartition = (await sha256Hex(shopId)).slice(0, 24);
+  const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
+  const attemptBackupId = String(body.backupId || '');
+  const attemptDayKey = String(body.dayKey || '');
   for (const timeoutMs of [8000, 15000]) {
-    try {
-      const latest = await fetchLatestGoogleBackup(timeoutMs);
-      if (!latest || latest.shopId !== shopId) continue;
-      const latestAt = latest.backedUpAt ? Date.parse(latest.backedUpAt) : NaN;
-      const attemptAt = typeof body.exportedAt === 'string' ? Date.parse(body.exportedAt) : NaN;
-      const latestBackupId = latest.backupId || latest.manifest?.backupId || '';
-      const attemptBackupId = String(body.backupId || '');
-      const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
-        && latestAt >= attemptAt - 10000
-        && latestAt <= attemptAt + 300000;
-      if ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough) return true;
-    } catch (error) {
-      console.warn('[Google Backup] recent-backup verification attempt failed', error);
-    }
+    const latest = await fetchLatestGoogleBackupArtifact(timeoutMs);
+    if (!latest || latest.shopId !== shopId || latest.shopPartition !== expectedPartition) continue;
+    const latestAt = Date.parse(latest.exportedAt);
+    const latestBackupId = latest.backupId;
+    const latestDayKey = Number.isFinite(latestAt) ? new Date(latestAt).toISOString().slice(0, 10) : '';
+    const sameDay = !attemptDayKey || !latestDayKey || latestDayKey === attemptDayKey
+      || (Number.isFinite(attemptAt) && Math.abs(latestAt - attemptAt) <= 12 * 60 * 60 * 1000);
+    const closeEnough = Number.isFinite(latestAt) && Number.isFinite(attemptAt)
+      && latestAt >= attemptAt - 15 * 60 * 1000
+      && latestAt <= attemptAt + 15 * 60 * 1000;
+    if (sameDay && ((attemptBackupId && latestBackupId === attemptBackupId) || closeEnough)) return true;
   }
   return false;
 }
