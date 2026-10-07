@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
-import { ensureCloudShop, processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo } from '../lib/cloudSync';
+import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo } from '../lib/cloudSync';
 import { queueReturnCreate } from '../lib/offline';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 
@@ -151,19 +151,17 @@ export default function Exchanges() {
       }));
 
       if (online && supabaseConfigured && supabase) {
-        let authoritativeSaleId = cloudSaleId;
-        let authoritativeShopId = cloudShopId;
-        if (!authoritativeSaleId || !authoritativeShopId) {
-          const remote = await resolveCloudSaleIdByBillNo({ billNo: bill.billNo });
-          if (!remote.ok || !remote.saleId || !remote.shopId) {
-            throw new Error(remote.error || 'Sale not found in the cloud for this bill number.');
-          }
-          authoritativeSaleId = remote.saleId;
-          authoritativeShopId = remote.shopId;
-          setCloudSaleId(authoritativeSaleId);
-          setCloudShopId(authoritativeShopId);
+        // Always re-resolve from the bill number immediately before committing.
+        // Persisted IDs can be stale after a shop switch, restored draft, or an
+        // earlier failed attempt; the bill number is the authoritative lookup key.
+        const remote = await resolveCloudSaleIdByBillNo({ billNo: bill.billNo });
+        if (!remote.ok || !remote.saleId || !remote.shopId) {
+          throw new Error(remote.error || 'Sale not found in the cloud for this bill number.');
         }
-        if (!authoritativeSaleId) throw new Error('This bill is not available in the cloud yet. Keep the POS online and search the bill again.');
+        const authoritativeSaleId = remote.saleId;
+        const authoritativeShopId = remote.shopId;
+        setCloudSaleId(authoritativeSaleId);
+        setCloudShopId(authoritativeShopId);
         const resolve = await resolveSaleReturnLines({ shopId: authoritativeShopId, saleId: authoritativeSaleId, lines: returnLines });
         if (!resolve.ok || !resolve.lines) throw new Error(resolve.error || 'Cloud sale item could not be matched');
         const cloud = await processSaleReturnAtomic({
