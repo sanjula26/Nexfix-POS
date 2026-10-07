@@ -6,6 +6,7 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import { fmtDate, fmtRs, uid, waLink } from '../lib/utils';
 import type { RepairJob, RepairStatus, RepairPart } from '../lib/types';
+import SearchableSelect from '../components/SearchableSelect';
 
 const PIPELINE: RepairStatus[] = ['received', 'diagnosed', 'waiting_parts', 'in_repair', 'ready', 'delivered'];
 
@@ -156,7 +157,7 @@ export default function Repairs() {
           <div className="rounded-xl border border-line p-3"><div className="text-[12px] font-bold text-ink mb-2">Parts used</div>
             {editing.parts.length === 0 && <div className="text-[12px] text-faint py-1">No inventory parts attached.</div>}
             {editing.parts.map((p, i) => <div key={`${p.productId || p.name}-${i}`} className="flex items-center justify-between gap-2 text-[13px] py-1 border-b border-line last:border-0"><span>{p.name} ×{p.qty}</span><span className="num font-semibold">{fmtRs(p.cost * p.qty, false)}</span>{isNew && <button type="button" className="icon-btn !w-7 !h-7" onClick={() => removePart(i)} aria-label="Remove part"><Trash2 size={13} /></button>}</div>)}
-            {isNew ? <div className="grid grid-cols-[1fr_80px_auto] gap-2 mt-2"><select className="input" value={partProductId} onChange={e => setPartProductId(e.target.value)}><option value="">Select inventory part…</option>{availableProducts.map(p => <option key={p.id} value={p.id}>{p.name} · stock {p.stock}</option>)}</select><input className="input num" type="number" min="1" step="1" value={partQty} onChange={e => setPartQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))} /><button type="button" className="btn btn-soft" onClick={addPart}>Add</button></div> : <div className="text-[11px] text-faint mt-2">Inventory parts are locked after the job is created so stock history stays consistent.</div>}
+            {isNew ? <div className="grid grid-cols-[1fr_80px_auto] gap-2 mt-2"><SearchableSelect value={partProductId} options={availableProducts} onChange={setPartProductId} placeholder="Search inventory part…" ariaLabel="Repair inventory part" clearable getLabel={p => p.name} getSearchText={p => [p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p => <><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')} · stock {p.stock}</div></>} /><input className="input num" type="number" min="1" step="1" value={partQty} onChange={e => setPartQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))} /><button type="button" className="btn btn-soft" onClick={addPart}>Add</button></div> : <div className="text-[11px] text-faint mt-2">Inventory parts are locked after the job is created so stock history stays consistent.</div>}
           </div>
           <div className="flex items-center justify-between text-sm font-bold text-ink px-1"><span>Estimated total</span><span className="num">{fmtRs(totalFor(editing))}</span></div>
           {!isNew && <Field label="Status"><select className="input" value={editing.status} onChange={e => setEditing({ ...editing, status: e.target.value as RepairStatus })}>{[...PIPELINE, 'cancelled' as RepairStatus].map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select></Field>}
