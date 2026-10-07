@@ -319,7 +319,7 @@ export default function Inventory() {
                   </p>
                 </div>
                 <textarea
-                  className="input min-h-[150px] font-mono text-sm bg-white"
+                  className="input min-h-[150px] font-mono text-sm bg-raised text-ink"
                   value={newUnitText}
                   onChange={e => setNewUnitText(e.target.value)}
                   placeholder={editing.trackImei && editing.trackSerial
