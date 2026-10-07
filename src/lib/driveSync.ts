@@ -702,7 +702,6 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
     const settings = source.settings && typeof source.settings === 'object' && !Array.isArray(source.settings)
       ? source.settings as Record<string, unknown>
       : {};
-
     const metadata = {
       shopName: String(settings.shopName || 'Shop'),
       shopPhone: String(settings.phone || ''),
@@ -725,18 +724,28 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
       whatsappReceipts: settings.whatsappReceipts === true,
     };
 
-    const url = new URL(getGoogleScriptUrl());
-    url.searchParams.set('action', 'updateShopMetadata');
-    url.searchParams.set('shopId', shopId);
-    url.searchParams.set('requestId', makeRequestId());
-    url.searchParams.set('shopProof', shopProof);
-    url.searchParams.set('recoveryKey', recoveryKey);
-    url.searchParams.set('metadata', JSON.stringify(metadata));
-    url.searchParams.set('apiKey', BACKUP_API_KEY);
+    let lastError = 'Google Drive shop details could not be updated.';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const url = new URL(getGoogleScriptUrl());
+        url.searchParams.set('action', 'updateShopMetadata');
+        url.searchParams.set('shopId', shopId);
+        url.searchParams.set('requestId', makeRequestId());
+        url.searchParams.set('shopProof', shopProof);
+        url.searchParams.set('recoveryKey', recoveryKey);
+        url.searchParams.set('metadata', JSON.stringify(metadata));
+        url.searchParams.set('apiKey', BACKUP_API_KEY);
 
-    const result = await getJsonp<{ ok?: boolean; message?: string }>(url, 15000);
-    if (result?.ok === true) return { ok: true };
-    return { ok: false, error: String(result?.message || 'Google Drive shop details could not be updated.') };
+        const result = await getJsonp<{ ok?: boolean; message?: string; folderName?: string }>(url, 15000);
+        const expectedFolder = `Shop_${(await sha256Hex(shopId)).slice(0, 24)} - ${metadata.shopName.trim() || 'Shop'}`;
+        if (result?.ok === true && (!result.folderName || result.folderName === expectedFolder)) return { ok: true };
+        lastError = String(result?.message || 'Google Drive shop details could not be updated.');
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError;
+      }
+      if (attempt < 2) await new Promise(resolve => window.setTimeout(resolve, 1500));
+    }
+    return { ok: false, error: lastError };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Google Drive shop details could not be updated.';
     console.error('[Google Backup] shop metadata sync failed', error);
