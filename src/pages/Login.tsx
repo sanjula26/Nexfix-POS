@@ -235,13 +235,6 @@ export default function Login() {
   })();
 
   useEffect(() => {
-    const desktopApi = (window as Window & { nexfixDesktop?: { getVersion?: () => Promise<string> } }).nexfixDesktop;
-    void desktopApi?.getVersion?.().then(version => {
-      if (version) setAppVersion(version);
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     if (!ready || user) return;
     migrateLegacyRememberedLogin();
     const saved = loadRememberedLogin(loginRole);
