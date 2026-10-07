@@ -108,10 +108,10 @@ function BrandingHero({ appVersion }: { appVersion: string }) {
           </div>
           <div>
             <h1 className="text-[clamp(2.4rem,5vw,5.2rem)] font-black leading-[0.9] tracking-[-0.055em]">
-              <span className="text-[#17133c] dark:text-white">NEXFIX</span>{' '}
+              <span className="text-ink">NEXFIX</span>{' '}
               <span className="bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">SOLUTION</span>
             </h1>
-            <p className="mt-3 text-sm font-medium tracking-wide text-[#5b5f7e] dark:text-slate-300 sm:text-base">
+            <p className="mt-3 text-sm font-medium tracking-wide text-sub sm:text-base">
               POS &amp; Inventory Management System · v{appVersion || "—"}
             </p>
           </div>
@@ -144,7 +144,7 @@ function BrandingHero({ appVersion }: { appVersion: string }) {
           />
         </div>
 
-        <p className="mt-8 text-xs font-medium tracking-wide text-[#6f7391] dark:text-slate-400">
+        <p className="mt-8 text-xs font-medium tracking-wide text-sub">
           Nexfix Solution ·{' '}
           <a className="transition hover:text-sky-600 dark:hover:text-cyan-300" href="tel:+94741097350">+94 74 109 7350</a>
           {' · '}
@@ -177,8 +177,8 @@ function FeatureCard({
       <div className="flex items-center gap-3">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-black/[0.04] dark:bg-black/20">{icon}</div>
         <div>
-          <p className="text-sm font-bold text-[#17133c] dark:text-slate-100">{title}</p>
-          <p className="mt-0.5 text-xs text-[#6f7391] dark:text-slate-400">{detail}</p>
+          <p className="text-sm font-bold text-ink dark:text-slate-100">{title}</p>
+          <p className="mt-0.5 text-xs text-sub">{detail}</p>
         </div>
       </div>
     </div>
@@ -200,7 +200,7 @@ function AuthCard({
         <div className="absolute right-[18%] top-[24%] h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_18px_5px_rgba(14,165,233,0.22)] dark:bg-cyan-300 dark:shadow-[0_0_18px_5px_rgba(103,232,249,0.35)]" />
         <div className="absolute right-[30%] bottom-[24%] h-1.5 w-1.5 rounded-full bg-sky-400 shadow-[0_0_15px_4px_rgba(14,165,233,0.18)] dark:bg-sky-300 dark:shadow-[0_0_15px_4px_rgba(125,211,252,0.3)]" />
       </div>
-      <div className={`relative w-full max-w-[460px] overflow-hidden rounded-[28px] border border-slate-200 bg-white/90 shadow-[0_25px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-cyan-300/20 dark:bg-[#071225]/90 dark:shadow-[0_25px_80px_rgba(2,8,23,0.55)] ${setup ? 'my-2' : 'lg:my-10'}`}>
+      <div className={`relative w-full max-w-[460px] overflow-hidden rounded-[28px] border border-slate-200 bg-surface shadow-[0_25px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl dark:border-cyan-300/20 dark:bg-[#071225]/90 dark:shadow-[0_25px_80px_rgba(2,8,23,0.55)] ${setup ? 'my-2' : 'lg:my-10'}`}>
         <div className="h-1 bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-500" />
         {children}
       </div>
@@ -322,7 +322,7 @@ export default function Login() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] text-[#17133c] dark:bg-[#030a18] dark:text-slate-100">
+      <div className="min-h-screen grid place-items-center bg-base text-ink">
         <Loader2 size={30} className="animate-spin text-cyan-300" />
       </div>
     );
@@ -337,9 +337,9 @@ export default function Login() {
   }
 
   const page = (
-    <main className="relative min-h-screen overflow-x-hidden bg-[#f5f6fb] text-[#17133c] dark:bg-[#030a18] dark:text-slate-100">
+    <main className="relative min-h-screen overflow-x-hidden bg-base text-ink">
       <div className="min-h-screen lg:grid lg:grid-cols-[1.05fr_0.95fr]">
-        <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="absolute right-5 top-5 z-30 grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-white/85 text-slate-600 shadow-lg backdrop-blur transition hover:border-sky-400 hover:text-sky-600 dark:border-white/10 dark:bg-[#0b1930]/90 dark:text-slate-300 dark:hover:border-cyan-400 dark:hover:text-cyan-300">
+        <button type="button" onClick={toggleTheme} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'} title={dark ? 'Switch to light mode' : 'Switch to dark mode'} className="absolute right-5 top-5 z-30 grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-surface text-sub shadow-lg backdrop-blur transition hover:border-sky-400 hover:text-sky-600 dark:border-white/10 dark:bg-[#0b1930]/90 dark:text-slate-300 dark:hover:border-cyan-400 dark:hover:text-cyan-300">
           {dark ? <Sun size={17} /> : <Moon size={17} />}
         </button>
         <BrandingHero appVersion={appVersion} />
@@ -349,22 +349,22 @@ export default function Login() {
               <div className="mb-5 flex items-center gap-3">
                 <div className="grid h-11 w-11 place-items-center rounded-xl border border-cyan-300/30 bg-cyan-400/10 text-cyan-200"><ShieldCheck size={21} /></div>
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-[#17133c] dark:text-white">Set up your administrator</h2>
-                  <p className="mt-1 text-xs text-[#6f7391] dark:text-slate-400">Create the first secure POS accounts.</p>
+                  <h2 className="text-2xl font-black tracking-tight text-ink">Set up your administrator</h2>
+                  <p className="mt-1 text-xs text-sub">Create the first secure POS accounts.</p>
                 </div>
               </div>
               <form onSubmit={setupAdmin} className="space-y-3.5">
-                <input required value={setupName} onChange={e => setSetupName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator name" autoComplete="name" />
-                <input required type="text" inputMode="email" value={setupEmail} onChange={e => setSetupEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-                <input required type="password" minLength={12} value={setupPassword} onChange={e => setSetupPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
-                <input required type="password" minLength={12} value={setupConfirm} onChange={e => setSetupConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm password" autoComplete="new-password" />
+                <input required value={setupName} onChange={e => setSetupName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator name" autoComplete="name" />
+                <input required type="text" inputMode="email" value={setupEmail} onChange={e => setSetupEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Administrator email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                <input required type="password" minLength={12} value={setupPassword} onChange={e => setSetupPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Strong password (12+ characters)" autoComplete="new-password" />
+                <input required type="password" minLength={12} value={setupConfirm} onChange={e => setSetupConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm password" autoComplete="new-password" />
                 <div className="my-2 border-t border-slate-200 pt-3 dark:border-white/10">
                   <p className="mb-2 text-[10px] font-bold tracking-[0.18em] text-sky-600 dark:text-cyan-300/80">CASHIER ACCOUNT</p>
                   <div className="grid gap-3">
-                    <input required value={setupCashierName} onChange={e => setSetupCashierName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier name" autoComplete="name" />
-                    <input required type="text" inputMode="email" value={setupCashierEmail} onChange={e => setSetupCashierEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-                    <input required type="password" minLength={12} value={setupCashierPassword} onChange={e => setSetupCashierPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier password (12+ characters)" autoComplete="new-password" />
-                    <input required type="password" minLength={12} value={setupCashierConfirm} onChange={e => setSetupCashierConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm cashier password" autoComplete="new-password" />
+                    <input required value={setupCashierName} onChange={e => setSetupCashierName(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier name" autoComplete="name" />
+                    <input required type="text" inputMode="email" value={setupCashierEmail} onChange={e => setSetupCashierEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+                    <input required type="password" minLength={12} value={setupCashierPassword} onChange={e => setSetupCashierPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Cashier password (12+ characters)" autoComplete="new-password" />
+                    <input required type="password" minLength={12} value={setupCashierConfirm} onChange={e => setSetupCashierConfirm(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3 !text-ink placeholder:!text-faint focus:!border-sky-400/70 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-500 dark:focus:!border-cyan-400/60" placeholder="Confirm cashier password" autoComplete="new-password" />
                   </div>
                 </div>
                 {error && <ErrorAlert message={error} />}
@@ -378,36 +378,36 @@ export default function Login() {
           <AuthCard>
             <div className="p-7 sm:p-9 lg:p-10">
               <div>
-                <h2 className="text-3xl font-black tracking-tight text-[#17133c] dark:text-white">NEXFIX SOLUTION</h2>
-                <p className="mt-2 text-sm text-[#6f7391] dark:text-slate-400">Sign in to your POS account</p>
+                <h2 className="text-3xl font-black tracking-tight text-ink">NEXFIX SOLUTION</h2>
+                <p className="mt-2 text-sm text-sub">Sign in to your POS account</p>
               </div>
 
-              <div className="mt-7 grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200 bg-[#f0f1f8] p-1.5 dark:border-white/10 dark:bg-[#0b1930]">
-                <button type="button" onClick={() => { setLoginRole('admin'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'admin' ? 'bg-gradient-to-r from-sky-400 to-blue-600 text-white shadow-[0_6px_20px_rgba(59,130,246,0.28)]' : 'text-[#7b7f9c] hover:text-[#17133c] dark:text-slate-400 dark:hover:text-white'}`}>ADMIN</button>
-                <button type="button" onClick={() => { setLoginRole('cashier'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'cashier' ? 'bg-gradient-to-r from-teal-400 to-emerald-600 text-white shadow-[0_6px_20px_rgba(20,184,166,0.25)]' : 'text-[#7b7f9c] hover:text-[#17133c] dark:text-slate-400 dark:hover:text-white'}`}>CASHIER</button>
+              <div className="mt-7 grid grid-cols-2 gap-1.5 rounded-xl border border-slate-200 bg-raised p-1.5 dark:border-white/10 dark:bg-[#0b1930]">
+                <button type="button" onClick={() => { setLoginRole('admin'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'admin' ? 'bg-gradient-to-r from-sky-400 to-blue-600 text-white shadow-[0_6px_20px_rgba(59,130,246,0.28)]' : 'text-sub hover:text-ink dark:text-slate-400 dark:hover:text-white'}`}>ADMIN</button>
+                <button type="button" onClick={() => { setLoginRole('cashier'); setError(''); }} className={`rounded-lg py-3 text-xs font-black tracking-wider transition ${loginRole === 'cashier' ? 'bg-gradient-to-r from-teal-400 to-emerald-600 text-white shadow-[0_6px_20px_rgba(20,184,166,0.25)]' : 'text-sub hover:text-ink dark:text-slate-400 dark:hover:text-white'}`}>CASHIER</button>
               </div>
 
               <form onSubmit={submit} className="mt-7 space-y-5">
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-[#7b7f9c] dark:text-slate-400">EMAIL</span>
+                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-sub">EMAIL</span>
                   <div className="relative">
-                    <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#8a8eaa] dark:text-slate-500" />
-                    <input required type="text" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={e => setEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3.5 !pl-10 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="you@shop.lk" />
+                    <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
+                    <input required type="text" inputMode="email" autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={email} onChange={e => setEmail(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3.5 !pl-10 !text-ink placeholder:!text-faint focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="you@shop.lk" />
                   </div>
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-[#7b7f9c] dark:text-slate-400">PASSWORD</span>
+                  <span className="mb-2 block text-[10px] font-bold tracking-[0.2em] text-sub">PASSWORD</span>
                   <div className="relative">
                     <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                    <input required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-[#f0f1f8] !py-3.5 !pl-10 !pr-11 !text-[#17133c] placeholder:!text-[#9a9ebf] focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="Password" />
-                    <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#8a8eaa] transition hover:text-sky-600 dark:text-slate-500 dark:hover:text-cyan-300">
+                    <input required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} className="input w-full !rounded-xl !border-slate-200 !bg-raised !py-3.5 !pl-10 !pr-11 !text-ink placeholder:!text-faint focus:!border-sky-400/70 focus:!ring-sky-400/20 dark:!border-white/10 dark:!bg-[#0b1930] dark:!text-white dark:placeholder:!text-slate-600 dark:focus:!border-cyan-400/70 dark:focus:!ring-cyan-400/20" placeholder="Password" />
+                    <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(v => !v)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-faint transition hover:text-sky-600 dark:text-slate-500 dark:hover:text-cyan-300">
                       {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
                 </label>
 
-                <label className="flex cursor-pointer items-center gap-2.5 text-xs font-medium text-[#6f7391] select-none dark:text-slate-400">
+                <label className="flex cursor-pointer items-center gap-2.5 text-xs font-medium text-sub select-none dark:text-slate-400">
                   <input
                     type="checkbox"
                     checked={remember}
@@ -424,10 +424,10 @@ export default function Login() {
                 </button>
               </form>
 
-              <p className="mt-7 text-center text-[11px] leading-5 text-[#8a8eaa] dark:text-slate-500">
+              <p className="mt-7 text-center text-[11px] leading-5 text-faint">
                 Your password is never stored in Remember me data.
               </p>
-              {appVersion && <p className="mt-2 text-center text-[10px] font-semibold tracking-[0.16em] text-[#a0a3bd] dark:text-slate-600">NEXFIX POS v{appVersion}</p>}
+              {appVersion && <p className="mt-2 text-center text-[10px] font-semibold tracking-[0.16em] text-faint">NEXFIX POS v{appVersion}</p>}
             </div>
           </AuthCard>
         )}
