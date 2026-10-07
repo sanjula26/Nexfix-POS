@@ -3,6 +3,7 @@ import { Boxes, Plus, Trash2 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import { fmtRs, uid } from '../lib/utils';
+import SearchableSelect from '../components/SearchableSelect';
 import type { KitItem, Product } from '../lib/types';
 
 export default function Kits() {
@@ -102,12 +103,7 @@ export default function Kits() {
       <Modal open={open} onClose={() => setOpen(false)} title="Manage kit / BOM" wide>
         <div className="space-y-4">
           <Field label="Kit product">
-            <select className="input" value={kitProductId} onChange={e => setKitProductId(e.target.value)}>
-              <option value="">Select kit product…</option>
-              {state.products.filter(p => p.active).map(p => (
-                <option key={p.id} value={p.id}>{p.name}{p.isKit ? ' (kit)' : ''}</option>
-              ))}
-            </select>
+            <SearchableSelect value={kitProductId} options={state.products.filter(p => p.active)} onChange={setKitProductId} placeholder="Search kit product, SKU or barcode…" ariaLabel="Kit product" clearable maxResults={40} getLabel={p => p.name} getSearchText={p => [p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p => <><div className="font-semibold text-ink text-sm">{p.name}{p.isKit ? ' (kit)' : ''}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')}</div></>} />
           </Field>
           {kitProductId && !state.products.find(p => p.id === kitProductId)?.isKit && can('act:manageStock') && (
             <button type="button" className="btn btn-soft text-sm" onClick={() => {
@@ -117,10 +113,7 @@ export default function Kits() {
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
             <Field label="Component">
-              <select className="input" value={compId} onChange={e => setCompId(e.target.value)}>
-                <option value="">Select component…</option>
-                {components.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <SearchableSelect value={compId} options={components} onChange={setCompId} placeholder="Search component, SKU or barcode…" ariaLabel="Kit component" clearable maxResults={40} getLabel={p => p.name} getSearchText={p => [p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p => <><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')}</div></>} />
             </Field>
             <Field label="Qty">
               <input type="number" className="input" value={compQty} min={0.01} step={0.01} onChange={e => setCompQty(Number(e.target.value) || 1)} />
