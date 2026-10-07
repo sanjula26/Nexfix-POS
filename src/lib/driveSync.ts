@@ -690,6 +690,60 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   }
 }
 
+export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ ok: boolean; error?: string }> {
+  if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google Drive requires an online connection.' };
+
+  try {
+    const shopId = await resolveAuthorizedBackupShopId();
+    const recoveryKey = ensureRecoveryKey(shopId);
+    const shopProof = await sha256Hex(`${recoveryKey}:${shopId}`);
+    const source = state && typeof state === 'object' && !Array.isArray(state) ? state as Record<string, unknown> : {};
+    const settings = source.settings && typeof source.settings === 'object' && !Array.isArray(source.settings)
+      ? source.settings as Record<string, unknown>
+      : {};
+
+    const metadata = {
+      shopName: String(settings.shopName || 'Shop'),
+      shopPhone: String(settings.phone || ''),
+      shopEmail: String(settings.email || ''),
+      shopAddress: String(settings.address || ''),
+      shopTagline: String(settings.tagline || ''),
+      taxRegistrationNo: String(settings.taxRegistrationNo || ''),
+      invoicePlaceOfSupply: String(settings.invoicePlaceOfSupply || ''),
+      invoiceTitle: String(settings.invoiceTitle || ''),
+      invoiceSubtitle: String(settings.invoiceSubtitle || ''),
+      invoiceCurrency: String(settings.invoiceCurrency || ''),
+      invoiceTaxLabel: String(settings.invoiceTaxLabel || ''),
+      invoiceTerms: String(settings.invoiceTerms || ''),
+      invoiceFooter: String(settings.invoiceFooter || ''),
+      receiptFooter: String(settings.receiptFooter || ''),
+      taxDefault: Number(settings.taxDefault) || 0,
+      lowStockDefault: Number(settings.lowStockDefault) || 0,
+      exchangeDays: Number(settings.exchangeDays) || 0,
+      openingFloat: Number(settings.openingFloat) || 0,
+      whatsappReceipts: settings.whatsappReceipts === true,
+    };
+
+    const url = new URL(getGoogleScriptUrl());
+    url.searchParams.set('action', 'updateShopMetadata');
+    url.searchParams.set('shopId', shopId);
+    url.searchParams.set('requestId', makeRequestId());
+    url.searchParams.set('shopProof', shopProof);
+    url.searchParams.set('recoveryKey', recoveryKey);
+    url.searchParams.set('metadata', JSON.stringify(metadata));
+    url.searchParams.set('apiKey', BACKUP_API_KEY);
+
+    const result = await getJsonp<{ ok?: boolean; message?: string }>(url, 15000);
+    if (result?.ok === true) return { ok: true };
+    return { ok: false, error: String(result?.message || 'Google Drive shop details could not be updated.') };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Google Drive shop details could not be updated.';
+    console.error('[Google Backup] shop metadata sync failed', error);
+    return { ok: false, error: message };
+  }
+}
+
 export async function syncToGoogleDrive(_tableName: string, _dataRows: unknown[]): Promise<boolean> {
   return false;
 }
