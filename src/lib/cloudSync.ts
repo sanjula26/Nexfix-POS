@@ -392,6 +392,28 @@ export async function registerTradeInAtomic(input: {
   return { ok: true, alreadyCommitted: row.already_committed === true, unitId: String(row.unit_id || input.unitId) };
 }
 
+export async function resolveCloudSaleIdByBillNo(input: {
+  shopId: string;
+  billNo: string;
+}): Promise<{ ok: boolean; saleId?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const billNo = input.billNo.trim();
+  if (!input.shopId || !billNo) return { ok: false, error: 'Shop and bill number are required' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const { data, error } = await supabase
+    .from('sales')
+    .select('id')
+    .eq('shop_id', input.shopId)
+    .eq('bill_no', billNo)
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data?.id) return { ok: false, error: 'Sale not found' };
+  return { ok: true, saleId: String(data.id) };
+}
+
 export async function resolveSaleReturnLines(input: {
   shopId: string;
   saleId: string;
