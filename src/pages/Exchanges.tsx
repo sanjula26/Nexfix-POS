@@ -5,7 +5,7 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
-import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo } from '../lib/cloudSync';
+import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo, ensureCloudShop } from '../lib/cloudSync';
 import { queueReturnCreate } from '../lib/offline';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 
@@ -70,7 +70,16 @@ export default function Exchanges() {
         saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: '', cloudShopId: '', selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
         return;
       }
-      const remote = await resolveCloudSaleIdByBillNo({ billNo: found?.billNo || raw });
+      const cloudShop = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
+      if (!cloudShop.ok || !cloudShop.shopId) {
+        // Authenticated cloud users without an active shop membership are
+        // still valid local POS users. Keep the return in the durable queue.
+        setCloudSaleId('');
+        setCloudShopId('');
+        saveDraft({ query: raw, billId: found?.id || '', billNo: found?.billNo || raw, cloudSaleId: '', cloudShopId: '', selected: restore ? selected : [], returnQty: restore ? returnQty : {}, searched: true });
+        return;
+      }
+      const remote = await resolveCloudSaleIdByBillNo({ billNo: found?.billNo || raw, shopId: cloudShop.shopId });
       if (remote.ok && remote.saleId && remote.shopId) {
         resolvedCloudSaleId = remote.saleId;
         resolvedCloudShopId = remote.shopId;
@@ -173,6 +182,14 @@ export default function Exchanges() {
             lines: returnLines,
           });
         } else {
+          const cloudShop = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
+          if (!cloudShop.ok || !cloudShop.shopId) {
+            await queueReturnCreate(returnId, {
+              saleId: bill.id, reason, mode,
+              paymentMethod: mode === 'refund' ? 'cash' : undefined,
+              lines: returnLines,
+            });
+          } else {
         // Always re-resolve from the bill number immediately before committing.
         // Persisted IDs can be stale after a shop switch, restored draft, or an
         // earlier failed attempt; the bill number is the authoritative lookup key.
@@ -192,6 +209,7 @@ export default function Exchanges() {
           lines: resolve.lines,
         });
         if (!cloud.ok) throw new Error(cloud.error || 'Cloud return was not committed');
+          }
         }
       } else {
         await queueReturnCreate(returnId, {
