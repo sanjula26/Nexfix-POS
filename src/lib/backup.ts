@@ -195,11 +195,8 @@ async function runCloudBackupSerialized(
   }
 }
 
-let scheduledGoogleBackupTimer: number | undefined;
-let scheduledGoogleBackupRunning = false;
-let scheduledGoogleBackupLastRunAt = 0;
-let scheduledGoogleBackupFirstQueuedAt = 0;
-let scheduledGoogleBackupGetter: (() => POSState) | undefined;
+// Automatic Google backups are interval-driven by startAutoBackup().
+
 
 /**
  * Event-driven Google backup scheduler.
