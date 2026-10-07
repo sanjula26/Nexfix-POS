@@ -7,7 +7,7 @@ import {
 import { usePOS } from '../lib/store';
 import { Modal, Field, PageHeading, Badge, Toggle } from '../components/ui';
 import {
-  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId,
+  isGoogleSyncEnabled, getGoogleScriptUrl, fetchLatestGoogleBackup, getLocalShopId, getDriveShopId, setExistingDriveShopId as saveExistingDriveShopId, adoptBackupShopId, syncShopMetadataToGoogleDrive,
 } from '../lib/driveSync';
 import { clearRecoveryKey, decryptBackupEnvelope, getBackupSecurityMessage, getRecoveryKey, hasRecoveryKey, isEncryptedBackupEnvelope, setRecoveryKey, sha256Hex } from '../lib/backupCrypto';
 import { applyBackupRestore } from '../lib/restore';
@@ -312,7 +312,14 @@ export default function Settings() {
     const promotions = (form.promotions || []).map(p => ({ ...p, name: p.name.trim(), category: p.category.trim(), discountPct: Number(p.discountPct) }));
     if (promotions.some(p => !p.name || !p.category || !Number.isFinite(p.discountPct) || p.discountPct <= 0 || p.discountPct > 100 || (p.startDate && p.endDate && p.endDate < p.startDate))) return setBackupMsg('Check promotion name, category, discount (1–100%) and dates');
     setBackupMsg('');
-    updateSettings({ ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, promotions }); setSaved(true); setTimeout(() => setSaved(false), 2000);
+    const nextSettings = { ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, promotions };
+    updateSettings(nextSettings);
+    if (gEnabled) {
+      void syncShopMetadataToGoogleDrive(nextSettings).then((result) => {
+        if (!result.ok) setBackupMsg(`Local settings saved, but Google Drive shop details were not updated: ${result.error || 'unknown error'}`);
+      });
+    }
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
   const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
