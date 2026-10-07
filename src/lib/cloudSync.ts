@@ -177,6 +177,31 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (membershipError) return { ok: false, error: membershipError.message };
   if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
 
+  const supplierRows = state.suppliers.map(s => ({
+    id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
+    phone: s.phone || null, email: s.email || null, address: s.address || null,
+    created_at: s.createdAt || new Date().toISOString(),
+  }));
+  if (supplierRows.length) {
+    const ids = supplierRows.map(s => s.id);
+    const { data: existing, error: existingError } = await supabase.from('suppliers').select('id').eq('shop_id', shopId).in('id', ids);
+    if (existingError) return { ok: false, error: `Suppliers lookup: ${existingError.message}` };
+    const existingIds = new Set((existing || []).map(row => row.id));
+    const missing = supplierRows.filter(row => !existingIds.has(row.id));
+    if (missing.length) {
+      const { error } = await supabase.from('suppliers').insert(missing);
+      if (error) return { ok: false, error: `Suppliers: ${error.message}` };
+    }
+    for (const row of supplierRows.filter(item => existingIds.has(item.id))) {
+      const { error } = await supabase.from('suppliers').update({
+        name: row.name, contact_person: row.contact_person, phone: row.phone,
+        email: row.email, address: row.address,
+      }).eq('id', row.id).eq('shop_id', shopId);
+      if (error) return { ok: false, error: `Suppliers update: ${error.message}` };
+    }
+  }
+
+
   const productRows = state.products.map(p => ({
     id: p.id, shop_id: shopId, name: p.name, sku: p.sku || null, barcode: p.barcode || null,
     description: null, cost: p.cost || 0, price: p.price || 0, stock: Math.max(0, Math.round(Number(p.stock) || 0)), reorder_level: p.reorderLevel ?? 5,
@@ -275,30 +300,6 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
         address: row.address, credit_limit: row.credit_limit, updated_at: row.updated_at,
       }).eq('id', row.id).eq('shop_id', shopId);
       if (error) return { ok: false, error: `Customers update: ${error.message}` };
-    }
-  }
-
-  const supplierRows = state.suppliers.map(s => ({
-    id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
-    phone: s.phone || null, email: s.email || null, address: s.address || null,
-    created_at: s.createdAt || new Date().toISOString(),
-  }));
-  if (supplierRows.length) {
-    const ids = supplierRows.map(s => s.id);
-    const { data: existing, error: existingError } = await supabase.from('suppliers').select('id').eq('shop_id', shopId).in('id', ids);
-    if (existingError) return { ok: false, error: `Suppliers lookup: ${existingError.message}` };
-    const existingIds = new Set((existing || []).map(row => row.id));
-    const missing = supplierRows.filter(row => !existingIds.has(row.id));
-    if (missing.length) {
-      const { error } = await supabase.from('suppliers').insert(missing);
-      if (error) return { ok: false, error: `Suppliers: ${error.message}` };
-    }
-    for (const row of supplierRows.filter(item => existingIds.has(item.id))) {
-      const { error } = await supabase.from('suppliers').update({
-        name: row.name, contact_person: row.contact_person, phone: row.phone,
-        email: row.email, address: row.address,
-      }).eq('id', row.id).eq('shop_id', shopId);
-      if (error) return { ok: false, error: `Suppliers update: ${error.message}` };
     }
   }
 
