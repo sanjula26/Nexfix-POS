@@ -1,6 +1,9 @@
--- The public RPC wrapper must execute the private SECURITY DEFINER resolver
--- with its own privileges. The resolver itself performs auth.uid() and shop-membership
--- checks, so callers never receive an authorization bypass.
+-- Keep the API wrapper SECURITY INVOKER. The private resolver is the only
+-- privileged implementation and already validates auth.uid(), shop membership,
+-- sale ownership/status and return quantities before doing any work.
+revoke all on function private.resolve_sale_return_items(uuid,uuid,jsonb) from public, anon;
+grant execute on function private.resolve_sale_return_items(uuid,uuid,jsonb) to authenticated;
+
 create or replace function public.resolve_sale_return_items(
   p_shop_id uuid,
   p_sale_id uuid,
@@ -8,7 +11,7 @@ create or replace function public.resolve_sale_return_items(
 )
 returns jsonb
 language sql
-security definer
+security invoker
 set search_path = ''
 as $$
   select private.resolve_sale_return_items(p_shop_id, p_sale_id, p_lines);
