@@ -103,7 +103,10 @@ interface StoreCtx {
   /** verify the admin password without switching role (used for price overrides etc.) */
   verifyAdminPin: (pin: string, reason?: string) => boolean;
   /** Fresh admin confirmation for sensitive destructive/security actions. */
-  confirmSensitiveAdmin: (reason: string) => boolean;
+  confirmSensitiveAdmin: (reason: string) => Promise<boolean>;
+  sensitiveAdminPrompt: { reason: string } | null;
+  resolveSensitiveAdmin: (credential: string) => boolean;
+  cancelSensitiveAdmin: () => void;
   unlockSession: (credential: string) => boolean;
   // products
   saveProduct: (p: Product) => boolean;
@@ -163,7 +166,7 @@ interface StoreCtx {
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
   backupMeta: BackupMeta;
-  runManualBackup: () => Promise<void>;
+  runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
   setAutoBackupHours: (hours: number) => Promise<void>;
   flushOfflineQueue: () => Promise<number>;
@@ -455,6 +458,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   });
   // not persisted — session lock for the admin elevation prompt
   const [adminPrompt, setAdminPrompt] = useState(false);
+  const [sensitiveAdminPrompt, setSensitiveAdminPrompt] = useState<{ reason: string } | null>(null);
+  const sensitiveAdminResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const [ready, setReady] = useState(!idbAvailable()); // true immediately if no IDB
   const [connectivity, setConnectivity] = useState<Connectivity>(() => getConnectivity());
   const [backupMeta, setBackupMeta] = useState<BackupMeta>({ autoBackupHours: 6, backupCount: 0 });
@@ -704,30 +709,54 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return false;
   }, [pushAudit, user]);
   const sensitiveAuthAtRef = useRef(0);
-  const confirmSensitiveAdmin = useCallback((reason: string): boolean => {
+  const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
     if (user?.role !== 'admin') {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
-      return false;
+      return Promise.resolve(false);
     }
     const FRESH_MS = 5 * 60 * 1000;
-    if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return true;
-    const label = String(reason || 'sensitive action').trim().slice(0, 120);
-    const secret = typeof window !== 'undefined' ? window.prompt('Administrator confirmation required for ' + label + '. Enter the current admin unlock password / PIN:') : null;
-    if (!secret) {
-      pushAudit('DENIED', 'Security', 'Sensitive action cancelled: administrator confirmation was not provided');
-      return false;
+    if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return Promise.resolve(true);
+    if (sensitiveAdminResolverRef.current) {
+      sensitiveAdminResolverRef.current(false);
+      sensitiveAdminResolverRef.current = null;
     }
+    const label = String(reason || 'sensitive action').trim().slice(0, 120);
+    setSensitiveAdminPrompt({ reason: label });
+    return new Promise<boolean>(resolve => { sensitiveAdminResolverRef.current = resolve; });
+  }, [pushAudit, user]);
+
+  const resolveSensitiveAdmin = useCallback((credential: string): boolean => {
+    const resolver = sensitiveAdminResolverRef.current;
+    if (!resolver || !sensitiveAdminPrompt) return false;
+    const secret = String(credential || '');
     const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
-    const passwordOk = !!admin && (isHashed(admin.password) ? (() => { try { return verifyPassword(secret, admin.password) || false; } catch { return false; } })() : verifyPassword(secret, admin.password || ''));
-    const pinOk = verifyPassword(secret, stateRef.current.settings.adminPinHash || '');
+    let passwordOk = false;
+    try {
+      passwordOk = !!admin && (isHashed(admin.password) ? verifyPassword(secret, admin.password) : secret === admin.password);
+    } catch { passwordOk = false; }
+    let pinOk = false;
+    try { pinOk = !!secret && verifyPassword(secret, stateRef.current.settings.adminPinHash || ''); } catch { pinOk = false; }
     if (!passwordOk && !pinOk) {
-      pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + label);
+      pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
       return false;
     }
     sensitiveAuthAtRef.current = Date.now();
-    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + label);
+    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
+    resolver(true);
+    sensitiveAdminResolverRef.current = null;
+    setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, user]);
+  }, [pushAudit, sensitiveAdminPrompt]);
+
+  const cancelSensitiveAdmin = useCallback(() => {
+    const resolver = sensitiveAdminResolverRef.current;
+    if (resolver) {
+      resolver(false);
+      sensitiveAdminResolverRef.current = null;
+      pushAudit('DENIED', 'Security', 'Sensitive action cancelled: administrator confirmation was not provided');
+    }
+    setSensitiveAdminPrompt(null);
+  }, [pushAudit]);
   const toggleTheme = useCallback(() => setDark(d => !d), []);
 
 
@@ -985,7 +1014,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.users, state.settings.adminPinHash, session, user]);
   const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
-    if (!verifyPassword(current, state.settings.adminPinHash)) return { ok: false, error: 'Current password is incorrect' };
+    const currentSecret = String(current || '').trim();
+    let currentOk = false;
+    if (state.settings.adminPinHash) {
+      try { currentOk = verifyPassword(currentSecret, state.settings.adminPinHash); } catch { currentOk = false; }
+    } else {
+      const admin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+      try { currentOk = !!admin && (isHashed(admin.password) ? verifyPassword(currentSecret, admin.password) : currentSecret === admin.password); } catch { currentOk = false; }
+    }
+    if (!currentOk) return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
     if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
     setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
     pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
@@ -1863,7 +1900,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const approveBillReverse = useCallback(async (requestId: string): Promise<boolean> => {
     if (user?.role !== 'admin') return false;
-    if (!confirmSensitiveAdmin('bill reversal approval')) return false;
+    if (!(await confirmSensitiveAdmin('bill reversal approval'))) return false;
     const req = stateRef.current.reverseRequests?.find(r => r.id === requestId);
     const sale = req ? stateRef.current.sales.find(x => x.id === req.saleId) : undefined;
     if (!req || req.status !== 'pending' || !sale || sale.status !== 'completed') return false;
@@ -2499,12 +2536,12 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
-  const saveUser = useCallback((u: AppUser) => {
+  const saveUser = useCallback(async (u: AppUser) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);
       return;
     }
-    if (!confirmSensitiveAdmin('user account create/change')) return;
+    if (!(await confirmSensitiveAdmin('user account create/change'))) return;
     const exists = state.users.some(x => x.id === u.id);
     // Password changes and newly created accounts must use the same 12+ character
     // policy as first-login and managed-password flows. Existing hashes are kept
@@ -2523,23 +2560,23 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
   }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
 
-  const toggleUserActive = useCallback((id: string) => {
+  const toggleUserActive = useCallback(async (id: string) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);
       return;
     }
-    if (!confirmSensitiveAdmin('user activation change')) return;
+    if (!(await confirmSensitiveAdmin('user activation change'))) return;
     const u = state.users.find(x => x.id === id);
     setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
     if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
   }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
 
-  const deleteUser = useCallback((id: string) => {
+  const deleteUser = useCallback(async (id: string) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);
       return;
     }
-    if (!confirmSensitiveAdmin('user deletion')) return;
+    if (!(await confirmSensitiveAdmin('user deletion'))) return;
     const u = state.users.find(x => x.id === id);
     if (!u || u.id === user?.id) return;
     setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
@@ -2547,13 +2584,13 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.users, user?.id, pushAudit, user, confirmSensitiveAdmin]);
 
   /* ---------------- admin ---------------- */
-  const setPermission = useCallback((role: Role, key: string, value: boolean) => {
+  const setPermission = useCallback(async (role: Role, key: string, value: boolean) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);
       return;
     }
     if (role === 'admin') return;
-    if (!confirmSensitiveAdmin('permission matrix change')) return;
+    if (!(await confirmSensitiveAdmin('permission matrix change'))) return;
     if (!PERMISSION_KEYS.some(item => item.key === key)) {
       pushAudit('DENIED', 'Permissions', `Blocked unknown permission key: ${role}:${key}`);
       return;
@@ -2726,21 +2763,21 @@ const deletePurchase = useCallback((id: string) => {
     }));
   }, [user?.email]);
 
-  const exportData = useCallback(() => {
+  const exportData = useCallback(async () => {
     if (!user || !can('act:export')) {
       pushAudit('DENIED', 'Settings', 'Blocked data export without export permission');
       return '';
     }
-    if (!confirmSensitiveAdmin('full POS data export')) return '';
+    if (!(await confirmSensitiveAdmin('full POS data export'))) return '';
     return JSON.stringify(state, null, 2);
   }, [state, user, can, pushAudit]);
 
-  const importData = useCallback((json: string) => {
+  const importData = useCallback(async (json: string) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Settings', 'Blocked backup import without admin access');
       return false;
     }
-    if (!confirmSensitiveAdmin('full POS backup import')) return false;
+    if (!(await confirmSensitiveAdmin('full POS backup import'))) return false;
     try {
       const parsed = JSON.parse(json) as POSState;
       // Basic schema validation — reject malicious / incomplete payloads
@@ -3224,16 +3261,28 @@ const deletePurchase = useCallback((id: string) => {
     scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
-  const runManualBackup = useCallback(async () => {
+  const runManualBackup = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     if (!user || !can('act:export')) {
       pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
-      return;
+      return { ok: false, error: 'Backup export permission is required.' };
     }
-    if (!confirmSensitiveAdmin('full local backup export')) return;
-    await downloadBackup(state, 'manual', { download: true, cloud: false });
-    const meta = await idbGetMeta();
-    setBackupMeta(meta);
-    pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
+    if (!(await confirmSensitiveAdmin('full local backup export'))) return { ok: false, error: 'Backup export cancelled.' };
+    try {
+      const result = await downloadBackup(stateRef.current, 'manual', { download: true, cloud: false });
+      const meta = await idbGetMeta();
+      setBackupMeta(meta);
+      if (!result.local) {
+        const error = result.error || 'Backup file could not be downloaded to this PC.';
+        pushAudit('DENIED', 'Settings', 'Manual backup download failed');
+        return { ok: false, error };
+      }
+      pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Backup download failed.';
+      pushAudit('DENIED', 'Settings', 'Manual backup download failed');
+      return { ok: false, error: message };
+    }
   }, [state, pushAudit, user, can, confirmSensitiveAdmin]);
 
   const refreshBackupMeta = useCallback(async () => {
