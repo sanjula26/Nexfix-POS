@@ -3210,11 +3210,12 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
       return;
     }
+    if (!confirmSensitiveAdmin('full local backup export')) return;
     await downloadBackup(state, 'manual', { download: true, cloud: false });
     const meta = await idbGetMeta();
     setBackupMeta(meta);
     pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
-  }, [state, pushAudit, user, can]);
+  }, [state, pushAudit, user, can, confirmSensitiveAdmin]);
 
   const refreshBackupMeta = useCallback(async () => {
     const meta = await idbGetMeta();
