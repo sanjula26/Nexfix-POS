@@ -272,7 +272,7 @@ export default function Settings() {
     }
   };
   const revokeCurrentUpdaterDevice = async () => {
-    if (!confirmSensitiveAdmin('revoke this Windows PC updater access')) return;
+    if (!(await confirmSensitiveAdmin('revoke this Windows PC updater access'))) { setUpdateState({ status: 'idle', message: 'Administrator confirmation cancelled.' }); return; }
     if (!desktopApi?.isPackaged) {
       setUpdateState({ status: 'error', message: 'Device revocation is available in the installed Windows POS only.' });
       return;
@@ -290,7 +290,7 @@ export default function Settings() {
       if (error) throw new Error(error.message || 'Server-side device revocation failed.');
       await desktopApi.clearUpdateCredentials?.();
       await desktopApi.clearCloudUpdaterDeviceToken?.();
-      setUpdateState({ status: 'error', message: 'This Windows PC is revoked for private updates. POS login and Google Drive backup remain unchanged.' });
+      setUpdateState({ status: 'idle', message: 'This Windows PC is revoked for private updates. POS login and Google Drive backup remain unchanged.' });
     } catch (error) {
       setUpdateState({ status: 'error', message: error instanceof Error ? error.message : 'Server-side device revocation failed. No updater credentials were intentionally retained.' });
       await desktopApi.clearUpdateCredentials?.();
@@ -367,8 +367,8 @@ export default function Settings() {
     }
   };
 
-  const useExistingShopBackupId = () => {
-    if (!confirmSensitiveAdmin('Shop Backup ID reconnect')) return;
+  const useExistingShopBackupId = async () => {
+    if (!(await confirmSensitiveAdmin('Shop Backup ID reconnect'))) { setShopIdMsg('Administrator confirmation cancelled.'); return; }
     const result = saveExistingDriveShopId(existingDriveShopId);
     if (!result.ok) {
       setShopIdMsg(result.error || 'Invalid Shop Backup ID');
@@ -382,7 +382,7 @@ export default function Settings() {
 
   const submitManagedPassword = async () => {
     setAccountMsg(null);
-    if (!confirmSensitiveAdmin('managed account password change')) return;
+    if (!(await confirmSensitiveAdmin('managed account password change'))) return;
     if (!securityUserId) return setAccountMsg({ ok: false, text: 'No active ' + securityRole + ' account is available' });
     if (accountNew.length < 12) return setAccountMsg({ ok: false, text: 'Password must be at least 12 characters' });
     if (accountNew !== accountConfirm) return setAccountMsg({ ok: false, text: 'Passwords do not match' });
@@ -391,9 +391,9 @@ export default function Settings() {
     setAccountMsg({ ok: true, text: (securityRole === 'admin' ? 'Admin' : 'Cashier') + ' login password updated' });
     setAccountNew(''); setAccountConfirm('');
   };
-  const submitPin = () => {
+  const submitPin = async () => {
     setPinMsg(null);
-    if (!confirmSensitiveAdmin('admin unlock password change')) return;
+    if (!(await confirmSensitiveAdmin('admin unlock password change'))) { setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' }); return; }
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
     const res = changeAdminPin(pinCur, pinNew);
     if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
@@ -407,7 +407,7 @@ export default function Settings() {
       return;
     }
     if (!files.length) return;
-    if (!confirmSensitiveAdmin('local backup restore')) return;
+    if (!(await confirmSensitiveAdmin('local backup restore'))) { setImportMsg('Administrator confirmation cancelled.'); return; }
     if (!window.confirm('Import this backup? Current local POS data will be replaced. A safety checkpoint will be created first.')) return;
 
     const readFile = (file: File) => new Promise<string>((resolve, reject) => {
@@ -541,7 +541,7 @@ export default function Settings() {
 
   const importRecoveryKeyFile = async (file?: File) => {
     if (!file) return;
-    if (!confirmSensitiveAdmin('Recovery Key import / shop reconnect')) return;
+    if (!(await confirmSensitiveAdmin('Recovery Key import / shop reconnect'))) return;
     try {
       const text = await file.text();
       const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
@@ -577,7 +577,7 @@ export default function Settings() {
 
   const runGoogleBackupNow = async () => {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
-    if (!confirmSensitiveAdmin('manual Google Drive backup')) return;
+    if (!(await confirmSensitiveAdmin('manual Google Drive backup'))) { setGMsg('Administrator confirmation cancelled.'); return; }
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
     if (connectivity !== 'online') return setGMsg('Google backup requires an online connection');
         setGRestoreBusy(true);
@@ -636,7 +636,7 @@ export default function Settings() {
       return;
     }
     if (!confirmGoogleRestore) return;
-    if (!confirmSensitiveAdmin('Google Drive restore')) return;
+    if (!(await confirmSensitiveAdmin('Google Drive restore'))) { setGMsg('Administrator confirmation cancelled.'); return; }
     const currentShopId = getLocalShopId();
     if (!currentShopId || confirmGoogleRestore.shopId !== currentShopId) {
       setConfirmGoogleRestore(null);
@@ -688,6 +688,7 @@ export default function Settings() {
           {updateState.status==='downloading'&&<div className="mt-4"><div className="flex justify-between text-[11px] font-semibold text-sub mb-1.5"><span>Downloading update…</span><span>{Math.round(updateState.percent||0)}%</span></div><div className="h-2 rounded-full bg-raised overflow-hidden"><div className="h-full rounded-full bg-sky-500 transition-all" style={{width:(Math.max(0,Math.min(100,updateState.percent||0)))+'%'}} /></div></div>}
           {updateState.status==='downloaded'&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">Update downloaded. Restarting…</p>}
           {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
+          {updateState.status==='idle'&&updateState.message&&<p className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 mt-3">{updateState.message}</p>}
           {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
           <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
           <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" className="btn btn-danger-soft" onClick={() => void revokeCurrentUpdaterDevice()} disabled={!desktopApi?.isPackaged}><Lock size={14} /> Revoke this PC's update access</button><span className="text-[10px] text-faint">Does not sign out POS or affect Google Drive backup.</span></div>
@@ -820,10 +821,10 @@ export default function Settings() {
               <p className="text-xs font-bold text-ink mb-1">Admin unlock password / PIN</p>
               <p className="text-[11px] text-faint mb-3">This is separate from the Admin login password. It remains available for the cashier → admin switch.</p>
               <div className="space-y-3.5">
-                <Field label="Current admin unlock PIN" hint="No default PIN is shipped. Use the administrator password initially, then set a separate unlock PIN."><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder="Current admin unlock PIN" /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
+                <Field label="Current admin unlock PIN" hint={state.settings.adminPinHash ? 'Enter the current admin unlock PIN. If you have never set one, use your administrator login password.' : 'No unlock PIN is set yet. Enter your current administrator login password here, then choose a new PIN.'}><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder={state.settings.adminPinHash ? 'Current admin unlock PIN' : 'Current administrator login password'} /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
                 <div className="grid sm:grid-cols-2 gap-3.5"><Field label="New admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field><Field label="Confirm new admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field></div>
                 {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
-                <button className="btn btn-primary" onClick={submitPin} disabled={!pinCur || !pinNew || !pinConfirm}><ShieldCheck size={15} /> Update admin unlock PIN</button>
+                <button className="btn btn-primary" onClick={() => void submitPin()} disabled={!pinNew || !pinConfirm || !pinCur}><ShieldCheck size={15} /> Update admin unlock PIN</button>
               </div>
             </div>
           </div>
@@ -911,8 +912,9 @@ export default function Settings() {
                 <button
                   className="btn btn-soft"
                   onClick={async () => {
-                    await runManualBackup();
-                    setBackupMsg('Manual backup downloaded');
+                    setBackupMsg('Preparing secure backup…');
+                    const result = await runManualBackup();
+                    setBackupMsg(result.ok ? 'Manual backup downloaded successfully.' : (result.error || 'Backup download failed.'));
                   }}
                 >
                   <Download size={15} /> Export backup
@@ -983,7 +985,7 @@ export default function Settings() {
           <button className="btn btn-soft flex-1" disabled={gRestoreBusy} onClick={() => setConfirmGoogleRestore(null)}>Cancel</button>
         </div>
       </Modal>
-      <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { if (confirmSensitiveAdmin('clear local POS data')) { resetData(); setConfirmReset(false); } }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div></Modal>
+      <Modal open={confirmReset} onClose={() => setConfirmReset(false)} title="Clear demo data?" sub="Restore the demo seed"><div className="rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-4 py-3 flex items-start gap-2.5 text-sm text-amber-600 dark:text-amber-400"><AlertTriangle size={16} className="shrink-0 mt-0.5" />Products, sales, customers, expenses and settings will be replaced with the demo dataset. Export a backup first if you need your records.</div><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={async () => { if (await confirmSensitiveAdmin('clear local POS data')) { resetData(); setConfirmReset(false); } else { setBackupMsg('Administrator confirmation cancelled.'); } }}><RotateCcw size={15} /> Clear Demo Data</button><button className="btn btn-soft flex-1" onClick={() => setConfirmReset(false)}>Cancel</button></div></Modal>
     </div>
   );
 }
