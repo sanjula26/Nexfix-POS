@@ -22,7 +22,7 @@ import type { Sale, PaymentLeg } from './types';
 export const salePayments=(s:Sale):PaymentLeg[]=>s.payments&&s.payments.length>0?s.payments:[{method:s.payment,amount:s.total}];
 export const salePaymentLabel=(s:Sale):string=>s.payments&&s.payments.length>1?'SPLIT':PAYMENT_LABEL[s.payment];
 export function mulberry32(seed:number){return function(){let t=(seed+=0x6d2b79f5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
-export const downloadFile=(name:string,content:string,type='text/plain')=>{const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);};
+export const downloadFile=(name:string,content:string,type='text/plain')=>{const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.appendChild(a);try{a.click();}finally{a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}};
 /** Canonical WhatsApp phone digits used for customer matching and WhatsApp links. */
 export const normalizeWhatsAppPhone=(phone:string):string=>{
   let digits=String(phone||'').replace(/\D/g,'');
