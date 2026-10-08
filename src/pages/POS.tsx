@@ -34,7 +34,7 @@ const PAYMENTS: { key: PaymentMethod; label: string; icon: React.ElementType }[]
   { key: 'mobile', label: 'Mobile', icon: Smartphone },
   { key: 'credit', label: 'Credit', icon: HandCoins },
 ];
-const SPLIT_METHODS = PAYMENTS;
+const SPLIT_METHODS = PAYMENTS.filter(p => p.key !== 'credit');
 
 interface Line { productId: string; qty: number; discount: number; price?: number; unitIds?: string[] }
 
@@ -270,7 +270,7 @@ export default function POS() {
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
   const hasCredit = !splitOn && payment === 'credit';
-  const creditDue = splitOn ? Math.max(0, total - legSum) : hasCredit ? Math.max(0, total - paidNum) : 0;
+  const creditDue = hasCredit ? Math.max(0, total - paidNum) : 0;
   const intentionalCredit = creditDue > 0.009;
   const change = hasCredit ? 0 : Math.max(0, paidNum - total);
   const shortage = Math.max(0, total - paidNum);
@@ -491,7 +491,7 @@ export default function POS() {
     if (splitOn) {
       if (legs.some(l => l.amount < 0)) return setError('Payment amounts cannot be negative');
       if (legSum > total + 0.009) return setError(`Split payments exceed the bill total by ${fmtRs(legSum - total)}. Adjust the amounts before completing.`);
-      if (creditDue > 0.009 && !legs.some(l => l.method === 'credit')) return setError('Add a Credit payment leg for the unpaid balance, or cover the full total.');
+      
     } else if (!hasCredit && paidNum < total) {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
@@ -1437,7 +1437,7 @@ export default function POS() {
             {!splitOn && (
               <div>
                 <span className="block text-[10px] font-bold tracking-wider uppercase text-faint mb-1.5">
-                  {hasCredit ? 'Advance paid (optional)' : 'Amount paid'}
+                  {hasCredit ? 'Amount received now (partial credit)' : 'Amount paid'}
                 </span>
                 <input
                   className="input num !text-xl !font-extrabold !py-2.5 text-right"
@@ -1446,6 +1446,21 @@ export default function POS() {
                   placeholder="0.00" inputMode="decimal"
                   onKeyDown={e => { if (e.key === 'Enter') finish(); }}
                 />
+                {hasCredit && (
+                  <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 space-y-2">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div><div className="text-[9px] uppercase tracking-wide text-faint">Total</div><div className="font-extrabold num text-xs">{fmtRs(total)}</div></div>
+                      <div><div className="text-[9px] uppercase tracking-wide text-faint">Received now</div><div className="font-extrabold num text-xs text-emerald-600">{fmtRs(Math.min(total, Math.max(0, paidNum)))}</div></div>
+                      <div><div className="text-[9px] uppercase tracking-wide text-faint">Balance on credit</div><div className="font-extrabold num text-xs text-amber-600">{fmtRs(creditDue)}</div></div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" className="btn btn-soft flex-1 !py-1.5 !text-[11px]" onClick={() => { setPaid('0'); setPaidAuto(false); }}>Full credit (received 0)</button>
+                      <button type="button" className="btn btn-soft flex-1 !py-1.5 !text-[11px]" onClick={() => { setPaid(String(total)); setPaidAuto(false); }}>Received = total</button>
+                    </div>
+                    {customer && <div className="text-[11px] text-sub">Existing customer credit: <b className="num">{fmtRs(customer.creditBalance)}</b>{customer.creditLimit && customer.creditLimit > 0 ? <> · Limit <b className="num">{fmtRs(customer.creditLimit)}</b> · Remaining <b className="num">{fmtRs(Math.max(0, customer.creditLimit - customer.creditBalance))}</b></> : null}</div>}
+                    {intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit && <div role="alert" className="text-[11px] font-bold text-rose-500">This bill would exceed the customer's credit limit.</div>}
+                  </div>
+                )}
                 {payment === 'cash' && total > 0 && (
                   <div className="flex gap-1.5 mt-2">
                     {[500, 1000, 2000, 5000].map(v => (
