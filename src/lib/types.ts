@@ -1,5 +1,6 @@
 import type { InventoryTransaction } from './inventoryLedger';
 import type { SupplierPayment } from './supplierPayments';
+import type { CustomerCreditPayment } from './customerCredit';
 
 export type Role = 'admin' | 'cashier' | 'technician' | 'manager';
 export interface AppUser { id:string; name:string; email:string; password:string; role:Role; active:boolean; createdAt:string; commissionPct?:number; mustChangePassword?:boolean; }
@@ -80,4 +81,4 @@ export interface Settings { shopName:string; tagline:string; address:string; pho
 export interface Permissions { admin:Record<string,boolean>; cashier:Record<string,boolean>; technician?:Record<string,boolean>; manager?:Record<string,boolean>; }
 export interface Counters { bill:number; po:number; ex:number; job:number; quote:number; claim:number; grn?:number; dn?:number; }
 export interface ReverseRequest { id:string; saleId:string; billNo:string; reason:string; requestedBy:string; requestedAt:string; status:'pending'|'approved'|'rejected'; reviewedBy?:string; reviewedAt?:string; reviewNote?:string; }
-export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; purchaseReturns?:PurchaseReturn[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; grns?:GRN[]; reverseRequests?:ReverseRequest[]; }
+export interface POSState { products:Product[]; customers:Customer[]; suppliers:Supplier[]; sales:Sale[]; purchases:Purchase[]; expenses:Expense[]; exchanges:Exchange[]; purchaseReturns?:PurchaseReturn[]; users:AppUser[]; audit:AuditEntry[]; held:HeldSale[]; sessions:DaySession[]; settings:Settings; permissions:Permissions; kitItems?:KitItem[]; quotations?:Quotation[]; warrantyClaims?:WarrantyClaim[]; counters:Counters; units:InventoryUnit[]; repairs:RepairJob[]; inventoryTransactions?:InventoryTransaction[]; supplierPayments?:SupplierPayment[]; customerCreditPayments?:CustomerCreditPayment[]; grns?:GRN[]; reverseRequests?:ReverseRequest[]; }
