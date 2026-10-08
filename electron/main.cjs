@@ -538,7 +538,40 @@ function createWindow(){
 ipcMain.handle('app:version',()=>app.getVersion());
 ipcMain.handle('app:copy-text',(_event,text)=>{if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
 ipcMain.handle('app:open-external',async(_event,url)=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
-ipcMain.handle('app:exit',()=>{ app.quit(); return true; });
+let exitBackupPending=false;
+let allowQuit=false;
+let exitBackupTimer=null;
+const requestExitWithBackup=()=>{
+  if(allowQuit)return;
+  const win=BrowserWindow.getAllWindows()[0];
+  if(!win){
+    allowQuit=true;
+    app.quit();
+    return;
+  }
+  if(exitBackupPending)return;
+  exitBackupPending=true;
+  win.webContents.send('app:exit-request');
+  exitBackupTimer=setTimeout(()=>{
+    exitBackupPending=false;
+    allowQuit=true;
+    app.quit();
+  },5000);
+};
+ipcMain.handle('app:exit',()=>{ requestExitWithBackup(); return true; });
+ipcMain.handle('app:exit-ready',()=>{
+  if(exitBackupTimer)clearTimeout(exitBackupTimer);
+  exitBackupTimer=null;
+  exitBackupPending=false;
+  allowQuit=true;
+  app.quit();
+  return true;
+});
+app.on('before-quit',(event)=>{
+  if(allowQuit)return;
+  event.preventDefault();
+  requestExitWithBackup();
+});
 app.whenReady().then(()=>{
   if(process.platform==='win32' && app.isPackaged){
     try{ app.setAsDefaultProtocolClient(AUTH_PROTOCOL); }catch{}
