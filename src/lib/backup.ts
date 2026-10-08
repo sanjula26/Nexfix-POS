@@ -231,7 +231,7 @@ export function scheduleGoogleBackup(
   // Keep this function as a compatibility hook for existing callers.
 }
 
-export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void): () => void {
+export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void | Promise<void>): () => void {
   let running = false;
   const RETRY_DELAY_MS = 60_000;
   const tick = async (force = false) => {
@@ -265,7 +265,7 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       running = true;
       const result = await downloadBackup(getState(), 'auto', { download: false, cloud: true });
       if (result.cloud) {
-        onBackup?.(new Date().toISOString());
+        await onBackup?.(new Date().toISOString());
         return;
       }
 
@@ -276,6 +276,7 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
         nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
         autoBackupFailureCount: failures,
       });
+      await onBackup?.(new Date().toISOString());
     } catch {
       // Keep the durable pending marker; the next retry tick will attempt the upload again.
       try {
@@ -285,6 +286,7 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
           nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
           autoBackupFailureCount: (meta.autoBackupFailureCount || 0) + 1,
         });
+        await onBackup?.(new Date().toISOString());
       } catch { /* metadata is best-effort */ }
     } finally { running = false; }
   };
