@@ -1926,7 +1926,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, reverseRequests: (s.reverseRequests || []).map(r => r.id === requestId ? { ...r, status: 'rejected' as const, reviewedBy: user.name, reviewedAt: new Date().toISOString(), reviewNote } : r) }));
     pushAudit('REVERSE-REJECTED', 'Sale', 'Reverse request for ' + req.billNo + ' rejected · ' + (reviewNote || 'No note'));
     return true;
-  }, [user, pushAudit]);
+  }, [user, pushAudit, confirmSensitiveAdmin]);
   /* ---------------- held sales ---------------- */
   const holdSale = useCallback((h: Omit<HeldSale, 'id' | 'heldAt'>) => {
     if (!user || !can('page:pos')) {
@@ -2502,7 +2502,7 @@ const deletePurchase = useCallback((id: string) => {
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
-  }, [state.users, pushAudit, user]);
+  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
 
   const toggleUserActive = useCallback((id: string) => {
     if (!user || user.role !== 'admin') {
@@ -2510,22 +2510,22 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     if (!confirmSensitiveAdmin('user activation change')) return;
-    if (!confirmSensitiveAdmin('user deletion')) return;
     const u = state.users.find(x => x.id === id);
     setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
     if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
-  }, [state.users, pushAudit, user]);
+  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
 
   const deleteUser = useCallback((id: string) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);
       return;
     }
+    if (!confirmSensitiveAdmin('user deletion')) return;
     const u = state.users.find(x => x.id === id);
     if (!u || u.id === user?.id) return;
     setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
     pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
-  }, [state.users, user?.id, pushAudit, user]);
+  }, [state.users, user?.id, pushAudit, user, confirmSensitiveAdmin]);
 
   /* ---------------- admin ---------------- */
   const setPermission = useCallback((role: Role, key: string, value: boolean) => {
@@ -2544,7 +2544,7 @@ const deletePurchase = useCallback((id: string) => {
       permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } },
     }));
     pushAudit('PERMISSION', 'Permissions', `Set ${key} = ${value ? 'ON' : 'OFF'} for ${role}`);
-  }, [pushAudit, user]);
+  }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
     if (!user || user.role !== 'admin') {
