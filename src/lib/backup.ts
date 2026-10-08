@@ -159,19 +159,34 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     }
   }
   const successful = local || cloud;
-  if (successful || errorMessage) {
+  if (kind === 'auto') {
+    const meta = await idbGetMeta();
+    if (cloud) {
+      // Automatic success is cloud-authoritative: only a confirmed Drive write
+      // advances the auto schedule and clears its durable retry state.
+      const now = new Date().toISOString();
+      await idbSetMeta({
+        lastAutoBackupAt: now,
+        lastCloudBackupAt: now,
+        lastCloudBackupError: undefined,
+        backupCount: (meta.backupCount || 0) + 1,
+        pendingAutoBackupAt: undefined,
+        nextAutoBackupRetryAt: undefined,
+        autoBackupFailureCount: 0,
+      });
+    } else if (errorMessage) {
+      // Never advance lastAutoBackupAt on a failed cloud upload. The scheduler
+      // owns retry timing and will keep the pending marker alive.
+      await idbSetMeta({ lastCloudBackupError: errorMessage });
+    }
+  } else if (successful || errorMessage) {
     const now = new Date().toISOString();
     const meta = await idbGetMeta();
-    await idbSetMeta(kind === 'auto'
-      ? {
-          lastAutoBackupAt: now,
-          backupCount: (meta.backupCount || 0) + 1,
-          pendingAutoBackupAt: undefined,
-          nextAutoBackupRetryAt: undefined,
-          autoBackupFailureCount: 0,
-          ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})),
-        }
-      : { lastManualBackupAt: now, backupCount: (meta.backupCount || 0) + 1, ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})) });
+    await idbSetMeta({
+      lastManualBackupAt: now,
+      backupCount: (meta.backupCount || 0) + 1,
+      ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})),
+    });
   }
   return { local, cloud, ...(errorMessage ? { error: errorMessage } : {}) };
 }
