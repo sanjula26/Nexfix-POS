@@ -47,12 +47,12 @@ function CloudAuthLifecycle() {
   useEffect(() => {
     if (user) {
       hadLocalSession.current = true;
-      if (user.role === 'admin') {
-        void refreshDesktopUpdaterCredentials().catch(() => {});
-      } else {
-        const desktop = (window as Window & { nexfixDesktop?: { clearUpdateCredentials?: () => Promise<unknown> } }).nexfixDesktop;
-        void desktop?.clearUpdateCredentials?.().catch(() => {});
-      }
+      // Windows updater authorization belongs to the physical POS device,
+      // not to the currently signed-in local role. Once an admin authorizes this
+      // PC, the encrypted device token remains valid for future launches,
+      // cashier/admin switching, and app updates until an explicit server-side
+      // device revocation occurs.
+      void refreshDesktopUpdaterCredentials().catch(() => {});
       return;
     }
     if (!hadLocalSession.current) return;
