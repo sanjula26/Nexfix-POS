@@ -475,6 +475,7 @@ export default function POS() {
       if (tradeIn.addToInventory && tp.trackImei && !tradeIn.imei.trim()) return setError('Enter the trade-in IMEI');
       if (tradeIn.addToInventory && tp.trackSerial && !tradeIn.serial.trim()) return setError('Enter the trade-in serial number');
     }
+    if (hasCredit && paidNum > total + 0.009) return setError('Amount received now cannot exceed the bill total.');
     if (intentionalCredit && !customerId) return setError('A registered customer is required when any balance remains on credit.');
     if (intentionalCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales.');
     if (intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit) {
