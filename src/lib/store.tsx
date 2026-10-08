@@ -3241,7 +3241,7 @@ const deletePurchase = useCallback((id: string) => {
   const value: StoreCtx = {
     state, user, viewingAs, dark, toggleTheme, can,
     adminPrompt, setAdminPrompt,
-    signIn, changePassword, changeManagedPassword, signOut, switchRole, changeAdminPin, verifyAdminPin,
+    signIn, changePassword, changeManagedPassword, signOut, switchRole, changeAdminPin, verifyAdminPin, confirmSensitiveAdmin, unlockSession,
     createInitialAdmin,
     saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
     saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
