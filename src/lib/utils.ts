@@ -23,7 +23,7 @@ export const salePayments=(s:Sale):PaymentLeg[]=>s.payments&&s.payments.length>0
 export const salePaymentLabel=(s:Sale):string=>{
   const due = Math.max(0, Number(s.total || 0) - Number(s.amountPaid || 0));
   const tenders = (s.payments || []).filter(p => p.method !== 'credit' && p.amount > 0);
-  if (due > 0.009 && s.payment === 'credit') {
+  if (due > 0.009) {
     return tenders.length
       ? `CREDIT BALANCE · ${tenders.map(p => PAYMENT_LABEL[p.method]).join(' + ')} RECEIVED`
       : 'CREDIT BALANCE';
