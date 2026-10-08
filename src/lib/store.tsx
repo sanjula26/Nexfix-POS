@@ -664,11 +664,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const unlockSession = useCallback((credential: string): boolean => {
     if (!user || !credential) return false;
     const current = stateRef.current.users.find(u => u.id === user.id);
-    if (!current || !current.active) return false;
+    if (!current || !current.active || current.mustChangePassword) return false;
+
     let passwordOk = false;
-    try { passwordOk = isHashed(current.password) ? verifyPassword(credential, current.password) : credential === current.password; } catch { passwordOk = false; }
-    const pinOk = current.role === 'admin' && verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
-    if (passwordOk || pinOk) {
+    try {
+      passwordOk = isHashed(current.password)
+        ? verifyPassword(credential, current.password)
+        : credential === current.password;
+    } catch { passwordOk = false; }
+
+    // An unattended terminal can be recovered by the current account or by
+    // an active administrator credential, without destroying the current cart.
+    let elevatedOk = false;
+    try {
+      elevatedOk = stateRef.current.users
+        .filter(u => u.role === 'admin' && u.active)
+        .some(admin => isHashed(admin.password)
+          ? verifyPassword(credential, admin.password)
+          : credential === admin.password);
+    } catch { elevatedOk = false; }
+    const adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
+
+    if (passwordOk || elevatedOk || adminPinOk) {
       loginAtRef.current = Date.now();
       pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
       return true;
