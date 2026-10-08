@@ -419,6 +419,9 @@ export default function AppLayout() {
   const [unlockCredential, setUnlockCredential] = useState('');
   const [unlockError, setUnlockError] = useState('');
   const [unlockBusy, setUnlockBusy] = useState(false);
+  const [unlockAttempts, setUnlockAttempts] = useState(0);
+  const [unlockLockedUntil, setUnlockLockedUntil] = useState(0);
+  const [unlockNow, setUnlockNow] = useState(Date.now());
   const lastActivityRef = useRef(Date.now());
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
@@ -437,6 +440,8 @@ export default function AppLayout() {
     setSessionLocked(false);
     setUnlockCredential('');
     setUnlockError('');
+    setUnlockAttempts(0);
+    setUnlockLockedUntil(0);
   }, [user?.id]);
 
   useEffect(() => {
@@ -460,18 +465,44 @@ export default function AppLayout() {
     };
   }, [user?.id, state.settings.securityIdleMinutes, sessionLocked]);
 
+  const unlockSecondsLeft = Math.max(0, Math.ceil((unlockLockedUntil - unlockNow) / 1000));
+
+  useEffect(() => {
+    if (!unlockLockedUntil) return;
+    const timer = window.setInterval(() => setUnlockNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [unlockLockedUntil]);
+
+  useEffect(() => {
+    if (unlockLockedUntil && unlockSecondsLeft === 0) {
+      setUnlockLockedUntil(0);
+      setUnlockAttempts(0);
+      setUnlockError('');
+    }
+  }, [unlockLockedUntil, unlockSecondsLeft]);
+
   const handleUnlock = () => {
-    if (unlockBusy || !unlockCredential) return;
+    if (unlockBusy || !unlockCredential || unlockSecondsLeft > 0) return;
     setUnlockBusy(true);
     setUnlockError('');
     try {
       if (unlockSession(unlockCredential)) {
         setSessionLocked(false);
         setUnlockCredential('');
+        setUnlockAttempts(0);
+        setUnlockLockedUntil(0);
         lastActivityRef.current = Date.now();
       } else {
+        const nextAttempts = unlockAttempts + 1;
         setUnlockCredential('');
-        setUnlockError('Incorrect password or admin unlock password.');
+        if (nextAttempts >= 3) {
+          setUnlockAttempts(0);
+          setUnlockLockedUntil(Date.now() + 30_000);
+          setUnlockError('Too many failed unlock attempts. Try again in 30 seconds.');
+        } else {
+          setUnlockAttempts(nextAttempts);
+          setUnlockError('Incorrect password or admin unlock password.');
+        }
       }
     } finally { setUnlockBusy(false); }
   };
@@ -565,10 +596,10 @@ export default function AppLayout() {
             <h2 className="text-center text-xl font-black text-ink">POS locked</h2>
             <p className="mt-2 text-center text-sm text-sub">The POS was locked after inactivity. Your current sale and offline work remain open.</p>
             <label className="mt-6 block"><span className="mb-2 block text-[10px] font-bold tracking-[0.18em] text-sub">PASSWORD</span>
-              <input autoFocus type="password" value={unlockCredential} onChange={e => setUnlockCredential(e.target.value)} className="input w-full" autoComplete="current-password" placeholder="Current password" />
+              <input autoFocus type="password" value={unlockCredential} onChange={e => { setUnlockCredential(e.target.value); setUnlockError(''); }} className="input w-full" autoComplete="current-password" placeholder="Current password or admin unlock password" disabled={unlockSecondsLeft > 0} />
             </label>
             {unlockError && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-600 dark:text-rose-300">{unlockError}</div>}
-            <button type="submit" disabled={unlockBusy || !unlockCredential} className="mt-5 w-full rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">{unlockBusy ? 'Unlocking…' : 'Unlock POS'}</button>
+            <button type="submit" disabled={unlockBusy || !unlockCredential || unlockSecondsLeft > 0} className="mt-5 w-full rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">{unlockBusy ? 'Unlocking…' : unlockSecondsLeft > 0 ? `Locked — ${unlockSecondsLeft}s` : 'Unlock POS'}</button>
           </form>
         </div>
       )}
