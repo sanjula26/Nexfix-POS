@@ -71,6 +71,8 @@ interface NewSaleInput {
   pointsRedeemed?: number;
   payment: PaymentMethod;
   amountPaid: number;
+  /** Remaining sale balance recorded as credit; tender legs represent only money received now. */
+  creditDue?: number;
   payments?: PaymentLeg[];
   note?: string;
   tradeIn?: TradeIn;
@@ -1425,7 +1427,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const isSplit = legs.length > 1;
     if (isSplit && legs.some(l => l.method === 'credit')) return null;
     if (isSplit && Math.abs(legs.reduce((a, l) => a + l.amount, 0) - Math.max(0, Number(input.amountPaid) || 0)) > 0.01) return null;
-    const isCredit = legs.some(l => l.method === 'credit') || (!isSplit && input.payment === 'credit');
+    const isCredit = legs.some(l => l.method === 'credit') || input.payment === 'credit';
     if (isCredit) {
       if (!cust) return null;
       const creditLimit = cust.creditLimit ?? 0;
@@ -1447,8 +1449,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       note: input.note?.trim() || undefined,
       customerId: cust?.id, customerName: cust?.name || 'Walk-in customer',
       items, subtotal, discount, tax, shipping: shipping || undefined, total,
-      payment: isSplit ? legs[0].method : input.payment,
-      payments: isSplit ? legs : undefined,
+      payment: balanceDue > 0.009 ? 'credit' : (legs[0]?.method || input.payment),
+      payments: legs.length > 0 ? legs.filter(l => l.method !== 'credit') : undefined,
       pointsRedeemed: pointsRedeemed || undefined,
       pointsEarned: pointsEarned || undefined,
       amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
@@ -1550,7 +1552,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
       customerId: input.customerId || null, discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct || 0,
       shipping: input.shipping || 0, pointsRedeemed: input.pointsRedeemed || 0,
-      payment: input.payment, amountPaid: input.amountPaid,
+      payment: input.payment, amountPaid: input.amountPaid, creditDue: input.creditDue || 0,
       payments: (input.payments || []).map(p => ({ method: p.method, amount: p.amount })),
       note: input.note || '', salesmanId: cloudSalesmanId || null,
     });
@@ -1570,9 +1572,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (tradeIn?.addToInventory && !tradeInUnitId) tradeInUnitId = uid();
     try { localStorage.setItem(pendingKey, JSON.stringify({ saleId, fingerprint, tradeInUnitId })); } catch { /* ignore */ }
 
-    const payments = (input.payments && input.payments.length)
-      ? input.payments.filter(p => p.amount > 0).map(p => ({ method: p.method, amount: p.amount }))
-      : [{ method: input.payment, amount: input.amountPaid }];
+    const payments: PaymentLeg[] = (input.payments || [])
+      .filter(p => p.amount > 0 && p.method !== 'credit')
+      .map(p => ({ method: p.method, amount: Math.round(p.amount * 100) / 100 }));
+    if (input.payment === 'credit' && (input.creditDue || 0) > 0.009) {
+      payments.push({ method: 'credit', amount: Math.round((input.creditDue || 0) * 100) / 100 });
+    } else if (payments.length === 0 && input.payment !== 'credit' && input.amountPaid > 0) {
+      payments.push({ method: input.payment, amount: Math.round(input.amountPaid * 100) / 100 });
+    }
     const cloud = await completeSaleAtomic({
       shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
@@ -1621,8 +1628,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       customerName: String(row.customer_name ?? committed.customer?.name ?? 'Walk-in customer'),
       items: committedItems, subtotal: n(row.subtotal), discount: Math.max(0, n(row.discount) - tradeInValue), tax: n(row.tax),
       shipping: n(row.shipping) || undefined, total: n(row.total),
-      payment: paymentRows.length > 1 ? paymentRows[0].method : (paymentRows[0]?.method || input.payment),
-      payments: paymentRows.length > 1 ? paymentRows : undefined,
+      payment: n(row.total) - n(row.amount_paid) > 0.009 ? 'credit' : (paymentRows.length > 1 ? paymentRows[0].method : (paymentRows[0]?.method || input.payment)),
+      payments: paymentRows.filter(p => p.method !== 'credit').length > 0 ? paymentRows.filter(p => p.method !== 'credit') : undefined,
       pointsRedeemed: n(row.points_redeemed) || undefined, pointsEarned: n(row.points_earned) || undefined,
       note: row.note ? String(row.note) : undefined,
       tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, unitId: tradeInUnitId } : undefined, amountPaid: n(row.amount_paid), change: n(row.change_amount),
