@@ -633,6 +633,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const stop = startAutoBackup(
       () => stateRef.current,
       async () => {
+        // Refresh both success and failure metadata so Settings never looks
+        // silently stale after an automatic attempt.
         const meta = await idbGetMeta();
         setBackupMeta(meta);
       },
@@ -3297,7 +3299,8 @@ const deletePurchase = useCallback((id: string) => {
     }
     const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
     setBackupMeta(meta);
-    pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${hours <= 0 ? 'OFF' : hours + 'h'}`);
+    const label = hours <= 0 ? 'OFF' : hours < 1 ? `${Math.round(hours * 60)}m` : `${hours}h`;
+    pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${label}`);
   }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
