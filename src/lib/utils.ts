@@ -20,7 +20,18 @@ export const PAYMENT_LABEL:Record<string,string>={cash:'CASH',card:'CARD',bank:'
 export const POINT_VALUE=20;export const POINT_EARN_DIV=1000;export const pointsForRs=(rs:number)=>Math.floor(rs/POINT_EARN_DIV);
 import type { Sale, PaymentLeg } from './types';
 export const salePayments=(s:Sale):PaymentLeg[]=>s.payments&&s.payments.length>0?s.payments:[{method:s.payment,amount:s.total}];
-export const salePaymentLabel=(s:Sale):string=>s.payments&&s.payments.length>1?'SPLIT':PAYMENT_LABEL[s.payment];
+export const salePaymentLabel=(s:Sale):string=>{
+  const due = Math.max(0, Number(s.total || 0) - Number(s.amountPaid || 0));
+  const tenders = (s.payments || []).filter(p => p.method !== 'credit' && p.amount > 0);
+  if (due > 0.009 && s.payment === 'credit') {
+    return tenders.length
+      ? `CREDIT BALANCE · ${tenders.map(p => PAYMENT_LABEL[p.method]).join(' + ')} RECEIVED`
+      : 'CREDIT BALANCE';
+  }
+  if (tenders.length > 1) return `SPLIT (${tenders.map(p => PAYMENT_LABEL[p.method]).join(' + ')})`;
+  if (tenders.length === 1) return PAYMENT_LABEL[tenders[0].method];
+  return PAYMENT_LABEL[s.payment];
+};
 export function mulberry32(seed:number){return function(){let t=(seed+=0x6d2b79f5);t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};}
 export const downloadFile=(name:string,content:string,type='text/plain')=>{const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.appendChild(a);try{a.click();}finally{a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}};
 /** Canonical WhatsApp phone digits used for customer matching and WhatsApp links. */
