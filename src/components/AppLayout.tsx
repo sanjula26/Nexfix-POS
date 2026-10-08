@@ -409,12 +409,17 @@ function AdminUnlockModal() {
 }
 
 export default function AppLayout() {
-  const { user, viewingAs, state, toggleTheme, dark, adminPrompt, connectivity, ready, refreshPOS } = usePOS();
+  const { user, viewingAs, state, toggleTheme, dark, adminPrompt, connectivity, ready, refreshPOS, unlockSession } = usePOS();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
+  const [sessionLocked, setSessionLocked] = useState(false);
+  const [unlockCredential, setUnlockCredential] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const lastActivityRef = useRef(Date.now());
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
   const lowStock = useMemo(
@@ -427,6 +432,49 @@ export default function AppLayout() {
   );
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+    setSessionLocked(false);
+    setUnlockCredential('');
+    setUnlockError('');
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    const configured = Number(state.settings.securityIdleMinutes);
+    const minutes = Number.isFinite(configured) ? Math.min(120, Math.max(1, configured)) : 10;
+    const timeoutMs = minutes * 60 * 1000;
+    const markActivity = () => { if (!sessionLocked) lastActivityRef.current = Date.now(); };
+    const events = ['pointerdown', 'keydown', 'touchstart', 'mousemove', 'wheel'];
+    events.forEach(event => window.addEventListener(event, markActivity, { passive: true }));
+    const timer = window.setInterval(() => {
+      if (!sessionLocked && Date.now() - lastActivityRef.current >= timeoutMs) {
+        setSessionLocked(true);
+        setUnlockCredential('');
+        setUnlockError('');
+      }
+    }, 1000);
+    return () => {
+      events.forEach(event => window.removeEventListener(event, markActivity));
+      window.clearInterval(timer);
+    };
+  }, [user?.id, state.settings.securityIdleMinutes, sessionLocked]);
+
+  const handleUnlock = () => {
+    if (unlockBusy || !unlockCredential) return;
+    setUnlockBusy(true);
+    setUnlockError('');
+    try {
+      if (unlockSession(unlockCredential)) {
+        setSessionLocked(false);
+        setUnlockCredential('');
+        lastActivityRef.current = Date.now();
+      } else {
+        setUnlockCredential('');
+        setUnlockError('Incorrect password or admin unlock password.');
+      }
+    } finally { setUnlockBusy(false); }
+  };
 
   const handleRefresh = async () => {
     if (refreshing) return;
@@ -445,6 +493,7 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-base">
+      <div inert={sessionLocked ? true : undefined} aria-hidden={sessionLocked} className={sessionLocked ? 'pointer-events-none select-none blur-[5px] saturate-[0.65]' : 'contents'}>
       <div
         inert={adminPrompt ? true : undefined}
         aria-hidden={adminPrompt}
@@ -508,6 +557,21 @@ export default function AppLayout() {
         </main>
       </div>
       </div>
+      </div>
+      {sessionLocked && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-black/65 backdrop-blur-md p-5">
+          <form onSubmit={(e) => { e.preventDefault(); handleUnlock(); }} className="w-full max-w-md rounded-3xl border border-line bg-surface p-7 shadow-2xl">
+            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-violet-500/10 text-violet-500"><LockKeyhole size={25} /></div>
+            <h2 className="text-center text-xl font-black text-ink">POS locked</h2>
+            <p className="mt-2 text-center text-sm text-sub">The POS was locked after inactivity. Your current sale and offline work remain open.</p>
+            <label className="mt-6 block"><span className="mb-2 block text-[10px] font-bold tracking-[0.18em] text-sub">PASSWORD</span>
+              <input autoFocus type="password" value={unlockCredential} onChange={e => setUnlockCredential(e.target.value)} className="input w-full" autoComplete="current-password" placeholder="Current password" />
+            </label>
+            {unlockError && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-600 dark:text-rose-300">{unlockError}</div>}
+            <button type="submit" disabled={unlockBusy || !unlockCredential} className="mt-5 w-full rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-50">{unlockBusy ? 'Unlocking…' : 'Unlock POS'}</button>
+          </form>
+        </div>
+      )}
       <AdminUnlockModal />
       <CommandPalette />
     </div>
