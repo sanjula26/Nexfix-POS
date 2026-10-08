@@ -864,7 +864,7 @@ export default function Settings() {
               <Field label="Use existing Recovery Key" hint="Use this after replacing/reinstalling Windows. Paste the key from RECOVERY_KEY.txt or your saved copy.">
                 <div className="flex gap-2">
                   <input type="text" className="input flex-1 font-mono text-xs" value={recoveryKeyInput} onChange={e => { setRecoveryKeyInput(e.target.value.trim()); setRecoveryKeyMsg(''); }} placeholder="Paste the existing Recovery Key" maxLength={64} />
-                  <button type="button" className="btn btn-primary shrink-0" disabled={!recoveryKeyInput} onClick={() => {
+                  <button type="button" className="btn btn-primary shrink-0" disabled={!recoveryKeyInput} onClick={async () => {
                     if (!(await confirmSensitiveAdmin('Recovery Key reconnect'))) { setRecoveryKeyMsg('Administrator confirmation cancelled.'); return; }
                     const result = setRecoveryKey(recoveryKeyInput, recoveryScope);
                     if (!result.ok) { setRecoveryKeyMsg(result.error || 'Invalid Recovery Key'); return; }
