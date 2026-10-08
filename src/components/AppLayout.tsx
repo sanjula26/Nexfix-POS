@@ -288,7 +288,7 @@ function AdminUnlockModal() {
   const tryUnlock = async () => {
     if (!pin || busy || lockSecsLeft > 0) return;
     setBusy(true); setError('');
-    window.setTimeout(async () => {
+    try {
       try {
         const res = user?.role === 'admin'
           ? await switchRole('cashier', pin, cashierEmail)
@@ -307,10 +307,10 @@ function AdminUnlockModal() {
           setAttempts(n);
           setError(res.error || (user?.role === 'admin' ? 'Incorrect cashier email or password' : 'Incorrect admin unlock credential'));
         }
-      } finally {
-        setBusy(false);
       }
-    }, 380);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
