@@ -95,6 +95,7 @@ export default function POS() {
 
   /* payment */
   const [payment, setPayment] = useState<PaymentMethod>('cash');
+  const [creditTender, setCreditTender] = useState<Exclude<PaymentMethod, 'credit'>>('cash');
   const [waReceipt, setWaReceipt] = useState(false);
   const [paid, setPaid] = useState('');
   const [paidAuto, setPaidAuto] = useState(false);
@@ -269,7 +270,7 @@ export default function POS() {
   const total = Math.max(0, Math.round((preTotal - pointsVal) * 100) / 100);
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
-  const hasCredit = !splitOn && payment === 'credit';
+  const hasCredit = payment === 'credit';
   const creditDue = hasCredit ? Math.max(0, total - paidNum) : 0;
   const intentionalCredit = creditDue > 0.009;
   const change = hasCredit ? 0 : Math.max(0, paidNum - total);
@@ -490,7 +491,7 @@ export default function POS() {
     }
     if (splitOn) {
       if (legs.some(l => l.amount <= 0)) return setError('Enter an amount greater than zero for every split payment');
-      if (legSum < total - 0.009) return setError(`Split payments are short by ${fmtRs(total - legSum)}`);
+      if (!hasCredit && legSum < total - 0.009) return setError(`Split payments are short by ${fmtRs(total - legSum)}`);
       if (legSum > total + 0.009) return setError(`Split payments exceed the bill total by ${fmtRs(legSum - total)}. Adjust the amounts before completing.`);
       
     } else if (!hasCredit && paidNum < total) {
@@ -532,7 +533,8 @@ export default function POS() {
       pointsRedeemed: redeemedPts,
       payment,
       amountPaid: paidNum,
-      payments: splitOn ? legs : undefined,
+      payments: splitOn ? legs : (hasCredit && paidNum > 0 ? [{ method: creditTender, amount: paidNum }] : undefined),
+      creditDue: hasCredit ? creditDue : 0,
       note: note.trim() || undefined,
       salesmanId: salesmanId || undefined,
     });
@@ -1453,6 +1455,12 @@ export default function POS() {
                       <div><div className="text-[9px] uppercase tracking-wide text-faint">Total</div><div className="font-extrabold num text-xs">{fmtRs(total)}</div></div>
                       <div><div className="text-[9px] uppercase tracking-wide text-faint">Received now</div><div className="font-extrabold num text-xs text-emerald-600">{fmtRs(Math.min(total, Math.max(0, paidNum)))}</div></div>
                       <div><div className="text-[9px] uppercase tracking-wide text-faint">Balance on credit</div><div className="font-extrabold num text-xs text-amber-600">{fmtRs(creditDue)}</div></div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <label htmlFor="credit-tender-method" className="text-sub font-semibold">Received by</label>
+                      <select id="credit-tender-method" className="input !py-1 !w-auto" value={creditTender} onChange={e => setCreditTender(e.target.value as Exclude<PaymentMethod, 'credit'>)}>
+                        {SPLIT_METHODS.map(method => <option key={method.key} value={method.key}>{method.label}</option>)}
+                      </select>
                     </div>
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-soft flex-1 !py-1.5 !text-[11px]" onClick={() => { setPaid('0'); setPaidAuto(false); }}>Full credit (received 0)</button>
