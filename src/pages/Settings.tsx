@@ -342,6 +342,7 @@ export default function Settings() {
   };
 
   const useExistingShopBackupId = () => {
+    if (!confirmSensitiveAdmin('Shop Backup ID reconnect')) return;
     const result = saveExistingDriveShopId(existingDriveShopId);
     if (!result.ok) {
       setShopIdMsg(result.error || 'Invalid Shop Backup ID');
@@ -355,6 +356,7 @@ export default function Settings() {
 
   const submitManagedPassword = async () => {
     setAccountMsg(null);
+    if (!confirmSensitiveAdmin('managed account password change')) return;
     if (!securityUserId) return setAccountMsg({ ok: false, text: 'No active ' + securityRole + ' account is available' });
     if (accountNew.length < 12) return setAccountMsg({ ok: false, text: 'Password must be at least 12 characters' });
     if (accountNew !== accountConfirm) return setAccountMsg({ ok: false, text: 'Passwords do not match' });
@@ -365,6 +367,7 @@ export default function Settings() {
   };
   const submitPin = () => {
     setPinMsg(null);
+    if (!confirmSensitiveAdmin('admin unlock password change')) return;
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
     const res = changeAdminPin(pinCur, pinNew);
     if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
@@ -378,6 +381,7 @@ export default function Settings() {
       return;
     }
     if (!files.length) return;
+    if (!confirmSensitiveAdmin('local backup restore')) return;
     if (!window.confirm('Import this backup? Current local POS data will be replaced. A safety checkpoint will be created first.')) return;
 
     const readFile = (file: File) => new Promise<string>((resolve, reject) => {
@@ -832,6 +836,7 @@ export default function Settings() {
                 <div className="flex gap-2">
                   <input type="text" className="input flex-1 font-mono text-xs" value={recoveryKeyInput} onChange={e => { setRecoveryKeyInput(e.target.value.trim()); setRecoveryKeyMsg(''); }} placeholder="Paste the existing Recovery Key" maxLength={64} />
                   <button type="button" className="btn btn-primary shrink-0" disabled={!recoveryKeyInput} onClick={() => {
+                    if (!confirmSensitiveAdmin('Recovery Key reconnect')) return;
                     const result = setRecoveryKey(recoveryKeyInput, recoveryScope);
                     if (!result.ok) { setRecoveryKeyMsg(result.error || 'Invalid Recovery Key'); return; }
                     setRecoveryKeyInput('');
