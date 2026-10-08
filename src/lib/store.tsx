@@ -157,8 +157,8 @@ interface StoreCtx {
   closeDay: (counts: Record<string, number>, note: string) => boolean;
   logAudit: (action: string, entity: string, details: string) => void;
   clearAudit: () => void;
-  exportData: () => string;
-  importData: (json: string) => boolean;
+  exportData: () => Promise<string>;
+  importData: (json: string) => Promise<boolean>;
   resetData: () => void;
   /** Reload the current POS data without destroying the authenticated session or route. */
   refreshPOS: () => Promise<void>;
@@ -3309,7 +3309,7 @@ const deletePurchase = useCallback((id: string) => {
 
   const value: StoreCtx = {
     state, user, viewingAs, dark, toggleTheme, can,
-    adminPrompt, setAdminPrompt,
+    adminPrompt, setAdminPrompt, sensitiveAdminPrompt, resolveSensitiveAdmin, cancelSensitiveAdmin,
     signIn, changePassword, changeManagedPassword, signOut, switchRole, changeAdminPin, verifyAdminPin, confirmSensitiveAdmin, unlockSession,
     createInitialAdmin,
     saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
