@@ -34,7 +34,7 @@ const PAYMENTS: { key: PaymentMethod; label: string; icon: React.ElementType }[]
   { key: 'mobile', label: 'Mobile', icon: Smartphone },
   { key: 'credit', label: 'Credit', icon: HandCoins },
 ];
-const SPLIT_METHODS = PAYMENTS.filter(p => p.key !== 'credit');
+const SPLIT_METHODS = PAYMENTS;
 
 interface Line { productId: string; qty: number; discount: number; price?: number; unitIds?: string[] }
 
@@ -270,6 +270,8 @@ export default function POS() {
   const legSum = legs.reduce((a, l) => a + (l.amount || 0), 0);
   const paidNum = splitOn ? legSum : parseFloat(paid) || 0;
   const hasCredit = !splitOn && payment === 'credit';
+  const creditDue = splitOn ? Math.max(0, total - legSum) : hasCredit ? Math.max(0, total - paidNum) : 0;
+  const intentionalCredit = creditDue > 0.009;
   const change = hasCredit ? 0 : Math.max(0, paidNum - total);
   const shortage = Math.max(0, total - paidNum);
   const itemCount = detailed.reduce((s, l) => s + l.qty, 0);
@@ -355,11 +357,12 @@ export default function POS() {
     const cur = lines.find(l => l.productId === productId);
     if (cur) {
       if (cur.qty + 1 > p.stock) { toast(`Only ${p.stock} in stock — ${p.name}`, 'rose'); return; }
-      setLines(ls => ls.map(l => l.productId === productId
-        ? { ...l, qty: l.qty + 1, unitIds: [...(l.unitIds || []), unitId] }
-        : l));
+      setLines(ls => {
+        const line = ls.find(l => l.productId === productId)!;
+        return [{ ...line, qty: line.qty + 1, unitIds: [...(line.unitIds || []), unitId] }, ...ls.filter(l => l.productId !== productId)];
+      });
     } else {
-      setLines(ls => [...ls, { productId, qty: 1, discount: 0, unitIds: [unitId] }]);
+      setLines(ls => [{ productId, qty: 1, discount: 0, unitIds: [unitId] }, ...ls]);
     }
     setUnitPickProductId(null);
     setUnitPickSearch('');
@@ -381,7 +384,7 @@ export default function POS() {
     if (p.stock <= p.reorderLevel) toast(`LOW STOCK · only ${p.stock - cur} left — ${p.name}`, 'rose');
     setLines(ls => {
       const ex = ls.find(l => l.productId === id);
-      return ex ? ls.map(l => (l.productId === id ? { ...l, qty: l.qty + 1 } : l)) : [...ls, { productId: id, qty: 1, discount: 0 }];
+      return ex ? [{ ...ex, qty: ex.qty + 1 }, ...ls.filter(l => l.productId !== id)] : [{ productId: id, qty: 1, discount: 0 }, ...ls];
     });
     toast(`Added · ${p.name}`, 'amber');
   };
@@ -471,8 +474,11 @@ export default function POS() {
       if (tradeIn.addToInventory && tp.trackImei && !tradeIn.imei.trim()) return setError('Enter the trade-in IMEI');
       if (tradeIn.addToInventory && tp.trackSerial && !tradeIn.serial.trim()) return setError('Enter the trade-in serial number');
     }
-    if (hasCredit && !customerId) return setError('Credit sales need a registered customer');
-    if (hasCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales');
+    if (intentionalCredit && !customerId) return setError('A registered customer is required when any balance remains on credit.');
+    if (intentionalCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales.');
+    if (intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit) {
+      return setError(`Credit limit exceeded. Existing due ${fmtRs(customer.creditBalance)} + this bill credit ${fmtRs(creditDue)} is above the ${fmtRs(customer.creditLimit)} limit.`);
+    }
     // Require IMEI/serial for tracked lines
     for (const l of lines) {
       const p = products.find(x => x.id === l.productId);
@@ -483,8 +489,9 @@ export default function POS() {
       }
     }
     if (splitOn) {
-      if (legs.some(l => l.amount <= 0)) return setError('Enter an amount for every split payment');
-      if (legSum < total) return setError(`Split payments are short by ${fmtRs(total - legSum)}`);
+      if (legs.some(l => l.amount < 0)) return setError('Payment amounts cannot be negative');
+      if (legSum > total + 0.009) return setError(`Split payments exceed the bill total by ${fmtRs(legSum - total)}. Adjust the amounts before completing.`);
+      if (creditDue > 0.009 && !legs.some(l => l.method === 'credit')) return setError('Add a Credit payment leg for the unpaid balance, or cover the full total.');
     } else if (!hasCredit && paidNum < total) {
       return setError(`Still ${fmtRs(total - paidNum)} short of the total`);
     }
@@ -768,7 +775,7 @@ export default function POS() {
 
   const payState: 'idle' | 'short' | 'exact' | 'change' | 'due' =
     total <= 0 ? 'idle'
-      : hasCredit && shortage > 0.009 ? 'due'
+      : intentionalCredit ? 'due'
       : !hasCredit && shortage > 0.009 ? 'short'
       : change > 0.009 ? 'change'
       : 'exact';
