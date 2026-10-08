@@ -24,7 +24,7 @@ import { uid } from '../lib/utils';
 export default function Settings() {
   const navigate = useNavigate();
   const {
-    state, user, updateSettings, resetData, can, changeAdminPin, changeManagedPassword,
+    state, user, updateSettings, resetData, can, changeAdminPin, changeManagedPassword, confirmSensitiveAdmin,
     connectivity, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours, flushOfflineQueue, pendingQueueCount,
   } = usePOS();
   const [backupMsg, setBackupMsg] = useState('');
@@ -125,6 +125,7 @@ export default function Settings() {
       receiptFooter: rest.receiptFooter || '', taxDefault: rest.taxDefault ?? 0, lowStockDefault: rest.lowStockDefault ?? 5,
       exchangeDays: rest.exchangeDays ?? 7, openingFloat: rest.openingFloat ?? 0, loyaltyPointsPerRs: rest.loyaltyPointsPerRs ?? 0.001, loyaltyPointValue: rest.loyaltyPointValue ?? 20, whatsappReceipts: rest.whatsappReceipts !== false,
       categories: rest.categories, brands: rest.brands, repairWarrantyDays: rest.repairWarrantyDays,
+      securityIdleMinutes: rest.securityIdleMinutes ?? 10,
       invoiceTitle: rest.invoiceTitle || 'INVOICE', invoiceSubtitle: rest.invoiceSubtitle || rest.tagline || 'COMPUTER & PHONE SHOP',
       invoiceCurrency: rest.invoiceCurrency || 'Rs.', invoiceTaxLabel: rest.invoiceTaxLabel || 'Tax',
       invoiceTerms: rest.invoiceTerms || '', invoiceFooter: rest.invoiceFooter || rest.receiptFooter || 'Thank you for your purchase!',
@@ -289,7 +290,7 @@ export default function Settings() {
       invoiceSubtitle: s.invoiceSubtitle || f.invoiceSubtitle, invoiceCurrency: s.invoiceCurrency || f.invoiceCurrency,
       invoiceTaxLabel: s.invoiceTaxLabel || f.invoiceTaxLabel, invoiceTerms: s.invoiceTerms ?? f.invoiceTerms,
       invoiceFooter: s.invoiceFooter || f.invoiceFooter, invoiceShowTax: s.invoiceShowTax !== false,
-      taxRegistrationNo: s.taxRegistrationNo ?? f.taxRegistrationNo, invoicePlaceOfSupply: s.invoicePlaceOfSupply ?? f.invoicePlaceOfSupply,
+      taxRegistrationNo: s.taxRegistrationNo ?? f.taxRegistrationNo, invoicePlaceOfSupply: s.invoicePlaceOfSupply ?? f.invoicePlaceOfSupply, securityIdleMinutes: s.securityIdleMinutes ?? f.securityIdleMinutes,
     }));
   }, [state.settings.shopName, state.settings.phone, state.settings.email, state.settings.invoiceTitle, state.settings.invoiceTerms]);
 
@@ -303,16 +304,18 @@ export default function Settings() {
     const openingFloat = Number(form.openingFloat);
     const loyaltyPointsPerRs = Number(form.loyaltyPointsPerRs);
     const loyaltyPointValue = Number(form.loyaltyPointValue);
+    const securityIdleMinutes = Number(form.securityIdleMinutes);
     if (!Number.isFinite(taxDefault) || taxDefault < 0 || taxDefault > 100) return setBackupMsg('Default tax must be between 0% and 100%');
     if (!Number.isFinite(lowStockDefault) || !Number.isInteger(lowStockDefault) || lowStockDefault < 0) return setBackupMsg('Low-stock default must be a whole number of 0 or more');
     if (!Number.isFinite(exchangeDays) || !Number.isInteger(exchangeDays) || exchangeDays < 0) return setBackupMsg('Exchange window must be a whole number of 0 or more days');
     if (!Number.isFinite(openingFloat) || openingFloat < 0) return setBackupMsg('Opening float cannot be negative');
     if (!Number.isFinite(loyaltyPointsPerRs) || loyaltyPointsPerRs < 0 || loyaltyPointsPerRs > 10) return setBackupMsg('Loyalty points per Rs must be between 0 and 10');
     if (!Number.isFinite(loyaltyPointValue) || loyaltyPointValue < 0) return setBackupMsg('Loyalty point value cannot be negative');
+    if (!Number.isFinite(securityIdleMinutes) || !Number.isInteger(securityIdleMinutes) || securityIdleMinutes < 1 || securityIdleMinutes > 120) return setBackupMsg('Idle lock must be between 1 and 120 minutes');
     const promotions = (form.promotions || []).map(p => ({ ...p, name: p.name.trim(), category: p.category.trim(), discountPct: Number(p.discountPct) }));
     if (promotions.some(p => !p.name || !p.category || !Number.isFinite(p.discountPct) || p.discountPct <= 0 || p.discountPct > 100 || (p.startDate && p.endDate && p.endDate < p.startDate))) return setBackupMsg('Check promotion name, category, discount (1–100%) and dates');
     setBackupMsg('');
-    const nextSettings = { ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, promotions };
+    const nextSettings = { ...form, taxDefault, lowStockDefault, exchangeDays, openingFloat, loyaltyPointsPerRs, loyaltyPointValue, securityIdleMinutes, promotions };
     // updateSettings() owns the authenticated Drive metadata sync. Do not
     // call syncShopMetadataToGoogleDrive(nextSettings) here: nextSettings is
     // the Settings object itself, not { settings: nextSettings }, and sending
@@ -321,7 +324,7 @@ export default function Settings() {
     updateSettings(nextSettings);
     setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
-  const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue') => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const num = (k: 'taxDefault' | 'lowStockDefault' | 'exchangeDays' | 'openingFloat' | 'loyaltyPointsPerRs' | 'loyaltyPointValue' | 'securityIdleMinutes') => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm(f => ({ ...f, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 }));
 
   const copyShopBackupId = async () => {
@@ -508,6 +511,7 @@ export default function Settings() {
 
   const importRecoveryKeyFile = async (file?: File) => {
     if (!file) return;
+    if (!confirmSensitiveAdmin('Recovery Key import / shop reconnect')) return;
     try {
       const text = await file.text();
       const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
@@ -543,6 +547,7 @@ export default function Settings() {
 
   const runGoogleBackupNow = async () => {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
+    if (!confirmSensitiveAdmin('manual Google Drive backup')) return;
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
     if (connectivity !== 'online') return setGMsg('Google backup requires an online connection');
         setGRestoreBusy(true);
@@ -601,6 +606,7 @@ export default function Settings() {
       return;
     }
     if (!confirmGoogleRestore) return;
+    if (!confirmSensitiveAdmin('Google Drive restore')) return;
     const currentShopId = getLocalShopId();
     if (!currentShopId || confirmGoogleRestore.shopId !== currentShopId) {
       setConfirmGoogleRestore(null);
