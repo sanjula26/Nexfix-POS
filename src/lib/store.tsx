@@ -685,7 +685,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const FRESH_MS = 5 * 60 * 1000;
     if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return true;
     const label = String(reason || 'sensitive action').trim().slice(0, 120);
-    const secret = typeof window !== 'undefined' ? window.prompt('Administrator confirmation required for ' + label + '. Enter the current admin password or admin unlock password:') : null;
+    const secret = typeof window !== 'undefined' ? window.prompt('Administrator confirmation required for ' + label + '. Enter the current admin unlock password / PIN:') : null;
     if (!secret) {
       pushAudit('DENIED', 'Security', 'Sensitive action cancelled: administrator confirmation was not provided');
       return false;
