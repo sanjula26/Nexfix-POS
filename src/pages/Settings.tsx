@@ -690,6 +690,7 @@ export default function Settings() {
           {updateState.status==='error'&&<p className="text-[12px] font-medium text-rose-500 mt-3">Update check failed: {updateState.message}</p>}
           {updateState.status==='not-available'&&<p className="text-[12px] font-medium text-emerald-600 dark:text-emerald-400 mt-3">You are already using the latest version.</p>}
           <div className="flex flex-wrap gap-2 mt-4"><button type="button" className="btn btn-soft" onClick={()=>void checkForAppUpdates()} disabled={updateState.status==='checking'||updateState.status==='downloading'}><CheckCircle2 size={15} /> {updateState.status==='checking'?'Checking…':'Check for updates'}</button>{updateState.status==='available'&&<button type="button" className="btn btn-primary" onClick={()=>void updateNow()} disabled={Boolean(desktopApi?.isPortable)}><Download size={15} /> Update now</button>}</div>
+          <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" className="btn btn-danger-soft" onClick={() => void revokeCurrentUpdaterDevice()} disabled={!desktopApi?.isPackaged}><Lock size={14} /> Revoke this PC's update access</button><span className="text-[10px] text-faint">Does not sign out POS or affect Google Drive backup.</span></div>
           {updateState.status==='available'&&<p className="mt-3 text-[11px] font-semibold text-sub">Version {updateState.version} is ready. Update now downloads it securely, closes the POS, installs it silently, and reopens the updated POS automatically.</p>}
         </div>
       )}
