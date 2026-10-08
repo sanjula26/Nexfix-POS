@@ -30,6 +30,16 @@
 - Google Drive backup retains the existing Apps Script API-key/shopProof contract, encrypted backup path, Recovery Key, shop partitioning, and RECOVERY_KEY.txt flow.
 - Supabase migrations contain active-device/revocation concepts and the private updater checks device authorization.
 
+## Exact files changed
+
+- src/lib/types.ts
+- src/lib/store.tsx
+- src/components/AppLayout.tsx
+- src/pages/Settings.tsx
+- electron/main.cjs
+- supabase/migrations/20261008093000_add_current_device_revoke_rpc.sql
+- docs/security-hardening-2026-10-08.md
+
 ## Implemented hardening
 
 - Added configurable idle session lock (default 10 minutes, bounded to 1–120 minutes).
