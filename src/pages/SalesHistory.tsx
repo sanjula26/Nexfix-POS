@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, EmptyState, PageHeading, Avatar } from '../components/ui';
-import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
+import ReceiptModal, { buildWhatsAppText, getSaleTenderPayments } from '../components/ReceiptModal';
 import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
@@ -156,7 +156,7 @@ export default function SalesHistory() {
                       <span className="inline-flex items-center gap-2"><Avatar name={s.cashierName} size={22} /><span className="text-[12.5px] text-sub">{s.cashierName.split(' ')[0]}</span></span>
                     </td>
                     <td className="td num text-sub">{s.items.reduce((a, i) => a + i.qty, 0)}</td>
-                    <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{salePaymentLabel(s)}</Badge></td>
+                    <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{s.payment === 'credit' && s.total - s.amountPaid > 0.009 ? (getSaleTenderPayments(s).length ? `CREDIT · ${getSaleTenderPayments(s).map(l => PAYMENT_LABEL[l.method]).join(' + ')}` : 'CREDIT') : salePaymentLabel(s)}</Badge></td>
                     <td className="td">
                       <Badge tone={s.status === 'completed' ? 'emerald' : s.status === 'refunded' ? 'rose' : s.status === 'reversed' ? 'rose' : 'amber'}>
                         {s.status.toUpperCase()}
@@ -203,7 +203,7 @@ export default function SalesHistory() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 ['Customer', view.customerName], ['Cashier', view.cashierName],
-                ['Payment', view.payments && view.payments.length > 1 ? `SPLIT (${view.payments.map(l => PAYMENT_LABEL[l.method]).join(' + ')})` : PAYMENT_LABEL[view.payment]], ['Status', view.status.toUpperCase()],
+                ['Payment', view.payment === 'credit' && view.total - view.amountPaid > 0.009 ? (getSaleTenderPayments(view).length ? `CREDIT · ${getSaleTenderPayments(view).map(l => PAYMENT_LABEL[l.method]).join(' + ')}` : 'CREDIT') : (view.payments && view.payments.length > 1 ? `SPLIT (${view.payments.map(l => PAYMENT_LABEL[l.method]).join(' + ')})` : PAYMENT_LABEL[view.payment])], ['Status', view.status.toUpperCase()],
               ].map(([l, v]) => (
                 <div key={l} className="rounded-xl bg-raised border border-line p-3">
                   <div className="text-[10px] font-bold tracking-wider uppercase text-faint">{l}</div>
@@ -249,14 +249,17 @@ export default function SalesHistory() {
                 <div className="flex justify-between text-emerald-500"><span className="flex items-center gap-1.5"><TrendingUp size={13} /> Profit</span><span className="num">{fmtRs(view.profit)}</span></div>
               )}
               <div className="flex justify-between text-lg font-extrabold text-ink pt-2 border-t border-line"><span>Total</span><span className="num">{fmtRs(view.total)}</span></div>
-              {view.payments && view.payments.length > 1 && (
+              {getSaleTenderPayments(view).length > 0 && (
                 <div className="rounded-lg bg-raised border border-line px-3 py-2 space-y-1">
-                  {salePayments(view).map((l, i) => (
-                    <div key={i} className="flex justify-between text-[12px] text-sub"><span>{PAYMENT_LABEL[l.method]}</span><span className="num">{fmtRs(l.amount)}</span></div>
+                  {getSaleTenderPayments(view).map((l, i) => (
+                    <div key={i} className="flex justify-between text-[12px] text-sub"><span>Paid ({PAYMENT_LABEL[l.method]})</span><span className="num">{fmtRs(l.amount)}</span></div>
                   ))}
                 </div>
               )}
-              <div className="flex justify-between text-sub text-[13px]"><span className="flex items-center gap-1.5"><Banknote size={13} /> Paid / Change</span><span className="num">{fmtRs(view.amountPaid)} / {fmtRs(view.change)}</span></div>
+              <div className="flex justify-between text-sub text-[13px]"><span className="flex items-center gap-1.5"><Banknote size={13} /> Received / Change</span><span className="num">{fmtRs(view.amountPaid)} / {fmtRs(view.change)}</span></div>
+              {view.payment === 'credit' && view.total - view.amountPaid > 0.009 && (
+                <div className="flex justify-between font-semibold text-amber-600 text-[13px]"><span>Balance due (Credit)</span><span className="num">{fmtRs(view.total - view.amountPaid)}</span></div>
+              )}
             </div>
             <div className="flex gap-2.5">
               <button className="btn btn-primary flex-1" onClick={() => { setPrintSale(view); setView(null); }}><Printer size={15} /> Print receipt</button>
