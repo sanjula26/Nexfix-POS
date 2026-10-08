@@ -468,7 +468,7 @@ export default function PriceTags() {
                   return p ? <UnitTag key={`${u.id}-p`} unit={u} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} /> : null;
                 })}
             </div>
-          ))
+          ))}
       </div>
     </div>
   );
