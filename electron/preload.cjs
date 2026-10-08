@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   exitApp: () => ipcRenderer.invoke('app:exit'),
+  exitBackupReady: () => ipcRenderer.invoke('app:exit-ready'),
+  onExitRequest: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on('app:exit-request', handler);
+    return () => ipcRenderer.removeListener('app:exit-request', handler);
+  },
   getUpdateStatus: () => ipcRenderer.invoke('update:status'),
   setUpdateCredentials: (payload) => ipcRenderer.invoke('update:set-credentials', payload),
   clearUpdateCredentials: () => ipcRenderer.invoke('update:clear-credentials'),
