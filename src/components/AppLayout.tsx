@@ -292,24 +292,22 @@ function AdminUnlockModal() {
     if (!pin || busy || lockSecsLeft > 0) return;
     setBusy(true); setError('');
     try {
-      try {
-        const res = user?.role === 'admin'
+      const res = user?.role === 'admin'
           ? await switchRole('cashier', pin, cashierEmail)
           : await switchRole('admin', pin);
-        if (res.ok) { setAdminPrompt(false); return; }
-        armIdle();
-        const n = attempts + 1;
-        setShakeKey(k => k + 1);
-        setPin('');
-        if (n >= MAX_ATTEMPTS) {
-          setAttempts(0);
-          setLockUntil(Date.now() + LOCKOUT_SECS * 1000);
-          logAudit('LOCKOUT', 'Auth', `${user?.role === 'admin' ? 'CASHIER sign-in' : 'ADMIN unlock'} locked ${LOCKOUT_SECS}s after ${MAX_ATTEMPTS} failed attempts`);
-          setError('Too many failed attempts');
-        } else {
-          setAttempts(n);
-          setError(res.error || (user?.role === 'admin' ? 'Incorrect cashier email or password' : 'Incorrect admin unlock credential'));
-        }
+      if (res.ok) { setAdminPrompt(false); return; }
+      armIdle();
+      const n = attempts + 1;
+      setShakeKey(k => k + 1);
+      setPin('');
+      if (n >= MAX_ATTEMPTS) {
+        setAttempts(0);
+        setLockUntil(Date.now() + LOCKOUT_SECS * 1000);
+        logAudit('LOCKOUT', 'Auth', `${user?.role === 'admin' ? 'CASHIER sign-in' : 'ADMIN unlock'} locked ${LOCKOUT_SECS}s after ${MAX_ATTEMPTS} failed attempts`);
+        setError('Too many failed attempts');
+      } else {
+        setAttempts(n);
+        setError(res.error || (user?.role === 'admin' ? 'Incorrect cashier email or password' : 'Incorrect admin unlock credential'));
       }
     } finally {
       setBusy(false);
