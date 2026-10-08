@@ -257,7 +257,7 @@ export default function SalesHistory() {
                 </div>
               )}
               <div className="flex justify-between text-sub text-[13px]"><span className="flex items-center gap-1.5"><Banknote size={13} /> Received / Change</span><span className="num">{fmtRs(view.amountPaid)} / {fmtRs(view.change)}</span></div>
-              {view.payment === 'credit' && view.total - view.amountPaid > 0.009 && (
+              {view.total - view.amountPaid > 0.009 && (
                 <div className="flex justify-between font-semibold text-amber-600 text-[13px]"><span>Balance due (Credit)</span><span className="num">{fmtRs(view.total - view.amountPaid)}</span></div>
               )}
             </div>
