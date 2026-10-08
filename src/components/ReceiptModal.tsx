@@ -2,10 +2,18 @@ import { Printer, Plus, Globe, MessageCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Modal } from './ui';
 import { usePOS } from '../lib/store';
-import { fmtRs, fmtDateTime, PAYMENT_LABEL, salePayments, POINT_VALUE, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
+import { fmtRs, fmtDateTime, PAYMENT_LABEL, POINT_VALUE, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
 const APP_VERSION = String(import.meta.env.VITE_APP_VERSION || '3.0.1449');
+
+/** Tender rows are money received now; credit is the outstanding balance, never a tender. */
+export function getSaleTenderPayments(sale: Sale) {
+  const saved = (sale.payments || []).filter(p => p.method !== 'credit' && p.amount > 0);
+  if (saved.length) return saved;
+  if (sale.payment !== 'credit' && sale.amountPaid > 0) return [{ method: sale.payment, amount: sale.amountPaid }];
+  return [];
+}
 
 export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolean }) {
   const { state } = usePOS(); const st = state.settings;
@@ -14,7 +22,7 @@ export function ReceiptSheet({ sale, forPrint }: { sale: Sale; forPrint?: boolea
     <div className="border-t border-dashed border-black my-3" /><div className="flex justify-between text-[11px]"><span>Bill: <b>{sale.billNo}</b></span></div><div className="flex justify-between text-[11px]"><span>{fmtDateTime(sale.date)}</span><span>Cashier: {sale.cashierName.split(' ')[0]}</span></div><div className="text-[11px]">Customer: {sale.customerName}</div>
     {sale.note && <><div className="border-t border-dashed border-black my-3" /><div className="text-[10px]"><span className="font-bold">Note:</span> {sale.note}</div></>}
     <div className="border-t border-dashed border-black my-3" /><table className="w-full text-[11px]"><thead><tr className="text-left"><th className="font-bold pb-1">Item</th><th className="font-bold pb-1 text-center">Qty</th><th className="font-bold pb-1 text-right">Amount</th></tr></thead><tbody>{sale.items.map((it,i)=><tr key={i}><td className="pr-2 py-0.5 align-top">{it.name}<div className="text-[9px] opacity-70">@ {fmtRs(it.price)}{it.discount ? ` · line disc -${fmtRs(it.discount,false)}` : ''}</div>{it.imeis?.length ? <div className="text-[9px] opacity-80">IMEI: {it.imeis.join(', ')}</div> : null}{it.serials?.length ? <div className="text-[9px] opacity-80">S/N: {it.serials.join(', ')}</div> : null}{it.warrantyMonths ? <div className="text-[9px] opacity-80">Warranty: {it.warrantyMonths} mo</div> : null}</td><td className="text-center align-top py-0.5">{it.qty}</td><td className="text-right align-top py-0.5">{(it.price*it.qty-(it.discount||0)).toLocaleString()}</td></tr>)}</tbody></table>
-    <div className="border-t border-dashed border-black my-3" /><div className="space-y-0.5 text-[11px]"><div className="flex justify-between"><span>Subtotal</span><span>{sale.items.reduce((a,i)=>a+i.price*i.qty-(i.discount||0),0).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>{sale.discount>0&&<div className="flex justify-between"><span>Discount</span><span>- {fmtRs(sale.discount,false)}</span></div>}{(sale.tradeIn?.value || 0)>0&&<div className="flex justify-between"><span>Trade-in</span><span>- {fmtRs(sale.tradeIn?.value || 0,false)}</span></div>}{sale.tax>0&&<div className="flex justify-between"><span>Tax</span><span>{fmtRs(sale.tax,false)}</span></div>}{(sale.shipping||0)>0&&<div className="flex justify-between"><span>Delivery / other</span><span>{fmtRs(sale.shipping||0,false)}</span></div>}{(sale.pointsRedeemed||0)>0&&<div className="flex justify-between"><span>Points ({sale.pointsRedeemed} × Rs. {Math.max(0, Number(st.loyaltyPointValue ?? POINT_VALUE))})</span><span>- {fmtRs((sale.pointsRedeemed||0)*Math.max(0, Number(st.loyaltyPointValue ?? POINT_VALUE)),false)}</span></div>}<div className="flex justify-between font-bold text-[14px] pt-1"><span>TOTAL</span><span>{fmtRs(sale.total,false)}</span></div>{sale.payments&&sale.payments.length>1?salePayments(sale).map((l,i)=><div key={i} className="flex justify-between"><span>Paid · {PAYMENT_LABEL[l.method]}</span><span>{fmtRs(l.amount,false)}</span></div>):<div className="flex justify-between"><span>Paid ({PAYMENT_LABEL[sale.payment]})</span><span>{fmtRs(sale.amountPaid,false)}</span></div>}{sale.change>0&&<div className="flex justify-between"><span>Change</span><span>{fmtRs(sale.change,false)}</span></div>}{sale.payment==='credit'&&sale.total-sale.amountPaid>0&&<div className="flex justify-between font-bold"><span>BALANCE DUE</span><span>{fmtRs(sale.total-sale.amountPaid,false)}</span></div>}{(sale.pointsEarned||0)>0&&<div className="flex justify-between text-[10px]"><span>Loyalty points earned</span><span>+{sale.pointsEarned} pts</span></div>}</div>
+    <div className="border-t border-dashed border-black my-3" /><div className="space-y-0.5 text-[11px]"><div className="flex justify-between"><span>Subtotal</span><span>{sale.items.reduce((a,i)=>a+i.price*i.qty-(i.discount||0),0).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>{sale.discount>0&&<div className="flex justify-between"><span>Discount</span><span>- {fmtRs(sale.discount,false)}</span></div>}{(sale.tradeIn?.value || 0)>0&&<div className="flex justify-between"><span>Trade-in</span><span>- {fmtRs(sale.tradeIn?.value || 0,false)}</span></div>}{sale.tax>0&&<div className="flex justify-between"><span>Tax</span><span>{fmtRs(sale.tax,false)}</span></div>}{(sale.shipping||0)>0&&<div className="flex justify-between"><span>Delivery / other</span><span>{fmtRs(sale.shipping||0,false)}</span></div>}{(sale.pointsRedeemed||0)>0&&<div className="flex justify-between"><span>Points ({sale.pointsRedeemed} × Rs. {Math.max(0, Number(st.loyaltyPointValue ?? POINT_VALUE))})</span><span>- {fmtRs((sale.pointsRedeemed||0)*Math.max(0, Number(st.loyaltyPointValue ?? POINT_VALUE)),false)}</span></div>}<div className="flex justify-between font-bold text-[14px] pt-1"><span>TOTAL</span><span>{fmtRs(sale.total,false)}</span></div>{getSaleTenderPayments(sale).length>0?getSaleTenderPayments(sale).map((l,i)=><div key={i} className="flex justify-between"><span>Paid ({PAYMENT_LABEL[l.method]})</span><span>{fmtRs(l.amount,false)}</span></div>):<div className="flex justify-between"><span>Paid</span><span>{fmtRs(0,false)}</span></div>}{sale.change>0&&<div className="flex justify-between"><span>Change</span><span>{fmtRs(sale.change,false)}</span></div>}{sale.payment==='credit'&&sale.total-sale.amountPaid>0.009&&<div className="flex justify-between font-bold"><span>Balance due (Credit)</span><span>{fmtRs(sale.total-sale.amountPaid,false)}</span></div>}{(sale.pointsEarned||0)>0&&<div className="flex justify-between text-[10px]"><span>Loyalty points earned</span><span>+{sale.pointsEarned} pts</span></div>}</div>
     <div className="border-t border-dashed border-black my-3" /><div className="text-center text-[10px] space-y-1"><div>{st.receiptFooter}</div><div className="opacity-70">Powered by NEXFIX POS v{APP_VERSION}</div></div>
   </div></div>;
 }
@@ -24,8 +32,8 @@ export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: s
   const money = (value: number) => `Rs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
   const lineDiscountTotal = sale.items.reduce((sum, item) => sum + (item.discount || 0), 0);
   const totalDiscount = lineDiscountTotal + Math.max(0, sale.discount || 0);
-  const payments = salePayments(sale);
-  const isSplitPayment = !!sale.payments && sale.payments.length > 1;
+  const payments = getSaleTenderPayments(sale);
+  const isSplitPayment = payments.length > 1;
 
   lines.push(`*${shop.shopName}*`);
   lines.push(`Bill: ${sale.billNo}`);
@@ -63,18 +71,16 @@ export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: s
   }
 
   lines.push(`*TOTAL: ${money(sale.total)}*`);
-  if (isSplitPayment) {
-    lines.push('Payment: Split');
+  if (payments.length) {
     payments.forEach(payment => {
-      lines.push(`  ${PAYMENT_LABEL[payment.method]}: ${money(payment.amount)}`);
+      lines.push(`Paid (${PAYMENT_LABEL[payment.method]}): ${money(payment.amount)}`);
     });
   } else {
-    lines.push(`Payment: ${PAYMENT_LABEL[sale.payment]}`);
+    lines.push(`Paid: ${money(0)}`);
   }
-  lines.push(`Paid: ${money(sale.amountPaid)}`);
   if (sale.change > 0) lines.push(`Change: ${money(sale.change)}`);
-  if (sale.payment === 'credit' && sale.total - sale.amountPaid > 0) {
-    lines.push(`Balance Due: ${money(sale.total - sale.amountPaid)}`);
+  if (sale.payment === 'credit' && sale.total - sale.amountPaid > 0.009) {
+    lines.push(`Balance due (Credit): ${money(sale.total - sale.amountPaid)}`);
   }
 
   lines.push('--------------------------------');
