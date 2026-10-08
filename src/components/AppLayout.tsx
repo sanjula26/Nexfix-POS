@@ -10,6 +10,9 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { fmtNum } from '../lib/utils';
+import { downloadBackup } from '../lib/backup';
+import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/driveSync';
+import { hasRecoveryKey } from '../lib/backupCrypto';
 import { Avatar, Modal } from './ui';
 import CommandPalette from './CommandPalette';
 
@@ -438,6 +441,36 @@ export default function AppLayout() {
   );
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    const desktop = (window as Window & {
+      nexfixDesktop?: {
+        onExitRequest?: (listener: () => void) => () => void;
+        exitBackupReady?: () => Promise<unknown>;
+      };
+    }).nexfixDesktop;
+    if (!desktop?.onExitRequest || !desktop.exitBackupReady) return;
+    return desktop.onExitRequest(() => {
+      void (async () => {
+        try {
+          const shopId = getLocalShopId();
+          const canAttempt = typeof navigator !== 'undefined'
+            && navigator.onLine
+            && isGoogleSyncEnabled()
+            && !!getGoogleScriptUrl()
+            && !!shopId
+            && hasRecoveryKey(shopId);
+          if (canAttempt) {
+            await downloadBackup(state, 'auto', { download: false, cloud: true });
+          }
+        } catch {
+          // Exit must never be blocked by a failed cloud backup.
+        } finally {
+          await desktop.exitBackupReady?.();
+        }
+      })();
+    });
+  }, [state]);
+
   useEffect(() => {
     lastActivityRef.current = Date.now();
     setSessionLocked(false);
