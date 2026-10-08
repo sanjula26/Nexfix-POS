@@ -271,6 +271,32 @@ export default function Settings() {
       setLegacyOtpBusy(false);
     }
   };
+  const revokeCurrentUpdaterDevice = async () => {
+    if (!confirmSensitiveAdmin('revoke this Windows PC updater access')) return;
+    if (!desktopApi?.isPackaged) {
+      setUpdateState({ status: 'error', message: 'Device revocation is available in the installed Windows POS only.' });
+      return;
+    }
+    const shopId = getCloudShopId();
+    const deviceId = phoneSalesMachine.id;
+    if (!supabase || !supabaseConfigured || !shopId || !deviceId) {
+      await desktopApi.clearUpdateCredentials?.();
+      await desktopApi.clearCloudUpdaterDeviceToken?.();
+      setUpdateState({ status: 'error', message: 'Local updater credentials cleared. Server-side device revocation could not be completed because cloud device identity is unavailable.' });
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('revoke_pos_device', { p_shop_id: shopId, p_device_id: deviceId });
+      if (error) throw new Error(error.message || 'Server-side device revocation failed.');
+      await desktopApi.clearUpdateCredentials?.();
+      await desktopApi.clearCloudUpdaterDeviceToken?.();
+      setUpdateState({ status: 'error', message: 'This Windows PC is revoked for private updates. POS login and Google Drive backup remain unchanged.' });
+    } catch (error) {
+      setUpdateState({ status: 'error', message: error instanceof Error ? error.message : 'Server-side device revocation failed. No updater credentials were intentionally retained.' });
+      await desktopApi.clearUpdateCredentials?.();
+      await desktopApi.clearCloudUpdaterDeviceToken?.();
+    }
+  };
   const updateNow=async()=>{if(desktopApi?.isPortable){setUpdateState({status:'error',message:'Portable edition updates require the installed Setup edition.'});return;}const authorized=await ensureUpdaterReady();if(!authorized){setUpdateState({status:'error',message:'Cloud update authorization is not ready. Keep the POS online and sign in with the provisioned Admin account, then try again.'});return;}setUpdateState({status:'downloading',percent:0});let result=await desktopApi?.downloadAndInstallUpdate?.();if(result?.error&&isUpdaterAuthorizationError(result.error)){const recovered=await reauthorizeUpdater();if(recovered){setUpdateState({status:'downloading',percent:0});result=await desktopApi?.downloadAndInstallUpdate?.();}}if(result?.error)setUpdateState({status:'error',message:result.error});};
   const securityAccounts = state.users.filter(u => u.role === securityRole && u.active);
   useEffect(() => {
