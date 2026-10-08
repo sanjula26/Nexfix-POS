@@ -168,6 +168,7 @@ h1,h2,h3,.font-display { font-family:var(--font-display); }
 .price-tag-barcode-warning { margin-top:2mm; display:flex; align-items:center; gap:1mm; border:1px solid #f59e0b; border-radius:2mm; padding:1.5mm 2mm; color:#92400e; background:#fffbeb; font-size:2.35mm; font-weight:700; }
 .price-tag-preview .price-tag-barcode-warning { font-size:9px; padding:5px 7px; }
 .price-tag-print-area { display:none; }
+.price-tag-print-area--thermal { page:price-tag-thermal; }
 
 @media print {
   body.printing-price-tags * { visibility:hidden !important; }
@@ -246,5 +247,5 @@ h1,h2,h3,.font-display { font-family:var(--font-display); }
     max-width:80mm !important;
   }
   body.printing-price-tags:has(.price-tag-print-area--thermal) { }
-  @page { size:auto; margin:0; }
+  @page price-tag-thermal { size:80mm auto; margin:2mm; }
 }
