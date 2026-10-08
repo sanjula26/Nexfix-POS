@@ -33,7 +33,6 @@ export function buildWhatsAppText(sale: Sale, shop: { shopName: string; phone: s
   const lineDiscountTotal = sale.items.reduce((sum, item) => sum + (item.discount || 0), 0);
   const totalDiscount = lineDiscountTotal + Math.max(0, sale.discount || 0);
   const payments = getSaleTenderPayments(sale);
-  const isSplitPayment = payments.length > 1;
 
   lines.push(`*${shop.shopName}*`);
   lines.push(`Bill: ${sale.billNo}`);
