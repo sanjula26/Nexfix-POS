@@ -3,10 +3,12 @@
 do $$
 declare
   v_definition text;
-  v_old text := 'v_amount_paid := v_amount_paid + v_payment_amount;';
-  v_new text := 'if v_payment_method <> ''credit'' then
+  v_old_spaced text := 'v_amount_paid := v_amount_paid + v_payment_amount;';
+  v_new_spaced text := 'if v_payment_method <> ''credit'' then
       v_amount_paid := v_amount_paid + v_payment_amount;
     end if;';
+  v_old_compact text := 'v_amount_paid:=v_amount_paid+v_payment_amount;';
+  v_new_compact text := 'if v_payment_method<>''credit'' then v_amount_paid:=v_amount_paid+v_payment_amount; end if;';
 begin
   select pg_get_functiondef(p.oid)
     into v_definition
@@ -21,15 +23,16 @@ begin
     raise exception 'private.complete_sale_atomic was not found';
   end if;
 
-  if position(v_old in v_definition) = 0 then
-    -- Idempotent deployment: the corrected payment loop is already installed.
-    if position(v_new in v_definition) > 0 then
-      return;
-    end if;
+  if position(v_old_spaced in v_definition) > 0 then
+    v_definition := replace(v_definition, v_old_spaced, v_new_spaced);
+  elsif position(v_old_compact in v_definition) > 0 then
+    v_definition := replace(v_definition, v_old_compact, v_new_compact);
+  elsif position(v_new_spaced in v_definition) > 0 or position(v_new_compact in v_definition) > 0 then
+    return;
+  else
     raise exception 'Expected complete_sale_atomic payment-total anchor was not found; refusing unsafe function rewrite';
   end if;
 
-  v_definition := replace(v_definition, v_old, v_new);
   execute v_definition;
 end
 $$;
