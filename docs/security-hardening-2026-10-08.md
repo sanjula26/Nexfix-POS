@@ -37,7 +37,8 @@
 - src/components/AppLayout.tsx
 - src/pages/Settings.tsx
 - electron/main.cjs
-- supabase/migrations/20261008093000_add_current_device_revoke_rpc.sql
+- supabase/migrations/20261008042828_harden_pos_device_revocation.sql
+- supabase/migrations/20261008042934_move_device_revoke_to_private_schema.sql
 - docs/security-hardening-2026-10-08.md
 
 ## Implemented hardening
@@ -60,7 +61,7 @@
 
 ## Device revocation finding
 
-The live Supabase project uses public.pos_devices(user_id, revoked_at). The owner-scoped public.revoke_pos_device(text,text) RPC was deployed and verified against that production schema. Settings now exposes an admin re-authenticated “Revoke this PC's update access” action; it revokes the server device and clears only the local updater credentials. POS login and Google Drive backup credentials remain untouched.
+The live Supabase project uses public.pos_devices(user_id, revoked_at). The old owner_id-based revoke path was not present in production. The corrected revocation implementation is private-schema SECURITY DEFINER with an admin-membership check, while public.revoke_pos_device(text,text) is only an invoker wrapper. Settings exposes an admin re-authenticated “Revoke this PC's update access” action; it revokes the server device, clears the persistent updater-token hash, and clears only local updater credentials. POS login and Google Drive backup credentials remain untouched. A stale unapplied migration that would have overwritten this boundary was removed.
 
 ## Verification limitations
 
