@@ -104,6 +104,7 @@ interface StoreCtx {
   verifyAdminPin: (pin: string, reason?: string) => boolean;
   /** Fresh admin confirmation for sensitive destructive/security actions. */
   confirmSensitiveAdmin: (reason: string) => boolean;
+  unlockSession: (credential: string) => boolean;
   // products
   saveProduct: (p: Product) => boolean;
   deleteProduct: (id: string) => void;
@@ -660,6 +661,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return ok;
   }, [state.settings.adminPinHash, user]);
 
+  const unlockSession = useCallback((credential: string): boolean => {
+    if (!user || !credential) return false;
+    const current = stateRef.current.users.find(u => u.id === user.id);
+    if (!current || !current.active) return false;
+    let passwordOk = false;
+    try { passwordOk = isHashed(current.password) ? verifyPassword(credential, current.password) : credential === current.password; } catch { passwordOk = false; }
+    const pinOk = current.role === 'admin' && verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
+    if (passwordOk || pinOk) {
+      loginAtRef.current = Date.now();
+      pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
+      return true;
+    }
+    pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
+    return false;
+  }, [pushAudit, user]);
   const sensitiveAuthAtRef = useRef(0);
   const confirmSensitiveAdmin = useCallback((reason: string): boolean => {
     if (user?.role !== 'admin') {
