@@ -409,7 +409,7 @@ function AdminUnlockModal() {
 }
 
 export default function AppLayout() {
-  const { user, viewingAs, state, toggleTheme, dark, adminPrompt, connectivity, ready, refreshPOS, unlockSession } = usePOS();
+  const { user, viewingAs, state, toggleTheme, dark, adminPrompt, connectivity, ready, refreshPOS, unlockSession, sensitiveAdminPrompt, resolveSensitiveAdmin, cancelSensitiveAdmin } = usePOS();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -422,6 +422,9 @@ export default function AppLayout() {
   const [unlockAttempts, setUnlockAttempts] = useState(0);
   const [unlockLockedUntil, setUnlockLockedUntil] = useState(0);
   const [unlockNow, setUnlockNow] = useState(Date.now());
+  const [sensitiveCredential, setSensitiveCredential] = useState('');
+  const [sensitiveError, setSensitiveError] = useState('');
+  const [sensitiveBusy, setSensitiveBusy] = useState(false);
   const lastActivityRef = useRef(Date.now());
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
@@ -603,6 +606,57 @@ export default function AppLayout() {
           </form>
         </div>
       )}
+      <Modal
+        open={sensitiveAdminPrompt !== null}
+        onClose={() => { if (!sensitiveBusy) { setSensitiveCredential(''); setSensitiveError(''); cancelSensitiveAdmin(); } }}
+        title="Administrator confirmation required"
+        sub={sensitiveAdminPrompt ? `Confirm: ${sensitiveAdminPrompt.reason}` : undefined}
+        locked
+      >
+        <form onSubmit={async e => {
+          e.preventDefault();
+          if (sensitiveBusy || !sensitiveCredential) return;
+          setSensitiveBusy(true);
+          setSensitiveError('');
+          try {
+            const accepted = resolveSensitiveAdmin(sensitiveCredential);
+            if (!accepted) {
+              setSensitiveCredential('');
+              setSensitiveError('Incorrect administrator password or PIN.');
+              return;
+            }
+            setSensitiveCredential('');
+          } finally {
+            setSensitiveBusy(false);
+          }
+        }}>
+          <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3.5 py-3 text-sm text-amber-700 dark:text-amber-300">
+            This sensitive action requires a fresh administrator credential. Your POS session will remain active.
+          </div>
+          <label className="mt-4 block">
+            <span className="mb-2 block text-[10px] font-bold tracking-[0.18em] text-sub">ADMIN PASSWORD OR UNLOCK PIN</span>
+            <input
+              autoFocus
+              type="password"
+              value={sensitiveCredential}
+              onChange={e => { setSensitiveCredential(e.target.value); setSensitiveError(''); }}
+              className="input w-full"
+              autoComplete="current-password"
+              placeholder="Enter admin login password or unlock PIN"
+              disabled={sensitiveBusy}
+            />
+          </label>
+          {sensitiveError && <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-600 dark:text-rose-300">{sensitiveError}</div>}
+          <div className="flex gap-2.5 mt-5">
+            <button type="submit" className="btn btn-primary flex-1" disabled={sensitiveBusy || !sensitiveCredential}>
+              {sensitiveBusy ? 'Checking…' : 'Confirm administrator'}
+            </button>
+            <button type="button" className="btn btn-soft" disabled={sensitiveBusy} onClick={() => { setSensitiveCredential(''); setSensitiveError(''); cancelSensitiveAdmin(); }}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Modal>
       <AdminUnlockModal />
       <CommandPalette />
     </div>
