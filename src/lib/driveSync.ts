@@ -346,11 +346,11 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
     // treated as a failure while the confirmation window is still open.
     // Front-load confirmation: warm Apps Script/Drive writes should settle in a few seconds.
     // Pending/network misses are inconclusive until the bounded window expires.
-    const confirmationWindowMs = 120000; // 120 seconds
+    const confirmationWindowMs = 30000; // 30 seconds: keep manual UX responsive while retaining authenticated final verification
     const deadline = Date.now() + confirmationWindowMs;
     // The status endpoint is intentionally lightweight; poll aggressively so
     // a warm Apps Script/Drive write is normally confirmed within a few seconds.
-    let pollDelay = 400;
+    let pollDelay = 250;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
       await new Promise((resolve) => window.setTimeout(resolve, Math.min(pollDelay, Math.max(100, remaining))));
@@ -379,7 +379,7 @@ async function postGoogleBackup(body: Record<string, unknown>, shopId: string, a
         const statusError = status.error;
         return { ok: false, error: isGenericGoogleBackupError(statusError) ? await explainGenericGoogleBackupError(requestId) : statusError, ...(retryAfterSeconds ? { retryAfterSeconds } : {}) };
       }
-      pollDelay = Math.min(4000, Math.round(pollDelay * 1.4));
+      pollDelay = Math.min(2000, Math.round(pollDelay * 1.35));
     }
 
     // One final authenticated status read closes the small completion race at the deadline.
@@ -446,7 +446,7 @@ async function verifyGoogleBackupArtifact(shopId: string, shopProof: string, bac
       if (dayKey) url.searchParams.set('dayKey', dayKey);
       if (partName && action === 'verifyBackup') url.searchParams.set('partName', partName);
       url.searchParams.set('apiKey', BACKUP_API_KEY);
-      const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 8000);
+      const result = await getJsonp<{ ok?: boolean; action?: string }>(url, 4000);
       return result?.ok === true && result.action === 'backupState';
     } catch {
       return false;
@@ -472,7 +472,7 @@ async function getGoogleBackupRequestStatus(baseUrl: string, shopId: string, req
       script.remove();
       resolve(value);
     };
-    const timer = window.setTimeout(() => finish(null), 6000);
+    const timer = window.setTimeout(() => finish(null), 4000);
     (window as unknown as Record<string, unknown>)[callbackName] = (result: unknown) => {
       if (!result || typeof result !== 'object') return finish(null);
       const data = result as { ok?: boolean; pending?: boolean; status?: string; message?: string; action?: string };
