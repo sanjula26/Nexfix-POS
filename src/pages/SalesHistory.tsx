@@ -36,7 +36,7 @@ export default function SalesHistory() {
     return [...state.sales]
       .sort((x, y) => +new Date(y.date) - +new Date(x.date))
       .filter(s => {
-        const paymentMatches = paymentFilter === 'all' || s.payment === paymentFilter || salePayments(s).some(l => l.method === paymentFilter);
+        const paymentMatches = paymentFilter === 'all' || s.payment === paymentFilter || (paymentFilter === 'credit' && s.total - s.amountPaid > 0.009) || salePayments(s).some(l => l.method === paymentFilter);
         return inRange(s.date, [a, b]) && paymentMatches &&
           (cashierFilter === 'all' || s.cashierId === cashierFilter) &&
           (!q || s.billNo.toLowerCase().includes(q) || s.customerName.toLowerCase().includes(q) || s.cashierName.toLowerCase().includes(q));
