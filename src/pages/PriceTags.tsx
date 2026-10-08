@@ -244,18 +244,20 @@ export default function PriceTags() {
     });
   };
 
-  const printItems = useMemo(() => {
-    if (mode === 'units') return selectedUnits;
+  const productPrintItems = useMemo(() => {
     const items: Product[] = [];
     selectedProducts.forEach(p => {
       const n = Math.max(1, Math.floor(copies[p.id] || 1));
       for (let i = 0; i < n; i++) items.push(p);
     });
     return items;
-  }, [mode, selectedProducts, selectedUnits, copies]);
+  }, [selectedProducts, copies]);
 
+  const unitPrintItems = selectedUnits;
   const gridCapacity = grid === 'thermal' ? 1 : GRID_INFO[grid].columns * GRID_INFO[grid].rows;
-  const printPages = useMemo(() => chunk(printItems, gridCapacity), [printItems, gridCapacity]);
+  const productPrintPages = useMemo(() => chunk(productPrintItems, gridCapacity), [productPrintItems, gridCapacity]);
+  const unitPrintPages = useMemo(() => chunk(unitPrintItems, gridCapacity), [unitPrintItems, gridCapacity]);
+  const printItemCount = mode === 'products' ? productPrintItems.length : unitPrintItems.length;
 
   const startPrint = () => {
     if (totalLabels <= 0) return;
@@ -431,13 +433,13 @@ export default function PriceTags() {
               {totalLabels > 0 && <Badge tone={totalLabels > 100 ? 'amber' : 'emerald'}>{totalLabels > 100 ? '100+ labels — confirm before print' : 'Ready to print'}</Badge>}
             </div>
 
-            {printItems.length === 0 ? (
+            {printItemCount === 0 ? (
               <EmptyState icon={<Tags size={26} />} title="No labels selected" sub="Select products or in-stock IMEI / serial units on the left." />
             ) : (
               <div className={`price-tag-preview price-tag-preview--${grid}`}>
                 {mode === 'products'
-                  ? printItems.map((p, i) => <ProductTag key={`${p.id}-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} />)
-                  : printItems.map(u => {
+                  ? productPrintItems.map((p, i) => <ProductTag key={`${p.id}-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} />)
+                  : unitPrintItems.map(u => {
                     const p = state.products.find(x => x.id === u.productId);
                     return p ? <UnitTag key={u.id} unit={u} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} /> : null;
                   })}
@@ -451,22 +453,22 @@ export default function PriceTags() {
         {grid === 'thermal'
           ? <div className="price-tag-thermal-stack">
             {mode === 'products'
-              ? printItems.map((p, i) => <ProductTag key={`${p.id}-t-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} forPrint />)
-              : printItems.map(u => {
+              ? productPrintItems.map((p, i) => <ProductTag key={`${p.id}-t-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} forPrint />)
+              : unitPrintItems.map(u => {
                 const p = state.products.find(x => x.id === u.productId);
                 return p ? <UnitTag key={`${u.id}-t`} unit={u} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} /> : null;
               })}
           </div>
-          : printPages.map((page, pageIndex) => (
+          : (mode === 'products' ? productPrintPages : unitPrintPages).map((page, pageIndex) => (
             <div className={`price-tag-print-page price-tag-print-page--${grid}`} key={pageIndex}>
               {mode === 'products'
-                ? page.map((p, i) => <ProductTag key={`${p.id}-p-${pageIndex}-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} forPrint />)
-                : page.map(u => {
+                ? (page as Product[]).map((p, i) => <ProductTag key={`${p.id}-p-${pageIndex}-${i}`} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} forPrint />)
+                : (page as InventoryUnit[]).map(u => {
                   const p = state.products.find(x => x.id === u.productId);
                   return p ? <UnitTag key={`${u.id}-p`} unit={u} product={p} shopName={state.settings.shopName} template={template} toggles={toggles} /> : null;
                 })}
             </div>
-          ))}
+          ))
       </div>
     </div>
   );
