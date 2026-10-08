@@ -398,7 +398,8 @@ function setupAutoUpdater(){
         return {ok:true};
       }catch(error){return {ok:false,error:error?.message||String(error)};}
     });
-    ipcMain.handle('update:set-credentials',(_event,payload)=>{
+    ipcMain.handle('update:set-credentials',(event,payload)=>{
+      if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
       const token=typeof payload?.token==='string'?payload.token.trim():'';
       const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
       const mode=payload?.mode==='device'?'device':'bearer';
@@ -413,8 +414,9 @@ function setupAutoUpdater(){
       if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
       return {ok};
     });
-    ipcMain.handle('update:clear-credentials',()=>{ updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
-    ipcMain.handle('update:status',()=>{
+    ipcMain.handle('update:clear-credentials',(event)=>{ if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'}; updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
+    ipcMain.handle('update:status',(event)=>{
+      if(!isTrustedRenderer(event)) return {supported:true,authorized:false,available:false,error:'Untrusted renderer'};
       const authorized=Boolean(updateAuthToken&&updateDeviceId);
       return {
         supported:true,
@@ -439,7 +441,8 @@ function setupAutoUpdater(){
       })();
       return updateCheckPromise;
     };
-    ipcMain.handle('update:check',async()=>{
+    ipcMain.handle('update:check',async(event)=>{
+      if(!isTrustedRenderer(event)) return{supported:true,available:false,error:'Untrusted renderer'};
       if(!app.isPackaged||!autoUpdater)return{supported:false,available:false};
       if(!configureUpdaterCredentials())return{supported:true,available:false,error:'Update authorization is not ready.'};
       try{
@@ -451,7 +454,8 @@ function setupAutoUpdater(){
         return{supported:true,available:false,error:message};
       }
     });
-    ipcMain.handle('update:downloadAndInstall',async()=>{
+    ipcMain.handle('update:downloadAndInstall',async(event)=>{
+      if(!isTrustedRenderer(event)) return{supported:true,started:false,error:'Untrusted renderer'};
       if(!app.isPackaged||process.platform!=='win32')return{supported:false,started:false};
       if(!configureUpdaterCredentials())return{supported:true,started:false,error:'Update authorization is not ready.'};
       if(updateDownloadActive||updateInstallScheduled)return{supported:true,started:false};
