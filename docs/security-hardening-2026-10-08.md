@@ -38,6 +38,7 @@
 - Sensitive audit entries do not contain passwords, Recovery Keys, tokens, or API keys.
 - Gated updater IPC set/clear/status/check/download handlers with the existing trusted-renderer check.
 - Preserved safeStorage updater credential storage and private gateway/SHA-512 flow.
+- Added owner-scoped server-side updater-device revocation and an admin-gated Settings control.
 
 ## Backup/update regression review
 
@@ -49,7 +50,7 @@
 
 ## Device revocation finding
 
-The repository contains a revoke_pos_device migration/function, but the currently connected Supabase project does not currently expose that RPC. The client therefore does not claim server-side revocation is active. Existing local updater-token clearing remains the safe fallback; backup credentials are separate and are not cleared by updater-token operations.
+The live Supabase project uses public.pos_devices(user_id, revoked_at). The owner-scoped public.revoke_pos_device(text,text) RPC was deployed and verified against that production schema. Settings now exposes an admin re-authenticated “Revoke this PC's update access” action; it revokes the server device and clears only the local updater credentials. POS login and Google Drive backup credentials remain untouched.
 
 ## Verification limitations
 
