@@ -156,7 +156,7 @@ export default function SalesHistory() {
                       <span className="inline-flex items-center gap-2"><Avatar name={s.cashierName} size={22} /><span className="text-[12.5px] text-sub">{s.cashierName.split(' ')[0]}</span></span>
                     </td>
                     <td className="td num text-sub">{s.items.reduce((a, i) => a + i.qty, 0)}</td>
-                    <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{s.payment === 'credit' && s.total - s.amountPaid > 0.009 ? (getSaleTenderPayments(s).length ? `CREDIT · ${getSaleTenderPayments(s).map(l => PAYMENT_LABEL[l.method]).join(' + ')}` : 'CREDIT') : salePaymentLabel(s)}</Badge></td>
+                    <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{salePaymentLabel(s)}</Badge></td>
                     <td className="td">
                       <Badge tone={s.status === 'completed' ? 'emerald' : s.status === 'refunded' ? 'rose' : s.status === 'reversed' ? 'rose' : 'amber'}>
                         {s.status.toUpperCase()}
@@ -203,7 +203,7 @@ export default function SalesHistory() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 ['Customer', view.customerName], ['Cashier', view.cashierName],
-                ['Payment', view.payment === 'credit' && view.total - view.amountPaid > 0.009 ? (getSaleTenderPayments(view).length ? `CREDIT · ${getSaleTenderPayments(view).map(l => PAYMENT_LABEL[l.method]).join(' + ')}` : 'CREDIT') : (view.payments && view.payments.length > 1 ? `SPLIT (${view.payments.map(l => PAYMENT_LABEL[l.method]).join(' + ')})` : PAYMENT_LABEL[view.payment])], ['Status', view.status.toUpperCase()],
+                ['Payment', salePaymentLabel(view)], ['Status', view.status.toUpperCase()],
               ].map(([l, v]) => (
                 <div key={l} className="rounded-xl bg-raised border border-line p-3">
                   <div className="text-[10px] font-bold tracking-wider uppercase text-faint">{l}</div>
