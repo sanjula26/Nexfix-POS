@@ -324,7 +324,11 @@ function setupAutoUpdater(){
       if(!email || !userId || !refreshToken || refreshToken.length>16384) return {ok:false,error:'Invalid cloud recovery credential'};
       try{
         const encrypted=safeStorage.encryptString(JSON.stringify({email,userId,refreshToken,updatedAt:new Date().toISOString()})).toString('base64');
-        writeSecureRecoveryFile({version:1,cloudUpdaterRecovery:encrypted});
+        // Merge into the existing secure record. The per-device updater token
+        // lives beside the cloud recovery credential and must never be erased
+        // merely because Supabase refresh-token state is refreshed.
+        const current=readSecureRecoveryFile();
+        writeSecureRecoveryFile({...current,version:2,cloudUpdaterRecovery:encrypted});
         return {ok:true};
       }catch(error){ return {ok:false,error:error?.message||String(error)}; }
     });
