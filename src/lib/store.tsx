@@ -645,6 +645,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user?.email]);
 
 
+  const pushAudit = useCallback((action: string, entity: string, details: string, who?: string) => {
+    setState(s => ({
+      ...s,
+      audit: [
+        { id: uid(), time: new Date().toISOString(), user: who || user?.email || 'system', action, entity, details },
+        ...s.audit,
+      ].slice(0, 500),
+    }));
+  }, [user?.email]);
+
   const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
     if (!user) return false;
     const ok = verifyPassword(pin || '', state.settings.adminPinHash);
@@ -720,15 +730,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit, user]);
   const toggleTheme = useCallback(() => setDark(d => !d), []);
 
-  const pushAudit = useCallback((action: string, entity: string, details: string, who?: string) => {
-    setState(s => ({
-      ...s,
-      audit: [
-        { id: uid(), time: new Date().toISOString(), user: who || user?.email || 'system', action, entity, details },
-        ...s.audit,
-      ].slice(0, 500),
-    }));
-  }, [user?.email]);
+
 
 
   const signIn = useCallback(async (email: string, password: string, remember: boolean, expectedRole?: Extract<Role, 'admin' | 'cashier'>) => {
