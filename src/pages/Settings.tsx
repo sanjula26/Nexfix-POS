@@ -796,6 +796,14 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="card p-6 border border-sky-500/20">
+            <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Lock size={15} /></span>Session Security</h3>
+            <p className="text-xs text-faint mb-4">Automatically lock the POS after inactivity. The current cart and offline data remain in memory; unlocking requires the current user's password, or the admin unlock password for an administrator.</p>
+            <Field label="Idle lock (minutes)" hint="1–120 minutes. Default is 10 minutes.">
+              <input type="number" min={1} max={120} className="input max-w-[180px]" value={form.securityIdleMinutes} onChange={num('securityIdleMinutes')} />
+            </Field>
+          </div>
+
           <div className="card p-6 border border-emerald-500/20">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup Encryption</h3>
             <p className="text-xs text-faint mb-4">{getBackupSecurityMessage()}</p>
