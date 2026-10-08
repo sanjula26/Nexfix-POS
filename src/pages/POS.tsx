@@ -489,7 +489,8 @@ export default function POS() {
       }
     }
     if (splitOn) {
-      if (legs.some(l => l.amount < 0)) return setError('Payment amounts cannot be negative');
+      if (legs.some(l => l.amount <= 0)) return setError('Enter an amount greater than zero for every split payment');
+      if (legSum < total - 0.009) return setError(`Split payments are short by ${fmtRs(total - legSum)}`);
       if (legSum > total + 0.009) return setError(`Split payments exceed the bill total by ${fmtRs(legSum - total)}. Adjust the amounts before completing.`);
       
     } else if (!hasCredit && paidNum < total) {
