@@ -401,7 +401,7 @@ export default function Settings() {
     setPinCur(''); setPinNew(''); setPinConfirm('');
   };
 
-  const onImport = (files: File[]) => {
+  const onImport = async (files: File[]) => {
     if (!user || user.role !== 'admin') {
       setImportMsg('Backup restore requires admin access');
       return;
