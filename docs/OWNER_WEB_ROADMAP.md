@@ -1,8 +1,8 @@
 # NexFix Owner Web + Multi-Branch Roadmap
 
-**Status:** Phase 0, Phase 1, Phase 1.5 and Phase 2 branch model/POS binding are implemented on `main`. Phase 2 regression verification passed on code commit `83426a87655a8978b7988b960ba39db7dc062673`; Phase 3 is not started and remains blocked pending explicit authorization.
+**Status:** Phase 0, Phase 1, Phase 1.5 and Phase 2 branch model/POS binding are implemented on `main`. Phase 3 was explicitly authorized on 2026-10-09; branch-aware Owner Web UI/reporting is committed and its additive reporting RPCs are deployed. See the Phase 3 verification status below.
 **Reviewed against:** `main` at the time of this document's creation.
-**Non-goal:** This document does not change POS runtime behavior, database schema, authentication, cloud sync, backup, or updater code.
+**Scope boundary:** Phase 3 may add read-only Owner Web UI/reporting and membership-checked SECURITY INVOKER reporting RPCs. It must not change desktop POS runtime, authentication/session behavior, cloud sync writes, Drive backup, updater, or R2 publishing.
 
 ## 1. Current architecture inventory
 
@@ -171,6 +171,29 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - [x] Branch stock primary key and branch-related foreign-key indexes are deployed and recorded in migration source.
 - [x] Branch selection guards, GRN-to-branch binding, branch-scoped day-end, atomic stock editing and offline queue behavior are implemented.
 - [x] Final production reconciliation after rollback-only tests: 23 products, 1,174 shop units, 1,174 branch units, delta 0; no test rows remained.
-- [x] Phase 3 is explicitly not started.
+- [x] Phase 3 was not started during Phase 2; the owner explicitly authorized Phase 3 on 2026-10-09.
 
 **Phase gate:** Phase 2 verification is green on the functional code commit above. Do not add Owner Web branch selectors, branch-level Owner Web KPIs, or all-branches aggregation until Phase 3 is explicitly authorized.
+
+
+## Phase 3 implementation update (2026-10-09)
+
+- Added the Owner Web branch switcher using only active branches for the membership-resolved shop, a `Currently viewing` label, a today's sales snapshot, and a manual snapshot refresh. Single-branch shops select their sole branch without presenting an unnecessary `All branches` choice.
+- Dashboard KPIs/charts, invoice pages, and sales reports follow the shared branch selector. `All branches` uses a branch/date aggregate RPC and combines aggregate rows rather than downloading all sales.
+- Added read-only stock valuation and low-stock-by-branch reporting, including CSV export. Cost value = `branch_stock.qty × products.cost`; selling value = `branch_stock.qty × products.price`; potential profit = selling value − cost value. Inactive products with remaining branch stock remain visible so the valuation reconciles to stock rows; inactive branches are excluded from this active-branch report.
+- Added `public.get_owner_branch_daily_sales` and `public.get_owner_branch_stock_valuation`. Both are SECURITY INVOKER, require `auth.uid()` plus active membership in the supplied shop, validate any branch against that same shop, and grant execution only to `authenticated`. The sales date predicate uses the existing shop/branch/created_at index shape. No service-role key is used in browser code.
+- Credit and cash-in-hand remain shop/POS-day-session level and are not represented as branch-level numbers. No polling was added; branch snapshot refresh is manual.
+- Applied the reporting migrations to the connected production Supabase project and checked them into `supabase/migrations/20261009094114_owner_web_branch_reporting.sql` and `supabase/migrations/20261009094302_optimize_owner_branch_daily_sales_range.sql`.
+- Production SQL verification: today's branch sales RPC returned 4 completed invoices / LKR 91,650, matching a direct shop-scoped sales aggregation (4 / LKR 91,650). Stock valuation RPC returned 23 product/branch rows; cost value LKR 257,000 and selling value LKR 2,494,800 matched the direct `branch_stock` × product cost/price calculation; potential profit was LKR 2,237,800.
+- The connected production shop currently has one active branch (Main). Single-branch UX and data reconciliation were checked against live data, but a multi-branch interaction cannot be exercised against production until a second active branch exists. The connected GitHub status API returned no commit status checks, and local frontend build/typecheck/lint could not be run in this environment because GitHub could not be resolved from the build container. Do not claim the full UI checklist is 100% green until those checks run.
+
+### Phase 3 checklist
+
+- [x] Branch switcher, current-view label, today's snapshot and manual refresh are implemented.
+- [x] Dashboard, sales pages and sales summary are branch-filtered; all-branches values use branch-scoped aggregate rows.
+- [x] Stock cost/selling/potential-profit valuation, low-stock status and stock CSV export are implemented.
+- [x] RPCs enforce active shop membership and same-shop branch validation; no service-role browser key or polling.
+- [x] Live sales aggregate and stock valuation calculations match direct database calculations.
+- [x] One-branch selector UX stays simple.
+- [x] Desktop POS, Drive backup, updater and R2 files were not modified; Phase 4/5 were not started.
+- [ ] Frontend typecheck, lint, production build and interactive multi-branch smoke test are pending due to the environment and only one active production branch.
