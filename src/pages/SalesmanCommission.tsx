@@ -17,7 +17,7 @@ export default function SalesmanCommission() {
   const rows = useMemo(() => (state.sales as SalesmanSale[])
     .filter(s => s.status === 'completed' || s.status === 'exchanged')
     .filter(s => dkey(s.date) >= from && dkey(s.date) <= to)
-    .filter(s => salesman === 'all' ? Boolean(s.salesmanId) : s.salesmanId === salesman)
+    .filter(s => salesman === 'all' ? Boolean(s.salesmanId || s.cashierId) : (s.salesmanId || s.cashierId) === salesman)
     .sort((a,b)=>b.date.localeCompare(a.date)), [state.sales, from, to, salesman]);
   const total = useMemo(() => rows.reduce((a,s)=>({
     bills:a.bills+1, gross:a.gross+num(s.subtotal), discounts:a.discounts+num(s.discount),
@@ -26,7 +26,7 @@ export default function SalesmanCommission() {
   }), {bills:0,gross:0,discounts:0,net:0,profit:0,credit:0,collected:0}), [rows]);
   const selectedUser = staff.find(u=>u.id===salesman);
   const commissionPct = num(selectedUser?.commissionPct);
-  const commission = rows.reduce((sum,s)=>sum+num(s.total)*num(staff.find(u=>u.id===s.salesmanId)?.commissionPct)/100,0);
+  const commission = rows.reduce((sum,s)=>sum+num(s.total)*num(staff.find(u=>u.id===(s.salesmanId || s.cashierId))?.commissionPct)/100,0);
   const exportCsv = () => {
     const data = [
       ['Bill no','Date','Salesman','Gross','Discount','Net','Profit','Credit due','Collected','Commission %','Commission'],
