@@ -114,7 +114,7 @@ interface StoreCtx {
   cancelSensitiveAdmin: () => void;
   unlockSession: (credential: string) => boolean;
   // products
-  saveProduct: (p: Product) => boolean;
+  saveProduct: (p: Product) => Promise<boolean>;
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
   saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
@@ -1075,7 +1075,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user, can, pushAudit]);
 
-  const saveProduct = useCallback((p: Product): boolean => {
+  const saveProduct = useCallback(async (p: Product): Promise<boolean> => {
     if (!user || !can('act:manageStock')) {
       pushAudit('DENIED', 'Product', `Blocked product save for ${p.name || p.id}`);
       return false;
@@ -1109,23 +1109,97 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
       return false;
     }
+    const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const multipleBranches = hasMultipleCachedBranches(shopId);
+    const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
+    const targetBranchId = selectedBranchId === 'local-main' ? defaultBranchId : selectedBranchId;
     const stockDelta = normalized.stock - (current?.stock || 0);
-    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main' && stockDelta !== 0) {
+    if (multipleBranches && selectedBranchId === 'local-main' && stockDelta !== 0) {
       pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: select this POS branch before changing stock.`);
       return false;
     }
-    if (exists && selectedBranchId !== 'local-main' && stockDelta !== 0) {
-      pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: use Adjust Stock so branch and shop totals are updated atomically.`);
-      return false;
-    }
-    if (selectedBranchId !== 'local-main' && stockDelta !== 0) {
+
+    if (stockDelta !== 0) {
+      if (stockAdjustmentLockRef.current) {
+        pushAudit('DENIED', 'Product', 'Another stock adjustment is in progress. Please wait before changing stock.');
+        return false;
+      }
+      const branchBound = selectedBranchId !== 'local-main';
+      const branchCacheReady = targetBranchId !== 'local-main' && hasCachedBranchStock(targetBranchId);
+      if (branchBound) {
+        const cachedQty = getCachedBranchStock(targetBranchId, normalized.id);
+        if (!branchCacheReady || cachedQty === null || cachedQty + stockDelta < 0) {
+          pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock is missing or insufficient. Connect online and refresh Settings.');
+          return false;
+        }
+      }
+      stockAdjustmentLockRef.current = true;
+      let cacheApplied = false;
+      try {
+        if (exists && supabaseConfigured && getConnectivity() === 'online') {
+          const shop = await ensureCloudShop('Nexfix Shop');
+          if (!shop.ok || !shop.shopId) {
+            pushAudit('DENIED', 'Product', 'Blocked stock edit: ' + (shop.error || 'Cloud shop is unavailable.'));
+            return false;
+          }
+          // Ensure a legacy/local-only product exists in normalized cloud storage
+          // at its old quantity before applying the idempotent delta.
+          const catalog = await syncNormalizedCatalog({ ...stateRef.current, units: [] }, shop.shopId);
+          if (!catalog.ok) {
+            pushAudit('DENIED', 'Product', 'Blocked stock edit: ' + (catalog.error || 'Catalog sync failed.'));
+            return false;
+          }
+          const adjustmentId = uid();
+          const cloudResult = await adjustBranchStockAtomic({
+            shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id,
+            productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId,
+          });
+          if (!cloudResult.ok) {
+            pushAudit('DENIED', 'Product', 'Cloud stock edit was not committed: ' + (cloudResult.error || 'unknown error'));
+            return false;
+          }
+          if (branchCacheReady && applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
+          try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* server remains authoritative */ }
+        } else if (exists && supabaseConfigured) {
+          if (branchCacheReady) {
+            if (applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
+            else if (branchBound) {
+              pushAudit('DENIED', 'Product', 'Blocked offline stock edit because selected-branch cache changed concurrently.');
+              return false;
+            }
+          } else if (branchBound) {
+            pushAudit('DENIED', 'Product', 'Blocked offline stock edit because selected-branch stock is not cached.');
+            return false;
+          }
+          try {
+            await queueBranchStockAdjustment({
+              shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id,
+              productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId: uid(), baseProduct: current,
+            });
+          } catch (error) {
+            if (cacheApplied) applyBranchStockDeltas(targetBranchId, { [normalized.id]: -stockDelta });
+            pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock edit could not be queued safely.');
+            return false;
+          }
+        } else if (branchBound) {
+          if (!applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) {
+            pushAudit('DENIED', 'Product', 'Blocked local stock edit because selected-branch stock would become negative.');
+            return false;
+          }
+        } else if (branchCacheReady) {
+          applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta });
+        }
+      } finally {
+        stockAdjustmentLockRef.current = false;
+      }
+    } else if (!exists && selectedBranchId !== 'local-main') {
       if (!hasCachedBranchStock(selectedBranchId)) {
-        pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock cache is missing. Connect online and refresh Settings.');
+        pushAudit('DENIED', 'Product', 'Blocked initial stock because selected-branch stock cache is missing. Connect online and refresh Settings.');
         return false;
       }
       if (!applyBranchStockDeltas(selectedBranchId, { [normalized.id]: stockDelta })) {
-        pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock would become negative.');
+        pushAudit('DENIED', 'Product', 'Blocked initial stock because selected-branch stock would become negative.');
         return false;
       }
     }
