@@ -63,7 +63,7 @@ export default function Exchanges() {
     setQuery(raw);
     setBill(found || null);
     setSelected(restore ? selected : matchedItemIndex >= 0 ? [matchedItemIndex] : []);
-    setReturnQty(restore ? returnQty : matchedItemIndex >= 0 && found ? { [matchedItemIndex]: found.items[matchedItemIndex].qty } : {});
+    setReturnQty(restore ? returnQty : matchedItemIndex >= 0 && found ? { [matchedItemIndex]: 1 } : {});
     setConfirm(false);
     setError(found ? (matchedItemIndex >= 0 ? 'Device identifier matched. Confirm the selected sold line and quantity before proceeding.' : '') : '');
     resetPendingReturn();
