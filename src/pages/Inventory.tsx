@@ -171,7 +171,7 @@ export default function Inventory() {
         alert('The product could not be saved. Check the SKU/barcode and try again.');
         return;
       }
-      const result = await saveUnitsBulk(newUnits);
+      const result = await saveUnitsBulk(newUnits, [editing]);
       if (!result.ok || result.errors.length) {
         alert(result.errors.length ? result.errors.join('\n') : 'The product was saved, but the unit identifiers could not be added.');
         return;
