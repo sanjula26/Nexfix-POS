@@ -60,13 +60,14 @@ export function calculateDayEndTotals(
   date: string,
   session?: DaySession,
 ): DayEndTotals {
-  const sales = state.sales.filter(sale =>
+  const billedSales = state.sales.filter(sale =>
     dkey(sale.date) === date &&
     (!session || sale.cashierId === session.cashierId) &&
-    (sale.status === 'completed' || sale.status === 'exchanged'),
+    (sale.status === 'completed' || sale.status === 'exchanged' || sale.status === 'refunded'),
   );
-  const grossSales = sales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
-  const discounts = sales.reduce((sum, sale) =>
+  const sales = billedSales.filter(sale => sale.status === 'completed' || sale.status === 'exchanged');
+  const grossSales = billedSales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0);
+  const discounts = billedSales.reduce((sum, sale) =>
     sum + Math.max(0, Number(sale.discount) || 0)
       + sale.items.reduce((items, item) => items + Math.max(0, Number(item.discount) || 0), 0), 0);
   const tenders = emptyTenders();
