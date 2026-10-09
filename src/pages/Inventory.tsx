@@ -166,7 +166,7 @@ export default function Inventory() {
         alert(parseErrors.join('\n'));
         return;
       }
-      const savedProduct = saveProduct({ ...editing, stock: 0 });
+      const savedProduct = await saveProduct({ ...editing, stock: 0 });
       if (!savedProduct) {
         alert('The product could not be saved. Check the SKU/barcode and try again.');
         return;
@@ -177,7 +177,7 @@ export default function Inventory() {
         return;
       }
     } else {
-      if (!saveProduct(editing)) {
+      if (!(await saveProduct(editing))) {
         alert('The product could not be saved. Check the SKU/barcode and try again.');
         return;
       }
