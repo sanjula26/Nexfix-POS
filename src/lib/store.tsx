@@ -1303,6 +1303,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     const snapshot = stateRef.current;
+    const todaySession = snapshot.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()));
+    if (!todaySession || todaySession.closed) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked credit settlement without an open cashier drawer session');
+      return null;
+    }
     const customer = snapshot.customers.find(x => x.id === p.customerId);
     const amount = Math.round(Number(p.amount) * 100) / 100;
     if (!customer || !Number.isFinite(amount) || amount <= 0) {
