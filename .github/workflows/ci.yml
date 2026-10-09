@@ -20,8 +20,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
-      - name: Lint
-        run: npm run lint
+      - name: Lint (desktop POS source; Owner Web has its own CI)
+        run: npm run lint -- --ignore-pattern 'apps/owner-web/**'
       - name: Production build
         run: npm run build
 
