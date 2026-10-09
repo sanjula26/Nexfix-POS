@@ -833,7 +833,7 @@ export default function Settings() {
         <p className="text-xs text-sub mb-3">Each device sells from one branch. A shop with only Main branch selects it automatically. This setting is local to this POS; cloud stock and IMEI checks enforce branch ownership.</p>
         <div className="max-w-xl">
           <label className="block text-xs font-semibold text-sub mb-1.5" htmlFor="pos-branch-select">Selected branch</label>
-          <select id="pos-branch-select" className="input" value={selectedBranchId} disabled={user?.role !== 'admin' || branchOptions.length === 0 || branchOptions.length === 1}
+          <select id="pos-branch-select" className="input" value={selectedBranchId} disabled={(user?.role !== 'admin' && user?.role !== 'manager') || branchOptions.length === 0 || branchOptions.length === 1}
             onChange={e => { const value = e.target.value; setSelectedBranchId(value); updateSettings({ branchId: value || undefined }); if (value) void bindBranchToDevice(value); else setBranchMsg('Select an active branch before cloud sales or GRN receive.'); }}>
             <option value="">Select a branch…</option>
             {branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code}){branch.is_default ? ' — Main' : ''}</option>)}
@@ -842,7 +842,7 @@ export default function Settings() {
           {branchOptions.length > 1 && !selectedBranchId && <p className="mt-2 text-xs font-semibold text-amber-600">Branch selection is required before this device can sync a sale or receive stock.</p>}
         </div>
       </div>
-      {user?.role === 'admin' && (
+      {(user?.role === 'admin' || user?.role === 'manager') && (
         <div className="card p-6 border border-indigo-500/20">
         <h3 className="font-bold text-ink mb-2">Create a branch</h3>
         <p className="text-xs text-sub mb-4">New branches start with zero stock. Use the transfer tool below to move existing stock safely.</p>
@@ -853,6 +853,7 @@ export default function Settings() {
         </div>
         {branchCreateMsg && <p className="mt-3 text-xs text-sub">{branchCreateMsg}</p>}
       </div>
+      )}
       {branchOptions.length > 1 && <div className="card p-6 border border-amber-500/20">
         <h3 className="font-bold text-ink mb-2">Stock transfer</h3>
         <p className="text-xs text-sub mb-4">Transfer is atomic and audited. Tracked products require their exact in-stock IMEI/serial codes from the source branch.</p>
