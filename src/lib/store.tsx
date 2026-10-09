@@ -1521,6 +1521,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const sale: Sale = {
       id: input._saleId || uid(), billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
+      salesmanId: input.salesmanId || undefined,
       machineId: machine.id, machineName: machine.name,
       note: input.note?.trim() || undefined,
       customerId: cust?.id, customerName: cust?.name || 'Walk-in customer',
