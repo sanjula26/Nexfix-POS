@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
@@ -52,7 +52,7 @@ export default function Settings() {
   const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState(() => state.settings.branchId && state.settings.branchId !== 'local-main' ? state.settings.branchId : '');
   const [branchMsg, setBranchMsg] = useState('Checking branch configuration…');
-  const bindBranchToDevice = async (branchId: string, shopId = getCloudShopId()) => {
+  const bindBranchToDevice = useCallback(async (branchId: string, shopId = getCloudShopId()) => {
     if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) return false;
     if (user?.role !== 'admin' && user?.role !== 'manager') return false;
     const { data, error } = await supabase.rpc('set_pos_device_branch', {
@@ -64,7 +64,7 @@ export default function Settings() {
     }
     setBranchMsg('Selected branch saved and this POS device is bound to it.');
     return true;
-  };
+  }, [user?.role, phoneSalesMachine.id]);
   useEffect(() => {
     let cancelled = false;
     const shopId = getCloudShopId();
@@ -111,7 +111,7 @@ export default function Settings() {
       }
     })();
     return () => { cancelled = true; };
-  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings, phoneSalesMachine.id]);
+  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings, phoneSalesMachine.id, bindBranchToDevice]);
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
   const [phoneSalesToken, setPhoneSalesToken] = useState('');
   const [phoneSalesLink, setPhoneSalesLink] = useState('');
