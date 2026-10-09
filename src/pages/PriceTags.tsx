@@ -197,6 +197,30 @@ export default function PriceTags() {
     setUnitPicked(new Set());
   }, [mode]);
 
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('nexfix_grn_price_tags_v1');
+      if (!raw) return;
+      sessionStorage.removeItem('nexfix_grn_price_tags_v1');
+      const parsed = JSON.parse(raw) as { items?: Array<{ productId?: string; qty?: number }> };
+      const valid = (parsed.items || []).filter(item => typeof item.productId === 'string' && state.products.some(product => product.id === item.productId));
+      if (!valid.length) return;
+      setMode('products');
+      setPicked(new Set(valid.map(item => item.productId as string)));
+      setCopies(Object.fromEntries(valid.map(item => [item.productId as string, Math.max(1, Math.floor(Number(item.qty) || 1))])));
+      setSearch('');
+      setCategory('all');
+      setActiveOnly(false);
+      setStockOnly(false);
+      setHideServices(false);
+      setHideZeroPrice(false);
+    } catch {
+      try { sessionStorage.removeItem('nexfix_grn_price_tags_v1'); } catch { /* best effort */ }
+    }
+  }, [state.products]);
+
+
+
   const categories = useMemo(() => Array.from(new Set(state.products.map(p => p.category).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [state.products]);
 
   const productRows = useMemo(() => {

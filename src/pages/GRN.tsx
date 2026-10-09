@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
@@ -18,6 +19,8 @@ function grnPrintHtml(grn: Purchase, shopName: string) {
 
 export default function GRN() {
   const { state, user, saveGRNDraft, updateGRNDraft, processGRN, deletePurchase, createPurchaseReturn, can } = usePOS();
+  const navigate = useNavigate();
+  const [receivedForTags, setReceivedForTags] = useState<Array<{ productId: string; qty: number }>>([]);
   const [printPreview, setPrintPreview] = useState<{ grn: Purchase; html: string } | null>(null);
   const [printReady, setPrintReady] = useState(false);
   const printFrame = useRef<HTMLIFrameElement | null>(null);
@@ -199,6 +202,7 @@ export default function GRN() {
         setView('form');
         return;
       }
+      setReceivedForTags(purchase.items.map(item => ({ productId: item.productId, qty: Math.max(1, Math.floor(item.qty || 1)) })));
       setConfirmId(null); setPriceChanges([]);
       setFormError(''); setView('list');
     } finally {
@@ -215,6 +219,8 @@ export default function GRN() {
         sub={processed.length + ' processed · ' + drafts.length + ' drafts'}
         actions={<button className="btn btn-primary" onClick={startNew}><Plus size={15} /> New GRN</button>}
       />
+
+      {receivedForTags.length > 0 && <div className="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-emerald-500/30 bg-emerald-500/[0.05]"><div><div className="font-bold text-ink">GRN processed successfully</div><div className="text-sm text-sub mt-1">Print product price labels for {receivedForTags.length} received product line(s). Received quantities will be preselected as label copies.</div></div>{can('page:pricetags') && <button className="btn btn-primary" onClick={() => { try { sessionStorage.setItem('nexfix_grn_price_tags_v1', JSON.stringify({ items: receivedForTags })); } catch { setFormError('Could not prepare the price-tag selection. Open Price Tags and select products manually.'); return; } navigate('/price-tags'); }}><Printer size={15}/> Print price tags for these items</button>}</div>}
 
       <div className="card p-4 mb-5">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
