@@ -42,6 +42,7 @@ const NAV: NavDef[] = [
   { to: '/exchanges', label: 'Exchanges', icon: ArrowLeftRight, perm: 'page:exchanges', group: 'Operations' },
   { to: '/expenses', label: 'Expenses', icon: Wallet, perm: 'page:expenses', group: 'Operations' },
   { to: '/reports', label: 'Reports', icon: BarChart3, perm: 'page:reports', group: 'Operations' },
+  { to: '/salesman-commission', label: 'Salesman Commission', icon: Users, perm: 'page:reports', group: 'Operations' },
   { to: '/price-tags', label: 'Price Tags', icon: Tags, perm: 'page:pricetags', group: 'Operations' },
   { to: '/users', label: 'Users', icon: UserCog, group: 'Administration', adminOnly: true },
   { to: '/cashier-balances', label: 'Cashier Balance Report', icon: Landmark, perm: 'page:pos', group: 'Operations' },
@@ -59,7 +60,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/suppliers/, 'Suppliers'], [/^\/supplier-payments/, 'Supplier Payments'], [/^\/credit-statements/, 'Customer Credit Statements'], [/^\/grn-report/, 'GRN Report'],
   [/^\/grn/, 'Goods Received Notes'], [/^\/purchase-return/, 'Purchase Return'], [/^\/purchases/, 'Purchases'],
   [/^\/csv-import/, 'CSV Import'], [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
-  [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'],
+  [/^\/salesman-commission/, 'Salesman Commission'], [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'],
   [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Cashier Balance Report'], [/^\/permissions/, 'Permissions'],
   [/^\/audit-log/, 'Audit Log'], [/^\/settings/, 'Settings'],
 ];

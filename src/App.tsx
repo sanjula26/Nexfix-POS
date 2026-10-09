@@ -30,6 +30,7 @@ const TodaySalesLinks = lazy(() => import('./pages/TodaySalesLinks'));
 const Exchanges = lazy(() => import('./pages/Exchanges'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Reports = lazy(() => import('./pages/Reports'));
+const SalesmanCommission = lazy(() => import('./pages/SalesmanCommission'));
 const PriceTags = lazy(() => import('./pages/PriceTags'));
 const Users = lazy(() => import('./pages/Users'));
 const CashierBalances = lazy(() => import('./pages/CashierBalances'));
@@ -337,6 +338,7 @@ function AppRoutes() {
           <Route path="/exchanges" element={<PermissionProtected permission="page:exchanges"><Exchanges /></PermissionProtected>} />
           <Route path="/expenses" element={<PermissionProtected permission="page:expenses"><Expenses /></PermissionProtected>} />
           <Route path="/reports" element={<PermissionProtected permission="page:reports"><Reports /></PermissionProtected>} />
+          <Route path="/salesman-commission" element={<PermissionProtected permission="page:reports"><SalesmanCommission /></PermissionProtected>} />
           <Route path="/price-tags" element={<PermissionProtected permission="page:pricetags"><PriceTags /></PermissionProtected>} />
           <Route path="/quotations" element={<PermissionProtected permission="page:pos"><Quotations /></PermissionProtected>} />
           <Route path="/warranty-claims" element={<PermissionProtected permission="page:repairs"><WarrantyClaims /></PermissionProtected>} />
