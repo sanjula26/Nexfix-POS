@@ -91,6 +91,29 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: false, error: 'Cloud shop membership is not provisioned for this user' };
 }
 
+/** Resolve a selected branch against the active shop membership. Local-only branch IDs are mapped to Main for queued legacy offline sales. */
+export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string): Promise<{ ok: boolean; branchId?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
+  const { data: rows, error } = await supabase.from('branches')
+    .select('id, is_default, active')
+    .eq('shop_id', shopId)
+    .eq('active', true)
+    .order('is_default', { ascending: false });
+  if (error) return { ok: false, error: `Branch lookup: ${error.message}` };
+  const branches = (rows || []) as Array<{ id: string; is_default: boolean; active: boolean }>;
+  if (!branches.length) return { ok: false, error: 'No active branch exists for this shop' };
+  if (preferredBranchId && preferredBranchId !== 'local-main') {
+    const selected = branches.find(branch => branch.id === preferredBranchId);
+    if (!selected) return { ok: false, error: 'Selected branch is not active for this shop. Open Settings and select an active branch.' };
+    return { ok: true, branchId: selected.id };
+  }
+  if (branches.length === 1) return { ok: true, branchId: branches[0].id };
+  const main = branches.find(branch => branch.is_default);
+  if (preferredBranchId === 'local-main' && main) return { ok: true, branchId: main.id };
+  return { ok: false, error: 'Select a branch in Settings before syncing sales or receiving stock' };
+}
+
 /** Register this machine with the currently authenticated cloud shop.
  * The server remains the source of truth for device ownership and membership.
  */
@@ -353,7 +376,9 @@ export async function completeSaleAtomic(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
-  const { data, error } = await supabase.rpc('complete_sale_atomic', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
+  const { data, error } = await supabase.rpc('complete_sale_atomic_for_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok || !row.sale) return { ok: false, error: 'Cloud sale was not committed' };
@@ -519,7 +544,7 @@ export async function processSaleReturnAtomic(input: {
 }
 
 export async function receivePurchaseAtomic(input: {
-  shopId: string; purchaseId: string; deviceId: string; purchase: Purchase;
+  shopId: string; branchId?: string; purchaseId: string; deviceId: string; purchase: Purchase;
 }): Promise<{ok:boolean; alreadyCommitted?:boolean; purchaseId?:string; total?:number; error?:string}> {
   if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
@@ -527,11 +552,11 @@ export async function receivePurchaseAtomic(input: {
   if (sessionError) return { ok:false, error:sessionError.message };
   if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
   if (!input.shopId || !input.purchaseId || !input.deviceId) return { ok:false, error:'Missing GRN identifiers' };
-  const { data, error } = await supabase.rpc('receive_purchase_atomic', {
-    p_shop_id: input.shopId,
-    p_purchase_id: input.purchaseId,
-    p_device_id: input.deviceId,
-    p_purchase: input.purchase,
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  if (!branch.ok || !branch.branchId) return { ok:false, error:branch.error || 'Branch is required' };
+  const { data, error } = await supabase.rpc('receive_purchase_atomic_for_branch', {
+    p_shop_id: input.shopId, p_branch_id: branch.branchId,
+    p_purchase_id: input.purchaseId, p_device_id: input.deviceId, p_purchase: input.purchase,
   });
   if (error) return { ok:false, error:error.message };
   const row = Array.isArray(data) ? data[0] : data;
