@@ -222,9 +222,9 @@ export default function Inventory() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {[
           { icon: Package, label: 'Products', value: fmtNum(state.products.length), tint: 'from-sky-500 to-blue-600' },
-          { icon: Boxes, label: 'Units in stock', value: fmtNum(units), tint: 'from-violet-500 to-indigo-600' },
-          { icon: Banknote, label: 'Stock value (cost)', value: can('act:viewCost') ? fmtRs(value, false) : 'Rs. ••••••', tint: 'from-emerald-500 to-teal-600' },
-          { icon: AlertTriangle, label: 'Low stock', value: fmtNum(low.length), tint: 'from-amber-500 to-orange-600' },
+          { icon: Boxes, label: selectedBranchId === 'local-main' ? 'Units in stock' : 'Branch units', value: branchStockReady ? fmtNum(units) : '—', tint: 'from-violet-500 to-indigo-600' },
+          { icon: Banknote, label: 'Stock value (cost)', value: !branchStockReady ? '—' : can('act:viewCost') ? fmtRs(value, false) : 'Rs. ••••••', tint: 'from-emerald-500 to-teal-600' },
+          { icon: AlertTriangle, label: 'Low stock', value: branchStockReady ? fmtNum(low.length) : '—', tint: 'from-amber-500 to-orange-600' },
         ].map(s => (
           <div key={s.label} className="card p-4 flex items-center gap-3.5">
             <span className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.tint} text-white flex items-center justify-center shadow-md shrink-0`}>
