@@ -1382,7 +1382,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked sale completion without POS access');
       return null;
     }
-    const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()));
+    const selectedBranchId = state.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+    const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()) && ((x.branchId || 'local-main') === selectedBranchId || ((x.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)));
     if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
       pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open or opening float is not confirmed');
       return null;
@@ -1617,7 +1619,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
       return null;
     }
-    const todaySession = stateRef.current.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()));
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+    const todaySession = stateRef.current.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()) && ((session.branchId || 'local-main') === selectedBranchId || ((session.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)));
     if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
       pushAudit('DENIED', 'Sale', 'Blocked cloud sale because today\'s cash session is not open or opening float is not confirmed');
       return null;
@@ -2533,7 +2537,7 @@ const deletePurchase = useCallback((id: string) => {
       const now = new Date().toISOString();
       setState(s => ({
         ...s,
-        expenses: [{ ...e, amount, category, note, paymentMethod, periodStart, periodEnd, id: uid(), date: now, by: user.name }, ...s.expenses],
+        expenses: [{ ...e, branchId: stateRef.current.settings.branchId || 'local-main', amount, category, note, paymentMethod, periodStart, periodEnd, id: uid(), date: now, by: user.name }, ...s.expenses],
       }));
       pushAudit('EXPENSE', 'Expense', `${category}: ${note} · Rs. ${amount.toLocaleString()}${paymentMethod === 'cash' ? ' · cash' : ''}`);
     } finally {
@@ -2885,7 +2889,7 @@ const deletePurchase = useCallback((id: string) => {
     const today = dkey(new Date());
     if (state.sessions.some(x => x.cashierId === user.id && x.date === today)) return;
     const ns: DaySession = {
-      id: uid(), cashierId: user.id, cashierName: user.name, date: today,
+      id: uid(), branchId: stateRef.current.settings.branchId || 'local-main', cashierId: user.id, cashierName: user.name, date: today,
       opening: state.settings.openingFloat, openingConfirmed: false, closed: false,
     };
     setState(s =>
@@ -3370,7 +3374,7 @@ const deletePurchase = useCallback((id: string) => {
         };
       }
       const ns: DaySession = {
-        id: uid(),
+        id: uid(), branchId: stateRef.current.settings.branchId || 'local-main',
         cashierId,
         cashierName: u.name,
         date: today,
