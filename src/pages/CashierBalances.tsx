@@ -29,7 +29,7 @@ const varianceTone = (variance: number): 'emerald' | 'amber' | 'rose' =>
   variance === 0 ? 'emerald' : variance > 0 ? 'amber' : 'rose';
 
 export default function CashierBalances() {
-  const { state, closeSession, closeDay, openSession, user, connectivity } = usePOS();
+  const { state, closeSession, closeDay, openSession, user, connectivity, signOut } = usePOS();
   const navigate = useNavigate();
   const today = dkey(new Date());
   const [settling, setSettling] = useState<string | null>(null);
@@ -208,7 +208,7 @@ export default function CashierBalances() {
       setDayCloseError('A variance note is required when any counted drawer differs from expected cash.');
       return;
     }
-    if (!window.confirm('Sign off every open cashier drawer for today? The POS will remain open on the Day End screen.')) return;
+    if (!window.confirm('Sign off every open cashier drawer for today? The POS will attempt an encrypted Google Drive backup, show the result, then sign out to the login screen.')) return;
     const ok = closeDay(counts, dayCloseNote.trim());
     if (!ok) {
       setDayCloseError('Day close was blocked. Refresh the report and check open drawers, held bills, and reverse approvals.');
@@ -252,6 +252,18 @@ export default function CashierBalances() {
       }
     })();
   }, [backupTarget, state, today, connectivity]);
+
+  // Full-day close is a clear end-of-day boundary: preserve the close and
+  // display the backup result briefly, then sign out regardless of backup
+  // success. Backup is best-effort and never rolls back the saved close.
+  useEffect(() => {
+    if (!backupTarget.startsWith('day:') || !backupStatus || backupStatus.target !== backupTarget || backupStatus.kind === 'backing-up') return;
+    const timer = window.setTimeout(() => {
+      signOut();
+      navigate('/login', { replace: true });
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [backupTarget, backupStatus, signOut, navigate]);
 
   const cards = [
     { label: 'Opening float', value: topTotals.opening, icon: Wallet, tone: 'violet' },
@@ -481,7 +493,7 @@ export default function CashierBalances() {
 
       <Modal open={dayCloseOpen} onClose={() => setDayCloseOpen(false)} title="Admin · Close full day" sub={`Today · ${today} · ${openSessions.length} open drawer(s)`} wide>
         <div className="space-y-4">
-          <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm text-sub">Every open drawer must be counted. Held bills and pending reverse approvals block day close. The app stays open after sign-off; the encrypted Drive backup runs best-effort.</div>
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-sm text-sub">Every open drawer must be counted. Held bills and pending reverse approvals block day close. After sign-off, the POS attempts encrypted Google Drive backup for up to 7 seconds, shows the result, then signs out to the login screen. If offline or backup is not configured, the day still closes locally and the result is shown before sign-out.</div>
           <div className="space-y-2">
             {openSessions.map(session => {
               const row = rowFor(session.cashierId);
