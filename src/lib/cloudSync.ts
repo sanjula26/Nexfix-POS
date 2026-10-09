@@ -544,6 +544,8 @@ export async function registerTradeInAtomic(input: {
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud trade-in was not committed' };
+  const { data: saleBranch } = await supabase.from('sales').select('branch_id').eq('shop_id', input.shopId).eq('id', input.saleId).maybeSingle();
+  if (saleBranch?.branch_id) { try { await refreshCloudBranchStock(input.shopId, saleBranch.branch_id); } catch { /* retry on the next branch refresh */ } }
   return { ok: true, alreadyCommitted: row.already_committed === true, unitId: String(row.unit_id || input.unitId) };
 }
 
@@ -619,6 +621,10 @@ export async function approveSaleReversal(input: {
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud reversal approval was not committed' };
+  if (row.sale_id) {
+    const { data: saleBranch } = await supabase.from('sales').select('branch_id').eq('shop_id', input.shopId).eq('id', row.sale_id).maybeSingle();
+    if (saleBranch?.branch_id) { try { await refreshCloudBranchStock(input.shopId, saleBranch.branch_id); } catch { /* retry on the next branch refresh */ } }
+  }
   return { ok: true, alreadyCommitted: row.already_committed === true, requestId: row.request_id, saleId: row.sale_id, billNo: row.bill_no };
 }
 
@@ -670,6 +676,8 @@ export async function processSaleReturnAtomic(input: {
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud return was not committed' };
+  const { data: saleBranch } = await supabase.from('sales').select('branch_id').eq('shop_id', input.shopId).eq('id', input.saleId).maybeSingle();
+  if (saleBranch?.branch_id) { try { await refreshCloudBranchStock(input.shopId, saleBranch.branch_id); } catch { /* retry on the next branch refresh */ } }
   return { ok: true, alreadyCommitted: row.already_committed === true, returnId: row.return_id, returnNo: row.return_no, refundAmount: Number(row.refund_amount), additionalPayment: Number(row.additional_payment), saleId: row.sale_id };
 }
 
@@ -741,6 +749,8 @@ export async function processPurchaseReturnAtomic(input: {
   if (error) return { ok:false, error:error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok:false, error:'Cloud supplier return was not committed' };
+  const { data: purchaseBranch } = await supabase.from('purchases').select('branch_id').eq('shop_id', input.shopId).eq('id', input.purchaseId).maybeSingle();
+  if (purchaseBranch?.branch_id) { try { await refreshCloudBranchStock(input.shopId, purchaseBranch.branch_id); } catch { /* retry on the next branch refresh */ } }
   return {
     ok:true,
     alreadyCommitted:row.already_committed === true,
