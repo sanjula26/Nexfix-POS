@@ -8,9 +8,18 @@ import {
 import { usePOS } from '../lib/store';
 import { Badge, Avatar } from '../components/ui';
 import { fmtRs, fmtNum, fmtDateTime, inRange, periodRange, startOfDay, salePayments, salePaymentLabel } from '../lib/utils';
+import { hasRecoveryKey } from '../lib/backupCrypto';
+import { getDriveShopId } from '../lib/driveSync';
+import { getCloudShopId } from '../lib/cloudSync';
 
 export default function Dashboard() {
-  const { state, user, can } = usePOS();
+  const { state, user, can, backupMeta, connectivity } = usePOS();
+  const recoveryScope = getDriveShopId() || getCloudShopId() || '';
+  const recoveryKeyPresent = hasRecoveryKey(recoveryScope);
+  const backupError = backupMeta.lastCloudBackupError || '';
+  const cloudBackupTime = backupMeta.lastCloudBackupAt ? new Date(backupMeta.lastCloudBackupAt).getTime() : 0;
+  const backupStale = !cloudBackupTime || Date.now() - cloudBackupTime > Math.max(24, (Number(backupMeta.autoBackupHours) || 6) * 2) * 60 * 60 * 1000;
+  const backupHealth = backupError ? 'error' : backupStale ? 'warning' : 'ok';
   const navigate = useNavigate();
   const snapRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
@@ -131,6 +140,22 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      <section className="card p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><div className="flex items-center gap-2"><Activity size={16} className="text-violet-500"/><h2 className="font-bold text-ink">Google Drive backup health</h2></div><p className="text-xs text-sub mt-1">Backup timestamps and recovery-key presence only — no secrets are displayed.</p></div>
+          <Badge tone={backupHealth === 'ok' ? 'emerald' : backupHealth === 'warning' ? 'amber' : 'rose'}>{backupHealth === 'ok' ? 'Cloud backup recent' : backupHealth === 'warning' ? 'Check backup status' : 'Last cloud backup error'}</Badge>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Last automatic backup</div><div className="text-sm font-semibold mt-1">{backupMeta.lastAutoBackupAt ? fmtDateTime(backupMeta.lastAutoBackupAt) : 'Not recorded'}</div></div>
+          <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Last manual backup</div><div className="text-sm font-semibold mt-1">{backupMeta.lastManualBackupAt ? fmtDateTime(backupMeta.lastManualBackupAt) : 'Not recorded'}</div></div>
+          <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Last confirmed Drive success</div><div className="text-sm font-semibold mt-1">{backupMeta.lastCloudBackupAt ? fmtDateTime(backupMeta.lastCloudBackupAt) : 'Not recorded'}</div></div>
+          <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Recovery Key</div><div className={`text-sm font-semibold mt-1 ${recoveryKeyPresent ? 'text-emerald-600' : 'text-amber-600'}`}>{recoveryKeyPresent ? 'Present on this device' : 'Not found for this shop on this device'}</div></div>
+        </div>
+        {backupError && <div role="status" className="rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-xs text-rose-600">Latest backup error: {backupError}</div>}
+        {!connectivity.online && <div className="text-xs text-amber-600">This device appears offline. A cloud backup cannot be confirmed until connectivity returns.</div>}
+        <div className="flex justify-end"><button className="btn btn-soft" onClick={()=>navigate('/settings')}>Open backup settings <ArrowRight size={14}/></button></div>
+      </section>
 
       {/* Phase 3 quick alerts */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
