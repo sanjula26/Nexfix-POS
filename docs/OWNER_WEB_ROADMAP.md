@@ -223,3 +223,21 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - [x] Desktop POS, Drive backup and updater source files were not modified.
 - [ ] Browser end-to-end click-through against a signed-in browser session remains to be manually smoke-tested; no automated browser session is provisioned here.
 - [x] Phase 5 not started.
+
+
+## Phase 5 — Distributor / super-admin: SKIPPED (2026-10-09)
+
+**Decision: do not build Phase 5 yet.** The current production evidence shows one shop, one active shop membership and one active user. The repository has a shop/membership model, but there is no verified product/business decision in the current project records that NexFix POS is being commercially operated as a distributor platform for many unrelated shops. A single live tenant is not proof of a multi-shop sales model.
+
+Building a super-admin before that business requirement is confirmed would introduce a high-privilege cross-tenant access surface, shop bootstrap/provisioning APIs, and support-access auditing that are not currently needed or safely testable against multiple real tenants. We therefore do not create a super-admin account, tenant listing, bootstrap flow, or support impersonation/audit feature as a partial implementation.
+
+Existing Owner Web remains shop-owner-only: membership-resolved shop scope and existing RLS are unchanged. This skip does **not** weaken the rule that a shop owner must never access another shop's data. The existing shop-scoped access model remains in place; no new cross-shop query or elevated browser credential is introduced.
+
+**Revisit Phase 5 only after an explicit product decision that NexFix POS is being sold/operated for many separate shops**, and provision a dedicated test tenant to prove isolation and onboarding before enabling distributor functionality.
+
+### Phase 5 checklist
+
+- [x] Evaluated the prerequisite against current product/repository evidence.
+- [x] Documented SKIP with reason; no half-built super-admin or cross-tenant support route.
+- [x] Normal shop-owner Owner Web unchanged; no application or database behavior changed for this phase.
+- [x] Phase 5 implementation intentionally not started.
