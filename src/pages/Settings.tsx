@@ -52,19 +52,36 @@ export default function Settings() {
   const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState(() => state.settings.branchId && state.settings.branchId !== 'local-main' ? state.settings.branchId : '');
   const [branchMsg, setBranchMsg] = useState('Checking branch configuration…');
+  const bindBranchToDevice = async (branchId: string, shopId = getCloudShopId()) => {
+    if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) return false;
+    if (user?.role !== 'admin' && user?.role !== 'manager') return false;
+    const { data, error } = await supabase.rpc('set_pos_device_branch', {
+      p_shop_id: shopId, p_device_id: phoneSalesMachine.id, p_branch_id: branchId,
+    });
+    if (error || !data?.ok) {
+      setBranchMsg(error?.message || data?.error || 'Could not bind this POS device to the selected branch.');
+      return false;
+    }
+    setBranchMsg('Selected branch saved and this POS device is bound to it.');
+    return true;
+  };
   useEffect(() => {
     let cancelled = false;
     const shopId = getCloudShopId();
     const cacheKey = shopId ? `nexfix_branches_v1:${shopId}` : '';
+    let hasCachedOptions = false;
     const applyOptions = (rows: BranchOption[], fromCache = false) => {
       if (cancelled) return;
       setBranchOptions(rows);
       const saved = state.settings.branchId || '';
       const match = rows.find(branch => branch.id === saved && branch.active);
-      if (match) setSelectedBranchId(match.id);
-      else if (rows.length === 1) {
+      if (match) {
+        setSelectedBranchId(match.id);
+        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(match.id, shopId);
+      } else if (rows.length === 1) {
         setSelectedBranchId(rows[0].id);
-        if (user?.role === 'admin' && saved !== rows[0].id) updateSettings({ branchId: rows[0].id });
+        if ((user?.role === 'admin' || user?.role === 'manager') && saved !== rows[0].id) updateSettings({ branchId: rows[0].id });
+        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(rows[0].id, shopId);
       } else setSelectedBranchId('');
       setBranchMsg(fromCache ? 'Offline mode: using saved branch list.' : rows.length === 1
         ? 'Main branch is selected automatically.'
@@ -73,7 +90,7 @@ export default function Settings() {
     if (cacheKey) {
       try {
         const cached = JSON.parse(localStorage.getItem(cacheKey) || '[]') as BranchOption[];
-        if (Array.isArray(cached) && cached.length) applyOptions(cached, true);
+        if (Array.isArray(cached) && cached.length) { hasCachedOptions = true; applyOptions(cached, true); }
       } catch { /* use live branch list below */ }
     }
     if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -90,11 +107,11 @@ export default function Settings() {
         if (cacheKey) { try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ } }
         applyOptions(rows, false);
       } catch (error) {
-        if (!cancelled && !branchOptions.length) setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.');
+        if (!cancelled && !hasCachedOptions) setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.');
       }
     })();
     return () => { cancelled = true; };
-  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings]);
+  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings, phoneSalesMachine.id]);
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
   const [phoneSalesToken, setPhoneSalesToken] = useState('');
   const [phoneSalesLink, setPhoneSalesLink] = useState('');
@@ -732,7 +749,7 @@ export default function Settings() {
         <div className="max-w-xl">
           <label className="block text-xs font-semibold text-sub mb-1.5" htmlFor="pos-branch-select">Selected branch</label>
           <select id="pos-branch-select" className="input" value={selectedBranchId} disabled={user?.role !== 'admin' || branchOptions.length === 0 || branchOptions.length === 1}
-            onChange={e => { const value = e.target.value; setSelectedBranchId(value); updateSettings({ branchId: value || undefined }); setBranchMsg(value ? 'Branch selection saved for this POS.' : 'Select an active branch before cloud sales or GRN receive.'); }}>
+            onChange={e => { const value = e.target.value; setSelectedBranchId(value); updateSettings({ branchId: value || undefined }); if (value) void bindBranchToDevice(value); else setBranchMsg('Select an active branch before cloud sales or GRN receive.'); }}>
             <option value="">Select a branch…</option>
             {branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code}){branch.is_default ? ' — Main' : ''}</option>)}
           </select>
