@@ -43,7 +43,7 @@ const NAV: NavDef[] = [
   { to: '/reports', label: 'Reports', icon: BarChart3, perm: 'page:reports', group: 'Operations' },
   { to: '/price-tags', label: 'Price Tags', icon: Tags, perm: 'page:pricetags', group: 'Operations' },
   { to: '/users', label: 'Users', icon: UserCog, group: 'Administration', adminOnly: true },
-  { to: '/cashier-balances', label: 'Day Cash & Drawer', icon: Landmark, group: 'Administration', adminOnly: true },
+  { to: '/cashier-balances', label: 'Cashier Balance Report', icon: Landmark, perm: 'page:pos', group: 'Operations' },
   { to: '/day-close-report', label: 'Day Close Report', icon: BarChart3, group: 'Administration', adminOnly: true },
   { to: '/permissions', label: 'Permissions', icon: KeyRound, group: 'Administration', adminOnly: true },
   { to: '/audit-log', label: 'Audit Log', icon: ScrollText, group: 'Administration', adminOnly: true },
@@ -59,7 +59,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/grn/, 'Goods Received Notes'], [/^\/purchase-return/, 'Purchase Return'], [/^\/purchases/, 'Purchases'],
   [/^\/csv-import/, 'CSV Import'], [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
   [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'],
-  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Day Cash & Drawer'], [/^\/permissions/, 'Permissions'],
+  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Cashier Balance Report'], [/^\/permissions/, 'Permissions'],
   [/^\/audit-log/, 'Audit Log'], [/^\/settings/, 'Settings'],
 ];
 

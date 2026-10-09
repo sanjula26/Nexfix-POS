@@ -9,6 +9,7 @@ export interface CustomerCreditAllocation {
 export interface CustomerCreditPayment {
   id: string;
   customerId: string;
+  cashierId?: string;
   amount: number;
   method: Exclude<PaymentMethod, 'credit'>;
   methods?: PaymentLeg[];

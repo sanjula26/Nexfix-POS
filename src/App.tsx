@@ -341,7 +341,7 @@ function AppRoutes() {
           <Route path="/kits" element={<PermissionProtected permission="page:inventory"><Kits /></PermissionProtected>} />
           <Route path="/audit-log" element={<PermissionProtected adminOnly><AuditLog /></PermissionProtected>} />
           <Route path="/users" element={<PermissionProtected adminOnly><Users /></PermissionProtected>} />
-          <Route path="/cashier-balances" element={<PermissionProtected adminOnly><CashierBalances /></PermissionProtected>} />
+          <Route path="/cashier-balances" element={<PermissionProtected permission="page:pos"><CashierBalances /></PermissionProtected>} />
           <Route path="/day-close-report" element={<PermissionProtected adminOnly><DayCloseReport /></PermissionProtected>} />
           <Route path="/permissions" element={<PermissionProtected adminOnly><Permissions /></PermissionProtected>} />
           <Route path="/settings" element={<PermissionProtected adminOnly><Settings /></PermissionProtected>} />
