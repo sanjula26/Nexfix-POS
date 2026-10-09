@@ -77,7 +77,7 @@ begin
          (coalesce(p.reorder_level,5) > 0 and bs.qty <= coalesce(p.reorder_level,5))
   from public.branch_stock bs
   join public.branches b on b.id=bs.branch_id and b.shop_id=bs.shop_id and b.active
-  join public.products p on p.id=bs.product_id and p.shop_id=bs.shop_id and p.active
+  join public.products p on p.id=bs.product_id and p.shop_id=bs.shop_id
   where bs.shop_id=p_shop_id and (p_branch_id is null or bs.branch_id=p_branch_id)
   order by b.name, p.name;
 end;
