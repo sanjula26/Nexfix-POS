@@ -2752,6 +2752,10 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: session is already closed');
       return false;
     }
+    if (current.openingConfirmed === false) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: opening float has not been confirmed');
+      return false;
+    }
     if (snapshot.held.length || (snapshot.reverseRequests || []).some(request => request.status === 'pending')) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: held bills or pending reverse approvals must be resolved first');
       return false;
@@ -2790,6 +2794,10 @@ const deletePurchase = useCallback((id: string) => {
     const openSessions = snapshot.sessions.filter(x => x.date === today && !x.closed);
     if (!openSessions.length) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: no open cashier sessions');
+      return false;
+    }
+    if (openSessions.some(session => session.openingConfirmed === false)) {
+      pushAudit('DENIED', 'DayClose', 'Blocked day close: every open drawer must confirm its opening float first');
       return false;
     }
     if (snapshot.held.length) {
