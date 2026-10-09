@@ -106,7 +106,7 @@ export default function CreditSettle() {
         return setError('Enter a valid Cash and/or Card split.');
       }
       if (Math.abs(cash + card - value) > 0.009) return setError('Cash + Card must equal the amount to collect.');
-      methods = [{ method: 'cash', amount: cash }, { method: 'card', amount: card }].filter(x => x.amount > 0);
+      methods = [{ method: 'cash' as const, amount: cash }, { method: 'card' as const, amount: card }].filter(x => x.amount > 0);
     }
     const payment = saveCustomerCreditPayment({
       customerId: customer.id, amount: value, method, methods,
