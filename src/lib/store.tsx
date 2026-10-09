@@ -3124,6 +3124,15 @@ const deletePurchase = useCallback((id: string) => {
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback((u: InventoryUnit): boolean => {
+    const shopId = getCloudShopId();
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Unit', 'Blocked unit save because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return false;
+    }
+    const targetBranchId = effectiveBranch(selectedBranchId);
     if (!user || !can('page:units') || !can('act:manageStock')) {
       pushAudit('DENIED', 'Unit', 'Blocked unit save without required inventory permissions');
       return false;
@@ -3149,6 +3158,10 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Unit', 'Blocked unit product reassignment');
       return false;
     }
+    if (existingUnit && effectiveBranch(existingUnit.branchId) !== targetBranchId) {
+      pushAudit('DENIED', 'Unit', 'Blocked editing a unit from another branch. Use a stock transfer to move units between branches.');
+      return false;
+    }
     if (existingUnit && existingUnit.status !== 'in_stock') {
       pushAudit('DENIED', 'Unit', 'Blocked edit of historical/non-stock unit');
       return false;
@@ -3166,7 +3179,7 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Unit', `Duplicate IMEI/serial blocked: ${imei || serial}`);
       return false;
     }
-    const normalized = { ...u, imei: imei || undefined, serial: serial || undefined };
+    const normalized = { ...u, branchId: existingUnit?.branchId || targetBranchId, imei: imei || undefined, serial: serial || undefined };
     setState(s => ({
       ...s,
       units: exists
@@ -3179,6 +3192,12 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.units, state.products, pushAudit, user, can]);
 
   const saveUnitsBulk = useCallback((newUnits: InventoryUnit[]): { ok: boolean; added: number; errors: string[] } => {
+    const shopId = getCloudShopId();
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') return { ok: false, added: 0, errors: ['Select this POS branch in Settings before adding IMEI/serial units.'] };
+    const targetBranchId = effectiveBranch(selectedBranchId);
     if (!user || !can('act:manageStock')) return { ok: false, added: 0, errors: ['You do not have permission to manage inventory units.'] };
     const errors: string[] = [];
     const current = state.units || [];
@@ -3212,7 +3231,7 @@ const deletePurchase = useCallback((id: string) => {
 
       const placeholder = current.find(x =>
         !usedPlaceholderIds.has(x.id) &&
-        x.productId === u.productId && x.status === 'in_stock' && !!x.purchaseId &&
+        x.productId === u.productId && x.status === 'in_stock' && !!x.purchaseId && effectiveBranch(x.branchId) === targetBranchId &&
         ((!x.imei && imei) || (!x.serial && serial))
       );
       if (placeholder) {
@@ -3220,13 +3239,14 @@ const deletePurchase = useCallback((id: string) => {
         replacements.push({
           ...u,
           id: placeholder.id,
+          branchId: placeholder.branchId || targetBranchId,
           purchaseId: placeholder.purchaseId,
           createdAt: placeholder.createdAt,
           cost: placeholder.cost,
           expiryDate: placeholder.expiryDate,
         });
       } else {
-        accepted.push(u);
+        accepted.push({ ...u, branchId: targetBranchId });
       }
     }
 
@@ -3251,6 +3271,18 @@ const deletePurchase = useCallback((id: string) => {
     }
     const u = (state.units || []).find(x => x.id === id);
     if (!u) return;
+    const shopId = getCloudShopId();
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Unit', 'Blocked unit delete because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return;
+    }
+    if (effectiveBranch(u.branchId) !== effectiveBranch(selectedBranchId)) {
+      pushAudit('DENIED', 'Unit', 'Blocked deleting a unit from another branch.');
+      return;
+    }
     if (u.status !== 'in_stock') {
       pushAudit('DENIED', 'Unit', 'Blocked deletion of ' + (u.imei || u.serial || u.id) + ': historical/non-stock unit must be retained');
       return;
