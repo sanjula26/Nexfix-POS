@@ -91,7 +91,7 @@ export default function Inventory() {
     setEditing({ ...editing, attributes: Object.keys(attributes).length ? attributes : undefined });
   };
 
-  const save = () => {
+  const save = async () => {
     if (!editing || !editing.name.trim()) return;
     const current = isNew ? null : state.products.find(p => p.id === editing.id);
     const currentTracked = !!(current?.trackImei || current?.trackSerial);
@@ -171,9 +171,10 @@ export default function Inventory() {
         alert('The product could not be saved. Check the SKU/barcode and try again.');
         return;
       }
-      const result = saveUnitsBulk(newUnits);
+      const result = await saveUnitsBulk(newUnits);
       if (!result.ok || result.errors.length) {
         alert(result.errors.length ? result.errors.join('\n') : 'The product was saved, but the unit identifiers could not be added.');
+        return;
       }
     } else {
       if (!saveProduct(editing)) {
