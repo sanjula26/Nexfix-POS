@@ -56,13 +56,14 @@ export default function Units() {
     <Modal open={bulkOpen} onClose={()=>setBulkOpen(false)} title="Bulk add IMEI / Serial" sub="Paste one identifier per line; use IMEI,SERIAL when both are tracked." wide>
       <BulkUnitEditor product={trackedProducts.find(p=>p.id===bulkProductId)} productId={bulkProductId} setProductId={setBulkProductId} products={trackedProducts} text={bulkText} setText={setBulkText} msg={bulkMsg} errors={bulkErrors} onResult={(result)=>{setBulkMsg(result.msg);setBulkErrors(result.errors)}} onClose={()=>setBulkOpen(false)} saveUnitsBulk={saveUnitsBulk}/>
     </Modal>
-    {editing||isNew?<Modal open title={isNew?'Add inventory unit':'Edit inventory unit'} onClose={()=>{setEditing(null);setIsNew(false)}}><UnitEditor value={editing} products={isNew?trackedProducts:products} units={units} isNew={isNew} onSave={(unit)=>{const p=products.find(x=>x.id===unit.productId);if(!p)return;if(isNew){const placeholder=units.find(x=>x.productId===p.id&&x.status==='in_stock'&&!!x.purchaseId&&((p.trackImei&&!x.imei)||(p.trackSerial&&!x.serial)));if(placeholder){saveUnit({...unit,id:placeholder.id,purchaseId:placeholder.purchaseId,createdAt:placeholder.createdAt,cost:placeholder.cost,expiryDate:placeholder.expiryDate,note:unit.note||placeholder.note});}else{saveUnit(unit);}}else{saveUnit(unit);}}} onClose={()=>{setEditing(null);setIsNew(false)}}/></Modal>:null}
+    {editing||isNew?<Modal open title={isNew?'Add inventory unit':'Edit inventory unit'} onClose={()=>{setEditing(null);setIsNew(false)}}><UnitEditor value={editing} products={isNew?trackedProducts:products} units={units} isNew={isNew} onSave={async (unit)=>{const p=products.find(x=>x.id===unit.productId);if(!p)return false;if(isNew){const placeholder=units.find(x=>x.productId===p.id&&x.status==='in_stock'&&!!x.purchaseId&&((p.trackImei&&!x.imei)||(p.trackSerial&&!x.serial)));if(placeholder){return await saveUnit({...unit,id:placeholder.id,purchaseId:placeholder.purchaseId,createdAt:placeholder.createdAt,cost:placeholder.cost,expiryDate:placeholder.expiryDate,note:unit.note||placeholder.note});}return await saveUnit(unit);}return await saveUnit(unit);}} onClose={()=>{setEditing(null);setIsNew(false)}}/></Modal>:null}
   </div>;
 }
 
-function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:InventoryUnit|null;products:Product[];units:InventoryUnit[];isNew:boolean;onSave:(u:InventoryUnit)=>void;onClose:()=>void}){
- const [productId,setProductId]=useState(value?.productId||products[0]?.id||''); const product=products.find(p=>p.id===productId); const [imei,setImei]=useState(value?.imei||''); const [serial,setSerial]=useState(value?.serial||''); const [status,setStatus]=useState<UnitStatus>(value?.status||'in_stock'); const [note,setNote]=useState(value?.note||''); const [error,setError]=useState('');
- const submit=()=>{
+function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:InventoryUnit|null;products:Product[];units:InventoryUnit[];isNew:boolean;onSave:(u:InventoryUnit)=>Promise<boolean>;onClose:()=>void}){
+ const [saving,setSaving]=useState(false); const [productId,setProductId]=useState(value?.productId||products[0]?.id||''); const product=products.find(p=>p.id===productId); const [imei,setImei]=useState(value?.imei||''); const [serial,setSerial]=useState(value?.serial||''); const [status,setStatus]=useState<UnitStatus>(value?.status||'in_stock'); const [note,setNote]=useState(value?.note||''); const [error,setError]=useState('');
+ const submit=async()=>{
+   if(saving)return;
    const product=products.find(p=>p.id===productId);
    if(!product){setError('Select a product.');return;}
    const normalizedImei=imei.trim(); const normalizedSerial=serial.trim();
@@ -72,7 +73,7 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
    const duplicate=units.some(x=>x.id!==(value?.id||'')&&x.status==='in_stock'&&((normalizedImei&&x.imei===normalizedImei)||(normalizedSerial&&x.serial===normalizedSerial)));
    if(duplicate){setError('That IMEI or serial number is already assigned to another in-stock unit.');return;}
    const unit:InventoryUnit={id:value?.id||uid(),productId:isNew?productId:(value?.productId||productId),imei:normalizedImei||undefined,serial:normalizedSerial||undefined,status:isNew?'in_stock':(value?.status||status),note:note.trim()||undefined,createdAt:value?.createdAt||new Date().toISOString()};
-   setError(''); onSave(unit); onClose();
+   setError(''); setSaving(true); try { const saved=await onSave(unit); if(saved) onClose(); else setError('Unit was not saved. Check branch selection, permissions and cloud/queue status.'); } catch { setError('Unit was not saved because the cloud operation failed. Please retry.'); } finally { setSaving(false); }
  };
  return <div className="space-y-4"><Field label="Product"><SearchableSelect value={productId} options={products} onChange={v=>{setProductId(v);setError('')}} disabled={!isNew} placeholder="Search product, SKU or barcode…" ariaLabel="Product" getLabel={p=>p.name} getSearchText={p=>[p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p=><><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')}</div></>} /></Field><div className="grid grid-cols-1 gap-4 md:grid-cols-2">
   <Field label={product?.trackImei ? 'IMEI *' : 'IMEI'} hint={product?.trackImei ? 'Required for this product' : 'Not required'}>
@@ -84,11 +85,13 @@ function UnitEditor({value,products,units,isNew,onSave,onClose}:{value:Inventory
 </div>
 <div className="rounded-lg bg-violet-500/[0.06] border border-violet-500/15 px-3 py-2 text-xs text-sub">
   {product?.trackImei && product?.trackSerial ? 'This product requires both IMEI and Serial.' : product?.trackImei ? 'This product requires an IMEI.' : product?.trackSerial ? 'This product requires a Serial number.' : 'Select a tracked product.'}
-</div><Field label="Status"><select className="input" value={status} onChange={e=>setStatus(e.target.value as UnitStatus)} disabled={isNew||!!value}><option value="in_stock">In stock</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).filter(s=>s!=='in_stock').map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select>{isNew?<div className="mt-1 text-xs text-sub">New units use an existing received stock unit when one is waiting for its IMEI/serial; otherwise stock increases by 1.</div>:<div className="mt-1 text-xs text-sub">Unit status is changed automatically by sales, returns, repairs and stock workflows.</div>}</Field><Field label="Note"><textarea className="input min-h-24" value={note} onChange={e=>setNote(e.target.value)}/></Field>{error&&<p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}<div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end"><button type="button" className="btn btn-soft w-full !px-5 !py-2.5 sm:w-auto" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary w-full !px-5 !py-2.5 sm:w-auto" onClick={submit}>Save</button></div></div>;
+</div><Field label="Status"><select className="input" value={status} onChange={e=>setStatus(e.target.value as UnitStatus)} disabled={isNew||!!value}><option value="in_stock">In stock</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).filter(s=>s!=='in_stock').map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select>{isNew?<div className="mt-1 text-xs text-sub">New units use an existing received stock unit when one is waiting for its IMEI/serial; otherwise stock increases by 1.</div>:<div className="mt-1 text-xs text-sub">Unit status is changed automatically by sales, returns, repairs and stock workflows.</div>}</Field><Field label="Note"><textarea className="input min-h-24" value={note} onChange={e=>setNote(e.target.value)}/></Field>{error&&<p role="alert" className="text-sm font-medium text-rose-600">{error}</p>}<div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end"><button type="button" className="btn btn-soft w-full !px-5 !py-2.5 sm:w-auto" disabled={saving} onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary w-full !px-5 !py-2.5 sm:w-auto" disabled={saving} onClick={submit}>{saving?'Saving…':'Save'}</button></div></div>;
 }
 
-function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product?:Product;productId:string;setProductId:(v:string)=>void;products:Product[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>{ok:boolean;added:number;errors:string[]}}){
- const submit=()=>{
+function BulkUnitEditor({product,productId,setProductId,products,text,setText,msg,errors,onResult,onClose,saveUnitsBulk}:{product?:Product;productId:string;setProductId:(v:string)=>void;products:Product[];text:string;setText:(v:string)=>void;msg:string;errors:string[];onResult:(r:{msg:string;errors:string[]})=>void;onClose:()=>void;saveUnitsBulk:(units:InventoryUnit[])=>Promise<{ok:boolean;added:number;errors:string[]}>}){
+ const [saving,setSaving]=useState(false);
+ const submit=async()=>{
+   if(saving)return;
    if(!product){onResult({msg:'Select a tracked product.',errors:[]});return;}
    const lines=text.split(/\r?\n/); const units:InventoryUnit[]=[]; const parseErrors:string[]=[];
    for(let i=0;i<lines.length;i++){
@@ -107,16 +110,19 @@ function BulkUnitEditor({product,productId,setProductId,products,text,setText,ms
      }
      units.push({id:uid(),productId,imei:imei||undefined,serial:serial||undefined,status:'in_stock',createdAt:new Date().toISOString()});
    }
-   const result=saveUnitsBulk(units);
-   const errors=[...parseErrors,...result.errors];
-   onResult({msg:result.added+' unit(s) added'+(errors.length?' · '+errors.length+' error(s)':''),errors});
-   if(result.added>0) setText('');
+   setSaving(true); try {
+     const result=await saveUnitsBulk(units);
+     const errors=[...parseErrors,...result.errors];
+     onResult({msg:result.added+' unit(s) added'+(errors.length?' · '+errors.length+' error(s)':''),errors});
+     if(result.added>0) setText('');
+   } catch { onResult({msg:'Unit sync failed. Check cloud/queue status and retry.',errors:parseErrors}); }
+   finally { setSaving(false); }
  };
  return <div className="space-y-4">
    <Field label="Product"><SearchableSelect value={productId} options={products} onChange={setProductId} placeholder="Search tracked product…" ariaLabel="Bulk product" getLabel={p=>p.name} getSearchText={p=>[p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p=><><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')} · {p.trackImei&&p.trackSerial?'IMEI + Serial':p.trackImei?'IMEI':'Serial'}</div></>} /></Field>
    <Field label={product?.trackImei&&product?.trackSerial?'IMEI,SERIAL per line':'One IMEI or serial per line'} hint={product?.trackImei&&product?.trackSerial?'Example: 356789012345678,ABC123':'Blank lines are ignored; duplicates are rejected.'}><textarea className="input min-h-[220px] font-mono text-sm" value={text} onChange={e=>setText(e.target.value)} placeholder={product?.trackImei&&product?.trackSerial?'356789012345678,ABC123\n356789012345679,ABC124':'356789012345678\n356789012345679'} /></Field>
    {msg&&<p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{msg}</p>}
    {errors.length>0&&<div className="max-h-40 overflow-auto rounded-xl border border-rose-500/25 bg-rose-500/10 p-3 text-xs text-rose-600 dark:text-rose-400"><div className="font-bold mb-1">Errors</div>{errors.map((e,i)=><div key={i}>{e}</div>)}</div>}
-   <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end"><button type="button" className="btn btn-soft w-full !px-5 !py-2.5 sm:w-auto" onClick={onClose}>Close</button><button type="button" className="btn btn-primary w-full !px-5 !py-2.5 sm:w-auto" onClick={submit} disabled={!product||!text.trim()}>Add units</button></div>
+   <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end"><button type="button" className="btn btn-soft w-full !px-5 !py-2.5 sm:w-auto" disabled={saving} onClick={onClose}>Close</button><button type="button" className="btn btn-primary w-full !px-5 !py-2.5 sm:w-auto" onClick={submit} disabled={saving||!product||!text.trim()}>{saving?'Saving…':'Add units'}</button></div>
  </div>;
 }
