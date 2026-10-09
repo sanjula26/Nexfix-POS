@@ -131,7 +131,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           if(parsed.baseProduct && state){
-            const bootstrapState={...state,products:state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product)};
+            const hasBaseProduct=state.products.some(product=>product.id===parsed.baseProduct!.id); const bootstrapState={...state,products:hasBaseProduct?state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product):[...state.products,parsed.baseProduct!]};
             const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
             if(!catalog.ok) break;
           }
