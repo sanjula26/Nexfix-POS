@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Banknote, CreditCard, Landmark, Smartphone, Search, UserRound, ReceiptText, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { usePOS } from '../lib/store';
-import { Badge, EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
+import { EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
 import { fmtDate, fmtDateTime, fmtRs } from '../lib/utils';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
@@ -15,7 +15,7 @@ const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; i
 ];
 
 export default function CreditSettle() {
-  const { state, user, can, saveCustomerCreditPayment } = usePOS();
+  const { state, can, saveCustomerCreditPayment } = usePOS();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'balance'>('balance');
@@ -33,11 +33,21 @@ export default function CreditSettle() {
 
   const payments = state.customerCreditPayments || [];
   const customer = state.customers.find(c => c.id === customerId);
-  const invoices = useMemo(() => state.sales
-    .filter(s => s.customerId && s.status === 'completed')
-    .map(s => ({ sale: s, due: getOpenCreditInvoiceBalance(s, payments) }))
-    .filter(x => x.due > 0.009)
-    .sort((a, b) => +new Date(a.sale.date) - +new Date(b.sale.date)), [state.sales, payments]);
+  const invoices = useMemo(() => {
+    const open = state.sales
+      .filter(s => s.customerId && s.status === 'completed')
+      .map(s => ({ sale: s, rawDue: getOpenCreditInvoiceBalance(s, payments) }))
+      .filter(x => x.rawDue > 0.009)
+      .sort((a, b) => +new Date(a.sale.date) - +new Date(b.sale.date));
+    const remainingByCustomer = new Map(state.customers.map(c => [c.id, Math.max(0, Number(c.creditBalance) || 0)]));
+    return open.map(row => {
+      const customerId = row.sale.customerId!;
+      const remaining = remainingByCustomer.get(customerId) || 0;
+      const due = Math.min(row.rawDue, remaining);
+      remainingByCustomer.set(customerId, Math.max(0, Math.round((remaining - due) * 100) / 100));
+      return { sale: row.sale, due };
+    }).filter(row => row.due > 0.009);
+  }, [state.sales, state.customers, payments]);
   const selectedInvoice = invoices.find(x => x.sale.id === saleId);
   const outstanding = customer
     ? (selectedInvoice && selectedInvoice.sale.customerId === customer.id ? selectedInvoice.due : Math.max(0, customer.creditBalance))
