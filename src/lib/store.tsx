@@ -1891,10 +1891,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const priorCreditReduction = (sale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
+    const refundCreditDue = Math.max(0, sale.total - sale.amountPaid - priorCreditReduction);
+    const refundCreditAmount = Math.min(refundCreditDue, refundValue);
+    const refundCashAmount = Math.max(0, Math.round((refundValue - refundCreditAmount) * 100) / 100);
     const refundEvent = {
       id: uid(),
       date: new Date().toISOString(),
       amount: Math.round(refundValue * 100) / 100,
+      cashAmount: refundCashAmount,
+      creditAmount: Math.round(refundCreditAmount * 100) / 100,
       method: 'cash' as const,
       cashierId: user.id,
       cashierName: user.name,
@@ -1919,7 +1925,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const returnedUnitIds = currentSale.items.flatMap(it => it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === currentSale.id));
       const allReturned = currentRemaining.every(q => q === 0);
       const tradeInReturn = allReturned && currentSale.tradeIn?.addToInventory && currentSale.tradeIn.productId && currentSale.tradeIn.unitId;
-      const creditDue = currentSale.amountPaid < currentSale.total ? Math.max(0, currentSale.total - currentSale.amountPaid) : 0;
+      const previouslyCredited = (currentSale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
+      const creditDue = Math.max(0, currentSale.total - currentSale.amountPaid - previouslyCredited);
       const creditReduction = Math.min(creditDue, refundValue);
       const returnedRatio = currentSale.total > 0 ? Math.min(1, refundValue / currentSale.total) : 1;
       const pointsEarnedToReverse = Math.min(currentSale.pointsEarned || 0, Math.round((currentSale.pointsEarned || 0) * returnedRatio));
