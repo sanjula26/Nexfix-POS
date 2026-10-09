@@ -366,7 +366,7 @@ export interface CommittedCloudSale {
 }
 
 export async function completeSaleAtomic(input: {
-  shopId: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
+  shopId: string; branchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
