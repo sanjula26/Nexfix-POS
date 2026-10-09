@@ -20,7 +20,7 @@ export default function LowStockSuggestions() {
           .map(g => ({date:g.processedAt || g.date,supplier:g.supplierName})).sort((a,b)=>b.date.localeCompare(a.date));
         const latest = [...history,...grnHistory].sort((a,b)=>b.date.localeCompare(a.date))[0];
         const supplier = state.suppliers.find(s=>s.id===p.supplierId)?.name || latest?.supplier || '—';
-        return {...p,suggested:Math.max(0,Math.ceil((Number(p.reorderLevel)||0)*2-(Number(p.stock)||0)),lastSupplier:supplier};
+        return {...p,suggested:Math.max(0,Math.ceil(((Number(p.reorderLevel)||0)*2)-(Number(p.stock)||0))),lastSupplier:supplier};
       }).sort((a,b)=>a.stock-b.stock || a.name.localeCompare(b.name));
   }, [state.products,state.purchases,state.grns,state.suppliers,search]);
   const exportCsv = () => downloadFile('nexfix-low-stock-reorder.csv',[
