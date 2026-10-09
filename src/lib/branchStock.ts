@@ -55,3 +55,13 @@ export function applyBranchStockDeltas(branchId: string, deltas: Record<string, 
     return true;
   } catch { return false; }
 }
+
+export function cacheDefaultBranchId(shopId: string, branchId: string): void {
+  if (!shopId || !branchId) return;
+  try { storage()?.setItem(`nexfix_default_branch_v1:${shopId}`, branchId); } catch { /* optional cache */ }
+}
+
+export function getDefaultBranchId(shopId: string): string | null {
+  if (!shopId) return null;
+  try { return storage()?.getItem(`nexfix_default_branch_v1:${shopId}`) || null; } catch { return null; }
+}
