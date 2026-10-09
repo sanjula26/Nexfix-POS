@@ -21,7 +21,8 @@ export type QueueOp =
   | { id: string; ts: string; type: 'sale_reversal_reject'; payload: string }
   | { id: string; ts: string; type: 'purchase_receive'; payload: string }
   | { id: string; ts: string; type: 'repair_delivery'; payload: string }
-  | { id: string; ts: string; type: 'branch_stock_adjustment'; payload: string };
+  | { id: string; ts: string; type: 'branch_stock_adjustment'; payload: string }
+  | { id: string; ts: string; type: 'inventory_units_add'; payload: string };
 export interface BackupMeta {
   lastAutoBackupAt?: string;
   lastManualBackupAt?: string;
