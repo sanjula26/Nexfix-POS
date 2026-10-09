@@ -18,6 +18,7 @@ import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
+import { calculateDayEndTotals } from './dayEnd';
 import { completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
@@ -1339,7 +1340,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     customerCreditPaymentLockRef.current = true;
     try {
       const payment: CustomerCreditPayment = {
-        id: uid(), customerId: customer.id, amount, method: methods[0].method,
+        id: uid(), customerId: customer.id, cashierId: user.id, amount, method: methods[0].method,
         methods: methods.length > 1 ? methods : undefined,
         allocations: allocations.length ? allocations : undefined,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
@@ -1890,6 +1891,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const refundEvent = {
+      id: uid(),
+      date: new Date().toISOString(),
+      amount: Math.round(refundValue * 100) / 100,
+      method: 'cash' as const,
+      cashierId: user.id,
+      cashierName: user.name,
+      by: user.name,
+    };
     setStateWithInventoryLedger('REFUND', s => {
       const currentSale = s.sales.find(x => x.id === saleId);
       if (!currentSale || currentSale.status !== 'completed') return s;
@@ -1916,7 +1926,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const pointsToRestore = Math.min(currentSale.pointsRedeemed || 0, Math.round((currentSale.pointsRedeemed || 0) * returnedRatio));
       return {
         ...s,
-        sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed' } : x),
+        sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed', refunds: [...(x.refunds || []), refundEvent] } : x),
         products: s.products.map(p => {
           const qty = qtyByProduct.get(p.id) || 0;
           const tradeInQty = tradeInReturn && p.id === currentSale.tradeIn!.productId ? -1 : 0;
@@ -2701,27 +2711,39 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit('SETTINGS', 'Settings', `Updated settings: ${Object.keys(patch).join(', ')}`);
   }, [pushAudit, user]);
 
-  const closeSession = useCallback((cashierId: string, counted: number, note: string) => {
-    if (!user || user.role !== 'admin') {
-      pushAudit('DENIED', 'Session', 'Blocked cash-session close without admin access');
-      return;
+  const closeSession = useCallback((cashierId: string, counted: number, note: string): boolean => {
+    if (!user || (user.role !== 'admin' && (user.id !== cashierId || !can('page:pos')))) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: only the cashier or an admin may sign off this drawer');
+      return false;
     }
     const amount = Number(counted);
     const cleanNote = String(note || '').trim();
     if (!cashierId || !Number.isFinite(amount) || amount < 0) {
       pushAudit('DENIED', 'Session', 'Blocked invalid cash-session closing count');
-      return;
+      return false;
     }
+    const snapshot = stateRef.current;
     const today = dkey(new Date());
-    const current = state.sessions.find(x => x.cashierId === cashierId && x.date === today);
+    const current = snapshot.sessions.find(x => x.cashierId === cashierId && x.date === today);
     if (!current) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: no session exists for today');
-      return;
+      return false;
     }
     if (current.closed) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: session is already closed');
-      return;
+      return false;
     }
+    if (snapshot.held.length || (snapshot.reverseRequests || []).some(request => request.status === 'pending')) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: held bills or pending reverse approvals must be resolved first');
+      return false;
+    }
+    const expected = calculateDayEndTotals(snapshot, today, current).expected;
+    const variance = Math.round((amount - expected) * 100) / 100;
+    if (variance !== 0 && !cleanNote) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session close: a variance note is required');
+      return false;
+    }
+    const closedAt = new Date().toISOString();
     let closed = false;
     setState(s => {
       const currentSession = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
@@ -2729,39 +2751,38 @@ const deletePurchase = useCallback((id: string) => {
       closed = true;
       return {
         ...s,
-        sessions: s.sessions.map(x =>
-          x.id === currentSession.id
-            ? { ...x, closed: true, closing: Math.round(amount * 100) / 100, note: cleanNote || undefined }
-            : x,
-        ),
+        sessions: s.sessions.map(x => x.id === currentSession.id
+          ? { ...x, closed: true, closing: Math.round(amount * 100) / 100, expected, variance, closedAt, closedBy: user.name, note: cleanNote || undefined }
+          : x),
       };
     });
-    if (closed) {
-      pushAudit('DAY-CLOSE', 'Session', `Drawer settled · counted Rs. ${amount.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
-    }
-  }, [pushAudit, user, state.sessions]);
+    if (!closed) return false;
+    pushAudit('DAY-CLOSE', 'Session', `Cashier sign off · ${current.cashierName} · expected Rs. ${expected.toLocaleString()} · counted Rs. ${amount.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    return true;
+  }, [pushAudit, user, can]);
 
-  const closeDay = useCallback((counts: Record<string, number>, note: string) => {
+  const closeDay = useCallback((counts: Record<string, number>, note: string): boolean => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'DayClose', 'Blocked full day close without admin access');
       return false;
     }
+    const snapshot = stateRef.current;
     const today = dkey(new Date());
-    const openSessions = state.sessions.filter(x => x.date === today && !x.closed);
+    const openSessions = snapshot.sessions.filter(x => x.date === today && !x.closed);
     if (!openSessions.length) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: no open cashier sessions');
       return false;
     }
-    if (state.held.length) {
+    if (snapshot.held.length) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: held sales must be completed or cleared first');
       return false;
     }
-    if ((state.reverseRequests || []).some(r => r.status === 'pending')) {
+    if ((snapshot.reverseRequests || []).some(request => request.status === 'pending')) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: pending bill reverse approvals exist');
       return false;
     }
     const cleanNote = String(note || '').trim();
-    const expectedByCashier = new Map<string, number>();
+    const closings = new Map<string, { counted: number; expected: number; variance: number }>();
     let anyVariance = false;
     for (const session of openSessions) {
       const counted = Number(counts[session.cashierId]);
@@ -2769,45 +2790,41 @@ const deletePurchase = useCallback((id: string) => {
         pushAudit('DENIED', 'DayClose', `Blocked day close: counted cash missing for ${session.cashierName}`);
         return false;
       }
-      const mine = state.sales.filter(s =>
-        dkey(s.date) === today &&
-        s.cashierId === session.cashierId &&
-        (s.status === 'completed' || s.status === 'exchanged')
-      );
-      const cashSales = mine.reduce((sum, sale) =>
-        sum + salePayments(sale).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0), 0);
-      const refunds = state.sales
-        .filter(s => s.status === 'refunded' && dkey(s.date) === today && s.cashierId === session.cashierId)
-        .reduce((sum, sale) => {
-          const cashPart = salePayments(sale).filter(l => l.method === 'cash').reduce((x, l) => x + l.amount, 0);
-          return sum + (cashPart > 0 ? cashPart : sale.total);
-        }, 0);
-      const expenses = state.expenses
-        .filter(e => dkey(e.date) === today && (e.paymentMethod || 'cash') === 'cash' && e.by === session.cashierName)
-        .reduce((sum, e) => sum + e.amount, 0);
-      const expected = Math.round((session.opening + cashSales - refunds - expenses) * 100) / 100;
-      const variance = Math.round((counted - expected) * 100) / 100;
-      expectedByCashier.set(session.cashierId, expected);
+      const expected = calculateDayEndTotals(snapshot, today, session).expected;
+      const roundedCount = Math.round(counted * 100) / 100;
+      const variance = Math.round((roundedCount - expected) * 100) / 100;
+      closings.set(session.cashierId, { counted: roundedCount, expected, variance });
       if (variance !== 0) anyVariance = true;
     }
     if (anyVariance && !cleanNote) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: variance note is required');
       return false;
     }
+    const closedAt = new Date().toISOString();
     setState(s => ({
       ...s,
-      sessions: s.sessions.map(x => {
-        if (x.date !== today || x.closed) return x;
-        const counted = Math.round(Number(counts[x.cashierId]) * 100) / 100;
-        return { ...x, closed: true, closing: counted, note: cleanNote || undefined };
+      sessions: s.sessions.map(session => {
+        if (session.date !== today || session.closed) return session;
+        const close = closings.get(session.cashierId);
+        if (!close) return session;
+        return {
+          ...session,
+          closed: true,
+          closing: close.counted,
+          expected: close.expected,
+          variance: close.variance,
+          closedAt,
+          closedBy: user.name,
+          note: cleanNote || undefined,
+        };
       }),
     }));
-    const totalExpected = [...expectedByCashier.values()].reduce((a, v) => a + v, 0);
-    const totalCounted = openSessions.reduce((a, s) => a + Math.round(Number(counts[s.cashierId]) * 100) / 100, 0);
+    const totalExpected = [...closings.values()].reduce((sum, close) => sum + close.expected, 0);
+    const totalCounted = [...closings.values()].reduce((sum, close) => sum + close.counted, 0);
     const variance = Math.round((totalCounted - totalExpected) * 100) / 100;
-    pushAudit('DAY-CLOSE', 'DayClose', `Full day closed · ${openSessions.length} drawer(s) · expected Rs. ${totalExpected.toLocaleString()} · counted Rs. ${totalCounted.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
+    pushAudit('DAY-CLOSE', 'DayClose', `Full day signed off · ${openSessions.length} drawer(s) · expected Rs. ${totalExpected.toLocaleString()} · counted Rs. ${totalCounted.toLocaleString()} · variance Rs. ${variance.toLocaleString()}${cleanNote ? ` · ${cleanNote}` : ''}`);
     return true;
-  }, [pushAudit, user, state.sessions, state.sales, state.expenses, state.held, state.reverseRequests]);
+  }, [pushAudit, user]);
 
   // auto-open today's drawer session once per cashier
   useEffect(() => {
