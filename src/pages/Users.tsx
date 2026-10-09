@@ -31,6 +31,7 @@ export default function Users() {
       setFormErr('This email is already used by another user');
       return;
     }
+    if (editing.commissionPct != null && (!Number.isFinite(Number(editing.commissionPct)) || Number(editing.commissionPct) < 0 || Number(editing.commissionPct) > 100)) { setFormErr('Commission rate must be between 0% and 100%.'); return; }
     const existing = state.users.find(u => u.id === editing.id);
     const newPass = editing.password.trim();
     if (isNew && !newPass) {
@@ -162,6 +163,9 @@ export default function Users() {
             )}
             {formErr && <p className="text-sm font-medium text-rose-500">{formErr}</p>}
             {formOk && <p className="text-sm font-medium text-emerald-500">{formOk}</p>}
+            <Field label="Commission rate (%)" hint="Optional; used for estimated salesman commission reports only. Leave blank for no rate.">
+              <input className="input num" type="number" min="0" max="100" step="0.25" value={editing.commissionPct ?? ''} onChange={e => setEditing({ ...editing, commissionPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="e.g. 2.5" />
+            </Field>
             <Field label="Role">
               <div className="grid grid-cols-2 gap-2">
                 {(['admin', 'cashier'] as Role[]).map(r => (
