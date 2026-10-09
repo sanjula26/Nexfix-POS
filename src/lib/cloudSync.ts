@@ -455,6 +455,25 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   return { ok: true };
 }
 
+export async function deleteInventoryUnitAtomic(input: {
+  shopId: string; branchId?: string; deviceId: string; unitId: string;
+}): Promise<{ ok: boolean; productId?: string; productStock?: number; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
+  const { data, error } = await supabase.rpc('delete_inventory_unit_atomic', {
+    p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId, p_unit_id: input.unitId,
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: row?.error || 'Tracked unit was not deleted' };
+  try { await refreshCloudBranchStock(input.shopId, branch.branchId); } catch { /* refresh can retry on next Settings open */ }
+  return { ok: true, productId: row.product_id, productStock: Number(row.product_stock) || 0 };
+}
+
 function getRevision(): number { try { const value = Number(storage()?.getItem(REV_KEY) || '0'); return Number.isSafeInteger(value) && value >= 0 ? value : 0; } catch { return 0; } }
 function setRevision(revision: number): void { if (!Number.isSafeInteger(revision) || revision < 0) return; try { storage()?.setItem(REV_KEY, String(revision)); } catch { /* ignore */ } }
 
