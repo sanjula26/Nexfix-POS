@@ -251,6 +251,26 @@ export default function CashierBalances() {
     { label: 'Expected cash in hand', value: topTotals.expected, icon: Landmark, tone: 'violet' },
   ];
 
+  const dayCloseSummary = useMemo(() => {
+    let expected = 0;
+    let counted = 0;
+    let allCounted = true;
+    for (const session of openSessions) {
+      expected += rowCache.get(session.cashierId)?.expected || 0;
+      const raw = dayCounts[session.cashierId] ?? '';
+      if (raw.trim() === '') {
+        allCounted = false;
+        continue;
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 0) allCounted = false;
+      else counted += value;
+    }
+    expected = Math.round(expected * 100) / 100;
+    counted = Math.round(counted * 100) / 100;
+    return { expected, counted, variance: Math.round((counted - expected) * 100) / 100, allCounted };
+  }, [openSessions, dayCounts, rowCache]);
+
   const currentSession = state.sessions.find(session => session.cashierId === user?.id && session.date === today);
   const currentClosed = !!currentSession?.closed;
 
@@ -453,6 +473,11 @@ export default function CashierBalances() {
                 </div>
               );
             })}
+          </div>
+          <div className="grid grid-cols-3 gap-2 rounded-xl border border-line p-3">
+            <div><div className="text-[9px] uppercase tracking-wide text-faint">Total expected</div><div className="font-bold num text-ink mt-1">{fmtRs(dayCloseSummary.expected)}</div></div>
+            <div><div className="text-[9px] uppercase tracking-wide text-faint">Total counted</div><div className="font-bold num text-ink mt-1">{dayCloseSummary.allCounted ? fmtRs(dayCloseSummary.counted) : '—'}</div></div>
+            <div><div className="text-[9px] uppercase tracking-wide text-faint">Total variance</div><div className={`font-bold num mt-1 ${!dayCloseSummary.allCounted ? 'text-sub' : dayCloseSummary.variance === 0 ? 'text-emerald-600' : dayCloseSummary.variance > 0 ? 'text-amber-600' : 'text-rose-600'}`}>{dayCloseSummary.allCounted ? fmtRs(dayCloseSummary.variance) : '—'}</div></div>
           </div>
           {dayCloseError && <div className="rounded-xl border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-sm font-semibold text-rose-600">{dayCloseError}</div>}
           <Field label="Full-day note (required if any variance)">
