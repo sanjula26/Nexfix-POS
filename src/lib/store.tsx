@@ -118,7 +118,7 @@ interface StoreCtx {
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
   saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
-  adjustStock: (id: string, delta: number, reason: string) => Promise<void>;
+  adjustStock: (id: string, delta: number, reason: string) => Promise<boolean>;
   // customers / suppliers
   saveCustomer: (c: Customer) => void;
   deleteCustomer: (id: string) => void;
@@ -477,6 +477,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
+  const stockAdjustmentLockRef = useRef(false);
   const purchaseReceiveLockRef = useRef(false);
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
@@ -1161,46 +1162,49 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
   }, [can, pushAudit, state.products, state.units, state.sales, state.purchases, state.purchaseReturns, state.exchanges, state.repairs, state.kitItems, state.quotations, state.warrantyClaims, user]);
 
-  const adjustStock = useCallback(async (id: string, delta: number, reason: string): Promise<void> => {
-    if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return; }
+  const adjustStock = useCallback(async (id: string, delta: number, reason: string): Promise<boolean> => {
+    if (stockAdjustmentLockRef.current) { pushAudit('DENIED', 'Product', 'Another stock adjustment is already in progress.'); return false; }
+    stockAdjustmentLockRef.current = true;
+    try {
+    if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return false; }
     const amount = Number(delta);
     const note = String(reason || '').trim();
-    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return; }
+    if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return false; }
     const p = stateRef.current.products.find(x => x.id === id);
-    if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return; }
+    if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return false; }
     const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
       pushAudit('DENIED', 'Product', 'Blocked stock adjustment because this shop has multiple branches and no branch is selected. Open Settings first.');
-      return;
+      return false;
     }
     if (selectedBranchId !== 'local-main') {
       const cachedQty = getCachedBranchStock(selectedBranchId, id);
       if (!hasCachedBranchStock(selectedBranchId) || cachedQty === null || cachedQty + amount < 0) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock is missing or insufficient. Connect online and refresh Settings.');
-        return;
+        return false;
       }
       const adjustmentId = uid();
       if (supabaseConfigured && getConnectivity() === 'online') {
         const shop = await ensureCloudShop('Nexfix Shop');
         if (!shop.ok || !shop.shopId) {
           pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
-          return;
+          return false;
         }
         const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: selectedBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
         if (!cloudResult.ok) {
           pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
-          return;
+          return false;
         }
         // Keep the cache immediately usable; if it was stale, reload the committed server values.
         if (!applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
-          await refreshCloudBranchStock(shop.shopId, selectedBranchId);
+          try { await refreshCloudBranchStock(shop.shopId, selectedBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
         }
       } else {
         // Offline/local mode: update the cache first, then durably queue the server mutation.
         if (!applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
           pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock would become negative or changed concurrently.');
-          return;
+          return false;
         }
         if (supabaseConfigured) {
           try {
@@ -1208,7 +1212,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           } catch (error) {
             applyBranchStockDeltas(selectedBranchId, { [id]: -amount });
             pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock adjustment could not be queued safely.');
-            return;
+            return false;
           }
         }
       }
@@ -1221,6 +1225,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return { ...s, products: updatedProducts };
     });
     pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
+    return true;
+    } finally {
+      stockAdjustmentLockRef.current = false;
+    }
   }, [can, pushAudit, setStateWithInventoryLedger, user]);
 
   /* ---------------- customers / suppliers ---------------- */
