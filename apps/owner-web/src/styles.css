@@ -5,3 +5,9 @@
 .branch-switch{display:flex;flex-direction:column;gap:7px;padding:12px 10px;margin:-12px 0 18px;border:1px solid #ffffff13;background:#ffffff08;border-radius:11px}.branch-switch label{font-size:10px;font-weight:700;color:#dce5f7}.branch-switch select{width:100%;min-width:0;background:#0b1427;color:#eef3ff;border:1px solid #35415a;border-radius:7px;padding:8px;font-size:11px}.branch-switch small{font-size:9px;line-height:1.45;color:#9ba9c2;overflow-wrap:anywhere}.branch-switch .error{color:#ffb5b5}.low-stock{display:inline-block;background:#fff2df;color:#a8660d;border-radius:6px;padding:5px 8px;font-size:9px;font-weight:700}
 
 .branch-refresh{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;background:transparent;border:1px solid #35415a;color:#c9d5ec;border-radius:7px;padding:6px 8px;font-size:9px}.branch-refresh:hover{background:#ffffff0b}
+
+/* Phase 4: read-only operational detail pages. */
+.bill-link{display:inline-flex;flex-direction:column;gap:3px;color:#4059d6}.bill-link small,.subtle{display:block;font-size:9px;color:#8994a8;font-weight:500}.bill-link:hover{text-decoration:underline}
+.detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.detail-grid>div{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid #edf0f5;border-radius:9px;min-width:0}.detail-grid small{font-size:9px;color:#8994a8}.detail-grid b{font-size:11px;color:#35415a;overflow-wrap:anywhere}.detail-total{display:flex;justify-content:space-between;gap:12px;padding-top:14px;margin-top:10px;border-top:1px solid #edf0f5;color:#778198;font-size:11px}.detail-total b{color:#202b41;font-size:13px}
+@media(max-width:850px){.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:540px){.detail-grid{grid-template-columns:1fr}.welcome{align-items:flex-start;flex-direction:column}.welcome .secondary{align-self:flex-start}}
