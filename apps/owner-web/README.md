@@ -11,7 +11,7 @@ Separate, read-only browser app for single-shop cloud sales. It is isolated from
 ## Security and reporting
 - Phase 3 branch selector is populated from active `public.branches` rows filtered by the membership-resolved shop ID. The browser never supplies an arbitrary shop ID and branch IDs are validated again in the reporting RPCs.
 - Dashboard, sales pages and daily report share the selected branch filter. `All branches` uses a server-side aggregate RPC grouped by branch/date and combines only aggregate rows; invoice lists remain shop-scoped and paginated.
-- Stock valuation and low-stock status come from `get_owner_branch_stock_valuation`, which joins `branch_stock` to active products and branches on matching `shop_id`. Cost value = branch quantity × product cost; selling value = branch quantity × product price; potential profit = selling value − cost value. CSV export is available for the valuation rows and the existing sales exports remain.
+- Stock valuation and low-stock status come from `get_owner_branch_stock_valuation`, which joins `branch_stock` to products and active branches on matching `shop_id`. Cost value = branch quantity × product cost; selling value = branch quantity × product price; potential profit = selling value − cost value. CSV export is available for the valuation rows and the existing sales exports remain.
 - Credit and cash-in-hand remain shop/POS-day-session level and are not presented as branch-level numbers.
 - Shop is resolved from the signed-in user's active `public.shop_memberships` row. Accounts with no membership or multiple active shop memberships are blocked.
 - The app never accepts a shop ID from a URL or local storage. Sales queries filter by the resolved shop, and PostgreSQL RLS remains the security boundary.
