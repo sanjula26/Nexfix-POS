@@ -134,3 +134,13 @@ Proposed tables/columns:
 - Live production RLS and canonical membership checks are documented in `docs/PHASE1_SECURITY.md`. The checks verified own-shop reads and denied unrelated-shop/no-membership reads. Browser JWT sign-in and a two-real-shop test remain pending.
 - Phase 1 sales values are gross completed invoice totals before partial returns. Profit, credit, expenses, payment mix, and cash-in-hand are deferred until coverage/accounting is verified.
 - Phase 2 remains prohibited until every Phase 1 verification item is green.
+
+
+## Phase 1.5 implementation update (2026-10-09)
+
+- Added shop-scoped daily sales aggregates and a sales-table trigger; the dashboard/report reads the aggregate RPC instead of downloading invoice rows to calculate totals.
+- The aggregate RPC validates the authenticated user's active shop membership and repairs the requested range on read as a fallback.
+- Invoice list defaults to the latest 30 days, selects only six columns, and uses 50-row server-side pages. Dashboard recent invoices are capped at five. Refresh is manual/on-load only; no polling.
+- Expected egress: dashboard uses at most 31 daily aggregate rows plus 5 recent invoices, compared with the former query cap of 10,000 invoice rows (99.69% fewer rows at that cap; byte savings vary). Fallback still performs server-side aggregation.
+- The additive SQL migration was applied to the connected production project and is checked into supabase/migrations/20261009120000_owner_daily_sales_aggregates.sql. Desktop POS/Drive/updater/R2 were not changed.
+- Phase 2 branches remain out of scope and were not started.
