@@ -1,5 +1,5 @@
 /** Durable connectivity helpers and local sync queue. */
-import type { InventoryUnit, Purchase } from './types';
+import type { InventoryUnit, Product, Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
@@ -56,7 +56,7 @@ export async function queueWrite(note?:string):Promise<void>{
   }
 }
 
-export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string}):Promise<void>{
+export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product}):Promise<void>{
   const queued=await idbEnqueue({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify(input)});
   if(!queued)throw new Error('Local sync storage is unavailable; stock adjustment was not queued safely.');
 }
@@ -127,9 +127,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
       if(op.type==='branch_stock_adjustment'){
         try{
-          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string};
+          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          if(parsed.baseProduct && state){
+            const bootstrapState={...state,products:state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product)};
+            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
+            if(!catalog.ok) break;
+          }
           const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId});
           if(!result.ok && result.error?.includes('Product is not synced to this cloud shop yet') && state){
             const catalog=await syncNormalizedCatalog(state,shop.shopId);
