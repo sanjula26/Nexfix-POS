@@ -98,7 +98,7 @@ export default function POS() {
   const [creditTender, setCreditTender] = useState<Exclude<PaymentMethod, 'credit'>>('cash');
   const [waReceipt, setWaReceipt] = useState(false);
   const [paid, setPaid] = useState('');
-  const [paidAuto, setPaidAuto] = useState(false);
+  const [paidAuto, setPaidAuto] = useState(true);
   const [splitOn, setSplitOn] = useState(false);
   const [legs, setLegs] = useState<PaymentLeg[]>([{ method: 'cash', amount: 0 }]);
 
@@ -279,7 +279,9 @@ export default function POS() {
 
   /* keep cashless tenders pinned to the total unless the cashier overrode it */
   useEffect(() => {
-    if (!splitOn && payment !== 'cash' && payment !== 'credit' && paidAuto) {
+    // Cash and cashless single-tender bills default to exact payment. Credit
+    // remains deliberately manual, and split tenders keep their own amounts.
+    if (!splitOn && payment !== 'credit' && paidAuto) {
       setPaid(total > 0 ? String(total) : '');
     }
   }, [total, payment, splitOn, paidAuto]);
@@ -423,7 +425,7 @@ export default function POS() {
     setLines([]); setCustomerId(''); setCustQuery(''); setBillingWhatsApp(''); setDiscount(''); setDiscMode('rs');
     setTaxPct(String(state.settings.taxDefault || '')); setShipOpen(false); setShipping('');
     setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
-    setRedeemOn(false); setPoints(''); setPayment('cash'); setPaid(''); setPaidAuto(false);
+    setRedeemOn(false); setPoints(''); setPayment('cash'); setPaid(total > 0 ? String(total) : ''); setPaidAuto(true);
     setWaReceipt(false);
     // Keep Split mode selected between bills. The cashier can press Split again
     // to return to the normal single-payment buttons.
@@ -1390,7 +1392,7 @@ export default function POS() {
                         disabled={disabled}
                         onClick={() => {
                           setPayment(m.key);
-                          if (m.key === 'cash' || m.key === 'credit') { setPaidAuto(false); setPaid(''); }
+                          if (m.key === 'credit') { setPaidAuto(false); setPaid(''); }
                           else { setPaidAuto(true); setPaid(total > 0 ? String(total) : ''); }
                         }}
                         className={`flex flex-col items-center gap-1 rounded-xl py-2 border text-[9.5px] font-bold transition-all ${
