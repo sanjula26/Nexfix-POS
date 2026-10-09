@@ -803,7 +803,6 @@ export default function Settings() {
 
   const runGoogleBackupNow = async () => {
     if (!user || user.role !== 'admin') return setGMsg('Google backup test requires admin access');
-    if (!(await confirmSensitiveAdmin('manual Google Drive backup'))) { setGMsg('Administrator confirmation cancelled.'); return; }
     if (!gEnabled || !getGoogleScriptUrl()) return setGMsg('Central Google Drive backup is not available');
     if (connectivity !== 'online') return setGMsg('Google backup requires an online connection');
         setGRestoreBusy(true);
