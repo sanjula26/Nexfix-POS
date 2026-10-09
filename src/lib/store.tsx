@@ -1663,7 +1663,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments.push({ method: input.payment, amount: Math.round(input.amountPaid * 100) / 100 });
     }
     const cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', saleId, customerId: input.customerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', deviceId: getMachineIdentity().id, saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
@@ -2166,6 +2166,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         const cloudResult = await receivePurchaseAtomic({
           shopId: shop.shopId,
           branchId: stateRef.current.settings.branchId || po.branchId || 'local-main',
+          deviceId: getMachineIdentity().id,
           purchaseId: po.id,
           deviceId: getMachineIdentity().id,
           purchase: po,
