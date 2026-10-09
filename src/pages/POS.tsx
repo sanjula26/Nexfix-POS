@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, Pencil, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
+  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
@@ -218,6 +218,23 @@ export default function POS() {
   const detailed = lines
     .map(l => ({ ...l, product: products.find(p => p.id === l.productId)! }))
     .filter(l => l.product);
+
+  const bundleSuggestions = useMemo(() => {
+    if (!lines.length) return [];
+    const cartIds = new Set(lines.map(line => line.productId));
+    const cartProducts = state.products.filter(product => cartIds.has(product.id));
+    const accessoryPattern = /accessor|charger|cable|case|cover|glass|protector|adapter|earbud|headphone|mouse|keyboard|bag|hub/i;
+    return state.products.filter(product => {
+      if (!product.active || product.isService || product.stock <= 0 || cartIds.has(product.id)) return false;
+      const accessory = accessoryPattern.test(product.category) || accessoryPattern.test(product.name);
+      if (!accessory) return false;
+      return cartProducts.some(cartProduct =>
+        (product.brand && cartProduct.brand && product.brand.toLowerCase() === cartProduct.brand.toLowerCase()) ||
+        !product.brand || !cartProduct.brand
+      );
+    }).sort((a,b) => Number(Boolean(b.brand)) - Number(Boolean(a.brand)) || a.name.localeCompare(b.name)).slice(0,3);
+  }, [lines, state.products]);
+
 
   /* ---------- totals ---------- */
   const linePrice = (l: (typeof detailed)[number]) => l.price ?? l.product.price;
@@ -1271,6 +1288,11 @@ export default function POS() {
                 </AnimatePresence>
               )}
             </div>
+
+            {bundleSuggestions.length > 0 && <div className="px-5 sm:px-6 py-3 border-t border-line bg-emerald-500/[0.035]">
+              <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sub mb-2"><Sparkles size={12} className="text-emerald-600"/> Helpful accessories in stock</div>
+              <div className="flex flex-wrap gap-2">{bundleSuggestions.map(product=><button key={product.id} type="button" onClick={()=>add(product.id)} className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"><span className="block text-xs font-semibold truncate">{product.name}</span><span className="block text-[10px] text-sub mt-0.5">{fmtRs(product.price,false)} · stock {product.stock}</span></button>)}</div>
+            </div>}
 
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
