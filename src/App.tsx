@@ -18,6 +18,7 @@ const Customers = lazy(() => import('./pages/Customers'));
 const Suppliers = lazy(() => import('./pages/Suppliers'));
 const SupplierPayments = lazy(() => import('./pages/SupplierPayments'));
 const CreditSettle = lazy(() => import('./pages/CreditSettle'));
+const CreditStatements = lazy(() => import('./pages/CreditStatements'));
 const GRN = lazy(() => import('./pages/GRN'));
 const GRNReport = lazy(() => import('./pages/GRNReport'));
 const Purchases = lazy(() => import('./pages/Purchases'));
@@ -326,6 +327,7 @@ function AppRoutes() {
           <Route path="/suppliers" element={<PermissionProtected permission="page:suppliers"><Suppliers /></PermissionProtected>} />
           <Route path="/supplier-payments" element={<PermissionProtected permission="page:suppliers"><SupplierPayments /></PermissionProtected>} />
           <Route path="/credit-settle" element={<PermissionProtected permission="page:customers"><CreditSettle /></PermissionProtected>} />
+          <Route path="/credit-statements" element={<PermissionProtected permission="page:customers"><CreditStatements /></PermissionProtected>} />
           <Route path="/purchases" element={<PermissionProtected permission="page:purchases"><Purchases /></PermissionProtected>} />
           <Route path="/grn" element={<PermissionProtected permission="page:purchases"><GRN /></PermissionProtected>} />
           <Route path="/grn-report" element={<PermissionProtected permission="page:purchases"><GRNReport /></PermissionProtected>} />

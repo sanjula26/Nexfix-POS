@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Plus, Pencil, Trash2, Phone, Mail, MapPin, History, Users, UserPlus, CreditCard, BadgeDollarSign,
+  Plus, Pencil, Trash2, Phone, Mail, MapPin, History, Users, UserPlus, CreditCard, BadgeDollarSign, ReceiptText,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState, PageHeading } from '../components/ui';
@@ -70,6 +70,8 @@ export default function Customers() {
         title="Customers"
         sub={`${state.customers.length} registered customers${credited.length ? ` · ${credited.length} with credit balance` : ''}`}
         actions={
+          <div className="flex flex-wrap items-center gap-2">
+          <button className="btn btn-soft" onClick={() => navigate('/credit-statements')}><ReceiptText size={15} /> Credit Statements</button>
           <button
             className="btn btn-primary"
             onClick={() => {
@@ -79,6 +81,7 @@ export default function Customers() {
           >
             <Plus size={15} /> Add Customer
           </button>
+          </div>
         }
       />
 
