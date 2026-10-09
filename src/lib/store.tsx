@@ -1136,6 +1136,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       stockAdjustmentLockRef.current = true;
       let cacheApplied = false;
+      const adjustmentId = uid();
       try {
         if (exists && supabaseConfigured && getConnectivity() === 'online') {
           const shop = await ensureCloudShop('Nexfix Shop');
@@ -1150,7 +1151,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             pushAudit('DENIED', 'Product', 'Blocked stock edit: ' + (catalog.error || 'Catalog sync failed.'));
             return false;
           }
-          const adjustmentId = uid();
           const cloudResult = await adjustBranchStockAtomic({
             shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id,
             productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId,
