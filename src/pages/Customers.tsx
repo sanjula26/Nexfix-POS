@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Plus, Pencil, Trash2, Phone, Mail, MapPin, History, Users, UserPlus, CreditCard, BadgeDollarSign,
 } from 'lucide-react';
@@ -9,6 +10,7 @@ import type { Customer } from '../lib/types';
 
 export default function Customers() {
   const { state, saveCustomer, deleteCustomer, can } = usePOS();
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Customer | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -132,6 +134,7 @@ export default function Customers() {
                     <td className="td">
                       <div className="flex items-center justify-end gap-1">
                         <button className="icon-btn !w-8 !h-8" title="Purchase history" onClick={() => setHistoryOf(c)}><History size={14} /></button>
+                        {c.creditBalance > 0.009 && can('page:pos') && <button className="btn btn-soft !px-2.5 !py-1.5 !text-xs !text-amber-600" title="Collect credit repayment" onClick={() => navigate(`/credit-settle?customer=${encodeURIComponent(c.id)}`)}><BadgeDollarSign size={13} /> Settle</button>}
                         <button className="icon-btn !w-8 !h-8" title="Edit" onClick={() => { setEditing({ ...c }); setIsNew(false); }}><Pencil size={14} /></button>
                         {(can('act:deleteRecords')) && (
                           <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Delete" onClick={() => setDeleting(c)}>
