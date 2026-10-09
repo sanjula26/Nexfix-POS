@@ -1147,6 +1147,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return; }
     const p = state.products.find(x => x.id === id);
     if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return; }
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (selectedBranchId !== 'local-main' && !hasCachedBranchStock(selectedBranchId)) {
+      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because branch stock cache is missing. Connect online and refresh Settings.');
+      return;
+    }
+    if (selectedBranchId !== 'local-main' && !applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
+      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock would become negative.');
+      return;
+    }
     setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
       const current = s.products.find(x => x.id === id);
       if (!current || !Number.isFinite(current.stock) || current.stock + amount < 0) return s;
@@ -2248,6 +2257,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return next;
       });
       if (!applied) return { ok: false, error: applyError || 'Unable to process this GRN. No stock was changed.' };
+      if (cloudEnabled && !online) {
+        const branchId = stateRef.current.settings.branchId || po.branchId || 'local-main';
+        const deltas: Record<string, number> = {};
+        for (const item of po.items) deltas[item.productId] = (deltas[item.productId] || 0) + item.qty;
+        if (branchId !== 'local-main') applyBranchStockDeltas(branchId, deltas);
+      }
       pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units' + (cloudEnabled ? ' · cloud-authoritative receive' : ''));
       return { ok: true };
     } finally {
@@ -2886,7 +2901,9 @@ const deletePurchase = useCallback((id: string) => {
   useEffect(() => {
     if (!user) return;
     const today = dkey(new Date());
-    if (state.sessions.some(x => x.cashierId === user.id && x.date === today)) return;
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+    if (state.sessions.some(x => x.cashierId === user.id && x.date === today && ((x.branchId || 'local-main') === selectedBranchId || ((x.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)))) return;
     const ns: DaySession = {
       id: uid(), branchId: stateRef.current.settings.branchId || 'local-main', cashierId: user.id, cashierName: user.name, date: today,
       opening: state.settings.openingFloat, openingConfirmed: false, closed: false,
