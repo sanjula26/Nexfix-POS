@@ -52,6 +52,17 @@ export default function Inventory() {
       .sort((a, b) => (lowOnly ? a.stock - b.stock : a.name.localeCompare(b.name)));
   }, [state.products, search, cat, lowOnly]);
 
+  const costHistory = useMemo(() => {
+    if (!editing || isNew) return [] as Array<{ date: string; cost: number; qty: number; supplier: string; source: string }>;
+    const purchases = (state.purchases || []).filter(po => po.status === 'received')
+      .flatMap(po => po.items.filter(item => item.productId === editing.id && Number.isFinite(Number(item.cost)) && item.cost >= 0)
+        .map(item => ({ date: po.processedAt || po.date, cost: Number(item.cost), qty: item.qty, supplier: po.supplierName, source: po.poNo || 'Purchase' })));
+    const grns = (state.grns || []).filter(grn => grn.status === 'processed')
+      .flatMap(grn => grn.items.filter(item => item.productId === editing.id && Number.isFinite(Number(item.costPrice)) && item.costPrice >= 0)
+        .map(item => ({ date: grn.processedAt || grn.date, cost: Number(item.costPrice), qty: item.quantity, supplier: grn.supplierName, source: grn.grnNumber || 'GRN' })));
+    return [...purchases, ...grns].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  }, [editing?.id, isNew, state.purchases, state.grns]);
+
   const categoryOptions = state.settings.categories?.length
     ? state.settings.categories
     : FALLBACK_CATEGORIES;
@@ -325,6 +336,10 @@ export default function Inventory() {
               <Field label="Low-stock alert at"><input className="input num" value={editing.reorderLevel || ''} onChange={e => setEditing({ ...editing, reorderLevel: Math.round(num(e.target.value)) })} /></Field>
             </div>
             {editing.price > 0 && editing.cost > 0 && <div className="rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20 px-4 py-3 text-sm flex justify-between"><span className="text-sub">Margin per unit</span><span className="num font-bold text-emerald-500">{fmtRs(editing.price - editing.cost)} ({Math.round(((editing.price - editing.cost) / editing.price) * 100)}%)</span></div>}
+            {!isNew && <section className="rounded-xl border border-line overflow-hidden">
+              <div className="px-4 py-3 bg-raised border-b border-line"><div className="font-semibold text-sm">Recent purchase cost history</div><div className="text-xs text-sub mt-0.5">Actual received Purchase / GRN line costs for this SKU, newest first.</div></div>
+              {costHistory.length ? <div className="overflow-x-auto"><table className="table w-full"><thead><tr><th className="th">Date</th><th className="th">Source</th><th className="th">Supplier</th><th className="th text-right">Unit cost</th><th className="th text-right">Qty</th></tr></thead><tbody>{costHistory.map((row,i)=><tr key={row.source+'-'+row.date+'-'+i}><td className="td">{fmtDate(row.date)}</td><td className="td">{row.source}</td><td className="td">{row.supplier || '—'}</td><td className="td text-right num font-semibold">{fmtRs(row.cost)}</td><td className="td text-right num">{row.qty}</td></tr>)}</tbody></table></div> : <div className="p-3 text-sm text-sub">No received purchase / GRN cost history is recorded for this product yet.</div>}
+            </section>}
             <div className="grid sm:grid-cols-2 gap-3">
               <label className={`flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3 ${!isNew && editing.trackImei !== current?.trackImei && !stockAligned ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}><input type="checkbox" className="accent-violet-600 w-4 h-4" checked={!!editing.trackImei} disabled={!isNew && editing.trackImei !== current?.trackImei && !stockAligned} onChange={e => setEditing({ ...editing, trackImei: e.target.checked })} /><span className="flex items-center gap-2 text-sm text-ink font-medium"><ScanBarcode size={15} className="text-violet-500" /> Track IMEI</span></label>
               <label className={`flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3 ${!isNew && editing.trackSerial !== current?.trackSerial && !stockAligned ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}><input type="checkbox" className="accent-violet-600 w-4 h-4" checked={!!editing.trackSerial} disabled={!isNew && editing.trackSerial !== current?.trackSerial && !stockAligned} onChange={e => setEditing({ ...editing, trackSerial: e.target.checked })} /><span className="text-sm text-ink font-medium">Track Serial No.</span></label>
