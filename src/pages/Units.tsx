@@ -4,6 +4,8 @@ import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, PageHeading, EmptyState, SearchInput } from '../components/ui';
 import SearchableSelect from '../components/SearchableSelect';
 import { fmtDate, uid } from '../lib/utils';
+import { getDefaultBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
+import { getCloudShopId } from '../lib/cloudSync';
 import type { InventoryUnit, UnitStatus, Product } from '../lib/types';
 
 const STATUS_TONE: Record<UnitStatus, 'emerald'|'slate'|'amber'|'violet'|'rose'> = { in_stock:'emerald', sold:'slate', returned:'amber', reserved:'violet', defective:'rose', in_repair:'amber' };
@@ -34,13 +36,21 @@ export default function Units() {
   const { state, saveUnit, saveUnitsBulk, deleteUnit, can } = usePOS();
   const [q,setQ]=useState(''); const [status,setStatus]=useState<string>('all');
   const [editing,setEditing]=useState<InventoryUnit|null>(null); const [isNew,setIsNew]=useState(false);
-  const units=state.units||[]; const products=state.products;
+  const allUnits=state.units||[]; const products=state.products;
+  const selectedBranchId=state.settings.branchId||'local-main';
+  const shopId=getCloudShopId();
+  const multipleBranches=hasMultipleCachedBranches(shopId);
+  const defaultBranchId=getDefaultBranchId(shopId)||'local-main';
+  const effectiveBranch=(branchId?:string)=>!branchId||branchId==='local-main'?defaultBranchId:branchId;
+  const branchSelectionReady=!(multipleBranches&&selectedBranchId==='local-main');
+  const units=allUnits.filter(unit=>branchSelectionReady&&effectiveBranch(unit.branchId)===effectiveBranch(selectedBranchId));
   const trackedProducts=useMemo(()=>products.filter(p=>p.trackImei||p.trackSerial),[products]);
   const [bulkOpen,setBulkOpen]=useState(false); const [bulkProductId,setBulkProductId]=useState(''); const [bulkText,setBulkText]=useState(''); const [bulkMsg,setBulkMsg]=useState(''); const [bulkErrors,setBulkErrors]=useState<string[]>([]);
   const openBulk=()=>{setBulkProductId(trackedProducts[0]?.id||'');setBulkText('');setBulkMsg('');setBulkErrors([]);setBulkOpen(true)};
   const rows=useMemo(()=>{ const query=q.trim().toLowerCase(); return units.filter(u=>{ if(status!=='all'&&u.status!==status)return false; if(!query)return true; const p=products.find(x=>x.id===u.productId); return `${p?.name||''} ${u.imei||''} ${u.serial||''}`.toLowerCase().includes(query); }); },[units,products,q,status]);
   return <div className="space-y-6">
-    <PageHeading title="Units / IMEI & Serial" sub="Track individual sellable units and warranty status." actions={can('act:manageStock')&&trackedProducts.length>0?<div className="flex items-center gap-3 shrink-0"><button type="button" className="btn btn-soft !px-4 !py-2.5" onClick={openBulk}><ClipboardList size={16}/> Bulk add</button><button type="button" className="btn btn-primary !px-4 !py-2.5 shadow-sm" onClick={()=>{setEditing(null);setIsNew(true)}}><Plus size={16}/> Add unit</button></div>:undefined}/>
+    <PageHeading title="Units / IMEI & Serial" sub="Track individual sellable units and warranty status." actions={can('act:manageStock')&&trackedProducts.length>0?<div className="flex items-center gap-3 shrink-0"><button type="button" className="btn btn-soft !px-4 !py-2.5" disabled={!branchSelectionReady} onClick={openBulk}><ClipboardList size={16}/> Bulk add</button><button type="button" className="btn btn-primary !px-4 !py-2.5 shadow-sm" disabled={!branchSelectionReady} onClick={()=>{setEditing(null);setIsNew(true)}}><Plus size={16}/> Add unit</button></div>:undefined}/>
+    {!branchSelectionReady&&<div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm">This shop has multiple branches. Open Settings and select the branch assigned to this POS before viewing or adding IMEI/serial units.</div>}
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3"><SearchInput value={q} onChange={setQ} placeholder="Search IMEI, serial or product"/><select className="input" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">All statuses</option>{(Object.keys(STATUS_LABEL) as UnitStatus[]).map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}</select><div className="rounded-xl border border-line bg-raised px-4 py-3 text-sm text-sub">Showing {rows.length} of {units.length} units</div></div>
     <div className="card overflow-hidden">{rows.length===0?<EmptyState icon={<Smartphone size={28}/>} title="No units found" sub="Add a unit or change the search filter."/>:<div className="divide-y divide-line">{rows.map(u=>{const p=products.find(x=>x.id===u.productId);return <div key={u.id} className="flex items-center justify-between gap-4 px-4 py-3"><div className="min-w-0"><div className="font-medium text-ink">{p?.name||'Unknown product'}</div><div className="text-xs text-sub">{u.imei||u.serial||'No IMEI/serial'} · Added {fmtDate(u.createdAt)}</div>{u.status==='sold'&&<div className="text-[11px] text-sub mt-0.5">Bill: {u.saleBillNo || (u.saleId ? state.sales.find(s=>s.id===u.saleId)?.billNo : '') || '—'} · Customer: {u.saleId ? (state.sales.find(s=>s.id===u.saleId)?.customerName || 'Walk-in customer') : '—'}</div>}{u.note&&<div className="text-[11px] text-faint mt-0.5 truncate">Note: {u.note}</div>}</div><div className="flex items-center gap-2 shrink-0"><Badge tone={STATUS_TONE[u.status]}>{STATUS_LABEL[u.status]}</Badge>{u.status==='sold'&&p&&<button type="button" className="btn-ghost" onClick={()=>printWarrantyCard(u,p,state.settings.shopName,state.sales.find(s=>s.id===u.saleId))} aria-label="Print warranty card" title="Print warranty card"><Printer size={15}/></button>}{can('act:manageStock')&&<button className="btn-ghost" onClick={()=>{setEditing(u);setIsNew(false)}} aria-label="Edit unit"><Cpu size={16}/></button>}{can('act:manageStock')&&can('act:deleteRecords')&&u.status==='in_stock'&&<button className="btn-ghost text-rose-600" onClick={()=>deleteUnit(u.id)} aria-label="Delete unit"><Trash2 size={16}/></button>}</div></div>})}</div>}</div>
     <Modal open={bulkOpen} onClose={()=>setBulkOpen(false)} title="Bulk add IMEI / Serial" sub="Paste one identifier per line; use IMEI,SERIAL when both are tracked." wide>
