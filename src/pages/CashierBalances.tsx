@@ -8,7 +8,9 @@ import { useNavigate } from 'react-router-dom';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, Field, Avatar, PageHeading } from '../components/ui';
 import { fmtRs, dkey } from '../lib/utils';
-import { calculateDayEndTotals } from '../lib/dayEnd';
+import { calculateDayEndTotals, type DayEndTotals } from '../lib/dayEnd';
+import { getCloudShopId } from '../lib/cloudSync';
+import { getDefaultBranchId } from '../lib/branchStock';
 import { downloadBackup } from '../lib/backup';
 import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/driveSync';
 import { hasRecoveryKey } from '../lib/backupCrypto';
@@ -32,6 +34,10 @@ export default function CashierBalances() {
   const { state, closeSession, closeDay, openSession, user, connectivity, signOut } = usePOS();
   const navigate = useNavigate();
   const today = dkey(new Date());
+  const selectedBranchId = state.settings.branchId || 'local-main';
+  const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+  const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+  const selectedBranchKey = effectiveBranch(selectedBranchId);
   const [settling, setSettling] = useState<string | null>(null);
   const [counted, setCounted] = useState('');
   const [note, setNote] = useState('');
@@ -54,14 +60,14 @@ export default function CashierBalances() {
     const ids = user?.role === 'admin'
       ? Array.from(new Set([
           ...cashiers.map(person => person.id),
-          ...state.sessions.filter(session => session.date === today).map(session => session.cashierId),
+          ...state.sessions.filter(session => session.date === today && effectiveBranch(session.branchId) === selectedBranchKey).map(session => session.cashierId),
         ]))
       : [user?.id || ''];
     const cache = new Map<string, ReturnType<typeof calculateDayEndTotals> & { session: DaySession | null }>();
     for (const cashierId of ids) {
       if (!cashierId) continue;
       const person = state.users.find(candidate => candidate.id === cashierId);
-      const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today);
+      const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today && effectiveBranch(item.branchId) === selectedBranchKey);
       const effectiveSession: DaySession = session || {
         id: 'preview-' + cashierId,
         cashierId,
@@ -73,7 +79,7 @@ export default function CashierBalances() {
       cache.set(cashierId, { ...calculateDayEndTotals(state, today, effectiveSession), session: session || null });
     }
     return cache;
-  }, [state, today, cashiers, user?.id, user?.name, user?.role]);
+  }, [state, today, cashiers, user?.id, user?.name, user?.role, selectedBranchKey]);
 
   const rowFor = (cashierId: string) => rowCache.get(cashierId) || {
     ...calculateDayEndTotals(state, today),
@@ -88,7 +94,7 @@ export default function CashierBalances() {
 
   const topTotals = useMemo(() => {
     if (user?.role !== 'admin') {
-      const session = state.sessions.find(item => item.cashierId === user?.id && item.date === today);
+      const session = state.sessions.find(item => item.cashierId === user?.id && item.date === today && effectiveBranch(item.branchId) === selectedBranchKey);
       if (session) return calculateDayEndTotals(state, today, session);
       const person = state.users.find(item => item.id === user?.id);
       return calculateDayEndTotals(state, today, {
@@ -96,10 +102,29 @@ export default function CashierBalances() {
         date: today, opening: state.settings.openingFloat || 0, closed: false,
       });
     }
-    return calculateDayEndTotals(state, today);
-  }, [state, today, user?.id, user?.name, user?.role]);
+    const branchSessions = state.sessions.filter(session => session.date === today && effectiveBranch(session.branchId) === selectedBranchKey);
+    if (!branchSessions.length) {
+      const empty: DaySession = { id: 'preview-branch', branchId: selectedBranchId, cashierId: '', cashierName: '', date: today, opening: 0, closed: false };
+      return calculateDayEndTotals(state, today, empty);
+    }
+    const emptyTotals: DayEndTotals = { opening: 0, grossSales: 0, refunds: 0, cashRefunds: 0, netSales: 0, cash: 0, card: 0, bank: 0, mobile: 0, creditSales: 0, creditSettled: { cash: 0, card: 0, bank: 0, mobile: 0 }, creditSettledTotal: 0, expenses: 0, cashExpenses: 0, discounts: 0, expected: 0, bills: 0, averageTicket: 0 };
+    const totals = branchSessions.map(session => calculateDayEndTotals(state, today, session));
+    const combined = totals.reduce((sum, item) => ({
+      opening: sum.opening + item.opening, grossSales: sum.grossSales + item.grossSales, refunds: sum.refunds + item.refunds,
+      cashRefunds: sum.cashRefunds + item.cashRefunds, netSales: sum.netSales + item.netSales,
+      cash: sum.cash + item.cash, card: sum.card + item.card, bank: sum.bank + item.bank, mobile: sum.mobile + item.mobile,
+      creditSales: sum.creditSales + item.creditSales,
+      creditSettled: { cash: sum.creditSettled.cash + item.creditSettled.cash, card: sum.creditSettled.card + item.creditSettled.card, bank: sum.creditSettled.bank + item.creditSettled.bank, mobile: sum.creditSettled.mobile + item.creditSettled.mobile },
+      creditSettledTotal: sum.creditSettledTotal + item.creditSettledTotal, expenses: sum.expenses + item.expenses,
+      cashExpenses: sum.cashExpenses + item.cashExpenses, discounts: sum.discounts + item.discounts, expected: sum.expected + item.expected,
+      bills: sum.bills + item.bills,
+      averageTicket: 0,
+    }), emptyTotals);
+    combined.averageTicket = combined.bills ? Math.round(combined.grossSales / combined.bills * 100) / 100 : 0;
+    return combined;
+  }, [state, today, user?.id, user?.name, user?.role, selectedBranchId, selectedBranchKey]);
 
-  const openSessions = useMemo(() => state.sessions.filter(session => session.date === today && !session.closed), [state.sessions, today]);
+  const openSessions = useMemo(() => state.sessions.filter(session => session.date === today && !session.closed && effectiveBranch(session.branchId) === selectedBranchKey), [state.sessions, today, selectedBranchKey]);
 
   const settle = () => {
     if (!settling || !selectedRow) return;
