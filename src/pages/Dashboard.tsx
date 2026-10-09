@@ -153,7 +153,7 @@ export default function Dashboard() {
           <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Recovery Key</div><div className={`text-sm font-semibold mt-1 ${recoveryKeyPresent ? 'text-emerald-600' : 'text-amber-600'}`}>{recoveryKeyPresent ? 'Present on this device' : 'Not found for this shop on this device'}</div></div>
         </div>
         {backupError && <div role="status" className="rounded-lg border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-xs text-rose-600">Latest backup error: {backupError}</div>}
-        {!connectivity.online && <div className="text-xs text-amber-600">This device appears offline. A cloud backup cannot be confirmed until connectivity returns.</div>}
+        {connectivity !== 'online' && <div className="text-xs text-amber-600">This device appears offline. A cloud backup cannot be confirmed until connectivity returns.</div>}
         <div className="flex justify-end"><button className="btn btn-soft" onClick={()=>navigate('/settings')}>Open backup settings <ArrowRight size={14}/></button></div>
       </section>
 
