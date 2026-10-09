@@ -378,7 +378,7 @@ export default function CashierBalances() {
                 {row.session?.closed && (
                   <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-sub">
                     <span>Counted: <b className="text-ink num">{fmtRs(row.session.closing ?? 0)}</b></span>
-                    <span>Variance: <b className={`num ${variance === 0 ? 'text-emerald-600' : variance > 0 ? 'text-amber-600' : 'text-rose-600'}`}>{fmtRs(variance ?? 0)}</b></span>
+                    <span>Variance: <b className={`num ${variance === 0 ? 'text-emerald-600' : variance != null && variance > 0 ? 'text-amber-600' : 'text-rose-600'}`}>{fmtRs(variance ?? 0)}</b></span>
                     {variance != null && <Badge tone={varianceTone(variance)}>{varianceLabel(variance)}</Badge>}
                     {row.session.closedBy && <span>Signed off by {row.session.closedBy}</span>}
                     {row.session.note && <span>Note: {row.session.note}</span>}
