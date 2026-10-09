@@ -1390,7 +1390,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     const s = state;
-    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     if (selectedBranchId !== 'local-main' && !hasCachedBranchStock(selectedBranchId)) {
       pushAudit('DENIED', 'Sale', 'Blocked offline sale because this branch stock cache is missing. Connect online and open Settings to refresh branch stock.');
       return null;
