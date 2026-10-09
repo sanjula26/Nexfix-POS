@@ -1182,44 +1182,59 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Product', 'Blocked stock adjustment because this shop has multiple branches and no branch is selected. Open Settings first.');
       return false;
     }
-    if (selectedBranchId !== 'local-main') {
-      const cachedQty = getCachedBranchStock(selectedBranchId, id);
-      if (!hasCachedBranchStock(selectedBranchId) || cachedQty === null || cachedQty + amount < 0) {
+    const targetBranchId = selectedBranchId === 'local-main' ? (getDefaultBranchId(shopId) || 'local-main') : selectedBranchId;
+    const branchBound = selectedBranchId !== 'local-main';
+    const branchCacheReady = targetBranchId !== 'local-main' && hasCachedBranchStock(targetBranchId);
+    if (branchBound) {
+      const cachedQty = getCachedBranchStock(targetBranchId, id);
+      if (!branchCacheReady || cachedQty === null || cachedQty + amount < 0) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock is missing or insufficient. Connect online and refresh Settings.');
         return false;
       }
-      const adjustmentId = uid();
-      if (supabaseConfigured && getConnectivity() === 'online') {
-        const shop = await ensureCloudShop('Nexfix Shop');
-        if (!shop.ok || !shop.shopId) {
-          pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
-          return false;
-        }
-        const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: selectedBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
-        if (!cloudResult.ok) {
-          pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
-          return false;
-        }
-        // Keep the cache immediately usable; if it was stale, reload the committed server values.
-        if (!applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
-          try { await refreshCloudBranchStock(shop.shopId, selectedBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
-        }
-      } else {
-        // Offline/local mode: update the cache first, then durably queue the server mutation.
-        if (!applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
-          pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock would become negative or changed concurrently.');
-          return false;
-        }
-        if (supabaseConfigured) {
-          try {
-            await queueBranchStockAdjustment({ shopId: shopId || undefined, branchId: selectedBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
-          } catch (error) {
-            applyBranchStockDeltas(selectedBranchId, { [id]: -amount });
-            pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock adjustment could not be queued safely.');
-            return false;
-          }
-        }
+    }
+
+    if (supabaseConfigured && getConnectivity() === 'online') {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
+        return false;
       }
+      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+      if (!cloudResult.ok) {
+        pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
+        return false;
+      }
+      if (branchCacheReady && applyBranchStockDeltas(targetBranchId, { [id]: amount })) {
+        try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* the delta is applied locally; refresh can retry */ }
+      } else {
+        try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
+      }
+    } else if (supabaseConfigured) {
+      let cacheApplied = false;
+      if (branchCacheReady) {
+        if (applyBranchStockDeltas(targetBranchId, { [id]: amount })) cacheApplied = true;
+        else if (branchBound) {
+          pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock changed concurrently.');
+          return false;
+        }
+      } else if (branchBound) {
+        pushAudit('DENIED', 'Product', 'Blocked offline stock adjustment because selected-branch stock is not cached.');
+        return false;
+      }
+      try {
+        await queueBranchStockAdjustment({ shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+      } catch (error) {
+        if (cacheApplied) applyBranchStockDeltas(targetBranchId, { [id]: -amount });
+        pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock adjustment could not be queued safely.');
+        return false;
+      }
+    } else if (branchBound) {
+      if (!applyBranchStockDeltas(targetBranchId, { [id]: amount })) {
+        pushAudit('DENIED', 'Product', 'Blocked local stock adjustment because selected-branch stock is missing or would become negative.');
+        return false;
+      }
+    } else if (branchCacheReady) {
+      applyBranchStockDeltas(targetBranchId, { [id]: amount });
     }
     setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
       const current = s.products.find(x => x.id === id);
