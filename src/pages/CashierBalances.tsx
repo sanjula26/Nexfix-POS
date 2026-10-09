@@ -50,10 +50,6 @@ export default function CashierBalances() {
     ? state.users.filter(person => person.role === 'cashier' || person.role === 'admin')
     : state.users.filter(person => person.id === user?.id), [state.users, user?.id, user?.role]);
 
-  const todaySessions = useMemo(() => state.sessions.filter(session =>
-    session.date === today && (user?.role === 'admin' || session.cashierId === user?.id),
-  ), [state.sessions, today, user?.id, user?.role]);
-
   const rowFor = (cashierId: string) => {
     const person = state.users.find(candidate => candidate.id === cashierId);
     const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today);
