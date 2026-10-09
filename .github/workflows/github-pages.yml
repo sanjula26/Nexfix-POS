@@ -54,7 +54,10 @@ jobs:
           VITE_SUPABASE_URL: https://ocmzgamnehwbkuwkjdrr.supabase.co
           VITE_SUPABASE_ANON_KEY: sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-
           VITE_OWNER_WEB_TIME_ZONE: Asia/Colombo
-        run: npm run build -- --base=/Nexfix-POS-Public/owner/ --outDir ../../dist/owner
+        run: |
+          npm run build -- --base=/Nexfix-POS-Public/owner/
+          mkdir -p ../../dist/owner
+          cp -a dist/. ../../dist/owner/
 
       - name: Verify public build is static and does not contain source maps
         run: |
