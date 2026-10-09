@@ -185,7 +185,7 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - Credit and cash-in-hand remain shop/POS-day-session level and are not represented as branch-level numbers. No polling was added; branch snapshot refresh is manual.
 - Applied the reporting migrations to the connected production Supabase project and checked them into `supabase/migrations/20261009094114_owner_web_branch_reporting.sql` and `supabase/migrations/20261009094302_optimize_owner_branch_daily_sales_range.sql`.
 - Production SQL verification: today's branch sales RPC returned 4 completed invoices / LKR 91,650, matching a direct shop-scoped sales aggregation (4 / LKR 91,650). Stock valuation RPC returned 23 product/branch rows; cost value LKR 257,000 and selling value LKR 2,494,800 matched the direct `branch_stock` × product cost/price calculation; potential profit was LKR 2,237,800.
-- The connected production shop currently has one active branch (Main). Single-branch UX and data reconciliation were checked against live data, but a multi-branch interaction cannot be exercised against production until a second active branch exists. The connected GitHub status API returned no commit status checks, and local frontend build/typecheck/lint could not be run in this environment because GitHub could not be resolved from the build container. Do not claim the full UI checklist is 100% green until those checks run.
+- The connected production shop currently has one active branch (Main). Single-branch UX and data reconciliation were checked against live data, but a multi-branch interaction cannot be exercised against production until a second active branch exists. Owner Web CI completed successfully for the Phase 3 UI fix commit: https://github.com/sanjula26/NexFix-POS/actions/runs/37913373846 (dependency install, typecheck, lint, and production build all passed). The connected production shop still has only one active branch, so a true multi-branch interaction smoke test remains pending. Do not claim the full UI checklist is 100% green until that multi-branch behavior can be exercised.
 
 ### Phase 3 checklist
 
@@ -196,4 +196,5 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - [x] Live sales aggregate and stock valuation calculations match direct database calculations.
 - [x] One-branch selector UX stays simple.
 - [x] Desktop POS, Drive backup, updater and R2 files were not modified; Phase 4/5 were not started.
-- [ ] Frontend typecheck, lint, production build and interactive multi-branch smoke test are pending due to the environment and only one active production branch.
+- [x] Owner Web dependency install, typecheck, lint and production build passed in Owner Web CI: https://github.com/sanjula26/NexFix-POS/actions/runs/37913373846.
+- [ ] Interactive multi-branch smoke test remains pending because production currently has only one active branch.
