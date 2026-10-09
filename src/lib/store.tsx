@@ -2252,14 +2252,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
       return { ok: false, error: 'You do not have permission to manage purchases.' };
     }
+    const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
-    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+    const multipleBranches = hasMultipleCachedBranches(shopId);
+    const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (multipleBranches && selectedBranchId === 'local-main') {
       pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this shop has multiple branches and no branch is selected. Open Settings first.');
       return { ok: false, error: 'Select a branch in Settings before receiving stock.' };
     }
     const po = stateRef.current.purchases.find(x => x.id === id);
     if (!po) return { ok: false, error: 'GRN draft was not found.' };
     if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
+    const purchaseBranchId = effectiveBranch(po.branchId);
+    if (multipleBranches && effectiveBranch(selectedBranchId) !== purchaseBranchId) {
+      pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this draft belongs to a different branch. Switch this POS to the GRN branch first.');
+      return { ok: false, error: 'This GRN belongs to another branch. Switch this POS to that branch before receiving it.' };
+    }
+    const receiveBranchId = selectedBranchId === 'local-main' ? purchaseBranchId : selectedBranchId;
 
     const planResult = buildPurchaseReceivePlan(po, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
@@ -2280,14 +2290,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }
         const cloudResult = await receivePurchaseAtomic({
           shopId: shop.shopId,
-          branchId: stateRef.current.settings.branchId || po.branchId || 'local-main',
+          branchId: receiveBranchId,
           deviceId: getMachineIdentity().id,
           purchaseId: po.id,
           purchase: po,
         });
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
       } else if (cloudEnabled && !online) {
-        await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: { ...po, branchId: stateRef.current.settings.branchId || po.branchId || 'local-main' } });
+        await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: { ...po, branchId: receiveBranchId } });
       }
 
       let applied = false;
@@ -2319,7 +2329,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
             for (const identifier of purchaseItem?.unitIdentifiers || []) {
               newUnits.push({
-                id: uid(), productId: p.id, branchId: stateRef.current.settings.branchId || currentPo.branchId || 'local-main', imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                id: uid(), productId: p.id, branchId: receiveBranchId, imei: p.trackImei ? identifier.imei?.trim() : undefined,
                 serial: p.trackSerial ? identifier.serial?.trim() : undefined, status: 'in_stock',
                 purchaseId: currentPo.id, cost, expiryDate: purchaseItem?.expiryDate, note: 'From ' + currentPo.poNo, createdAt: now,
               } as InventoryUnit);
@@ -2329,7 +2339,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
         });
         const next = {
-          ...s, purchases: s.purchases.map(x => x.id === id ? { ...x, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
+          ...s, purchases: s.purchases.map(x => x.id === id ? { ...x, branchId: receiveBranchId, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
           products, units: [...newUnits, ...(s.units || [])],
         };
         applied = true;
@@ -2337,7 +2347,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       if (!applied) return { ok: false, error: applyError || 'Unable to process this GRN. No stock was changed.' };
       if (cloudEnabled && !online) {
-        const branchId = stateRef.current.settings.branchId || po.branchId || 'local-main';
+        const branchId = receiveBranchId;
         const deltas: Record<string, number> = {};
         for (const item of po.items) deltas[item.productId] = (deltas[item.productId] || 0) + item.qty;
         if (branchId !== 'local-main') applyBranchStockDeltas(branchId, deltas);
