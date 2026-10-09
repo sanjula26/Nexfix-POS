@@ -13,7 +13,7 @@ import { clearRecoveryKey, decryptBackupEnvelope, getBackupSecurityMessage, getR
 import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
-import { getCloudShopId } from '../lib/cloudSync';
+import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
@@ -54,8 +54,10 @@ export default function Settings() {
   const [selectedBranchId, setSelectedBranchId] = useState(() => state.settings.branchId && state.settings.branchId !== 'local-main' ? state.settings.branchId : '');
   const [branchMsg, setBranchMsg] = useState('Checking branch configuration…');
   const [newBranchName, setNewBranchName] = useState('');
-  const [newBranchCode, setNewBranchCode] = useState('');
   const [branchCreateMsg, setBranchCreateMsg] = useState('');
+  const [branchCloudAuthNeeded, setBranchCloudAuthNeeded] = useState(false);
+  const [branchCreateBusy, setBranchCreateBusy] = useState(false);
+  const [branchReloadKey, setBranchReloadKey] = useState(0);
   const [transferFromBranch, setTransferFromBranch] = useState('');
   const [transferToBranch, setTransferToBranch] = useState('');
   const [transferProductId, setTransferProductId] = useState('');
@@ -79,25 +81,58 @@ export default function Settings() {
     return true;
   }, [user?.role, phoneSalesMachine.id]);
   const createBranch = async () => {
-    const shopId = getCloudShopId();
-    if (!shopId || !supabase || !supabaseConfigured) { setBranchCreateMsg('Connect to the cloud before creating a branch.'); return; }
-    if (user?.role !== 'admin' && user?.role !== 'manager') { setBranchCreateMsg('Only an admin or manager can create a branch.'); return; }
+    setBranchCloudAuthNeeded(false);
     const name = newBranchName.trim();
-    const code = newBranchCode.trim().toUpperCase();
-    if (name.length < 2 || name.length > 80 || !/^[A-Z0-9][A-Z0-9_-]{0,19}$/.test(code)) {
-      setBranchCreateMsg('Enter a branch name (2–80 characters) and code (1–20 letters/numbers/hyphen/underscore).'); return;
+    if (name.length < 2 || name.length > 80) { setBranchCreateMsg('Enter a branch name between 2 and 80 characters.'); return; }
+    if (!supabaseConfigured || !supabase) { setBranchCreateMsg('Cloud service is not configured on this POS.'); return; }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) { setBranchCreateMsg('Connect to the internet before creating a cloud branch.'); return; }
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) { setBranchCreateMsg(`Cloud sign-in could not be checked: ${sessionError.message}`); return; }
+    if (!sessionData.session) {
+      setBranchCloudAuthNeeded(true);
+      setBranchCreateMsg('Sign in to Cloud account first.');
+      return;
     }
-    setBranchCreateMsg('Creating branch…');
-    const { data, error } = await supabase.rpc('create_shop_branch', { p_shop_id: shopId, p_name: name, p_code: code });
-    if (error || !data?.ok || !data?.branch?.id) { setBranchCreateMsg(error?.message || data?.error || 'Branch creation failed.'); return; }
-    const created = data.branch as BranchOption;
-    setBranchOptions(previous => {
-      const next = [...previous.filter(item => item.id !== created.id), created].sort((a,b) => Number(b.is_default)-Number(a.is_default) || a.name.localeCompare(b.name));
+    const membership = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
+    if (!membership.ok || !membership.shopId) {
+      setBranchCreateMsg(membership.error?.toLowerCase().includes('membership')
+        ? 'Cloud account is signed in, but this account has no active shop membership. Ask the shop owner to provision the correct Cloud account.'
+        : membership.error || 'Could not resolve an active cloud shop for this account.');
+      return;
+    }
+    const shopId = membership.shopId;
+    setBranchCreateBusy(true);
+    setBranchCreateMsg('Creating branch and generating a unique code…');
+    try {
+      const { data, error } = await supabase.rpc('create_shop_branch', { p_shop_id: shopId, p_name: name, p_code: null });
+      if (error || !data?.ok || !data?.branch?.id) {
+        const message = error?.message || data?.error || 'Branch creation failed.';
+        if (/permission denied for function create_shop_branch|authentication required|cloud sign-in required/i.test(message)) {
+          setBranchCloudAuthNeeded(true);
+          setBranchCreateMsg('Sign in to Cloud account first. The cloud session is required to create branches.');
+        } else if (/only an admin or manager|active shop membership|not authorized/i.test(message)) {
+          setBranchCreateMsg('Cloud account is signed in, but it must have an active Admin or Manager membership for this shop.');
+        } else setBranchCreateMsg(message);
+        return;
+      }
+      const created = data.branch as BranchOption;
+      const { data: refreshedRows, error: refreshError } = await supabase.from('branches')
+        .select('id,name,code,is_default,active').eq('shop_id', shopId).eq('active', true)
+        .order('is_default', { ascending: false }).order('name');
+      const next = !refreshError && refreshedRows
+        ? refreshedRows as BranchOption[]
+        : [...branchOptions.filter(item => item.id !== created.id), created];
+      setBranchOptions(next);
       try { localStorage.setItem(`nexfix_branches_v1:${shopId}`, JSON.stringify(next)); } catch { /* optional cache */ }
-      return next;
-    });
-    setNewBranchName(''); setNewBranchCode('');
-    setBranchCreateMsg(`Branch ${created.name} created. Its opening stock is zero; transfer stock from Main to populate it.`);
+      setSelectedBranchId(created.id);
+      updateSettings({ branchId: created.id });
+      void bindBranchToDevice(created.id, shopId);
+      setNewBranchName('');
+      setBranchCreateMsg(`Branch ${created.name} created successfully (code: ${created.code}). Its opening stock is zero; transfer stock from Main to populate it.`);
+      setBranchReloadKey(value => value + 1);
+    } catch (error) {
+      setBranchCreateMsg(error instanceof Error ? error.message : 'Branch creation failed. Please retry while online.');
+    } finally { setBranchCreateBusy(false); }
   };
 
   const addTransferLine = async () => {
@@ -158,62 +193,87 @@ export default function Settings() {
 
   useEffect(() => {
     let cancelled = false;
-    const shopId = getCloudShopId();
-    const cacheKey = shopId ? `nexfix_branches_v1:${shopId}` : '';
-    let hasCachedOptions = false;
-    const applyOptions = (rows: BranchOption[], fromCache = false) => {
+    const applyOptions = (rows: BranchOption[], message?: string) => {
       if (cancelled) return;
       setBranchOptions(rows);
       const saved = state.settings.branchId || '';
       const match = rows.find(branch => branch.id === saved && branch.active);
       if (match) {
         setSelectedBranchId(match.id);
-        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(match.id, shopId);
+        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(match.id);
       } else if (rows.length === 1) {
         setSelectedBranchId(rows[0].id);
         if ((user?.role === 'admin' || user?.role === 'manager') && saved !== rows[0].id) updateSettings({ branchId: rows[0].id });
-        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(rows[0].id, shopId);
+        if (user?.role === 'admin' || user?.role === 'manager') void bindBranchToDevice(rows[0].id);
       } else setSelectedBranchId('');
-      setBranchMsg(fromCache ? 'Offline mode: using saved branch list.' : rows.length === 1
+      setBranchMsg(message || (rows.length === 1
         ? 'Main branch is selected automatically.'
-        : rows.length > 1 ? 'Select the branch assigned to this POS device.' : 'No active branch was returned for this shop.');
+        : rows.length > 1 ? 'Select the branch assigned to this POS device.' : 'No active branch was returned for this shop.'));
     };
-    if (cacheKey) {
-      try {
-        const cached = JSON.parse(localStorage.getItem(cacheKey) || '[]') as BranchOption[];
-        if (Array.isArray(cached) && cached.length) { hasCachedOptions = true; applyOptions(cached, true); }
-      } catch { /* use live branch list below */ }
-    }
-    if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) {
-      if (!state.settings.branchId) setBranchMsg('Connect the POS online once to assign this device to a branch. Local sales remain available offline.');
-      return () => { cancelled = true; };
-    }
-    void (async () => {
-      try {
-        const { data, error } = await supabase.from('branches')
-          .select('id,name,code,is_default,active')
-          .eq('shop_id', shopId).eq('active', true).order('is_default', { ascending: false }).order('name');
-        if (error) throw error;
-        const rows = (data || []) as BranchOption[];
-        const mainBranch = rows.find(branch => branch.is_default);
-        if (mainBranch) cacheDefaultBranchId(shopId, mainBranch.id);
-        if (cacheKey) { try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ } }
-        applyOptions(rows, false);
-        const preferred = rows.find(branch => branch.id === state.settings.branchId)?.id
-          || rows.find(branch => branch.id === selectedBranchId)?.id
-          || (rows.length === 1 ? rows[0].id : '');
-        if (preferred) {
-          const { data: stockRows, error: stockError } = await supabase.from('branch_stock')
-            .select('product_id,qty').eq('shop_id', shopId).eq('branch_id', preferred);
-          if (!stockError && stockRows) cacheBranchStock(preferred, stockRows as Array<{ product_id: string; qty: number | string }>);
-          else if (!cancelled) setBranchMsg(stockError?.message || 'Branch loaded, but offline stock cache could not be refreshed.');
-        }
-      } catch (error) {
-        if (!cancelled && !hasCachedOptions) setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.');
+    const loadBranches = async () => {
+      if (!supabaseConfigured || !supabase) {
+        setBranchOptions([]);
+        setBranchCloudAuthNeeded(true);
+        setBranchMsg('Cloud service is not configured. Branch management needs a Cloud account.');
+        return;
       }
-    })();
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setBranchCloudAuthNeeded(true);
+        const cachedShopId = getCloudShopId();
+        let cached: BranchOption[] = [];
+        try { cached = JSON.parse(localStorage.getItem(`nexfix_branches_v1:${cachedShopId}`) || '[]') as BranchOption[]; } catch { /* optional cache */ }
+        if (cachedShopId && cached.length) applyOptions(cached, 'Offline mode: using the saved branch list. Sign in to Cloud when online to refresh branches.');
+        else { setBranchOptions([]); setBranchMsg('Connect to the internet and sign in to Cloud to load branches. Local sales remain available offline.'); }
+        return;
+      }
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw new Error(`Cloud session check failed: ${sessionError.message}`);
+      if (!sessionData.session) {
+        setBranchOptions([]);
+        setSelectedBranchId('');
+        setBranchCloudAuthNeeded(true);
+        setBranchMsg('Sign in to Cloud account first to load the active branch list. Local POS login and local sales remain available.');
+        return;
+      }
+      setBranchCloudAuthNeeded(false);
+      const membership = await ensureCloudShop(state.settings.shopName || 'Nexfix Shop');
+      if (!membership.ok || !membership.shopId) {
+        setBranchOptions([]);
+        setSelectedBranchId('');
+        setBranchMsg(membership.error?.toLowerCase().includes('membership')
+          ? 'Cloud account is signed in, but no active shop membership was found for this account.'
+          : membership.error || 'Could not resolve this Cloud account shop.');
+        return;
+      }
+      const shopId = membership.shopId;
+      const cacheKey = `nexfix_branches_v1:${shopId}`;
+      const { data: ensured, error: ensureError } = await supabase.rpc('ensure_default_branch', { p_shop_id: shopId });
+      if (ensureError) throw new Error(ensureError.message);
+      if (!ensured?.ok || !ensured?.branch?.id) throw new Error(ensured?.error || 'Could not ensure the Main branch for this shop.');
+      const { data, error } = await supabase.from('branches')
+        .select('id,name,code,is_default,active')
+        .eq('shop_id', shopId).eq('active', true).order('is_default', { ascending: false }).order('name');
+      if (error) throw error;
+      const rows = (data || []) as BranchOption[];
+      const mainBranch = rows.find(branch => branch.is_default);
+      if (mainBranch) cacheDefaultBranchId(shopId, mainBranch.id);
+      try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ }
+      applyOptions(rows);
+      const preferred = rows.find(branch => branch.id === state.settings.branchId)?.id
+        || rows.find(branch => branch.id === selectedBranchId)?.id
+        || (rows.length === 1 ? rows[0].id : '');
+      if (preferred) {
+        const { data: stockRows, error: stockError } = await supabase.from('branch_stock')
+          .select('product_id,qty').eq('shop_id', shopId).eq('branch_id', preferred);
+        if (!stockError && stockRows) cacheBranchStock(preferred, stockRows as Array<{ product_id: string; qty: number | string }>);
+        else if (!cancelled) setBranchMsg(stockError?.message || 'Branch loaded, but offline stock cache could not be refreshed.');
+      }
+    };
+    void loadBranches().catch(error => {
+      if (!cancelled) { setBranchOptions([]); setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.'); }
+    });
     return () => { cancelled = true; };
-  }, [phoneSalesShopId, state.settings.branchId, selectedBranchId, user?.role, updateSettings, phoneSalesMachine.id, bindBranchToDevice]);
+  }, [phoneSalesShopId, state.settings.branchId, selectedBranchId, user?.role, updateSettings, phoneSalesMachine.id, bindBranchToDevice, branchReloadKey]);
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
   const [phoneSalesToken, setPhoneSalesToken] = useState('');
   const [phoneSalesLink, setPhoneSalesLink] = useState('');
@@ -856,6 +916,7 @@ export default function Settings() {
             {branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code}){branch.is_default ? ' — Main' : ''}</option>)}
           </select>
           <p className={`mt-2 text-xs ${selectedBranchId ? 'text-emerald-600' : 'text-amber-600'}`}>{branchMsg}</p>
+          {branchCloudAuthNeeded && <p className="mt-2 text-xs"><a className="text-indigo-500 underline font-semibold" href="#cloud-update-authorization">Open Cloud account sign-in / authorization</a></p>}
           {branchOptions.length > 1 && !selectedBranchId && <p className="mt-2 text-xs font-semibold text-amber-600">Branch selection is required before this device can sync a sale or receive stock.</p>}
         </div>
       </div>
@@ -864,9 +925,9 @@ export default function Settings() {
         <h3 className="font-bold text-ink mb-2">Create a branch</h3>
         <p className="text-xs text-sub mb-4">New branches start with zero stock. Use the transfer tool below to move existing stock safely.</p>
         <div className="grid sm:grid-cols-3 gap-3">
-          <Field label="Branch name"><input className="input" value={newBranchName} onChange={e => setNewBranchName(e.target.value)} placeholder="e.g. Kandy" maxLength={80} /></Field>
-          <Field label="Branch code"><input className="input" value={newBranchCode} onChange={e => setNewBranchCode(e.target.value.toUpperCase())} placeholder="e.g. KDY" maxLength={20} /></Field>
-          <div className="flex items-end"><button type="button" className="btn btn-primary w-full" onClick={() => void createBranch()} disabled={user?.role !== 'admin' && user?.role !== 'manager'}>Create branch</button></div>
+          <Field label="Branch name"><input className="input" value={newBranchName} onChange={e => { setNewBranchName(e.target.value); setBranchCreateMsg(''); }} placeholder="e.g. Kandy" maxLength={80} /></Field>
+          <div className="rounded-xl border border-line bg-raised/40 p-3 text-xs text-sub"><span className="font-semibold text-ink">Auto branch code preview:</span> <code className="font-bold">{newBranchName.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) || 'BRANCH'}</code><p className="mt-1">Generated from the name; if already used, the cloud adds -2, -3, etc. (max 20 characters).</p></div>
+          <div className="flex items-end"><button type="button" className="btn btn-primary w-full" onClick={() => void createBranch()} disabled={branchCreateBusy || user?.role !== 'admin' && user?.role !== 'manager'}>{branchCreateBusy ? 'Creating…' : 'Create branch'}</button></div>
         </div>
         {branchCreateMsg && <p className="mt-3 text-xs text-sub">{branchCreateMsg}</p>}
       </div>
@@ -909,13 +970,29 @@ export default function Settings() {
 
 
       {user?.role === 'admin' && (
-        <div className="card p-6 border border-emerald-500/20 mt-5">
+        <div id="cloud-update-authorization" className="card p-6 border border-emerald-500/20 mt-5">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Cloud update authorization</h3>
           <p className="text-xs text-faint mb-4">One-time setup for the private Windows updater. This creates the cloud account and first shop only when you explicitly start this setup; normal local POS login remains unchanged.</p>
           <div className="grid sm:grid-cols-2 gap-3.5">
             <Field label="Cloud account email" hint="Use the Supabase Auth Admin email; it may be different from the local POS login email."><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="cloud-admin@example.com" autoComplete="email" /></Field>
             <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>          </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
+            <button type="button" className="btn btn-secondary" onClick={() => void (async () => {
+              if (!supabase || !supabaseConfigured) { setCloudSetupMsg({ ok: false, text: 'Cloud service is not configured.' }); return; }
+              if (!cloudSetupEmail.trim() || !cloudSetupPassword) { setCloudSetupMsg({ ok: false, text: 'Enter the Cloud account email and password first.' }); return; }
+              setCloudSetupBusy(true); setCloudSetupMsg(null);
+              try {
+                const { error } = await supabase.auth.signInWithPassword({ email: cloudSetupEmail.trim(), password: cloudSetupPassword });
+                if (error) { setCloudSetupMsg({ ok: false, text: error.message }); return; }
+                const membership = await ensureCloudShop(form.shopName || state.settings.shopName || 'Nexfix Shop');
+                if (!membership.ok || !membership.shopId) { setCloudSetupMsg({ ok: false, text: membership.error?.toLowerCase().includes('membership') ? 'Signed in, but this Cloud account has no active shop membership. Ask the shop owner to provision it.' : membership.error || 'Could not resolve the Cloud shop.' }); return; }
+                setBranchCloudAuthNeeded(false);
+                setBranchMsg('Cloud sign-in successful. Loading branches…');
+                setBranchReloadKey(value => value + 1);
+                setCloudSetupMsg({ ok: true, text: 'Cloud account signed in and active shop membership confirmed. Branches will refresh now.' });
+              } catch (error) { setCloudSetupMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud sign-in failed.' }); }
+              finally { setCloudSetupBusy(false); }
+            })()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || !cloudSetupPassword}>Sign in to Cloud account</button>
             <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
           </div>
           {cloudSetupMsg && <p className={`mt-3 text-[12px] font-semibold ${cloudSetupMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{cloudSetupMsg.text}</p>}
