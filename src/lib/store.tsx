@@ -1175,7 +1175,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           try {
             await queueBranchStockAdjustment({
               shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id,
-              productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId: uid(), baseProduct: current,
+              productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId: uid(), baseProduct: current!,
             });
           } catch (error) {
             if (cacheApplied) applyBranchStockDeltas(targetBranchId, { [normalized.id]: -stockDelta });
