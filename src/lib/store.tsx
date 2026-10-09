@@ -1553,7 +1553,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return deny(`Customer outstanding changed to Rs. ${currentOutstanding.toLocaleString()}. Refresh the balance and retry.`, `Blocked stale credit settlement for ${customer.name}`);
       }
       const payment: CustomerCreditPayment = {
-        id: uid(), customerId: customer.id, cashierId: user.id, amount, method: methods[0].method,
+        id: uid(), customerId: customer.id, cashierId: user.id, branchId: selectedBranchId, amount, method: methods[0].method,
         methods: methods.length > 1 ? methods : undefined,
         allocations,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
