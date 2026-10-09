@@ -14,7 +14,7 @@ import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
-import { cacheBranchStock } from '../lib/branchStock';
+import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -190,6 +190,8 @@ export default function Settings() {
           .eq('shop_id', shopId).eq('active', true).order('is_default', { ascending: false }).order('name');
         if (error) throw error;
         const rows = (data || []) as BranchOption[];
+        const mainBranch = rows.find(branch => branch.is_default);
+        if (mainBranch) cacheDefaultBranchId(shopId, mainBranch.id);
         if (cacheKey) { try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ } }
         applyOptions(rows, false);
         const preferred = rows.find(branch => branch.id === state.settings.branchId)?.id
