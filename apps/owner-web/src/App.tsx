@@ -86,7 +86,7 @@ function midnightIso(key: string, zone = TIME_ZONE) {
   for (let i = 0; i < 4; i++) {
     const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess));
     const part = (name: string) => Number(p.find((item) => item.type === name)?.value || 0);
-    const represented = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second));
+    const represented = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
     const correction = target - represented; guess += correction; if (!correction) break;
   }
   return new Date(guess).toISOString();
