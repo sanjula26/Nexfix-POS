@@ -95,7 +95,6 @@ function money(value: number, currency: string | null | undefined) {
   return new Intl.NumberFormat('en-LK', { style: 'currency', currency: currency || 'LKR', maximumFractionDigits: 2 }).format(value);
 }
 function dateTime(value: string) { return new Intl.DateTimeFormat('en-LK', { dateStyle: 'medium', timeStyle: 'short', timeZone: TIME_ZONE }).format(new Date(value)); }
-function total(sales: Sale[]) { return sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0); }
 function csvCell(value: unknown) { return '"' + String(value ?? '').replace(/"/g, '""') + '"'; }
 function exportCsv(filename: string, rows: unknown[][]) {
   const blob = new Blob(['\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
