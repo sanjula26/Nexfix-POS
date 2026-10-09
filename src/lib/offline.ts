@@ -1,6 +1,7 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
@@ -92,7 +93,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:undefined,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
+            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
