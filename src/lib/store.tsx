@@ -1103,6 +1103,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
     const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
+    if (state.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase())
+      || state.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode)) {
+      pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
+      return false;
+    }
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const stockDelta = normalized.stock - (current?.stock || 0);
+    if (selectedBranchId !== 'local-main' && stockDelta !== 0) {
+      if (!hasCachedBranchStock(selectedBranchId)) {
+        pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock cache is missing. Connect online and refresh Settings.');
+        return false;
+      }
+      if (!applyBranchStockDeltas(selectedBranchId, { [normalized.id]: stockDelta })) {
+        pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock would become negative.');
+        return false;
+      }
+    }
     let duplicate = false;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
