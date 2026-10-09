@@ -1,6 +1,6 @@
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { BrowserRouter, Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { BarChart3, CalendarDays, ChevronRight, CircleDollarSign, Download, FileText, GitBranch, LayoutDashboard, LogOut, Menu, Package, RefreshCw, Settings, Users, Wallet, Wrench, type LucideIcon } from 'lucide-react';
 import './styles.css';
 
@@ -219,5 +219,5 @@ function ReportPage() {
     <section className="panel"><div className="panel-head"><div><h3>Daily sales breakdown</h3><p>Gross completed invoice totals by shop-local date</p></div></div>{loading?<div className="empty"><span className="spinner"/>Calculating report…</div>:<div className="daily-list">{daily.map(d=><div className="daily-row" key={d.key}><span>{d.key}</span><div className="daily-track"><div style={{width:(d.amount?Math.max(1,d.amount/max*100):0)+'%'}}/></div><small>{d.list.length} inv.</small><b>{money(d.amount,currency)}</b></div>)}</div>}</section>
   </div>;
 }
-function App() { return <AuthProvider><BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}><Routes><Route path="/login" element={<Login/>}/><Route element={<Guard/>}><Route element={<Shell/>}><Route index element={<Navigate to="/dashboard" replace/>}/><Route path="/dashboard" element={<Dashboard/>}/><Route path="/sales" element={<SalesPage/>}/><Route path="/reports" element={<ReportPage/>}/></Route></Route><Route path="*" element={<Navigate to="/dashboard" replace/>}/></Routes></BrowserRouter></AuthProvider>; }
+function App() { return <AuthProvider><HashRouter><Routes><Route path="/login" element={<Login/>}/><Route element={<Guard/>}><Route element={<Shell/>}><Route index element={<Navigate to="/dashboard" replace/>}/><Route path="/dashboard" element={<Dashboard/>}/><Route path="/sales" element={<SalesPage/>}/><Route path="/reports" element={<ReportPage/>}/></Route></Route><Route path="*" element={<Navigate to="/dashboard" replace/>}/></Routes></HashRouter></AuthProvider>; }
 export default App;
