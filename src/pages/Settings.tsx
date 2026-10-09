@@ -144,6 +144,11 @@ export default function Settings() {
         p_note: transferNote.trim() || null, p_idempotency_key: uid(),
       });
       if (error || !data?.ok) throw new Error(error?.message || data?.error || 'Stock transfer failed.');
+      for (const branchId of [transferFromBranch, transferToBranch]) {
+        const { data: stockRows, error: stockError } = await supabase.from('branch_stock')
+          .select('product_id,qty').eq('shop_id', shopId).eq('branch_id', branchId);
+        if (!stockError && stockRows) cacheBranchStock(branchId, stockRows as Array<{ product_id: string; qty: number | string }>);
+      }
       setTransferMsg(`Transfer completed successfully (${transferLines.length} line(s)). Source and destination branch stock was updated atomically.`);
       setTransferLines([]); setTransferNote('');
     } catch (error) {
