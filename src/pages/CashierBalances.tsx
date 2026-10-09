@@ -155,7 +155,6 @@ export default function CashierBalances() {
       const hasSales = state.sales.some(sale => dkey(sale.date) === today && sale.cashierId === openFloatId);
       const hasCashExpenses = state.expenses.some(expense => dkey(expense.date) === today && (expense.paymentMethod || 'cash') === 'cash' && expense.by === cashierName);
       if (hasSales || hasCashExpenses) {
-        setSignOffError('Opening float cannot be changed after sales or cash expenses. Confirm the existing opening amount instead.');
         window.alert('Opening float cannot be changed after sales or cash expenses. Use the existing amount to confirm the opening float.');
         return;
       }
