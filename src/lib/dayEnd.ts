@@ -39,7 +39,23 @@ function belongsToSession(
 }
 
 function tenderLegs(sale: Sale): PaymentLeg[] {
-  if (sale.payments?.length) return sale.payments.filter(leg => leg.method !== 'credit' && leg.amount > 0);
+  if (sale.payments?.length) {
+    const legs = sale.payments
+      .filter(leg => leg.method !== 'credit' && Number.isFinite(leg.amount) && leg.amount > 0)
+      .map(leg => ({ ...leg, amount: money(leg.amount) }));
+    // Change is handed back as physical cash. Some split-tender bills persist
+    // the gross tender legs, so subtract change from the cash leg before
+    // reporting drawer cash (and cash received); never deduct it from card,
+    // bank, or mobile tender totals.
+    const change = Math.max(0, money(Number(sale.change) || 0));
+    if (change > 0) {
+      const cashIndex = legs.findIndex(leg => leg.method === 'cash');
+      if (cashIndex >= 0) {
+        legs[cashIndex] = { ...legs[cashIndex], amount: money(Math.max(0, legs[cashIndex].amount - change)) };
+      }
+    }
+    return legs.filter(leg => leg.amount > 0);
+  }
   const paid = Math.max(0, Number(sale.amountPaid) || 0);
   const received = Math.min(Math.max(0, sale.total), paid > 0 ? paid : sale.payment === 'credit' ? 0 : Math.max(0, sale.total));
   if (received <= 0) return [];
