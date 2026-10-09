@@ -334,7 +334,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => {
     const requestedBranch = u.branchId || state.settings.branchId || 'local-main';
     const resolvedBranch = requestedBranch === 'local-main'
-      ? (activeBranches || []).length === 1 ? defaultBranch?.id : undefined
+      ? defaultBranch?.id
       : (activeBranches || []).some(branch => branch.id === requestedBranch) ? requestedBranch : undefined;
     return {
       id: u.id, shop_id: shopId, branch_id: resolvedBranch, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
