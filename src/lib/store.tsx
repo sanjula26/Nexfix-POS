@@ -21,6 +21,8 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
+import { getCachedBranchStock, hasCachedBranchStock, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
+import { getCloudShopId } from './cloudSync';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1387,6 +1389,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     const s = state;
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (selectedBranchId !== 'local-main' && !hasCachedBranchStock(selectedBranchId)) {
+      pushAudit('DENIED', 'Sale', 'Blocked offline sale because this branch stock cache is missing. Connect online and open Settings to refresh branch stock.');
+      return null;
+    }
+    const availableForBranch = (product: Product) => {
+      if (selectedBranchId === 'local-main') return product.stock;
+      return getCachedBranchStock(selectedBranchId, product.id) ?? 0;
+    };
     const saleLines = applyCategoryPromotions(input.lines, s.products, s.settings);
     const items: SaleItem[] = [];
     const tradeIn = input.tradeIn;
@@ -1414,7 +1425,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const kitLines = p.isKit ? (s.kitItems || []).filter(k => k.kitProductId === p.id && Number.isFinite(k.qty) && k.qty > 0) : [];
       // A kit is stocked through its BOM components. A kit without a BOM keeps
       // the legacy product-stock behaviour so existing catalog data remains safe.
-      if (!kitLines.length && requestedQty > p.stock) return null;
+      if (!kitLines.length && requestedQty > availableForBranch(p)) return null;
       requestedQtyByProduct.set(l.productId, requestedQty);
       if (kitLines.length) {
         for (const kitLine of kitLines) {
@@ -1430,6 +1441,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         for (const uid_ of l.unitIds) {
           const u = (s.units || []).find(x => x.id === uid_ && x.productId === p.id && x.status === 'in_stock');
           if (!u) return null;
+          const unitBranchId = u.branchId && u.branchId !== 'local-main' ? u.branchId : (getDefaultBranchId(getCloudShopId()) || 'local-main');
+          if (selectedBranchId !== 'local-main' && unitBranchId !== selectedBranchId) return null;
           if (soldUnitIds.includes(uid_)) return null; // same unit twice
           soldUnitIds.push(uid_);
         }
@@ -1455,7 +1468,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (!component) return null;
       const directQty = requestedQtyByProduct.get(componentId) || 0;
       const kitDirectOverlap = s.products.find(x => x.id === componentId)?.isKit ? 0 : directQty;
-      if (kitQty + kitDirectOverlap > component.stock) return null;
+      if (kitQty + kitDirectOverlap > availableForBranch(component)) return null;
     }
 
     const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
@@ -1552,6 +1565,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const productsAfterTradeIn = tradeInUnit
       ? updatedProducts.map(p => p.id === tradeInUnit.productId ? { ...p, stock: p.stock + 1 } : p)
       : updatedProducts;
+    if (selectedBranchId !== 'local-main') {
+      const deltas: Record<string, number> = {};
+      for (const nextProduct of productsAfterTradeIn) {
+        const previous = s.products.find(product => product.id === nextProduct.id);
+        const delta = nextProduct.stock - (previous?.stock ?? nextProduct.stock);
+        if (delta) deltas[nextProduct.id] = delta;
+      }
+      if (Object.keys(deltas).length && !applyBranchStockDeltas(selectedBranchId, deltas)) {
+        pushAudit('DENIED', 'Sale', 'Blocked sale because cached branch stock is insufficient or stale.');
+        return null;
+      }
+    }
 
     setStateWithInventoryLedger('SALE', prev => ({
       ...prev,
@@ -1568,7 +1593,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       units: [
         ...(tradeInUnit ? [tradeInUnit] : []),
         ...(prev.units || []).map(u => soldUnitIds.includes(u.id)
-          ? { ...u, status: 'sold' as const, saleId: sale.id, saleBillNo: billNo, soldAt: sale.date }
+          ? { ...u, branchId: u.branchId || getDefaultBranchId(getCloudShopId()) || 'local-main', status: 'sold' as const, saleId: sale.id, saleBillNo: billNo, soldAt: sale.date }
           : u,
         ),
       ],
