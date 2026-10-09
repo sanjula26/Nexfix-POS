@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Package, Plus, Pencil, Trash2, Boxes, Banknote, AlertTriangle, Layers,
@@ -9,6 +9,8 @@ import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
+import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
+import { getCloudShopId } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -40,6 +42,14 @@ export default function Inventory() {
   const [stockCounts, setStockCounts] = useState<Record<string, string>>({});
   const [stockTakeReason, setStockTakeReason] = useState('Stock take adjustment');
   const [newUnitText, setNewUnitText] = useState('');
+  const selectedBranchId = state.settings.branchId || 'local-main';
+  const shopId = getCloudShopId();
+  const multipleBranches = hasMultipleCachedBranches(shopId);
+  const branchStockReady = selectedBranchId === 'local-main' ? !multipleBranches : hasCachedBranchStock(selectedBranchId);
+  const stockFor = useCallback((product: Product): number | null => {
+    if (selectedBranchId === 'local-main') return multipleBranches ? null : product.stock;
+    return getCachedBranchStock(selectedBranchId, product.id);
+  }, [selectedBranchId, multipleBranches]);
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -47,10 +57,10 @@ export default function Inventory() {
       .filter(p =>
         (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode.includes(q) || p.brand.toLowerCase().includes(q)) &&
         (cat === 'all' || p.category === cat) &&
-        (!lowOnly || p.stock <= p.reorderLevel),
+        (!lowOnly || (stockFor(p) !== null && (stockFor(p) as number) <= p.reorderLevel)),
       )
-      .sort((a, b) => (lowOnly ? a.stock - b.stock : a.name.localeCompare(b.name)));
-  }, [state.products, search, cat, lowOnly]);
+      .sort((a, b) => (lowOnly ? (stockFor(a) ?? Number.MAX_SAFE_INTEGER) - (stockFor(b) ?? Number.MAX_SAFE_INTEGER) : a.name.localeCompare(b.name)));
+  }, [state.products, search, cat, lowOnly, stockFor]);
 
   const costHistory = useMemo(() => {
     if (!editing || isNew) return [] as Array<{ date: string; cost: number; qty: number; supplier: string; source: string }>;
@@ -67,10 +77,10 @@ export default function Inventory() {
     ? state.settings.categories
     : FALLBACK_CATEGORIES;
   const cats = ['all', ...Array.from(new Set([...categoryOptions, ...state.products.map(p => p.category)]))];
-  const units = state.products.reduce((a, p) => a + p.stock, 0);
-  const value = state.products.reduce((a, p) => a + p.stock * p.cost, 0);
-  const retail = state.products.reduce((a, p) => a + p.stock * p.price, 0);
-  const low = state.products.filter(p => p.stock <= p.reorderLevel).map(p => ({ ...p, suggestedReorderQty: Math.max(0, p.reorderLevel * 2 - p.stock) }));
+  const units = state.products.reduce((a, p) => a + (stockFor(p) ?? 0), 0);
+  const value = state.products.reduce((a, p) => a + (stockFor(p) ?? 0) * p.cost, 0);
+  const retail = state.products.reduce((a, p) => a + (stockFor(p) ?? 0) * p.price, 0);
+  const low = state.products.filter(p => stockFor(p) !== null && (stockFor(p) as number) <= p.reorderLevel).map(p => { const qty = stockFor(p) ?? 0; return { ...p, stock: qty, suggestedReorderQty: Math.max(0, p.reorderLevel * 2 - qty) }; });
 
   const setProductAttribute = (key: string, value: string) => {
     if (!editing) return;
@@ -184,13 +194,14 @@ export default function Inventory() {
           <Badge tone="blue" className="uppercase mb-2"><Layers size={11} /> Stock Control</Badge>
           <h1 className="text-[26px] sm:text-3xl font-extrabold text-ink tracking-tight">Inventory</h1>
           <p className="text-sm text-sub mt-1">
-            {fmtNum(state.products.length)} products · {fmtNum(units)} units · {low.length} low-stock alerts
+            {fmtNum(state.products.length)} products · {branchStockReady ? fmtNum(units) : '—'} {selectedBranchId === 'local-main' ? 'units' : 'branch units'} · {branchStockReady ? low.length : '—'} low-stock alerts
           </p>
         </div>
+        {!branchStockReady && <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm">Branch stock is not loaded for this POS. Open Settings while online and select the correct branch before viewing stock totals, taking stock, or adjusting quantities.</div>}
         <div className="flex items-center gap-2.5">
           {can('act:manageStock') && (
             <>
-              <button type="button" className="btn btn-soft" onClick={() => { setStockCounts(Object.fromEntries(state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => [p.id, String(p.stock)]))); setStockTakeOpen(true); }}>
+              <button type="button" className="btn btn-soft" disabled={!branchStockReady} title={!branchStockReady ? 'Select a branch and refresh branch stock before stock take' : 'Stock take'} onClick={() => { setStockCounts(Object.fromEntries(state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => [p.id, String(stockFor(p) ?? '')]))); setStockTakeOpen(true); }}>
                 <ClipboardCheck size={15} /> Stock take
               </button>
               <button type="button" className="btn btn-soft" onClick={() => setCatMgrOpen(true)}>
@@ -257,6 +268,7 @@ export default function Inventory() {
               <tbody>
                 {products.map(p => {
                   const tracked = !!(p.trackImei || p.trackSerial);
+                  const currentStock = stockFor(p);
                   return <tr key={p.id} className="hover:bg-raised/40 transition-colors">
                     <td className="td">
                       <div className="font-semibold text-ink">{p.name}</div>
@@ -271,12 +283,12 @@ export default function Inventory() {
                     {can('act:viewCost') && <td className="td num text-sub">{fmtRs(p.cost)}</td>}
                     <td className="td num font-semibold text-ink">{fmtRs(p.price)}</td>
                     <td className="td">
-                      <div className="flex items-center gap-2"><span className={`num font-bold ${p.stock === 0 ? 'text-rose-500' : p.stock <= p.reorderLevel ? 'text-amber-500' : 'text-ink'}`}>{p.stock}</span>{p.stock <= p.reorderLevel && <Badge tone={p.stock === 0 ? 'rose' : 'amber'}>{p.stock === 0 ? 'OUT' : 'LOW'}</Badge>}</div>
-                      <div className="w-24 h-1.5 rounded-full bg-raised mt-1.5 overflow-hidden"><div className={`h-full rounded-full ${p.stock === 0 ? 'bg-rose-500' : p.stock <= p.reorderLevel ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (p.stock / Math.max(p.reorderLevel * 3, 1)) * 100)}%` }} /></div>
-                    </td><td className="td num font-semibold text-sub">{Math.max(0, p.reorderLevel * 2 - p.stock)}</td>
-                    {can('act:viewCost') && <td className="td num text-sub">{fmtRs(p.stock * p.cost)}</td>}
+                      <div className="flex items-center gap-2"><span className={`num font-bold ${currentStock === null ? 'text-sub' : currentStock === 0 ? 'text-rose-500' : currentStock <= p.reorderLevel ? 'text-amber-500' : 'text-ink'}`}>{currentStock === null ? '—' : currentStock}</span>{currentStock !== null && currentStock <= p.reorderLevel && <Badge tone={currentStock === 0 ? 'rose' : 'amber'}>{currentStock === 0 ? 'OUT' : 'LOW'}</Badge>}</div>
+                      <div className="w-24 h-1.5 rounded-full bg-raised mt-1.5 overflow-hidden"><div className={`h-full rounded-full ${currentStock === null ? 'bg-slate-300' : currentStock === 0 ? 'bg-rose-500' : currentStock <= p.reorderLevel ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${currentStock === null ? 0 : Math.min(100, (currentStock / Math.max(p.reorderLevel * 3, 1)) * 100)}%` }} /></div>
+                    </td><td className="td num font-semibold text-sub">{currentStock === null ? '—' : Math.max(0, p.reorderLevel * 2 - currentStock)}</td>
+                    {can('act:viewCost') && <td className="td num text-sub">{currentStock === null ? '—' : fmtRs(currentStock * p.cost)}</td>}
                     {can('act:manageStock') && <td className="td"><div className="flex items-center justify-end gap-1">
-                      <button className={`icon-btn !w-8 !h-8 ${tracked ? 'opacity-40 cursor-not-allowed' : ''}`} title={tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked} onClick={() => { setStockAdj(p); setAdjDelta(''); }}><Boxes size={14} /></button>
+                      <button className={`icon-btn !w-8 !h-8 ${tracked || !branchStockReady ? 'opacity-40 cursor-not-allowed' : ''}`} title={!branchStockReady ? 'Select a branch and refresh stock first' : tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked || !branchStockReady} onClick={() => { setStockAdj({ ...p, stock: stockFor(p) ?? p.stock }); setAdjDelta(''); }}><Boxes size={14} /></button>
                       <button className="icon-btn !w-8 !h-8" title="Edit" onClick={() => { setEditing({ ...p }); setIsNew(false); }}><Pencil size={14} /></button>
                       {can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Delete" onClick={() => setDeleting(p)}><Trash2 size={14} /></button>}
                     </div></td>}
@@ -332,7 +344,7 @@ export default function Inventory() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Field label="Cost (Rs.)"><input className="input num" value={editing.cost || ''} onChange={e => setEditing({ ...editing, cost: num(e.target.value) })} /></Field>
               <Field label="Sell price (Rs.)"><input className="input num" value={editing.price || ''} onChange={e => setEditing({ ...editing, price: num(e.target.value) })} /></Field>
-              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : undefined}><input className="input num" value={editing.stock || ''} disabled={tracked} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
+              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : (!isNew && selectedBranchId !== 'local-main' ? 'Shop total is shown; use Adjust Stock to change this branch quantity.' : undefined)}><input className="input num" value={editing.stock || ''} disabled={tracked || (!isNew && selectedBranchId !== 'local-main')} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
               <Field label="Low-stock alert at"><input className="input num" value={editing.reorderLevel || ''} onChange={e => setEditing({ ...editing, reorderLevel: Math.round(num(e.target.value)) })} /></Field>
             </div>
             {editing.price > 0 && editing.cost > 0 && <div className="rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20 px-4 py-3 text-sm flex justify-between"><span className="text-sub">Margin per unit</span><span className="num font-bold text-emerald-500">{fmtRs(editing.price - editing.cost)} ({Math.round(((editing.price - editing.cost) / editing.price) * 100)}%)</span></div>}
@@ -384,10 +396,10 @@ export default function Inventory() {
         <div className="space-y-4">
           <div className="rounded-xl bg-raised border border-line px-4 py-3 text-sm text-sub">Tracked IMEI/serial stock is excluded here. Reconcile those through Units/GRN.</div>
           <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-line divide-y divide-line">
-            {state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => { const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) ? counted - p.stock : 0; return <div key={p.id} className="p-3 flex items-center gap-3"><div className="min-w-0 flex-1"><div className="font-semibold text-ink truncate">{p.name}</div><div className="text-[11px] text-sub">System {p.stock} · Difference <span className={delta === 0 ? 'text-sub' : delta > 0 ? 'text-emerald-600' : 'text-rose-500'}>{delta > 0 ? '+' : ''}{delta}</span></div></div><input className="input num !w-28" type="number" min={0} value={stockCounts[p.id] ?? ''} onChange={e => setStockCounts(s => ({ ...s, [p.id]: e.target.value }))} /></div>; })}
+            {state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => { const systemQty = stockFor(p); const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) && systemQty !== null ? counted - systemQty : 0; return <div key={p.id} className="p-3 flex items-center gap-3"><div className="min-w-0 flex-1"><div className="font-semibold text-ink truncate">{p.name}</div><div className="text-[11px] text-sub">System {systemQty === null ? '—' : systemQty} · Difference <span className={delta === 0 ? 'text-sub' : delta > 0 ? 'text-emerald-600' : 'text-rose-500'}>{delta > 0 ? '+' : ''}{delta}</span></div></div><input className="input num !w-28" type="number" min={0} value={stockCounts[p.id] ?? ''} onChange={e => setStockCounts(s => ({ ...s, [p.id]: e.target.value }))} /></div>; })}
           </div>
           <Field label="Reason"><input className="input" value={stockTakeReason} onChange={e => setStockTakeReason(e.target.value)} /></Field>
-          <div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setStockTakeOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" onClick={() => { let changed = 0; state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).forEach(p => { const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) ? Math.round(counted - p.stock) : 0; if (delta !== 0) { adjustStock(p.id, delta, stockTakeReason.trim() || 'Stock take adjustment'); changed++; } }); setStockTakeOpen(false); setStockCounts({}); if (changed === 0) window.alert('No stock differences to post.'); }}>Post adjustments</button></div>
+          <div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setStockTakeOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!branchStockReady} onClick={async () => { let changed = 0; let failed = 0; for (const p of state.products.filter(p => p.active && !p.trackImei && !p.trackSerial)) { const systemQty = stockFor(p); const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) && systemQty !== null ? Math.round(counted - systemQty) : 0; if (delta !== 0) { if (await adjustStock(p.id, delta, stockTakeReason.trim() || 'Stock take adjustment')) changed++; else failed++; } } if (failed) { window.alert(`${failed} stock adjustment(s) failed. Review branch selection, stock availability and cloud/queue status, then retry the remaining differences.`); return; } setStockTakeOpen(false); setStockCounts({}); if (changed === 0) window.alert('No stock differences to post.'); }}>Post adjustments</button></div>
         </div>
       </Modal>
       <Modal open={!!stockAdj} onClose={() => setStockAdj(null)} title="Adjust stock" sub={stockAdj?.name}>
@@ -398,7 +410,7 @@ export default function Inventory() {
             <Field label="Reason"><select className="input" value={adjReason} onChange={e => setAdjReason(e.target.value)}>{['Restock', 'Supplier return', 'Damaged / broken', 'Stock count fix', 'Internal use'].map(r => <option key={r}>{r}</option>)}</select></Field>
           </div>
           {adjDelta && <p className="text-sm text-sub">New stock will be <b className="num text-ink">{Math.max(0, stockAdj.stock + (parseFloat(adjDelta) || 0))}</b></p>}
-          <button className="btn btn-primary w-full" disabled={!adjDelta || parseFloat(adjDelta) === 0 || user == null} onClick={() => { adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason); setStockAdj(null); }}><Boxes size={15} /> Apply adjustment</button>
+          <button className="btn btn-primary w-full" disabled={!adjDelta || parseFloat(adjDelta) === 0 || user == null} onClick={async () => { const ok = await adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason); if (ok) setStockAdj(null); else window.alert('Stock adjustment was not committed. Check branch selection, available stock and cloud connection.'); }}><Boxes size={15} /> Apply adjustment</button>
         </div>}
       </Modal>
 
