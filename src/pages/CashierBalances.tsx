@@ -171,7 +171,7 @@ export default function CashierBalances() {
   const openDayClose = () => {
     if (!openSessions.length) return;
     const initial: Record<string, string> = {};
-    for (const session of openSessions) initial[session.cashierId] = String(rowFor(session.cashierId).expected);
+    for (const session of openSessions) initial[session.cashierId] = '';
     setDayCounts(initial);
     setDayCloseNote('');
     setDayCloseError('');
@@ -408,7 +408,7 @@ export default function CashierBalances() {
                       Opening {fmtRs(row.opening)}
                     </button>
                     {!row.session?.closed && row.session && (
-                      <button type="button" className="btn btn-primary !py-1.5 !px-3 text-xs" onClick={() => { setSettling(cashier.id); setCounted(String(row.expected)); setNote(''); setSignOffError(''); }}>
+                      <button type="button" className="btn btn-primary !py-1.5 !px-3 text-xs" onClick={() => { setSettling(cashier.id); setCounted(''); setNote(''); setSignOffError(''); }}>
                         <Lock size={14} /> Cashier Sign Off
                       </button>
                     )}
