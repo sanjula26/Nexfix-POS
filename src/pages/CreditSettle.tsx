@@ -30,7 +30,7 @@ function buildSettlementWhatsAppText(saved: { payment: import('../lib/customerCr
   if (saved.remainingBalance <= 0.009) lines.push('*STATUS: PAID IN FULL — BALANCE CLEARED*');
   lines.push('', 'Thank you for your payment!');
   if (settings.phone) lines.push(`Contact: ${settings.phone}`);
-  return lines.join('\\n');
+  return lines.join('\n');
 }
 
 export default function CreditSettle() {
