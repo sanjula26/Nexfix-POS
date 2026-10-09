@@ -1304,8 +1304,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const snapshot = stateRef.current;
     const todaySession = snapshot.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()));
-    if (!todaySession || todaySession.closed) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked credit settlement without an open cashier drawer session');
+    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked credit settlement without an open cashier drawer with confirmed opening float');
       return null;
     }
     const customer = snapshot.customers.find(x => x.id === p.customerId);
@@ -3322,13 +3322,13 @@ const deletePurchase = useCallback((id: string) => {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
           return s;
         }
+        if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         const hasSales = s.sales.some(sale => dkey(sale.date) === today && sale.cashierId === cashierId);
         const hasCashExpenses = s.expenses.some(exp => dkey(exp.date) === today && (exp.paymentMethod || 'cash') === 'cash' && exp.by === u.name);
-        if (hasSales || hasCashExpenses) {
+        if ((hasSales || hasCashExpenses) && existing.opening !== normalizedOpening) {
           pushAudit('DENIED', 'Session', `Blocked opening-float change after activity for ${u.name}`);
           return s;
         }
-        if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         opened = true;
         return {
           ...s,
