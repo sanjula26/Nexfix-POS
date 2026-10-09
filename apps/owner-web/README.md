@@ -12,7 +12,12 @@ Separate, read-only browser app for single-shop cloud sales. It is isolated from
 - Shop is resolved from the signed-in user's active `public.shop_memberships` row. Accounts with no membership or multiple active shop memberships are blocked.
 - The app never accepts a shop ID from a URL or local storage. Sales queries filter by the resolved shop, and PostgreSQL RLS remains the security boundary.
 - Browser code uses only the public anon/publishable key; never put a service-role key in a `VITE_*` variable.
-- Only SELECT operations are used for business data. Date ranges are limited to 366 days, results are fetched in bounded pages, and ranges over 10,000 invoices fail visibly.
+- Dashboard and sales-report totals use public.get_owner_daily_sales, which returns shop-scoped daily aggregates rather than invoice rows. The database trigger maintains public.owner_daily_sales as sales sync inserts/updates/deletes rows; the RPC repairs the requested date window on read as a fallback.
+- Invoice listing defaults to the last 30 days and requests only id,bill_no,customer_name,total,created_at,status, 50 rows per page, with server-side pagination. CSV export exports the visible page; the report CSV exports daily aggregates.
+- No polling or background refresh loop: dashboard, invoice list, and report load once on entry; refresh/apply buttons are user-driven.
+- Daily aggregate date keys use Asia/Colombo, matching the default Owner Web timezone. If business timezone changes, update the database aggregation timezone and app configuration together.
+- Expected egress reduction: dashboard aggregate response is at most one small row per requested day (31 for month-to-date, plus a separate 5-invoice recent list), rather than downloading all matching invoice rows. Against the previous 10,000-row query cap, 31 aggregate rows are 99.69% fewer response rows; actual byte savings depend on row sizes and the number of sales. Database-side aggregation still reads the relevant sales range during the fallback refresh.
+- Sales totals are gross completed invoice totals before partial returns. Profit, credit, expenses and payment mix remain deferred. Cash in hand says “Available after POS day-end sync”.
 - Sales totals are gross completed invoice totals before partial returns. Profit, credit, expenses and payment mix remain deferred. Cash in hand says “Available after POS day-end sync”.
 - Default shop timezone is `Asia/Colombo`; set `VITE_OWNER_WEB_TIME_ZONE` only after confirming the business timezone.
 
