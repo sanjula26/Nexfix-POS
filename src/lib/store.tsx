@@ -1382,8 +1382,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()));
-    if (!todaySession || todaySession.closed) {
-      pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open');
+    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
+      pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open or opening float is not confirmed');
       return null;
     }
     const s = state;
@@ -1590,6 +1590,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
     if (!user || !can('page:pos') || input.lines.length === 0) {
       if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
+      return null;
+    }
+    const todaySession = stateRef.current.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()));
+    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
+      pushAudit('DENIED', 'Sale', 'Blocked cloud sale because today\'s cash session is not open or opening float is not confirmed');
       return null;
     }
     if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);
@@ -2847,7 +2852,7 @@ const deletePurchase = useCallback((id: string) => {
     if (state.sessions.some(x => x.cashierId === user.id && x.date === today)) return;
     const ns: DaySession = {
       id: uid(), cashierId: user.id, cashierName: user.name, date: today,
-      opening: state.settings.openingFloat, closed: false,
+      opening: state.settings.openingFloat, openingConfirmed: false, closed: false,
     };
     setState(s =>
       s.sessions.some(x => x.cashierId === user.id && x.date === today)
@@ -3323,11 +3328,11 @@ const deletePurchase = useCallback((id: string) => {
           pushAudit('DENIED', 'Session', `Blocked opening-float change after activity for ${u.name}`);
           return s;
         }
-        if (existing.opening === normalizedOpening) return s;
+        if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         opened = true;
         return {
           ...s,
-          sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: normalizedOpening } : x),
+          sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: normalizedOpening, openingConfirmed: true } : x),
         };
       }
       const ns: DaySession = {
@@ -3336,6 +3341,7 @@ const deletePurchase = useCallback((id: string) => {
         cashierName: u.name,
         date: today,
         opening: normalizedOpening,
+        openingConfirmed: true,
         closed: false,
       };
       opened = true;
