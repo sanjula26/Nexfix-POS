@@ -1,6 +1,6 @@
 # NexFix Owner Web + Multi-Branch Roadmap
 
-**Status:** Phase 0 design/inventory only. Phase 1 is intentionally not started.
+**Status:** Phase 0 design is committed; Phase 1 implementation is being added as an isolated read-only app. Phase 2 is not started.
 **Reviewed against:** `main` at the time of this document's creation.
 **Non-goal:** This document does not change POS runtime behavior, database schema, authentication, cloud sync, backup, or updater code.
 
@@ -12,7 +12,7 @@
 - Supabase Auth is initialized in `src/lib/supabase.ts` using the public project URL and anon key, with persistent sessions and refresh. No service-role key is needed or allowed in browser code.
 - `src/lib/cloudSync.ts` resolves the cloud tenant through an active `shop_memberships` row for the authenticated Supabase user. A cached shop ID is checked against that membership before reuse; a missing membership is not auto-provisioned.
 - Desktop updater device registration uses guarded RPCs and is a separate authorization concern. Owner Web should not reuse local POS credentials or updater credentials as its login mechanism.
-- **Schema/security drift to resolve before web data access:** tracked SQL includes both `shop_memberships` and a legacy `shop_members` policy model, and more than one snapshot schema/security approach. Some RLS policies call `is_shop_member`, which reads `shop_members`, while application membership resolution uses `shop_memberships`. Do not assume these are interchangeable or that a policy is correctly wired merely because a similarly named table exists. Phase 1 must confirm the deployed database migration state and reconcile/verify the canonical membership/RLS path before relying on direct browser queries.
+- **Production verification (2026-10-09):** live production has `public.shop_memberships` and no `public.shop_members`; deployed `private.is_shop_member` and `private.is_shop_admin` read `shop_memberships` and use `auth.uid()` plus active membership. The current sales RLS policy calls `private.is_shop_member(shop_id)`. Older/legacy SQL files still require migration-drift review; see `docs/PHASE1_SECURITY.md`. The deployed migration history and repository filenames differ for the partial-credit fix; no migration was applied as part of Owner Web.
 
 ### Cloud-normalized data (when the relevant production migrations are applied)
 
@@ -126,3 +126,4 @@ Proposed tables/columns:
 - [ ] Commit and push Phase 1; publish a short Sinhala owner summary.
 
 **Stop rule:** Phase 0 does not authorize Phase 1 implementation automatically. Phase 1 begins only after this Phase 0 document is reviewed/accepted and its deployment/security prerequisites are understood. Phase 2 must not begin until every Phase 1 gate is green.
+\n\n## Phase 1 implementation update (2026-10-09)\n\n- Separate app: `apps/owner-web`; desktop POS entry, Electron packaging, billing, day-end, Drive backup, and updater are not modified.\n- Live production RLS and canonical membership checks are documented in `docs/PHASE1_SECURITY.md`. The checks verified own-shop reads and denied unrelated-shop/no-membership reads. Browser JWT sign-in and a two-real-shop test remain pending.\n- Phase 1 sales values are gross completed invoice totals before partial returns. Profit, credit, expenses, payment mix, and cash-in-hand are deferred until coverage/accounting is verified.\n- Phase 2 remains prohibited until every Phase 1 verification item is green.\n
