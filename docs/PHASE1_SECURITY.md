@@ -63,3 +63,14 @@ The connected production migration history ends at version `20261008234347` (`fi
 - [ ] Verify no desktop POS, Drive backup, day-end or updater behavior changed.
 
 Phase 2 (branches) remains blocked until every Phase 1 checklist item is green.
+
+
+## Phase 1.5 — Egress reduction and aggregate access (2026-10-09)
+
+- Added public.owner_daily_sales keyed by (shop_id, sale_date), with only completed invoice count and gross invoice total. Row-level security is enabled; authenticated reads are restricted through private.is_shop_member(shop_id).
+- private.sync_owner_daily_sales is an internal SECURITY DEFINER trigger function with a fixed search path. It adjusts daily aggregates on sales insert, relevant update, and delete events so normal desktop cloud sync writes maintain the aggregate cache.
+- public.get_owner_daily_sales(shop_id, from, to) is a restricted authenticated RPC. It rejects anonymous callers, checks active membership for the requested shop, limits date windows to 366 days, and repairs the requested aggregate window before returning only daily rows. Its SECURITY DEFINER status is intentional because the read fallback rewrites aggregate rows; the explicit membership check and function execute grants are mandatory security boundaries.
+- Dashboard reads daily aggregates for today/MTD/14-day chart and only the latest five invoice rows for the recent list. Reports use aggregates. Invoice list defaults to the latest 30 days and requests 50 rows/page with six limited columns. No polling was introduced.
+- Expected client egress: at most 31 aggregate rows for month-to-date plus 5 recent invoice rows on the dashboard, versus the previous query cap of 10,000 invoice rows. At the 10,000-row cap, 31 rows is 99.69% fewer rows; actual bytes depend on payload sizes and sales volume. The read fallback performs server-side aggregation over the requested date range, so this primarily reduces API response egress rather than guaranteeing proportional reduction in database CPU.
+- Aggregates use the shop-local date convention Asia/Colombo to match the configured default Owner Web timezone. A timezone change requires coordinated database and app changes.
+- Desktop POS billing, local state, Google Drive backup, recovery key, cloud updater, installer storage, and R2 configuration are unchanged. No branch-management/Phase 2 feature was started.
