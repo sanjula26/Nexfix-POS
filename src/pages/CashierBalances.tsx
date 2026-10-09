@@ -50,18 +50,34 @@ export default function CashierBalances() {
     ? state.users.filter(person => person.role === 'cashier' || person.role === 'admin')
     : state.users.filter(person => person.id === user?.id), [state.users, user?.id, user?.role]);
 
-  const rowFor = (cashierId: string) => {
-    const person = state.users.find(candidate => candidate.id === cashierId);
-    const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today);
-    const effectiveSession: DaySession = session || {
-      id: 'preview-' + cashierId,
-      cashierId,
-      cashierName: person?.name || user?.name || 'Cashier',
-      date: today,
-      opening: state.settings.openingFloat || 0,
-      closed: false,
-    };
-    return { ...calculateDayEndTotals(state, today, effectiveSession), session: session || null };
+  const rowCache = useMemo(() => {
+    const ids = user?.role === 'admin'
+      ? Array.from(new Set([
+          ...cashiers.map(person => person.id),
+          ...state.sessions.filter(session => session.date === today).map(session => session.cashierId),
+        ]))
+      : [user?.id || ''];
+    const cache = new Map<string, ReturnType<typeof calculateDayEndTotals> & { session: DaySession | null }>();
+    for (const cashierId of ids) {
+      if (!cashierId) continue;
+      const person = state.users.find(candidate => candidate.id === cashierId);
+      const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today);
+      const effectiveSession: DaySession = session || {
+        id: 'preview-' + cashierId,
+        cashierId,
+        cashierName: person?.name || user?.name || 'Cashier',
+        date: today,
+        opening: state.settings.openingFloat || 0,
+        closed: false,
+      };
+      cache.set(cashierId, { ...calculateDayEndTotals(state, today, effectiveSession), session: session || null });
+    }
+    return cache;
+  }, [state, today, cashiers, user?.id, user?.name, user?.role]);
+
+  const rowFor = (cashierId: string) => rowCache.get(cashierId) || {
+    ...calculateDayEndTotals(state, today),
+    session: null,
   };
 
   const selectedRow = settling ? rowFor(settling) : null;
