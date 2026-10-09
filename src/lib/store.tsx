@@ -10,7 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
@@ -19,7 +19,7 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { addInventoryUnitsAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
+import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
 
@@ -180,7 +180,7 @@ interface StoreCtx {
   // Phase 3 — units & repairs
   saveUnit: (u: InventoryUnit) => Promise<boolean>;
   saveUnitsBulk: (units: InventoryUnit[], catalogProducts?: Product[]) => Promise<{ ok: boolean; added: number; errors: string[] }>;
-  deleteUnit: (id: string) => void;
+  deleteUnit: (id: string) => Promise<boolean>;
   findUnitByCode: (code: string) => InventoryUnit | undefined;
   saveRepair: (r: RepairJob) => void;
   updateRepairStatus: (id: string, status: RepairStatus, patch?: Partial<RepairJob>) => void;
@@ -3336,36 +3336,87 @@ const deletePurchase = useCallback((id: string) => {
     return { ok: true, added, errors };
   }, [user, can, pushAudit, setState]);
 
-  const deleteUnit = useCallback((id: string) => {
+  const deleteUnit = useCallback(async (id: string): Promise<boolean> => {
     if (!user || !can('page:units') || !can('act:deleteRecords')) {
       pushAudit('DENIED', 'Unit', 'Blocked unit delete without required permissions');
-      return;
+      return false;
     }
-    const u = (state.units || []).find(x => x.id === id);
-    if (!u) return;
+    const snapshot = stateRef.current;
+    const unit = (snapshot.units || []).find(x => x.id === id);
+    if (!unit) return false;
     const shopId = getCloudShopId();
-    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    const selectedBranchId = snapshot.settings.branchId || 'local-main';
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
       pushAudit('DENIED', 'Unit', 'Blocked unit delete because this shop has multiple branches and no branch is selected. Open Settings first.');
-      return;
+      return false;
     }
-    if (effectiveBranch(u.branchId) !== effectiveBranch(selectedBranchId)) {
+    const targetBranchId = effectiveBranch(selectedBranchId);
+    if (effectiveBranch(unit.branchId) !== targetBranchId) {
       pushAudit('DENIED', 'Unit', 'Blocked deleting a unit from another branch.');
-      return;
+      return false;
     }
-    if (u.status !== 'in_stock') {
-      pushAudit('DENIED', 'Unit', 'Blocked deletion of ' + (u.imei || u.serial || u.id) + ': historical/non-stock unit must be retained');
-      return;
+    if (unit.status !== 'in_stock') {
+      pushAudit('DENIED', 'Unit', 'Blocked deletion of ' + (unit.imei || unit.serial || unit.id) + ': historical/non-stock unit must be retained');
+      return false;
     }
+
+    let cloudProductStock: number | undefined;
+    let cacheDecremented = false;
+    if (supabaseConfigured && getConnectivity() === 'online') {
+      const shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok || !shop.shopId) {
+        pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (shop.error || 'Cloud shop is unavailable.'));
+        return false;
+      }
+      const branchUnits = (snapshot.units || []).filter(item => effectiveBranch(item.branchId) === targetBranchId);
+      const catalog = await syncNormalizedCatalog({ ...snapshot, units: branchUnits }, shop.shopId);
+      if (!catalog.ok) {
+        pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (catalog.error || 'Catalog sync failed.'));
+        return false;
+      }
+      const cloudResult = await deleteInventoryUnitAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, unitId: unit.id });
+      if (!cloudResult.ok) {
+        pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (cloudResult.error || 'Cloud transaction failed.'));
+        return false;
+      }
+      cloudProductStock = cloudResult.productStock;
+    } else {
+      if (targetBranchId !== 'local-main') {
+        if (selectedBranchId !== 'local-main' && !hasCachedBranchStock(targetBranchId)) {
+          pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted because branch stock is not cached. Connect online and refresh Settings.');
+          return false;
+        }
+        if (hasCachedBranchStock(targetBranchId)) {
+          if (!applyBranchStockDeltas(targetBranchId, { [unit.productId]: -1 })) {
+            pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted because selected-branch stock could not be decremented safely.');
+            return false;
+          }
+          cacheDecremented = true;
+        }
+      }
+      if (supabaseConfigured) {
+        try {
+          await queueInventoryUnitDelete({ shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id, unit, operationId: uid() });
+        } catch (error) {
+          if (cacheDecremented) applyBranchStockDeltas(targetBranchId, { [unit.productId]: 1 });
+          pushAudit('DENIED', 'Unit', error instanceof Error ? error.message : 'Tracked unit deletion could not be queued safely.');
+          return false;
+        }
+      }
+    }
+
     setStateWithInventoryLedger('UNIT_DELETE', s => ({
       ...s,
       units: (s.units || []).filter(x => x.id !== id),
-      products: s.products.map(p => p.id === u.productId ? { ...p, stock: Math.max(0, p.stock - 1) } : p),
+      products: s.products.map(p => p.id === unit.productId
+        ? { ...p, stock: cloudProductStock === undefined ? Math.max(0, p.stock - 1) : cloudProductStock }
+        : p),
     }));
-    if (u) pushAudit('DELETE', 'Unit', `Deleted unit ${u.imei || u.serial || u.id}`);
-  }, [state.units, pushAudit, user, can]);
+    pushAudit('DELETE', 'Unit', `Deleted unit ${unit.imei || unit.serial || unit.id}`);
+    return true;
+  }, [pushAudit, user, can, setStateWithInventoryLedger]);
 
   const findUnitByCode = useCallback((code: string) => {
     const q = code.trim().toLowerCase();
