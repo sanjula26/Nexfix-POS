@@ -241,3 +241,6 @@ Existing Owner Web remains shop-owner-only: membership-resolved shop scope and e
 - [x] Documented SKIP with reason; no half-built super-admin or cross-tenant support route.
 - [x] Normal shop-owner Owner Web unchanged; no application or database behavior changed for this phase.
 - [x] Phase 5 implementation intentionally not started.
+
+
+**Phase 4 gate note:** Phase 4's last reported checklist still has the signed-in browser end-to-end click-through pending. The Windows Desktop Build has since completed successfully, but Phase 4 is not represented as fully green until that browser smoke test is done. This is an additional reason Phase 5 implementation remains gated.
