@@ -1297,8 +1297,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked duplicate settlement submission');
       return null;
     }
-    if (!user || !can('page:customers') || !can('act:creditSale')) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement without customer access and credit-collection permission');
+    if (!user || !can('page:customers') || !can('page:pos')) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement without customer and POS access');
       return null;
     }
     const snapshot = stateRef.current;
