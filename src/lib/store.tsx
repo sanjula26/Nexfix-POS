@@ -157,7 +157,7 @@ interface StoreCtx {
   // admin
   setPermission: (role: Role, key: string, value: boolean) => void;
   updateSettings: (patch: Partial<Settings>) => void;
-  closeSession: (cashierId: string, counted: number, note: string) => void;
+  closeSession: (cashierId: string, counted: number, note: string) => boolean;
   /** Close every open cashier drawer for today after counted-cash reconciliation. */
   closeDay: (counts: Record<string, number>, note: string) => boolean;
   logAudit: (action: string, entity: string, details: string) => void;
@@ -3283,8 +3283,8 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user, can]);
 
   const openSession = useCallback((cashierId: string, opening: number) => {
-    if (!user || user.role !== 'admin') {
-      pushAudit('DENIED', 'Session', 'Blocked cash-session open without admin access');
+    if (!user || (user.role !== 'admin' && (user.id !== cashierId || !can('page:pos')))) {
+      pushAudit('DENIED', 'Session', 'Blocked cash-session open: only the cashier or an admin may set this opening float');
       return;
     }
     const u = state.users.find(x => x.id === cashierId);
