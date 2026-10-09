@@ -123,10 +123,12 @@ export function calculateDayEndTotals(
   const cashExpenses = expenses
     .filter(expense => (expense.paymentMethod || 'cash') === 'cash')
     .reduce((sum, expense) => sum + Math.max(0, Number(expense.amount) || 0), 0);
+  const daySessions = state.sessions.filter(item => item.date === date);
   const opening = session
     ? Math.max(0, Number(session.opening) || 0)
-    : (state.sessions.filter(item => item.date === date).reduce((sum, item) => sum + Math.max(0, item.opening), 0)
-      || Math.max(0, Number(state.settings.openingFloat) || 0));
+    : daySessions.length
+      ? daySessions.reduce((sum, item) => sum + Math.max(0, Number(item.opening) || 0), 0)
+      : Math.max(0, Number(state.settings.openingFloat) || 0);
   const cash = money(tenders.cash);
   const expected = money(opening + cash + creditSettled.cash - cashRefunds - cashExpenses);
 
@@ -153,6 +155,6 @@ export function calculateDayEndTotals(
     discounts: money(discounts),
     expected,
     bills: sales.length,
-    averageTicket: sales.length ? money(grossSales / sales.length) : 0,
+    averageTicket: sales.length ? money(sales.reduce((sum, sale) => sum + Math.max(0, Number(sale.total) || 0), 0) / sales.length) : 0,
   };
 }
