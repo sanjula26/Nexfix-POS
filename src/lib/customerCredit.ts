@@ -33,7 +33,7 @@ export function getOpenCreditInvoiceBalance(
 export function allocateCreditPaymentFIFO(
   customerId: string,
   amount: number,
-  sales: readonly Array<{ id: string; billNo: string; customerId?: string; total: number; amountPaid: number; date: string; status: string }>,
+  sales: ReadonlyArray<{ id: string; billNo: string; customerId?: string; total: number; amountPaid: number; date: string; status: string }>,
   payments: readonly CustomerCreditPayment[],
 ): Array<{ saleId: string; billNo: string; amount: number }> {
   let remaining = Math.max(0, Math.round(amount * 100) / 100);
