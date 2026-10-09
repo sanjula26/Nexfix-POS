@@ -10,7 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
@@ -19,9 +19,9 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
+import { adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
 import { supabaseConfigured } from './supabase';
-import { getCachedBranchStock, hasCachedBranchStock, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
+import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -118,7 +118,7 @@ interface StoreCtx {
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
   saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
-  adjustStock: (id: string, delta: number, reason: string) => void;
+  adjustStock: (id: string, delta: number, reason: string) => Promise<void>;
   // customers / suppliers
   saveCustomer: (c: Customer) => void;
   deleteCustomer: (id: string) => void;
@@ -1110,6 +1110,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     const stockDelta = normalized.stock - (current?.stock || 0);
+    if (exists && selectedBranchId !== 'local-main' && stockDelta !== 0) {
+      pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: use Adjust Stock so branch and shop totals are updated atomically.`);
+      return false;
+    }
     if (selectedBranchId !== 'local-main' && stockDelta !== 0) {
       if (!hasCachedBranchStock(selectedBranchId)) {
         pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock cache is missing. Connect online and refresh Settings.');
@@ -1157,21 +1161,52 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
   }, [can, pushAudit, state.products, state.units, state.sales, state.purchases, state.purchaseReturns, state.exchanges, state.repairs, state.kitItems, state.quotations, state.warrantyClaims, user]);
 
-  const adjustStock = useCallback((id: string, delta: number, reason: string) => {
+  const adjustStock = useCallback(async (id: string, delta: number, reason: string): Promise<void> => {
     if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return; }
     const amount = Number(delta);
     const note = String(reason || '').trim();
     if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return; }
-    const p = state.products.find(x => x.id === id);
+    const p = stateRef.current.products.find(x => x.id === id);
     if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return; }
+    const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
-    if (selectedBranchId !== 'local-main' && !hasCachedBranchStock(selectedBranchId)) {
-      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because branch stock cache is missing. Connect online and refresh Settings.');
+    if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because this shop has multiple branches and no branch is selected. Open Settings first.');
       return;
     }
-    if (selectedBranchId !== 'local-main' && !applyBranchStockDeltas(selectedBranchId, { [id]: amount })) {
-      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock would become negative.');
-      return;
+    if (selectedBranchId !== 'local-main') {
+      const cachedQty = getCachedBranchStock(selectedBranchId, id);
+      if (!hasCachedBranchStock(selectedBranchId) || cachedQty === null || cachedQty + amount < 0) {
+        pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock is missing or insufficient. Connect online and refresh Settings.');
+        return;
+      }
+      const adjustmentId = uid();
+      if (supabaseConfigured) {
+        if (getConnectivity() === 'online') {
+          const shop = await ensureCloudShop('Nexfix Shop');
+          if (!shop.ok || !shop.shopId) {
+            pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
+            return;
+          }
+          const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: selectedBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+          if (!cloudResult.ok) {
+            pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
+            return;
+          }
+        } else {
+          try {
+            await queueBranchStockAdjustment({ shopId: shopId || undefined, branchId: selectedBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+          } catch (error) {
+            pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock adjustment could not be queued safely.');
+            return;
+          }
+        }
+      }
+      // Server is authoritative online; offline cache is updated only after the durable queue accepts the change.
+      if (!applyBranchStockDeltas(selectedBranchId, { [id]: amount }) && getConnectivity() !== 'online') {
+        pushAudit('DENIED', 'Product', 'Stock adjustment was queued, but the local branch cache changed concurrently. Refresh Settings before further stock operations.');
+        return;
+      }
     }
     setStateWithInventoryLedger('STOCK_ADJUSTMENT', s => {
       const current = s.products.find(x => x.id === id);
@@ -1181,7 +1216,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return { ...s, products: updatedProducts };
     });
     pushAudit('STOCK', 'Product', `Stock ${amount >= 0 ? '+' : ''}${amount} for ${p.name} — ${note}`);
-  }, [can, pushAudit, state.products, user]);
+  }, [can, pushAudit, setStateWithInventoryLedger, user]);
 
   /* ---------------- customers / suppliers ---------------- */
   const saveCustomer = useCallback((c: Customer) => {
@@ -1409,7 +1444,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return null;
     }
     const selectedBranchId = state.settings.branchId || 'local-main';
-    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+    const shopIdForBranch = getCloudShopId();
+    if (hasMultipleCachedBranches(shopIdForBranch) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Sale', 'Blocked sale because this shop has multiple branches and no branch is selected. Open Settings and select this POS branch.');
+      return null;
+    }
+    const defaultBranchId = getDefaultBranchId(shopIdForBranch) || 'local-main';
     const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()) && ((x.branchId || 'local-main') === selectedBranchId || ((x.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)));
     if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
       pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open or opening float is not confirmed');
@@ -2195,6 +2235,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
       return { ok: false, error: 'You do not have permission to manage purchases.' };
     }
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return { ok: false, error: 'Select a branch in Settings before receiving stock.' };
+    }
     const po = stateRef.current.purchases.find(x => x.id === id);
     if (!po) return { ok: false, error: 'GRN draft was not found.' };
     if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
@@ -2551,6 +2596,11 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Expense', 'Blocked expense creation without expense access');
       return;
     }
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Expense', 'Blocked expense creation because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return;
+    }
     const amount = Math.round(Number(e.amount) * 100) / 100;
     const category = String(e.category || '').trim();
     const note = String(e.note || '').trim();
@@ -2804,7 +2854,12 @@ const deletePurchase = useCallback((id: string) => {
     }
     const snapshot = stateRef.current;
     const today = dkey(new Date());
-    const current = snapshot.sessions.find(x => x.cashierId === cashierId && x.date === today);
+    const selectedBranchId = snapshot.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Session', 'Blocked day-session close because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return false;
+    }
+    const current = snapshot.sessions.find(x => x.cashierId === cashierId && x.date === today && (x.branchId || 'local-main') === selectedBranchId);
     if (!current) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: no session exists for today');
       return false;
@@ -3380,6 +3435,11 @@ const deletePurchase = useCallback((id: string) => {
     const u = state.users.find(x => x.id === cashierId);
     if (!u) return;
     const today = dkey(new Date());
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Session', 'Blocked day-session open because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return;
+    }
     const normalizedOpening = Math.round(Math.max(0, Number(opening)) * 100) / 100;
     if (!Number.isFinite(normalizedOpening)) {
       pushAudit('DENIED', 'Session', 'Blocked invalid cash-session opening float');
@@ -3387,7 +3447,7 @@ const deletePurchase = useCallback((id: string) => {
     }
     let opened = false;
     setState(s => {
-      const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today);
+      const existing = s.sessions.find(x => x.cashierId === cashierId && x.date === today && (x.branchId || 'local-main') === selectedBranchId);
       if (existing) {
         if (existing.closed) {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
