@@ -51,16 +51,24 @@ export default function Exchanges() {
     if (!raw) return;
     setSearched(true);
     const q = raw.toLowerCase();
-    const found = state.sales.find(s => s.billNo.toLowerCase() === q || (q.length >= 4 && s.billNo.toLowerCase().endsWith(q)));
+    const saleHasUnitCode = (sale: typeof state.sales[number]) => sale.items.some(item =>
+      [...(item.imeis || []), ...(item.serials || [])].some(code => String(code || '').trim().toLowerCase() === q) ||
+      (item.unitIds || []).some(id => (state.units || []).some(unit => unit.id === id && [unit.imei, unit.serial].some(code => String(code || '').trim().toLowerCase() === q)))
+    );
+    const found = state.sales.find(s => s.billNo.toLowerCase() === q || (q.length >= 4 && s.billNo.toLowerCase().endsWith(q)) || saleHasUnitCode(s));
+    const matchedItemIndex = found?.items.findIndex(item =>
+      [...(item.imeis || []), ...(item.serials || [])].some(code => String(code || '').trim().toLowerCase() === q) ||
+      (item.unitIds || []).some(id => (state.units || []).some(unit => unit.id === id && [unit.imei, unit.serial].some(code => String(code || '').trim().toLowerCase() === q)))
+    ) ?? -1;
     setQuery(raw);
     setBill(found || null);
-    setSelected(restore ? selected : []);
-    setReturnQty(restore ? returnQty : {});
+    setSelected(restore ? selected : matchedItemIndex >= 0 ? [matchedItemIndex] : []);
+    setReturnQty(restore ? returnQty : matchedItemIndex >= 0 && found ? { [matchedItemIndex]: found.items[matchedItemIndex].qty } : {});
     setConfirm(false);
-    setError('');
+    setError(found ? (matchedItemIndex >= 0 ? 'Device identifier matched. Confirm the selected sold line and quantity before proceeding.' : '') : '');
     resetPendingReturn();
 
-    // Bill search is intentionally local-first. The local POS database is the
+    // Bill / IMEI / serial search is intentionally local-first. The local POS database is the
     // authoritative UI source, and cloud Auth/membership availability must
     // never turn a valid local bill into a visible "Sale not found" error.
     // Cloud sale resolution is performed only at commit time, immediately
