@@ -17,6 +17,7 @@ import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
+import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { completeSaleAtomic, ensureCloudShop, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 
@@ -123,6 +124,7 @@ interface StoreCtx {
   deleteSupplier: (id: string) => void;
   saveSupplierPayment: (p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => import('./supplierPayments').SupplierPayment | null;
   deleteSupplierPayment: (id: string) => void;
+  saveCustomerCreditPayment: (p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }) => CustomerCreditPayment | null;
   // sales
   completeSale: (input: NewSaleInput) => Sale | null;
   completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
@@ -380,6 +382,7 @@ function migrate(s: POSState): POSState {
     warrantyClaims: s.warrantyClaims || [],
     purchaseReturns: s.purchaseReturns || [],
     supplierPayments: s.supplierPayments || [],
+    customerCreditPayments: s.customerCreditPayments || [],
     reverseRequests: s.reverseRequests || [],
     settings: {
       ...s.settings,
@@ -475,6 +478,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReceiveLockRef = useRef(false);
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
+  const customerCreditPaymentLockRef = useRef(false);
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
@@ -1287,6 +1291,71 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       supplierPaymentLockRef.current = false;
     }
   }, [pushAudit, user, can]);
+
+  const saveCustomerCreditPayment = useCallback((p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }) => {
+    if (customerCreditPaymentLockRef.current) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked duplicate settlement submission');
+      return null;
+    }
+    if (!user || !can('page:customers') || !can('act:creditSale')) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement without customer access and credit-collection permission');
+      return null;
+    }
+    const snapshot = stateRef.current;
+    const customer = snapshot.customers.find(x => x.id === p.customerId);
+    const amount = Math.round(Number(p.amount) * 100) / 100;
+    if (!customer || !Number.isFinite(amount) || amount <= 0) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked invalid settlement customer or amount');
+      return null;
+    }
+    const outstanding = Math.max(0, Math.round((Number(customer.creditBalance) || 0) * 100) / 100);
+    if (outstanding <= 0 || amount > outstanding) {
+      pushAudit('DENIED', 'CustomerCreditPayment', `Blocked settlement above outstanding for ${customer.name}`);
+      return null;
+    }
+    const methods = Array.isArray(p.methods) && p.methods.length
+      ? p.methods.map(leg => ({ method: leg.method, amount: Math.round(Number(leg.amount) * 100) / 100 }))
+      : [{ method: p.method, amount }];
+    const validMethods = new Set<PaymentMethod>(['cash', 'card', 'bank', 'mobile']);
+    if (methods.some(leg => !validMethods.has(leg.method) || !Number.isFinite(leg.amount) || leg.amount <= 0)
+      || Math.abs(methods.reduce((sum, leg) => sum + leg.amount, 0) - amount) > 0.009) {
+      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement with invalid or mismatched tender amounts');
+      return null;
+    }
+    const previousPayments = snapshot.customerCreditPayments || [];
+    let allocations: Array<{ saleId: string; billNo: string; amount: number }> = [];
+    if (p.saleId) {
+      const sale = snapshot.sales.find(x => x.id === p.saleId && x.customerId === customer.id && x.status === 'completed');
+      const invoiceDue = sale ? getOpenCreditInvoiceBalance(sale, previousPayments) : 0;
+      if (!sale || invoiceDue <= 0 || amount > invoiceDue) {
+        pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement above selected invoice outstanding');
+        return null;
+      }
+      allocations = [{ saleId: sale.id, billNo: sale.billNo, amount }];
+    } else {
+      allocations = allocateCreditPaymentFIFO(customer.id, amount, snapshot.sales, previousPayments);
+    }
+    customerCreditPaymentLockRef.current = true;
+    try {
+      const payment: CustomerCreditPayment = {
+        id: uid(), customerId: customer.id, amount, method: methods[0].method,
+        methods: methods.length > 1 ? methods : undefined,
+        allocations: allocations.length ? allocations : undefined,
+        date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
+      };
+      const newBalance = Math.max(0, Math.round((outstanding - amount) * 100) / 100);
+      setState(s => ({
+        ...s,
+        customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
+        customerCreditPayments: [payment, ...(s.customerCreditPayments || [])],
+      }));
+      pushAudit('CREATE', 'CustomerCreditPayment', `Collected Rs. ${amount.toLocaleString()} from ${customer.name} by ${methods.map(x => x.method).join('+')}; outstanding Rs. ${newBalance.toLocaleString()}`);
+      scheduleGoogleBackup(() => stateRef.current, 'settings');
+      return payment;
+    } finally {
+      customerCreditPaymentLockRef.current = false;
+    }
+  }, [can, pushAudit, user]);
 
   const deleteSupplierPayment = useCallback((id: string) => {
     if (!user || !can('page:suppliers') || !can('act:deleteRecords')) {
@@ -3323,7 +3392,7 @@ const deletePurchase = useCallback((id: string) => {
     signIn, changePassword, changeManagedPassword, signOut, switchRole, changeAdminPin, verifyAdminPin, confirmSensitiveAdmin, unlockSession,
     createInitialAdmin,
     saveProduct, deleteProduct, saveKitItems, saveQuotations, adjustStock,
-    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment,
+    saveCustomer, deleteCustomer, saveSupplier, deleteSupplier, saveSupplierPayment, deleteSupplierPayment, saveCustomerCreditPayment,
     completeSale, completeSaleCloud, refundSale, requestBillReverse, approveBillReverse, rejectBillReverse, holdSale, resumeHold, deleteHold,
     savePurchase, saveGRNDraft, updateGRNDraft, receivePurchase, processGRN, createPurchaseReturn, deletePurchase,
     addExpense, deleteExpense, processExchange,
