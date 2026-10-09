@@ -113,6 +113,10 @@ export default function CashierBalances() {
       setSignOffError('Please add a short note explaining the shortage or overage.');
       return;
     }
+    if (selectedRow.session?.openingConfirmed === false) {
+      setSignOffError('Confirm the opening float before signing off this drawer.');
+      return;
+    }
     if (state.held.length) {
       setSignOffError('Complete or clear held bills before signing off.');
       return;
@@ -176,6 +180,10 @@ export default function CashierBalances() {
 
   const submitDayClose = () => {
     if (!openSessions.length) return;
+    if (openSessions.some(session => session.openingConfirmed === false)) {
+      setDayCloseError('Confirm the opening float for every open drawer before closing the full day.');
+      return;
+    }
     if (state.held.length) {
       setDayCloseError('Complete or clear held bills before closing the full day.');
       return;
