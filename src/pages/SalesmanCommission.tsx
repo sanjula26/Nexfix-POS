@@ -26,7 +26,7 @@ export default function SalesmanCommission() {
   }), {bills:0,gross:0,discounts:0,net:0,profit:0,credit:0,collected:0}), [rows]);
   const selectedUser = staff.find(u=>u.id===salesman);
   const commissionPct = num(selectedUser?.commissionPct);
-  const commission = rows.reduce((sum,s)=>sum+num(s.total)*commissionPct/100,0);
+  const commission = rows.reduce((sum,s)=>sum+num(s.total)*num(staff.find(u=>u.id===s.salesmanId)?.commissionPct)/100,0);
   const exportCsv = () => {
     const data = [
       ['Bill no','Date','Salesman','Gross','Discount','Net','Profit','Credit due','Collected','Commission %','Commission'],
