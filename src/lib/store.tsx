@@ -179,7 +179,7 @@ interface StoreCtx {
   pendingQueueCount: number;
   // Phase 3 — units & repairs
   saveUnit: (u: InventoryUnit) => Promise<boolean>;
-  saveUnitsBulk: (units: InventoryUnit[]) => Promise<{ ok: boolean; added: number; errors: string[] }>;
+  saveUnitsBulk: (units: InventoryUnit[], catalogProducts?: Product[]) => Promise<{ ok: boolean; added: number; errors: string[] }>;
   deleteUnit: (id: string) => void;
   findUnitByCode: (code: string) => InventoryUnit | undefined;
   saveRepair: (r: RepairJob) => void;
@@ -3244,7 +3244,7 @@ const deletePurchase = useCallback((id: string) => {
     return true;
   }, [pushAudit, user, can, setState]);
 
-  const saveUnitsBulk = useCallback(async (newUnits: InventoryUnit[]): Promise<{ ok: boolean; added: number; errors: string[] }> => {
+  const saveUnitsBulk = useCallback(async (newUnits: InventoryUnit[], catalogProducts: Product[] = []): Promise<{ ok: boolean; added: number; errors: string[] }> => {
     const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
@@ -3255,7 +3255,7 @@ const deletePurchase = useCallback((id: string) => {
     const currentState = stateRef.current;
     const errors: string[] = [];
     const current = currentState.units || [];
-    const currentProducts = currentState.products;
+    const currentProducts = [...new Map([...currentState.products, ...catalogProducts].map(product => [product.id, product])).values()];
     const imeis = new Set(current.map(u => (u.imei || '').trim().toLowerCase()).filter(Boolean));
     const serials = new Set(current.map(u => (u.serial || '').trim().toLowerCase()).filter(Boolean));
     const accepted: InventoryUnit[] = [];
@@ -3298,7 +3298,7 @@ const deletePurchase = useCallback((id: string) => {
     if (supabaseConfigured && getConnectivity() === 'online') {
       const shop = await ensureCloudShop('Nexfix Shop');
       if (!shop.ok || !shop.shopId) return { ok: false, added: 0, errors: [...errors, shop.error || 'Cloud shop is unavailable.'] };
-      const catalog = await syncNormalizedCatalog({ ...stateRef.current, units: [] }, shop.shopId);
+      const catalog = await syncNormalizedCatalog({ ...stateRef.current, products: currentProducts, units: [] }, shop.shopId);
       if (!catalog.ok) return { ok: false, added: 0, errors: [...errors, catalog.error || 'Catalog sync failed.'] };
       const cloudResult = await addInventoryUnitsAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: toSync });
       if (!cloudResult.ok) return { ok: false, added: 0, errors: [...errors, cloudResult.error || 'Cloud unit transaction failed.'] };
