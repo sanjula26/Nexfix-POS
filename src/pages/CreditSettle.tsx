@@ -3,7 +3,9 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
-import { fmtDate, fmtDateTime, fmtRs } from '../lib/utils';
+import { dkey, fmtDate, fmtDateTime, fmtRs } from '../lib/utils';
+import { getDefaultBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
+import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
 
@@ -15,7 +17,7 @@ const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; i
 ];
 
 export default function CreditSettle() {
-  const { state, can, saveCustomerCreditPayment } = usePOS();
+  const { state, user, can, saveCustomerCreditPayment } = usePOS();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'balance'>('balance');
@@ -29,6 +31,7 @@ export default function CreditSettle() {
   const [cardPart, setCardPart] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<{ id: string; amount: number; method: string; balance: number; customer: string } | null>(null);
 
   const payments = state.customerCreditPayments || [];
@@ -68,7 +71,24 @@ export default function CreditSettle() {
     .filter(p => !customerId || p.customerId === customerId)
     .sort((a, b) => +new Date(b.date) - +new Date(a.date))
     .slice(0, 12);
-  const canCollect = can('page:customers') && can('page:pos');
+  const canCollect = !!user && (user.role === 'admin' || (can('page:customers') && can('page:pos')));
+  const today = dkey(new Date());
+  const selectedBranchId = state.settings.branchId || 'local-main';
+  const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+  const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+  const todaySession = state.sessions.find(session =>
+    session.cashierId === user?.id && session.date === today &&
+    effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId),
+  );
+  const sessionBlockReason = hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main'
+    ? 'Select this POS branch in Settings before collecting credit payments.'
+    : !todaySession
+      ? "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session."
+      : todaySession.closed
+        ? "Today's cashier drawer is already closed. Credit payments cannot be collected in a closed session."
+        : todaySession.openingConfirmed === false
+          ? "Confirm today's opening float in Cashier Balance Report before collecting credit."
+          : '';
 
   const selectCustomer = (id: string) => {
     setCustomerId(id);
@@ -92,29 +112,48 @@ export default function CreditSettle() {
   };
 
   const save = () => {
+    if (saving) return;
     setError('');
-    if (!canCollect) return setError('Your account needs both Customers and POS access to collect customer payments.');
+    if (!canCollect) return setError('You do not have permission to collect credit payments. Ask an administrator to enable Customers and POS access.');
+    if (sessionBlockReason) return setError(sessionBlockReason);
     if (!customer) return setError('Select a customer first.');
     const value = Math.round(Number(amount) * 100) / 100;
     if (!Number.isFinite(value) || value <= 0) return setError('Enter an amount greater than zero.');
-    if (value > outstanding + 0.009) return setError(`Amount exceeds the outstanding balance of ${fmtRs(outstanding)}.`);
+    if (value > outstanding + 0.009) {
+      return setError(selectedInvoice
+        ? `Amount exceeds selected invoice due (${fmtRs(outstanding)}).`
+        : `Amount exceeds customer outstanding (${fmtRs(outstanding)}).`);
+    }
     let methods: PaymentLeg[] | undefined;
     if (splitOn) {
       const cash = Math.round(Number(cashPart) * 100) / 100;
       const card = Math.round(Number(cardPart) * 100) / 100;
       if (cash < 0 || card < 0 || !Number.isFinite(cash) || !Number.isFinite(card) || (cash <= 0 && card <= 0)) {
-        return setError('Enter a valid Cash and/or Card split.');
+        return setError('Enter a valid Cash and/or Card split. Each entered amount must be positive.');
       }
-      if (Math.abs(cash + card - value) > 0.009) return setError('Cash + Card must equal the amount to collect.');
+      if (Math.abs(cash + card - value) > 0.009) return setError(`Cash + Card (${fmtRs(cash + card)}) must equal the amount to collect (${fmtRs(value)}).`);
       methods = [{ method: 'cash' as const, amount: cash }, { method: 'card' as const, amount: card }].filter(x => x.amount > 0);
     }
-    const payment = saveCustomerCreditPayment({
+    setSaving(true);
+    const result = saveCustomerCreditPayment({
       customerId: customer.id, amount: value, method, methods,
       note: note.trim() || undefined, saleId: selectedInvoice?.sale.id,
     });
-    if (!payment) return setError('Payment was not saved. The balance may have changed; refresh and try again.');
+    if (!result.ok) {
+      setError(result.error);
+      setSaving(false);
+      return;
+    }
+    const payment = result.payment;
     setLastSaved({ id: payment.id, amount: payment.amount, method: (payment.methods || [{ method: payment.method, amount: payment.amount }]).map(x => x.method.toUpperCase()).join(' + '), balance: Math.max(0, customer.creditBalance - payment.amount), customer: customer.name });
     setAmount(''); setCashPart(''); setCardPart(''); setNote('');
+    if (selectedInvoice && value >= selectedInvoice.due - 0.009) {
+      setSaleId('');
+      const next = new URLSearchParams(searchParams);
+      next.delete('sale');
+      setSearchParams(next, { replace: true });
+    }
+    setSaving(false);
   };
 
   return (
@@ -127,6 +166,7 @@ export default function CreditSettle() {
       </div>
 
       {!canCollect && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /> Your role can view receivables, but needs Customers and POS permissions to collect payments.</div>}
+      {user && sessionBlockReason && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /><div><div className="font-semibold">Cashier drawer required</div><div>{sessionBlockReason}</div><div className="mt-1 text-xs">Credit collections are recorded in today's drawer and included in day-end cash/card totals.</div></div></div>}
       {lastSaved && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-2"><CheckCircle2 size={19} className="text-emerald-600 mt-0.5" /><div><div className="font-bold text-emerald-700">Credit payment saved</div><div className="text-sm text-sub">{lastSaved.customer} · {lastSaved.method} · {fmtRs(lastSaved.amount)}</div><div className="text-sm font-semibold mt-1">New outstanding: {fmtRs(lastSaved.balance)}</div></div></div><button className="btn btn-soft" onClick={() => setLastSaved(null)}>Dismiss</button></div>}
 
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-5 items-start">
@@ -157,13 +197,18 @@ export default function CreditSettle() {
           <div className="card p-5 space-y-4">
             <div><div className="text-xs font-bold uppercase tracking-wider text-sub">Collect payment</div><h2 className="text-lg font-extrabold mt-1">{customer?.name || 'Select a customer'}</h2><div className="text-sm text-sub">{customer?.phone || 'Choose a customer or an open invoice from the list.'}</div></div>
             {customer && <div className="rounded-xl bg-raised border border-line p-3 flex items-center justify-between gap-3"><div><div className="text-xs text-sub">{selectedInvoice ? `Invoice ${selectedInvoice.sale.billNo} due` : 'Customer outstanding balance'}</div><div className="text-2xl font-extrabold num text-amber-600">{fmtRs(outstanding)}</div></div>{selectedInvoice && <button className="btn btn-soft !text-xs" onClick={() => { setSaleId(''); const next = new URLSearchParams(searchParams); next.delete('sale'); setSearchParams(next, { replace: true }); }}>Pay FIFO instead</button>}</div>}
-            <Field label="Amount to collect (Rs.)"><input className="input num" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="e.g. 20000" disabled={!customer || !canCollect} /></Field>
+            <Field label="Amount to collect (Rs.)"><input className="input num" inputMode="decimal" value={amount} onChange={e => { setAmount(e.target.value.replace(/[^0-9.]/g, '')); setError(''); }} placeholder="e.g. 20000" disabled={!customer || !canCollect || !!sessionBlockReason || saving} /></Field>
+            {customer && <div className="flex flex-wrap gap-2 -mt-2">
+              <button type="button" className="btn btn-soft !text-xs" disabled={!canCollect || !!sessionBlockReason || saving} onClick={() => { if (selectedInvoice) { setSaleId(''); const next = new URLSearchParams(searchParams); next.delete('sale'); setSearchParams(next, { replace: true }); } setAmount(String(Math.round(customer.creditBalance * 100) / 100)); setError(''); }}>Exact customer balance</button>
+              {selectedInvoice && <button type="button" className="btn btn-soft !text-xs" disabled={!canCollect || !!sessionBlockReason || saving} onClick={() => { setAmount(String(selectedInvoice.due)); setError(''); }}>Exact invoice due</button>}
+              <button type="button" className="btn btn-soft !text-xs" disabled={!canCollect || !!sessionBlockReason || saving} onClick={() => { setAmount(String(Math.round(outstanding * 50) / 100)); setError(''); }}>50%</button>
+            </div>}
             <div><div className="text-sm font-semibold mb-2">Payment method</div><div className="grid grid-cols-2 gap-2">{METHODS.map(m => { const Icon = m.icon; return <button key={m.value} type="button" onClick={() => { setMethod(m.value); setSplitOn(false); }} disabled={!canCollect} className={`rounded-xl border p-3 text-left flex items-center gap-2 ${!splitOn && method === m.value ? 'border-violet-500 bg-violet-500/10 text-violet-600' : 'border-line hover:bg-raised'}`}><Icon size={17} /><span className="text-sm font-semibold">{m.label}</span></button>; })}</div></div>
             <label className="flex items-center gap-2 text-sm text-sub"><input type="checkbox" checked={splitOn} onChange={e => setSplitOn(e.target.checked)} disabled={!canCollect} /> Split Cash + Card</label>
             {splitOn && <div className="grid grid-cols-2 gap-3"><Field label="Cash (Rs.)"><input className="input num" inputMode="decimal" value={cashPart} onChange={e => setCashPart(e.target.value.replace(/[^0-9.]/g, ''))} /></Field><Field label="Card (Rs.)"><input className="input num" inputMode="decimal" value={cardPart} onChange={e => setCardPart(e.target.value.replace(/[^0-9.]/g, ''))} /></Field><div className="col-span-2 text-xs text-sub">Split total: {fmtRs((Number(cashPart) || 0) + (Number(cardPart) || 0))}</div></div>}
             <Field label="Note (optional)"><textarea className="input min-h-[76px]" value={note} onChange={e => setNote(e.target.value)} placeholder="Payment reference / note" /></Field>
             {error && <div className="text-sm text-rose-500 flex gap-2"><AlertTriangle size={16} />{error}</div>}
-            <button className="btn btn-primary w-full justify-center" onClick={save} disabled={!customer || !canCollect || !amount || Number(amount) <= 0}><CheckCircle2 size={16} /> Save credit payment</button>
+            <button className="btn btn-primary w-full justify-center" onClick={save} disabled={!customer || !canCollect || !!sessionBlockReason || saving || !amount || Number(amount) <= 0}><CheckCircle2 size={16} /> {saving ? 'Saving payment…' : 'Save credit payment'}</button>
             <p className="text-[11px] text-sub">Payments reduce the customer balance immediately and are recorded with date, user, method and invoice allocations. Settlements cannot be deleted in this version.</p>
           </div>
           <div className="card overflow-hidden">
