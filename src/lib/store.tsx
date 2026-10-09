@@ -2240,7 +2240,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
             for (const identifier of purchaseItem?.unitIdentifiers || []) {
               newUnits.push({
-                id: uid(), productId: p.id, branchId: currentPo.branchId || stateRef.current.settings.branchId || 'local-main', imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                id: uid(), productId: p.id, branchId: stateRef.current.settings.branchId || currentPo.branchId || 'local-main', imei: p.trackImei ? identifier.imei?.trim() : undefined,
                 serial: p.trackSerial ? identifier.serial?.trim() : undefined, status: 'in_stock',
                 purchaseId: currentPo.id, cost, expiryDate: purchaseItem?.expiryDate, note: 'From ' + currentPo.poNo, createdAt: now,
               } as InventoryUnit);
