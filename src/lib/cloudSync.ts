@@ -327,11 +327,22 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
 
-  const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => ({
-    id: u.id, shop_id: shopId, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
-    expiry_date: u.expiryDate || null, cost: u.cost ?? null, warranty_expires_at: u.warrantyExpiresAt || null,
-    note: u.note || null, created_at: u.createdAt || new Date().toISOString(),
-  }));
+  const { data: activeBranches, error: branchLookupError } = await supabase.from('branches')
+    .select('id,is_default').eq('shop_id', shopId).eq('active', true);
+  if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
+  const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
+  const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => {
+    const requestedBranch = u.branchId || state.settings.branchId || 'local-main';
+    const resolvedBranch = requestedBranch === 'local-main'
+      ? (activeBranches || []).length === 1 ? defaultBranch?.id : undefined
+      : (activeBranches || []).some(branch => branch.id === requestedBranch) ? requestedBranch : undefined;
+    return {
+      id: u.id, shop_id: shopId, branch_id: resolvedBranch, product_id: u.productId, imei: u.imei || null, serial: u.serial || null,
+      expiry_date: u.expiryDate || null, cost: u.cost ?? null, warranty_expires_at: u.warrantyExpiresAt || null,
+      note: u.note || null, created_at: u.createdAt || new Date().toISOString(),
+    };
+  });
+  if (unitRows.some(row => !row.branch_id)) return { ok: false, error: 'An in-stock IMEI/serial unit has no valid branch. Open Settings and assign this device before cloud sync.' };
   if (unitRows.length) {
     const ids = unitRows.map(u => u.id);
     const { data: existing, error: existingError } = await supabase.from('inventory_units').select('id').eq('shop_id', shopId).in('id', ids);
