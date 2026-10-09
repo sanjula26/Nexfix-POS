@@ -32,6 +32,7 @@ const NAV: NavDef[] = [
   { to: '/customers', label: 'Customers', icon: Users, perm: 'page:customers', group: 'Operations' },
   { to: '/suppliers', label: 'Suppliers', icon: Truck, perm: 'page:suppliers', group: 'Operations' },
   { to: '/supplier-payments', label: 'Supplier Payments', icon: Wallet, perm: 'page:suppliers', group: 'Operations' },
+  { to: '/credit-settle', label: 'Credit Settle', icon: Landmark, perm: 'page:customers', group: 'Operations' },
   { to: '/purchases', label: 'Purchases', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
   { to: '/grn', label: 'Goods Received Notes', icon: ClipboardList, perm: 'page:purchases', group: 'Operations' },
   { to: '/grn-report', label: 'GRN Report', icon: FileText, perm: 'page:purchases', group: 'Operations' },
