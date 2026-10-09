@@ -10,6 +10,7 @@ export interface CustomerCreditPayment {
   id: string;
   customerId: string;
   cashierId?: string;
+  branchId?: string;
   amount: number;
   method: Exclude<PaymentMethod, 'credit'>;
   methods?: PaymentLeg[];
