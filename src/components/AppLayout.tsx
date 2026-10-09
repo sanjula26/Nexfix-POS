@@ -98,7 +98,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <aside
-      className="flex flex-col h-full w-[270px] shrink-0 text-white"
+      className="flex flex-col h-full w-[270px] shrink-0 text-white print:hidden"
       style={{ background: 'linear-gradient(180deg, #1a1440 0%, #0d0a24 100%)' }}
     >
       <div className="flex items-center gap-3 px-5 pt-5 pb-4">
@@ -577,7 +577,7 @@ export default function AppLayout() {
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="shrink-0 h-16 bg-surface/85 backdrop-blur border-b border-line flex items-center gap-3 px-4 sm:px-6 z-20">
+        <header className="shrink-0 h-16 bg-surface/85 backdrop-blur border-b border-line flex items-center gap-3 px-4 sm:px-6 z-20 print:hidden">
           <button className="icon-btn lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Menu"><Menu size={18} /></button>
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-1 h-6 rounded-full bg-gradient-to-b from-violet-500 to-indigo-500" />
