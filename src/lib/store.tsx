@@ -1203,12 +1203,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     }
-    if (!exists && normalized.stock === 0 && selectedBranchId !== 'local-main' && hasCachedBranchStock(selectedBranchId)) {
-      if (!applyBranchStockDeltas(selectedBranchId, { [normalized.id]: 0 })) {
-        pushAudit('DENIED', 'Product', 'Could not initialize this product in the selected branch stock cache.');
-        return false;
-      }
-    }
     let duplicate = false;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
