@@ -1519,7 +1519,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const machine = getMachineIdentity();
     const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const sale: Sale = {
-      id: input._saleId || uid(), billNo, date: new Date().toISOString(),
+      id: input._saleId || uid(), branchId: stateRef.current.settings.branchId || 'local-main', billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
       salesmanId: input.salesmanId || undefined,
       machineId: machine.id, machineName: machine.name,
@@ -1546,7 +1546,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return qty > 0 ? { ...p, stock: Math.max(0, p.stock - qty) } : p;
     });
     const tradeInUnit = tradeInUnitId && tradeIn ? {
-      id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+      id: tradeInUnitId, productId: tradeIn.productId, branchId: sale.branchId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
       status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
     } : undefined;
     const productsAfterTradeIn = tradeInUnit
@@ -1663,7 +1663,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments.push({ method: input.payment, amount: Math.round(input.amountPaid * 100) / 100 });
     }
     const cloud = await completeSaleAtomic({
-      shopId: shop.shopId, saleId, customerId: input.customerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
@@ -1703,7 +1703,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     });
     const paymentRows: PaymentLeg[] = committed.payments.map(p => ({ method: String(p.method) as PaymentMethod, amount: n(p.amount) }));
     const sale: Sale = {
-      id: String(row.id), billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
+      id: String(row.id), branchId: String(row.branch_id || stateRef.current.settings.branchId || 'local-main'), billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
       cashierId: String(row.cashier_id ?? user.id), cashierName: String(row.cashier_name ?? user.name),
       machineId: getMachineIdentity().id, machineName: getMachineIdentity().name,
       customerId: row.customer_id ? String(row.customer_id) : undefined,
@@ -2128,7 +2128,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(s => {
       const seq = s.counters.po + 1;
       const po: Purchase = {
-        ...p, id: uid(), poNo: `PO-${String(seq).padStart(4, '0')}`,
+        ...p, branchId: stateRef.current.settings.branchId || 'local-main', id: uid(), poNo: `PO-${String(seq).padStart(4, '0')}`,
         date: new Date().toISOString(), status: 'pending',
       };
       return { ...s, purchases: [po, ...s.purchases], counters: { ...s.counters, po: seq } };
@@ -2165,13 +2165,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }
         const cloudResult = await receivePurchaseAtomic({
           shopId: shop.shopId,
+          branchId: stateRef.current.settings.branchId || po.branchId || 'local-main',
           purchaseId: po.id,
           deviceId: getMachineIdentity().id,
           purchase: po,
         });
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
       } else if (cloudEnabled && !online) {
-        await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: po });
+        await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: { ...po, branchId: stateRef.current.settings.branchId || po.branchId || 'local-main' } });
       }
 
       let applied = false;
@@ -2203,7 +2204,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
             for (const identifier of purchaseItem?.unitIdentifiers || []) {
               newUnits.push({
-                id: uid(), productId: p.id, imei: p.trackImei ? identifier.imei?.trim() : undefined,
+                id: uid(), productId: p.id, branchId: currentPo.branchId || stateRef.current.settings.branchId || 'local-main', imei: p.trackImei ? identifier.imei?.trim() : undefined,
                 serial: p.trackSerial ? identifier.serial?.trim() : undefined, status: 'in_stock',
                 purchaseId: currentPo.id, cost, expiryDate: purchaseItem?.expiryDate, note: 'From ' + currentPo.poNo, createdAt: now,
               } as InventoryUnit);
