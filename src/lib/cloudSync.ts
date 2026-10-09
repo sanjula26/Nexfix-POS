@@ -20,6 +20,7 @@ function sanitizeCloudSnapshotState(state: POSState): POSState {
     sessions: [],
     settings: {
       ...state.settings,
+      branchId: undefined, // branch assignment is device-local, never replicated through shop snapshots
       adminPinHash: '',
     },
   };
@@ -378,7 +379,7 @@ export async function completeSaleAtomic(input: {
   if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
   const branch = await resolveCloudBranchId(input.shopId, input.branchId);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('complete_sale_atomic_for_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  const { data, error } = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok || !row.sale) return { ok: false, error: 'Cloud sale was not committed' };
@@ -554,7 +555,7 @@ export async function receivePurchaseAtomic(input: {
   if (!input.shopId || !input.purchaseId || !input.deviceId) return { ok:false, error:'Missing GRN identifiers' };
   const branch = await resolveCloudBranchId(input.shopId, input.branchId);
   if (!branch.ok || !branch.branchId) return { ok:false, error:branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('receive_purchase_atomic_for_branch', {
+  const { data, error } = await supabase.rpc('receive_purchase_atomic_for_device_branch', {
     p_shop_id: input.shopId, p_branch_id: branch.branchId,
     p_purchase_id: input.purchaseId, p_device_id: input.deviceId, p_purchase: input.purchase,
   });
