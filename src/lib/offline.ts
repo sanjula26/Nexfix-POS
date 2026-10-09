@@ -77,7 +77,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     for(const op of ops){
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           if(state) {
@@ -92,7 +92,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
+            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
@@ -124,7 +124,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             const catalog=await syncNormalizedCatalog(catalogState,shop.shopId);
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
           }
-          const result=await receivePurchaseAtomic({shopId:shop.shopId,purchaseId:parsed.purchaseId,deviceId:parsed.input.deviceId,purchase:parsed.input.purchase});
+          const result=await receivePurchaseAtomic({shopId:shop.shopId,branchId:parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',purchaseId:parsed.purchaseId,deviceId:parsed.input.deviceId,purchase:parsed.input.purchase});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
