@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, CheckCircle2, AlertTriangle, Printer, MessageCircle } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
-import { dkey, fmtDate, fmtDateTime, fmtRs } from '../lib/utils';
+import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsAppLink } from '../lib/utils';
 import { getDefaultBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
@@ -15,6 +15,23 @@ const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; i
   { value: 'bank', label: 'Bank / Online', icon: Landmark },
   { value: 'mobile', label: 'Mobile', icon: Smartphone },
 ];
+
+
+function buildSettlementWhatsAppText(saved: { payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding: number; remainingBalance: number; cashierName: string }, settings: { shopName?: string; phone?: string; address?: string; email?: string }): string {
+  const money = (value: number) => `Rs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const payment = saved.payment;
+  const lines = [`*${settings.shopName || 'Shop'}*`];
+  if (settings.phone) lines.push(`Phone: ${settings.phone}`);
+  if (settings.address) lines.push(settings.address);
+  lines.push('', '*CREDIT PAYMENT RECEIPT / ණය ගෙවීම*', `Receipt: ${payment.id.slice(0, 12)}`, `Date: ${fmtDateTime(payment.date)}`, `Customer: ${saved.customerName}`, `Mobile: ${saved.customerPhone || '—'}`, `Cashier: ${saved.cashierName}`, '--------------------------------', `Previous outstanding: ${money(saved.previousOutstanding)}`);
+  for (const leg of payment.methods || [{ method: payment.method, amount: payment.amount }]) lines.push(`Paid now (${leg.method.toUpperCase()}): ${money(leg.amount)}`);
+  for (const allocation of payment.allocations || []) lines.push(`Bill ${allocation.billNo}: ${money(allocation.amount)} allocated`);
+  lines.push('--------------------------------', `*REMAINING BALANCE: ${money(saved.remainingBalance)}*`);
+  if (saved.remainingBalance <= 0.009) lines.push('*STATUS: PAID IN FULL — BALANCE CLEARED*');
+  lines.push('', 'Thank you for your payment!');
+  if (settings.phone) lines.push(`Contact: ${settings.phone}`);
+  return lines.join('\\n');
+}
 
 export default function CreditSettle() {
   const { state, user, can, saveCustomerCreditPayment } = usePOS();
@@ -32,7 +49,9 @@ export default function CreditSettle() {
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState<{ id: string; amount: number; method: string; balance: number; customer: string } | null>(null);
+  const [lastSaved, setLastSaved] = useState<{ payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding: number; remainingBalance: number; cashierName: string } | null>(null);
+  const [whatsappPhone, setWhatsappPhone] = useState('');
+  const [whatsappError, setWhatsappError] = useState('');
 
   const payments = state.customerCreditPayments || [];
   const customer = state.customers.find(c => c.id === customerId);
@@ -145,7 +164,10 @@ export default function CreditSettle() {
       return;
     }
     const payment = result.payment;
-    setLastSaved({ id: payment.id, amount: payment.amount, method: (payment.methods || [{ method: payment.method, amount: payment.amount }]).map(x => x.method.toUpperCase()).join(' + '), balance: Math.max(0, customer.creditBalance - payment.amount), customer: customer.name });
+    const remainingBalance = Math.max(0, Math.round((customer.creditBalance - payment.amount) * 100) / 100);
+    setLastSaved({ payment, customerName: customer.name, customerPhone: customer.phone || '', previousOutstanding: Math.max(0, customer.creditBalance), remainingBalance, cashierName: user?.name || payment.by || 'Cashier' });
+    setWhatsappPhone(customer.phone || '');
+    setWhatsappError('');
     setAmount(''); setCashPart(''); setCardPart(''); setNote('');
     if (selectedInvoice && value >= selectedInvoice.due - 0.009) {
       setSaleId('');
@@ -167,7 +189,23 @@ export default function CreditSettle() {
 
       {!canCollect && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /> Your role can view receivables, but needs Customers and POS permissions to collect payments.</div>}
       {user && sessionBlockReason && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /><div><div className="font-semibold">Cashier drawer required</div><div>{sessionBlockReason}</div><div className="mt-1 text-xs">Credit collections are recorded in today's drawer and included in day-end cash/card totals.</div></div></div>}
-      {lastSaved && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-start gap-2"><CheckCircle2 size={19} className="text-emerald-600 mt-0.5" /><div><div className="font-bold text-emerald-700">Credit payment saved</div><div className="text-sm text-sub">{lastSaved.customer} · {lastSaved.method} · {fmtRs(lastSaved.amount)}</div><div className="text-sm font-semibold mt-1">New outstanding: {fmtRs(lastSaved.balance)}</div></div></div><button className="btn btn-soft" onClick={() => setLastSaved(null)}>Dismiss</button></div>}
+      {lastSaved && <>
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+          <div className="flex items-start gap-2"><CheckCircle2 size={19} className="text-emerald-600 mt-0.5" /><div className="min-w-0 flex-1"><div className="font-bold text-emerald-700">Credit payment saved</div><div className="text-sm text-sub">{lastSaved.customerName} · {fmtRs(lastSaved.payment.amount)} paid</div><div className="text-sm font-semibold mt-1">Remaining balance: {fmtRs(lastSaved.remainingBalance)}</div>{lastSaved.remainingBalance <= 0.009 && <div className="text-xs font-extrabold text-emerald-700 mt-1">PAID IN FULL · BALANCE CLEARED</div>}</div></div>
+          <div className="flex flex-wrap gap-2"><button type="button" className="btn btn-primary" onClick={() => window.print()}><Printer size={15}/> Print settlement receipt</button><button type="button" className="btn !text-white" style={{background:'linear-gradient(135deg,#25d366,#128c7e)'}} onClick={() => { const phone = normalizeWhatsAppPhone(whatsappPhone); if (phone.length < 9 || phone.length > 15) { setWhatsappError('Enter a valid WhatsApp number including country code if needed.'); return; } setWhatsappError(''); openWhatsAppLink(phone, buildSettlementWhatsAppText(lastSaved, state.settings)); }}><MessageCircle size={15}/> WhatsApp settlement</button><button type="button" className="btn btn-soft" onClick={() => setLastSaved(null)}>Dismiss</button></div>
+          <div><label className="block text-xs font-semibold text-sub mb-1">Customer WhatsApp number (editable)</label><input className="input w-full" type="tel" inputMode="tel" value={whatsappPhone} onChange={e => {setWhatsappPhone(e.target.value); setWhatsappError('');}} placeholder="e.g. 0771234567 or +94771234567" />{whatsappError && <div className="text-xs text-rose-500 mt-1">{whatsappError}</div>}<div className="text-[11px] text-sub mt-1">WhatsApp opens with a prefilled message. Review and send it in WhatsApp.</div></div>
+        </div>
+        <div className="print-area" style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace'}}><div style={{width:'72mm',maxWidth:'72mm',padding:'4mm',background:'#fff',color:'#000',fontSize:'11px',lineHeight:1.45}}>
+          <div style={{textAlign:'center',fontWeight:800,fontSize:'15px'}}>{state.settings.shopName || 'Shop'}</div>{state.settings.phone && <div style={{textAlign:'center'}}>Tel: {state.settings.phone}</div>}{state.settings.address && <div style={{textAlign:'center',fontSize:'10px'}}>{state.settings.address}</div>}
+          <div style={{borderTop:'1px dashed #000',margin:'10px 0'}}/><div style={{textAlign:'center',fontWeight:800}}>CREDIT PAYMENT RECEIPT</div><div style={{textAlign:'center',fontWeight:700}}>ණය ගෙවීම</div>
+          <div style={{marginTop:'8px'}}>Receipt: {lastSaved.payment.id.slice(0,12)}</div><div>Date: {fmtDateTime(lastSaved.payment.date)}</div><div>Customer: {lastSaved.customerName}</div><div>Mobile: {lastSaved.customerPhone || whatsappPhone || '—'}</div><div>Cashier: {lastSaved.cashierName}</div>
+          <div style={{borderTop:'1px dashed #000',margin:'8px 0'}}/><div>Previous outstanding: {fmtRs(lastSaved.previousOutstanding)}</div>
+          {(lastSaved.payment.methods || [{method:lastSaved.payment.method,amount:lastSaved.payment.amount}]).map((leg,i)=><div key={i}>Paid ({leg.method.toUpperCase()}): {fmtRs(leg.amount)}</div>)}
+          {lastSaved.payment.allocations?.map((allocation,i)=><div key={i}>Bill {allocation.billNo}: {fmtRs(allocation.amount)} allocated</div>)}
+          <div style={{borderTop:'1px dashed #000',margin:'8px 0'}}/><div style={{fontWeight:900,fontSize:'13px'}}>REMAINING BALANCE</div><div style={{fontWeight:900,fontSize:'16px'}}>{fmtRs(lastSaved.remainingBalance)}</div>{lastSaved.remainingBalance <= 0.009 && <div style={{fontWeight:900,textAlign:'center',marginTop:'5px'}}>PAID IN FULL · BALANCE CLEARED</div>}
+          <div style={{borderTop:'1px dashed #000',margin:'8px 0'}}/><div style={{textAlign:'center'}}>Thank you! Please contact us if you need assistance.</div>{state.settings.phone && <div style={{textAlign:'center'}}>Contact: {state.settings.phone}</div>}
+        </div></div>
+      </>}
 
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-5 items-start">
         <div className="space-y-4">
