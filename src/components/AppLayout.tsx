@@ -59,7 +59,7 @@ const TITLES: [RegExp, string][] = [
   [/^\/grn/, 'Goods Received Notes'], [/^\/purchase-return/, 'Purchase Return'], [/^\/purchases/, 'Purchases'],
   [/^\/csv-import/, 'CSV Import'], [/^\/sales/, 'Sales History'], [/^\/exchanges/, 'Exchanges / Returns'], [/^\/expenses/, 'Expenses'],
   [/^\/reports/, 'Reports & Analytics'], [/^\/price-tags/, 'Price Tags'],
-  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Day Cash & Drawer'], [/^\/permissions/, 'Permissions'],
+  [/^\/users/, 'Users'], [/^\/cashier-balances/, 'Cashier Balance Report'], [/^\/permissions/, 'Permissions'],
   [/^\/audit-log/, 'Audit Log'], [/^\/settings/, 'Settings'],
 ];
 
