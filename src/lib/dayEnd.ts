@@ -1,6 +1,8 @@
 import type { DaySession, PaymentLeg, POSState, Sale, PaymentMethod } from './types';
 import type { CustomerCreditPayment } from './customerCredit';
 import { dkey } from './utils';
+import { getCloudShopId } from './cloudSync';
+import { getDefaultBranchId } from './branchStock';
 
 export type TenderTotals = Record<Exclude<PaymentMethod, 'credit'>, number>;
 
@@ -34,6 +36,9 @@ function belongsToSession(
   session?: DaySession,
 ): boolean {
   if (!session) return true;
+  const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+  const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+  if (effectiveBranch((item as { branchId?: string }).branchId) !== effectiveBranch(session.branchId)) return false;
   if (item.cashierId) return item.cashierId === session.cashierId;
   return (item.cashierName || item.by || '') === session.cashierName;
 }
