@@ -1250,6 +1250,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return false; }
     const p = stateRef.current.products.find(x => x.id === id);
     if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return false; }
+    const adjustmentId = uid();
     const shopId = getCloudShopId();
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
