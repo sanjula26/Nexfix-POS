@@ -198,3 +198,28 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - [x] Desktop POS, Drive backup, updater and R2 files were not modified; Phase 4/5 were not started.
 - [x] Owner Web dependency install, typecheck, lint and production build passed in Owner Web CI: https://github.com/sanjula26/NexFix-POS/actions/runs/37913373846.
 - [ ] Interactive multi-branch smoke test remains pending because production currently has only one active branch.
+
+
+## Phase 4 operational depth (2026-10-09)
+
+- Added read-only invoice drill-down with shop/branch-scoped parent invoice lookup, invoice lines, and recorded payments. Return/refund detail remains intentionally unavailable because `sale_returns` has a no-direct-access RLS policy.
+- Added a membership-checked SECURITY INVOKER RPC `get_owner_credit_customers`. It compares `customers.credit_balance` with the outstanding amount calculated from completed invoices (`max(total - amount_paid, 0))); differences are visibly flagged and excluded from verified totals. Live production verification found 3 credit customers, all 3 matched, with LKR 53,100 in both customer credit balances and completed-invoice outstanding. This is not a claim of a separate settlements ledger. Credit is shop-level, not branch-level.
+- Enabled Expenses as a read-only, shop- and branch-scoped list with CSV export. Production currently has 0 synced expense rows, so the UI says no synced records and does not invent a total.
+- Enabled Cashier day-end history using synced `day_sessions`, with selected-branch filtering and explicitly labeled closing-minus-opening difference. Production currently has 0 synced sessions, so cash-in-hand remains unavailable.
+- Enabled POS users as an active `shop_memberships` directory, with profile details only where existing RLS allows. It does not claim to list desktop-local POS users that are not cloud members.
+- Kept Inventory, Repairs and Settings disabled as Soon; no unsupported routes or invitation API were added. Admin invitations remain deferred because no verified Owner Web invite/membership provisioning workflow was found.
+- No desktop POS source, Drive backup, updater or R2 implementation was modified. No polling or browser service-role key was added. Phase 5 has not started.
+
+### Phase 4 checklist
+
+- [x] Credit customers/outstanding shown only when the cloud customer balance matches completed-invoice outstanding; mismatches are flagged.
+- [x] Invoice detail drill-down is read-only and branch-aware.
+- [x] Day-end history route works; empty synced-session state is honest and cash balance is not fabricated.
+- [x] Expenses route works; current empty cloud dataset is shown honestly and branch filters are respected.
+- [x] POS users route lists active cloud memberships under shop scope and existing RLS; desktop-local-only users are explicitly out of scope.
+- [x] Enabled navigation routes are registered and have loading, error, and empty states.
+- [x] Owner Web typecheck, lint and production build passed: https://github.com/sanjula26/NexFix-POS/actions/runs/37914501129.
+- [x] Credit RPC live data reconciled: 3/3 customers matched, LKR 53,100 equals open invoice balance; RPC is SECURITY INVOKER, executable by authenticated only, not anon.
+- [x] Desktop POS, Drive backup and updater source files were not modified.
+- [ ] Browser end-to-end click-through against a signed-in browser session remains to be manually smoke-tested; no automated browser session is provisioned here.
+- [x] Phase 5 not started.
