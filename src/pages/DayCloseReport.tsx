@@ -115,8 +115,8 @@ export default function DayCloseReport() {
 
           <div className="card overflow-hidden">
             <div className="px-4 py-3 border-b border-line font-extrabold text-ink">Closed cashier sessions</div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1750px] text-sm">
+            <div className="overflow-x-auto print:overflow-visible">
+              <table className="w-full min-w-[1750px] text-sm print:min-w-0">
                 <thead><tr className="text-left text-[10px] uppercase tracking-wider text-faint border-b border-line">
                   <th className="px-4 py-3">Date / cashier</th><th className="py-3">Opening</th><th className="py-3">Bills</th>
                   <th className="py-3">Gross sales</th><th className="py-3">Refunds</th><th className="py-3">Net sales</th>
