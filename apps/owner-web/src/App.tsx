@@ -186,7 +186,7 @@ function Dashboard() {
     try {
       const [aggregates, recentPage] = await Promise.all([
         loaders.aggregates(month < chartStart ? month : chartStart, today),
-        loaders.page(midnightIso(month), midnightIso(addDays(today,1)), 0, 5),
+        loaders.page(midnightIso(addDays(today,-29)), midnightIso(addDays(today,1)), 0, 5),
       ]);
       setDaily(aggregates); setRecent(recentPage.rows); setUpdated(new Date().toISOString());
     } catch (e) { setError(e instanceof Error ? e.message : 'Unknown query error'); }
