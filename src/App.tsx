@@ -17,6 +17,7 @@ const Inventory = lazy(() => import('./pages/Inventory'));
 const Customers = lazy(() => import('./pages/Customers'));
 const Suppliers = lazy(() => import('./pages/Suppliers'));
 const SupplierPayments = lazy(() => import('./pages/SupplierPayments'));
+const CreditSettle = lazy(() => import('./pages/CreditSettle'));
 const GRN = lazy(() => import('./pages/GRN'));
 const GRNReport = lazy(() => import('./pages/GRNReport'));
 const Purchases = lazy(() => import('./pages/Purchases'));
@@ -324,6 +325,7 @@ function AppRoutes() {
           <Route path="/customers" element={<PermissionProtected permission="page:customers"><Customers /></PermissionProtected>} />
           <Route path="/suppliers" element={<PermissionProtected permission="page:suppliers"><Suppliers /></PermissionProtected>} />
           <Route path="/supplier-payments" element={<PermissionProtected permission="page:suppliers"><SupplierPayments /></PermissionProtected>} />
+          <Route path="/credit-settle" element={<PermissionProtected permission="page:customers"><CreditSettle /></PermissionProtected>} />
           <Route path="/purchases" element={<PermissionProtected permission="page:purchases"><Purchases /></PermissionProtected>} />
           <Route path="/grn" element={<PermissionProtected permission="page:purchases"><GRN /></PermissionProtected>} />
           <Route path="/grn-report" element={<PermissionProtected permission="page:purchases"><GRNReport /></PermissionProtected>} />
