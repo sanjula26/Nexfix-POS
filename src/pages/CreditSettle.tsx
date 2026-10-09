@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
@@ -119,7 +119,7 @@ export default function CreditSettle() {
 
   return (
     <div className="space-y-5">
-      <PageHeading chip="Receivables" chipTone="amber" title="Credit Settle" sub="Collect full or partial customer credit repayments." />
+      <PageHeading chip="Receivables" chipTone="amber" title="Credit Settle" sub="Collect full or partial customer credit repayments." actions={<Link to="/credit-statements" className="btn btn-soft"><ReceiptText size={15}/> Credit statements</Link>} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-sub">Total outstanding</div><div className="text-2xl font-extrabold num mt-1 text-amber-600">{fmtRs(totalReceivables)}</div><div className="text-xs text-sub mt-1">{state.customers.filter(c => c.creditBalance > 0.009).length} customers with balance</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-sub">Collected today</div><div className="text-2xl font-extrabold num mt-1">{fmtRs(totalCollectedToday)}</div><div className="text-xs text-sub mt-1">Recorded repayments</div></div>
