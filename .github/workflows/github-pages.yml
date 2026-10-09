@@ -39,9 +39,6 @@ jobs:
           export VITE_APP_VERSION
           npm run build -- --mode public-pages
 
-      - name: Install Owner Web dependencies
-        working-directory: apps/owner-web
-        run: npm install --no-audit --no-fund
       - name: Typecheck Owner Web
         working-directory: apps/owner-web
         run: npm run typecheck
