@@ -324,6 +324,16 @@ export default function CashierBalances() {
         }
       />
 
+      {currentSession && !currentSession.closed && currentSession.openingConfirmed === false && (
+        <div className="card p-4 border border-amber-500/25 bg-amber-500/[0.06] flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
+            <div><div className="font-bold text-ink">Opening float not confirmed</div><p className="text-sm text-sub mt-1">Confirm the physical starting cash before making sales or collecting credit settlements.</p></div>
+          </div>
+          <button type="button" className="btn btn-primary print:hidden" onClick={() => { setOpenFloatId(currentSession.cashierId); setOpeningInput(String(currentSession.opening)); }}><Unlock size={15} /> Confirm opening float</button>
+        </div>
+      )}
+
       {currentClosed && user?.role !== 'admin' && (
         <div className="card p-4 border border-emerald-500/25 bg-emerald-500/[0.05]">
           <div className="flex items-start gap-3">
