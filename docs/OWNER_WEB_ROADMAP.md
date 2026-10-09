@@ -1,6 +1,6 @@
 # NexFix Owner Web + Multi-Branch Roadmap
 
-**Status:** Phase 0, Phase 1 and Phase 1.5 are implemented. Phase 2 branch model and POS binding are implemented on main; final regression verification is in progress. Phase 3 is not started and remains blocked until every Phase 2 checklist item is green.
+**Status:** Phase 0, Phase 1, Phase 1.5 and Phase 2 branch model/POS binding are implemented on `main`. Phase 2 regression verification passed on code commit `83426a87655a8978b7988b960ba39db7dc062673`; Phase 3 is not started and remains blocked pending explicit authorization.
 **Reviewed against:** `main` at the time of this document's creation.
 **Non-goal:** This document does not change POS runtime behavior, database schema, authentication, cloud sync, backup, or updater code.
 
@@ -89,18 +89,18 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 
 ## 4. Phase 2 branch model and compatibility contract
 
-Preferred direction: **`branches` + `branch_stock`**, rather than treating one product row's `stock` field as simultaneously representing stock in several locations.
+**Implemented model:** Strategy A — products remain the shop-wide catalog and legacy total-stock mirror; `branch_stock(shop_id, branch_id, product_id, qty)` is the operational stock quantity for each branch.
 
-Proposed tables/columns:
-- `branches(id uuid, shop_id uuid, name text, code text, active boolean, is_default boolean, created_at timestamptz)`; unique active code/name per shop as agreed; exactly one default branch per shop after backfill.
-- `branch_stock(shop_id uuid, branch_id uuid, product_id uuid, qty numeric, updated_at timestamptz)`; unique `(branch_id, product_id)`, checks against invalid negative quantities where business rules allow.
-- Add `branch_id` to `sales`, `expenses`, `day_sessions`, `purchases/GRN receipts`, stock movement/ledger rows, and repair/transfer workflows as appropriate. For IMEI/serial stock, add `branch_id` to `inventory_units` and enforce that unit/product/branch/shop ownership agrees.
-- Add explicit `stock_transfers` and `stock_transfer_lines` with from/to branch, status, creator/approver, timestamps and idempotency key. Completing a transfer must be one atomic server-side transaction and admin-authorized.
-- Add `branch_id` to device registration (or a device-to-branch binding table) and enforce that each POS device's selected branch is authorized by the same shop.
-- Existing products currently carry one `products.stock` value. Migration must snapshot each existing shop's stock into its default “Main” branch exactly once, with audit/reconciliation totals before and after; retain compatibility during rollout and never double-count the legacy column.
-- Customer credit is proposed as **shop-level** initially, because existing customers and customer balances are shop-scoped. Invoices remain tagged to the branch where sold; statement/payment allocation remains at shop scope unless a later explicit business requirement changes it.
-- Branch-scoped cash/day-end is per branch and per cashier session. Consolidated totals must be sums of distinct branch records, not duplicated shop-level totals.
-- Phase 2 implementation note (2026-10-09): the branch tables, transactional branch_id columns, default-branch backfill, device binding and branch-aware RPCs are now deployed. This section records the approved model; it is no longer design-only. Phase 3 Owner Web multi-branch UI remains explicitly blocked.
+- `branches` has a default Main branch for every existing shop, unique `(shop_id, code)`, and one default branch per shop. New branches start with zero stock.
+- `branch_stock` uses `(branch_id, product_id)` as its primary key and has shop/branch/product foreign-key indexes. Existing product stock was backfilled to Main once; a single-active-branch trigger preserves legacy `products.stock` behavior.
+- `branch_id` is required/backfilled on normalized `sales`, `expenses`, `day_sessions`, `purchases`/GRN headers, and `inventory_units`. Returns inherit their source sale/GRN branch; stock transfers record both source and destination branches.
+- IMEI/serial units belong to one branch. Sale validation rejects units from another branch; atomic unit add/delete, transfer, supplier return, sale return, sale reversal and trade-in paths reconcile branch quantities and the shop total.
+- Stock transfers and stock adjustments are atomic server-side operations with shop/role checks, quantity validation and idempotency. Transfer lines support exact in-stock IMEI/serial IDs and transfer the unit's branch in the same transaction.
+- POS devices are bound to a branch when a shop has multiple active branches. Settings auto-selects Main for a single-branch shop; a cached multi-branch shop requires an explicit branch before branch-sensitive stock/day-end operations.
+- Offline stock checks use a selected-branch cache. Branch stock adjustments and tracked-unit add/delete use durable IndexedDB queue operations; queued stock adjustments bootstrap the pre-change product quantity before applying their idempotent delta.
+- Customer credit remains shop-level initially. Sales and day-end sessions are branch-tagged; consolidated owner reporting remains shop-level in Phase 2.
+- `owner_daily_sales` intentionally remains shop-level. Owner Web Phase 1 KPIs continue to work unchanged; branch selectors, branch-level KPIs and all-branches views remain Phase 3+.
+
 
 ## 5. Phase gates and verification
 
@@ -147,28 +147,30 @@ Proposed tables/columns:
 
 ## Phase 2 implementation update (2026-10-09)
 
-### Chosen stock model
+### Live reconciliation and regression tests
 
-- Strategy A is implemented: products remains the shop-wide catalog and legacy total-stock field; branch_stock(shop_id, branch_id, product_id, qty) is the branch operational quantity. (branch_id, product_id) is now the primary key. The single-active-branch trigger keeps the legacy stock mirror compatible; multi-branch sale/GRN/transfer/adjustment RPCs maintain branch quantities and the shop total without making Owner Web branch-aware.
-- Every existing shop receives a default Main branch; existing product quantities are backfilled once. The production reconciliation checked today found 23 products totaling 1,174 units and 23 Main-branch stock rows totaling 1,174 units, with a zero total delta.
-- branch_id is required on normalized sales, expenses, day sessions, purchases/GRNs, and inventory units. The existing production rows checked for these tables had no null branch IDs.
-- IMEI/serial units carry a branch. Sale RPCs reject units from another branch; transfer RPCs move tracked units and stock in one server transaction.
-- POS devices bind to a branch. Settings auto-selects Main when there is one active branch and requires a branch selection for a cached multi-branch shop.
-- Offline stock checks use a branch-specific cache. A sale, GRN receive, expense or day-session operation is blocked when the cached shop has multiple active branches but this device has no selected branch. Branch stock adjustments use adjust_branch_stock_atomic online and a durable IndexedDB queue offline. Existing-product stock edits through the catalog editor are blocked when branch-bound; use the stock adjustment action so branch and shop totals stay atomic.
-- Cashier session opening, sign-off, full day close and Cashier Balances are scoped to the selected branch. Session identity is branch-aware, including legacy local-main rows mapped to the default branch.
-- owner_daily_sales intentionally remains shop-level in Phase 2. Owner Web Phase 1 KPIs continue to work unchanged; branch-specific Owner Web views and branch filters remain Phase 3+.
+- The connected production shop has 23 products with a shop-wide stock total of 1,174 and Main-branch stock total of 1,174; mismatch count is 0.
+- A rollback-only database integration test exercised atomic tracked-unit creation, a transfer containing tracked and untracked stock, idempotent transfer retry, unit branch movement, and atomic unit deletion. Assertions passed and all writes were rolled back.
+- Separate rollback-only tests exercised sale return, supplier return, trade-in and sale reversal stock reconciliation. Assertions passed; temporary GRN/return/unit/reversal records were rolled back. Follow-up checks found zero test records and the production stock totals unchanged.
+- Existing sales, purchases/GRNs, expenses, day sessions and inventory units are backfilled to Main and have no null `branch_id` rows in the production check. The actual connected shop remains single-branch after the rollback-only tests.
+- Manual tracked-unit add/edit/delete now uses the atomic branch-scoped cloud RPCs online and durable queue operations offline. New GRNs must be received at their originating branch; supplier returns validate the GRN branch and tracked-unit branch.
+- The migrations are committed under `supabase/migrations/`: `20261009080000_add_branch_model_and_backfill.sql`, `20261009081500_add_branch_aware_transaction_rpcs.sql`, `20261009083000_bind_pos_devices_to_branches.sql`, `20261009084500_add_branch_provisioning_rpc.sql`, `20261009090000_harden_branch_rpc_idempotency.sql`, `20261009091500_add_branch_stock_adjustment_rpc.sql`, `20261009091600_branch_stock_primary_key_and_fk_indexes.sql`, `20261009091700_add_branch_inventory_units_atomic_rpc.sql`, `20261009091800_delete_branch_inventory_unit_atomic_rpc.sql`, `20261009091900_branch_stock_returns_reversals_tradeins.sql`, and `20261009092000_reconcile_tracked_stock_across_branches.sql`.
+- `owner_daily_sales` remains shop-level. No Owner Web branch UI or Phase 3 work was started.
 
 ### Phase 2 checklist
 
-- [x] Additive schema, default Main backfill, required transactional branch_id, branch-scoped units, RLS and device binding are applied.
+- [x] Additive schema, Main-branch backfill, transactional `branch_id`, branch-scoped units, RLS and device binding are applied.
 - [x] Branch stock transfer and stock-adjustment RPCs enforce shop membership/role, same-shop branches, quantity checks and idempotency.
-- [x] Existing production product total and branch-stock total reconcile (1,174 units; delta 0 for the connected shop).
-- [x] Desktop POS CI typecheck, lint and production build passed on the branch-binding changes; security audit passed.
-- [x] Owner Web build and publish passed; Owner Web remains read-only and shop-level.
-- [x] Branch-stock primary key and missing branch-related foreign-key indexes were added to production and recorded in supabase/migrations/20261009091600_branch_stock_primary_key_and_fk_indexes.sql.
-- [x] Source guards now block missing-branch operations for known multi-branch caches, sync branch stock adjustments atomically/through the offline queue, and scope day-end sessions to the selected branch.
-- [ ] Windows Desktop Build must finish successfully on the final Phase 2 commit, including installer/R2/updater publishing steps.
-- [ ] Execute a rollback-only transfer integration test (including a tracked IMEI/serial transfer) against a temporary branch and prove source/destination quantities and unit branch ownership change atomically without leaving test records. Do not mutate real shop stock to perform this test.
-- [ ] Verify the final published commit, run result, and branch reconciliation after the last code change.
+- [x] Tracked-unit add/delete and supplier-return paths enforce branch ownership; sale returns, reversals and trade-ins reconcile stock across branches.
+- [x] Production product total and branch-stock total reconcile (1,174 units; delta 0; 0 mismatched products).
+- [x] Rollback-only transfer, tracked-unit, sale-return, supplier-return, trade-in and reversal integration tests passed; test records and stock changes were rolled back.
+- [x] POS CI passed: https://github.com/sanjula26/NexFix-POS/actions/runs/37910038697
+- [x] POS Security Audit passed: https://github.com/sanjula26/NexFix-POS/actions/runs/37910038970
+- [x] Windows Desktop Build passed on code commit `83426a87655a8978b7988b960ba39db7dc062673`, including installer/portable artifact verification, checksums, private Cloudflare R2 publishing, Supabase compatibility chunks, cleanup and final private-release verification: https://github.com/sanjula26/NexFix-POS/actions/runs/37910038785
+- [x] Phone Sales deployment passed on the same commit; Owner Web Phase 1 remains read-only and shop-level: https://github.com/sanjula26/NexFix-POS/actions/runs/37910038874
+- [x] Branch stock primary key and branch-related foreign-key indexes are deployed and recorded in migration source.
+- [x] Branch selection guards, GRN-to-branch binding, branch-scoped day-end, atomic stock editing and offline queue behavior are implemented.
+- [x] Final production reconciliation after rollback-only tests: 23 products, 1,174 shop units, 1,174 branch units, delta 0; no test rows remained.
+- [x] Phase 3 is explicitly not started.
 
-**Phase gate:** Phase 3 is not started. Do not add Owner Web branch selectors, branch-level Owner Web KPIs, or all-branches aggregation until every unchecked Phase 2 item above is green.
+**Phase gate:** Phase 2 verification is green on the functional code commit above. Do not add Owner Web branch selectors, branch-level Owner Web KPIs, or all-branches aggregation until Phase 3 is explicitly authorized.
