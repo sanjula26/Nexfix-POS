@@ -1,6 +1,6 @@
 # NexFix Owner Web + Multi-Branch Roadmap
 
-**Status:** Phase 0 design is committed; Phase 1 read-only app is committed and verification is in progress. Phase 2 is not started.
+**Status:** Phase 0, Phase 1 and Phase 1.5 are implemented. Phase 2 branch model and POS binding are implemented on main; final regression verification is in progress. Phase 3 is not started and remains blocked until every Phase 2 checklist item is green.
 **Reviewed against:** `main` at the time of this document's creation.
 **Non-goal:** This document does not change POS runtime behavior, database schema, authentication, cloud sync, backup, or updater code.
 
@@ -87,7 +87,7 @@ The desktop's cloud transaction layer uses guarded RPCs for sensitive operations
 - Before Phase 1 implementation, audit and reconcile canonical membership tables/policies and snapshot migration drift in the actual deployment. Add regression tests proving user A cannot read shop B, even when user A submits shop B's ID directly.
 - Use bounded date ranges and indexes. Prefer a small aggregate RPC for dashboard charts if direct queries require large scans; ensure the RPC validates membership and business timezone.
 
-## 4. Branch model proposal (design only; no migration in Phase 0)
+## 4. Phase 2 branch model and compatibility contract
 
 Preferred direction: **`branches` + `branch_stock`**, rather than treating one product row's `stock` field as simultaneously representing stock in several locations.
 
@@ -100,7 +100,7 @@ Proposed tables/columns:
 - Existing products currently carry one `products.stock` value. Migration must snapshot each existing shop's stock into its default “Main” branch exactly once, with audit/reconciliation totals before and after; retain compatibility during rollout and never double-count the legacy column.
 - Customer credit is proposed as **shop-level** initially, because existing customers and customer balances are shop-scoped. Invoices remain tagged to the branch where sold; statement/payment allocation remains at shop scope unless a later explicit business requirement changes it.
 - Branch-scoped cash/day-end is per branch and per cashier session. Consolidated totals must be sums of distinct branch records, not duplicated shop-level totals.
-- Do not implement branch tables or bind POS devices until Phase 1 is fully verified and a separate Phase 2 migration plan is approved.
+- Phase 2 implementation note (2026-10-09): the branch tables, transactional branch_id columns, default-branch backfill, device binding and branch-aware RPCs are now deployed. This section records the approved model; it is no longer design-only. Phase 3 Owner Web multi-branch UI remains explicitly blocked.
 
 ## 5. Phase gates and verification
 
@@ -133,7 +133,7 @@ Proposed tables/columns:
 - Separate app: `apps/owner-web`; desktop POS entry, Electron packaging, billing, day-end, Drive backup, and updater are not modified.
 - Live production RLS and canonical membership checks are documented in `docs/PHASE1_SECURITY.md`. The checks verified own-shop reads and denied unrelated-shop/no-membership reads. Browser JWT sign-in and a two-real-shop test remain pending.
 - Phase 1 sales values are gross completed invoice totals before partial returns. Profit, credit, expenses, payment mix, and cash-in-hand are deferred until coverage/accounting is verified.
-- Phase 2 remains prohibited until every Phase 1 verification item is green.
+- Phase 2 was started after the owner confirmed the Phase 0/1/1.5 prerequisites. Remaining Phase 2 runtime/regression verification is tracked below; CI green alone is not treated as proof of live stock-transfer behavior.
 
 
 ## Phase 1.5 implementation update (2026-10-09)
@@ -144,3 +144,31 @@ Proposed tables/columns:
 - Expected egress: dashboard uses at most 31 daily aggregate rows plus 5 recent invoices, compared with the former query cap of 10,000 invoice rows (99.69% fewer rows at that cap; byte savings vary). Fallback still performs server-side aggregation.
 - The additive SQL migrations were applied to the connected production project and are checked into supabase/migrations/20261009064402_owner_daily_sales_aggregates.sql, supabase/migrations/20261009064831_fix_owner_daily_sales_rpc_ambiguity.sql, and supabase/migrations/20261009065025_make_owner_daily_sales_trigger_nonblocking.sql, and supabase/migrations/20261009065416_optimize_owner_daily_sales_range_query.sql, and supabase/migrations/20261009065523_split_owner_daily_sales_refresh_helper.sql. The public aggregate RPC is SECURITY INVOKER; only the membership-checked refresh helper in the private schema is SECURITY DEFINER. The aggregate trigger is best-effort so aggregate cache errors do not block POS sales sync. Desktop POS/Drive/updater/R2 were not changed.
 - Phase 2 branches remain out of scope and were not started.
+
+## Phase 2 implementation update (2026-10-09)
+
+### Chosen stock model
+
+- Strategy A is implemented: products remains the shop-wide catalog and legacy total-stock field; branch_stock(shop_id, branch_id, product_id, qty) is the branch operational quantity. (branch_id, product_id) is now the primary key. The single-active-branch trigger keeps the legacy stock mirror compatible; multi-branch sale/GRN/transfer/adjustment RPCs maintain branch quantities and the shop total without making Owner Web branch-aware.
+- Every existing shop receives a default Main branch; existing product quantities are backfilled once. The production reconciliation checked today found 23 products totaling 1,174 units and 23 Main-branch stock rows totaling 1,174 units, with a zero total delta.
+- branch_id is required on normalized sales, expenses, day sessions, purchases/GRNs, and inventory units. The existing production rows checked for these tables had no null branch IDs.
+- IMEI/serial units carry a branch. Sale RPCs reject units from another branch; transfer RPCs move tracked units and stock in one server transaction.
+- POS devices bind to a branch. Settings auto-selects Main when there is one active branch and requires a branch selection for a cached multi-branch shop.
+- Offline stock checks use a branch-specific cache. A sale, GRN receive, expense or day-session operation is blocked when the cached shop has multiple active branches but this device has no selected branch. Branch stock adjustments use adjust_branch_stock_atomic online and a durable IndexedDB queue offline. Existing-product stock edits through the catalog editor are blocked when branch-bound; use the stock adjustment action so branch and shop totals stay atomic.
+- Cashier session opening, sign-off, full day close and Cashier Balances are scoped to the selected branch. Session identity is branch-aware, including legacy local-main rows mapped to the default branch.
+- owner_daily_sales intentionally remains shop-level in Phase 2. Owner Web Phase 1 KPIs continue to work unchanged; branch-specific Owner Web views and branch filters remain Phase 3+.
+
+### Phase 2 checklist
+
+- [x] Additive schema, default Main backfill, required transactional branch_id, branch-scoped units, RLS and device binding are applied.
+- [x] Branch stock transfer and stock-adjustment RPCs enforce shop membership/role, same-shop branches, quantity checks and idempotency.
+- [x] Existing production product total and branch-stock total reconcile (1,174 units; delta 0 for the connected shop).
+- [x] Desktop POS CI typecheck, lint and production build passed on the branch-binding changes; security audit passed.
+- [x] Owner Web build and publish passed; Owner Web remains read-only and shop-level.
+- [x] Branch-stock primary key and missing branch-related foreign-key indexes were added to production and recorded in supabase/migrations/20261009091600_branch_stock_primary_key_and_fk_indexes.sql.
+- [x] Source guards now block missing-branch operations for known multi-branch caches, sync branch stock adjustments atomically/through the offline queue, and scope day-end sessions to the selected branch.
+- [ ] Windows Desktop Build must finish successfully on the final Phase 2 commit, including installer/R2/updater publishing steps.
+- [ ] Execute a rollback-only transfer integration test (including a tracked IMEI/serial transfer) against a temporary branch and prove source/destination quantities and unit branch ownership change atomically without leaving test records. Do not mutate real shop stock to perform this test.
+- [ ] Verify the final published commit, run result, and branch reconciliation after the last code change.
+
+**Phase gate:** Phase 3 is not started. Do not add Owner Web branch selectors, branch-level Owner Web KPIs, or all-branches aggregation until every unchecked Phase 2 item above is green.
