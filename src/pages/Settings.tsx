@@ -884,6 +884,7 @@ export default function Settings() {
         <div className="flex flex-wrap items-center gap-3 mt-3"><button type="button" className="btn btn-primary" onClick={() => void completeTransfer()} disabled={transferBusy || user?.role !== 'admin' && user?.role !== 'manager'}>{transferBusy ? 'Transferring…' : 'Complete transfer'}</button><button type="button" className="btn btn-secondary" onClick={() => { setTransferLines([]); setTransferMsg('Transfer draft cleared.'); }}>Clear lines</button></div>
         {transferMsg && <p className="mt-3 text-xs text-sub">{transferMsg}</p>}
       </div>}
+      {user?.role === 'admin' && (
       <div className="card p-6 border border-sky-500/20">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
           <p className="text-xs text-faint mb-4">Update inside the app without leaving the POS.</p>
