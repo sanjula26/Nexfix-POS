@@ -126,7 +126,7 @@ interface StoreCtx {
   deleteSupplier: (id: string) => void;
   saveSupplierPayment: (p: Omit<import('./supplierPayments').SupplierPayment, 'id' | 'date' | 'by'>) => import('./supplierPayments').SupplierPayment | null;
   deleteSupplierPayment: (id: string) => void;
-  saveCustomerCreditPayment: (p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }) => CustomerCreditPayment | null;
+  saveCustomerCreditPayment: (p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }) => { ok: true; payment: CustomerCreditPayment } | { ok: false; error: string };
   // sales
   completeSale: (input: NewSaleInput) => Sale | null;
   completeSaleCloud: (input: NewSaleInput) => Promise<Sale | null>;
@@ -1462,64 +1462,103 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
   }, [pushAudit, user, can]);
 
-  const saveCustomerCreditPayment = useCallback((p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }) => {
+  const saveCustomerCreditPayment = useCallback((p: { customerId: string; amount: number; method: Exclude<PaymentMethod, 'credit'>; methods?: PaymentLeg[]; note?: string; saleId?: string }): { ok: true; payment: CustomerCreditPayment } | { ok: false; error: string } => {
+    const deny = (reason: string, audit: string) => {
+      pushAudit('DENIED', 'CustomerCreditPayment', audit);
+      return { ok: false as const, error: reason };
+    };
     if (customerCreditPaymentLockRef.current) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked duplicate settlement submission');
-      return null;
+      return deny('A credit payment is already being saved. Please wait a moment.', 'Blocked duplicate settlement submission');
     }
-    if (!user || !can('page:customers') || !can('page:pos')) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement without customer and POS access');
-      return null;
+    if (!user) {
+      return deny('Your POS session has expired. Sign in again before collecting payment.', 'Blocked settlement without an authenticated user');
     }
+    // Admins have full access through can(); other roles must have both page permissions.
+    if (user.role !== 'admin' && (!can('page:customers') || !can('page:pos'))) {
+      return deny('You do not have permission to collect credit payments. Ask an administrator to enable Customers and POS access.', 'Blocked settlement without customer and POS access');
+    }
+
     const snapshot = stateRef.current;
-    const todaySession = snapshot.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()));
-    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked credit settlement without an open cashier drawer with confirmed opening float');
-      return null;
+    const today = dkey(new Date());
+    const selectedBranchId = snapshot.settings.branchId || 'local-main';
+    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      return deny('Select this POS branch in Settings before collecting credit payments.', 'Blocked credit settlement because no branch is selected');
     }
+    const todaySession = snapshot.sessions.find(session =>
+      session.cashierId === user.id && session.date === today &&
+      effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId),
+    );
+    if (!todaySession) {
+      return deny("Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session.", 'Blocked credit settlement because today has no matching cashier session');
+    }
+    if (todaySession.closed) {
+      return deny("Today's cashier drawer is already closed. Reopen the correct session only through the approved day-opening flow.", 'Blocked credit settlement because today session is closed');
+    }
+    if (todaySession.openingConfirmed === false) {
+      return deny("Confirm today's opening float in Cashier Balance Report before collecting credit.", 'Blocked credit settlement because opening float is not confirmed');
+    }
+
     const customer = snapshot.customers.find(x => x.id === p.customerId);
+    if (!customer) return deny('Customer not found. Refresh the customer list and try again.', 'Blocked settlement for a missing customer');
     const amount = Math.round(Number(p.amount) * 100) / 100;
-    if (!customer || !Number.isFinite(amount) || amount <= 0) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked invalid settlement customer or amount');
-      return null;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return deny('Enter a valid payment amount greater than Rs. 0.00.', 'Blocked invalid settlement amount');
     }
     const outstanding = Math.max(0, Math.round((Number(customer.creditBalance) || 0) * 100) / 100);
-    if (outstanding <= 0 || amount > outstanding) {
-      pushAudit('DENIED', 'CustomerCreditPayment', `Blocked settlement above outstanding for ${customer.name}`);
-      return null;
+    if (outstanding <= 0) return deny('This customer has no outstanding credit balance.', `Blocked settlement for zero outstanding customer ${customer.name}`);
+    if (amount > outstanding + 0.009) {
+      return deny(`Amount exceeds customer outstanding (${'Rs. ' + outstanding.toLocaleString()}). Refresh the balance and enter a smaller amount.`, `Blocked settlement above customer outstanding for ${customer.name}`);
     }
+
     const rawMethods: PaymentLeg[] = Array.isArray(p.methods) && p.methods.length
       ? p.methods.map(leg => ({ method: leg.method, amount: Math.round(Number(leg.amount) * 100) / 100 }))
       : [{ method: p.method, amount }];
     const validMethods = new Set<Exclude<PaymentMethod, 'credit'>>(['cash', 'card', 'bank', 'mobile']);
     if (rawMethods.some(leg => !validMethods.has(leg.method as Exclude<PaymentMethod, 'credit'>) || !Number.isFinite(leg.amount) || leg.amount <= 0)
       || Math.abs(rawMethods.reduce((sum, leg) => sum + leg.amount, 0) - amount) > 0.009) {
-      pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement with invalid or mismatched tender amounts');
-      return null;
+      return deny('Payment split is invalid. Cash + Card (and any other tender legs) must equal the amount being collected.', 'Blocked settlement with invalid or mismatched tender amounts');
     }
     const methods = rawMethods as Array<{ method: Exclude<PaymentMethod, 'credit'>; amount: number }>;
     const previousPayments = snapshot.customerCreditPayments || [];
     let allocations: Array<{ saleId: string; billNo: string; amount: number }> = [];
     if (p.saleId) {
       const sale = snapshot.sales.find(x => x.id === p.saleId && x.customerId === customer.id && x.status === 'completed');
-      const invoiceDue = sale ? getOpenCreditInvoiceBalance(sale, previousPayments) : 0;
-      if (!sale || invoiceDue <= 0 || amount > invoiceDue) {
-        pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement above selected invoice outstanding');
-        return null;
+      if (!sale) return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
+      const invoiceDue = Math.min(getOpenCreditInvoiceBalance(sale, previousPayments), outstanding);
+      if (invoiceDue <= 0.009) return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${sale.billNo}`);
+      if (amount > invoiceDue + 0.009) {
+        return deny(`Amount exceeds selected invoice due (Rs. ${invoiceDue.toLocaleString()}). Reduce the amount or choose “Pay FIFO instead”.`, `Blocked settlement above selected invoice due for ${sale.billNo}`);
       }
       allocations = [{ saleId: sale.id, billNo: sale.billNo, amount }];
     } else {
       allocations = allocateCreditPaymentFIFO(customer.id, amount, snapshot.sales, previousPayments);
+      const allocated = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
+      if (Math.abs(allocated - amount) > 0.009) {
+        return deny('Could not allocate the full payment to open invoices. Refresh and check the customer’s invoice balances before retrying; no payment was saved.', `Blocked FIFO allocation mismatch for ${customer.name}: requested Rs. ${amount}, allocated Rs. ${allocated}`);
+      }
     }
+    const allocatedTotal = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
+    if (Math.abs(allocatedTotal - amount) > 0.009) {
+      return deny('Could not allocate the full payment to open invoices. Refresh and retry; no payment was saved.', `Blocked incomplete invoice allocation for ${customer.name}`);
+    }
+
     customerCreditPaymentLockRef.current = true;
     try {
+      // Recheck the current balance immediately before committing to avoid an overpayment.
+      const currentCustomer = stateRef.current.customers.find(x => x.id === customer.id);
+      const currentOutstanding = Math.max(0, Math.round((Number(currentCustomer?.creditBalance) || 0) * 100) / 100);
+      if (!currentCustomer || amount > currentOutstanding + 0.009) {
+        return deny(`Customer outstanding changed to Rs. ${currentOutstanding.toLocaleString()}. Refresh the balance and retry.`, `Blocked stale credit settlement for ${customer.name}`);
+      }
       const payment: CustomerCreditPayment = {
         id: uid(), customerId: customer.id, cashierId: user.id, amount, method: methods[0].method,
         methods: methods.length > 1 ? methods : undefined,
-        allocations: allocations.length ? allocations : undefined,
+        allocations,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
       };
-      const newBalance = Math.max(0, Math.round((outstanding - amount) * 100) / 100);
+      const newBalance = Math.max(0, Math.round((currentOutstanding - amount) * 100) / 100);
       setState(s => ({
         ...s,
         customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
@@ -1527,7 +1566,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }));
       pushAudit('CREATE', 'CustomerCreditPayment', `Collected Rs. ${amount.toLocaleString()} from ${customer.name} by ${methods.map(x => x.method).join('+')}; outstanding Rs. ${newBalance.toLocaleString()}`);
       scheduleGoogleBackup(() => stateRef.current, 'settings');
-      return payment;
+      return { ok: true, payment };
     } finally {
       customerCreditPaymentLockRef.current = false;
     }
