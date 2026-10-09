@@ -3001,7 +3001,7 @@ const deletePurchase = useCallback((id: string) => {
         : { ...s, sessions: [...s.sessions, ns] },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, state.settings.branchId]);
 
   const logAudit = useCallback((action: string, entity: string, details: string) => {
     pushAudit(action, entity, details);
