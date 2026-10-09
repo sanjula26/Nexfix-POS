@@ -87,21 +87,21 @@ export function calculateDayEndTotals(
 
   const allRefundEvents = state.sales.flatMap(sale => (sale.refunds || [])
     .filter(refund => dkey(refund.date) === date && belongsToSession(refund, session))
-    .map(refund => ({ amount: Math.max(0, Number(refund.amount) || 0), method: refund.method || 'cash' })));
+    .map(refund => ({ amount: Math.max(0, Number(refund.amount) || 0), cashAmount: refund.cashAmount == null ? undefined : Math.max(0, Number(refund.cashAmount) || 0), method: refund.method || 'cash' })));
   // Compatibility for pre-upgrade records, which had no refund timestamp/event.
   for (const sale of state.sales) {
     if (sale.status !== 'refunded' || (sale.refunds || []).length || dkey(sale.date) !== date) continue;
     if (session && sale.cashierId !== session.cashierId) continue;
-    allRefundEvents.push({ amount: Math.max(0, Number(sale.total) || 0), method: 'cash' });
+    allRefundEvents.push({ amount: Math.max(0, Number(sale.total) || 0), cashAmount: Math.max(0, Number(sale.total) || 0), method: 'cash' });
   }
   // Exchanges are dated independently from the original bill. The existing
   // model does not store an exchange tender method, so refunds are treated as cash.
   for (const exchange of state.exchanges || []) {
     if (dkey(exchange.date) !== date || (session && exchange.by !== session.cashierName)) continue;
-    if (Number(exchange.refund) > 0) allRefundEvents.push({ amount: Number(exchange.refund), method: 'cash' });
+    if (Number(exchange.refund) > 0) allRefundEvents.push({ amount: Number(exchange.refund), cashAmount: Number(exchange.refund), method: 'cash' });
   }
   const refunds = allRefundEvents.reduce((sum, refund) => sum + refund.amount, 0);
-  const cashRefunds = allRefundEvents.reduce((sum, refund) => sum + (refund.method === 'cash' ? refund.amount : 0), 0);
+  const cashRefunds = allRefundEvents.reduce((sum, refund) => sum + (refund.method === 'cash' ? (refund.cashAmount ?? refund.amount) : 0), 0);
 
   const creditSettled = emptyTenders();
   const creditPayments = (state.customerCreditPayments || []).filter(payment =>
