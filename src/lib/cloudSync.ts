@@ -1,6 +1,7 @@
 import type { POSState, Purchase } from './types';
 import { supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
+import { cacheBranchStock } from './branchStock';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -90,6 +91,16 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   // provisioned by an owner/admin; otherwise a local cashier could become the
   // first cloud shop administrator simply by signing in.
   return { ok: false, error: 'Cloud shop membership is not provisioned for this user' };
+}
+
+/** Refresh the selected branch's local offline stock cache after a cloud transaction. */
+export async function refreshCloudBranchStock(shopId: string, branchId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  const { data, error } = await supabase.from('branch_stock').select('product_id,qty')
+    .eq('shop_id', shopId).eq('branch_id', branchId);
+  if (error) return { ok: false, error: error.message };
+  cacheBranchStock(branchId, (data || []) as Array<{ product_id: string; qty: number | string }>);
+  return { ok: true };
 }
 
 /** Resolve a selected branch against the active shop membership. Local-only branch IDs are mapped to Main for queued legacy offline sales. */
@@ -394,6 +405,7 @@ export async function completeSaleAtomic(input: {
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok || !row.sale) return { ok: false, error: 'Cloud sale was not committed' };
+  void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return {
     ok: true,
     alreadyCommitted: row.already_committed === true,
@@ -573,6 +585,7 @@ export async function receivePurchaseAtomic(input: {
   if (error) return { ok:false, error:error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok:false, error:'Cloud GRN receive was not committed' };
+  void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return { ok:true, alreadyCommitted:row.already_committed === true, purchaseId:row.purchase_id, total:Number(row.total || 0) };
 }
 
