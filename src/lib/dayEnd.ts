@@ -83,7 +83,7 @@ export function calculateDayEndTotals(
 ): DayEndTotals {
   const billedSales = state.sales.filter(sale =>
     dkey(sale.date) === date &&
-    (!session || sale.cashierId === session.cashierId) &&
+    belongsToSession(sale, session) &&
     (sale.status === 'completed' || sale.status === 'exchanged' || sale.status === 'refunded'),
   );
   const sales = billedSales.filter(sale => sale.status === 'completed' || sale.status === 'exchanged');
@@ -112,7 +112,7 @@ export function calculateDayEndTotals(
   // Compatibility for pre-upgrade records, which had no refund timestamp/event.
   for (const sale of state.sales) {
     if (sale.status !== 'refunded' || (sale.refunds || []).length || dkey(sale.date) !== date) continue;
-    if (session && sale.cashierId !== session.cashierId) continue;
+    if (session && !belongsToSession(sale, session)) continue;
     allRefundEvents.push({ amount: Math.max(0, Number(sale.total) || 0), cashAmount: Math.max(0, Number(sale.total) || 0), method: 'cash' });
   }
   // Exchanges are dated independently from the original bill. The existing
@@ -138,7 +138,7 @@ export function calculateDayEndTotals(
   const creditSettledTotal = METHODS.reduce((sum, method) => sum + creditSettled[method], 0);
 
   const expenses = (state.expenses || []).filter(expense =>
-    dkey(expense.date) === date && (!session || expense.by === session.cashierName),
+    dkey(expense.date) === date && belongsToSession(expense, session),
   );
   const expenseTotal = expenses.reduce((sum, expense) => sum + Math.max(0, Number(expense.amount) || 0), 0);
   const cashExpenses = expenses
