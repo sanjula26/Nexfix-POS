@@ -1,4 +1,4 @@
-import type { POSState, Purchase } from './types';
+import type { InventoryUnit, POSState, Purchase } from './types';
 import { supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock } from './branchStock';
@@ -111,6 +111,48 @@ export async function adjustBranchStockAtomic(input: {
   if (!row?.ok) return { ok: false, error: row?.error || 'Branch stock adjustment was not committed' };
   void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return { ok: true, alreadyCommitted: row.already_committed === true };
+}
+
+// Atomically create tracked units or fill GRN-created placeholder identifiers.
+// The database RPC also reconciles branch and shop stock, and is idempotent by unit ID.
+export async function addInventoryUnitsAtomic(input: {
+  shopId: string; branchId?: string; deviceId: string; units: InventoryUnit[];
+}): Promise<{ ok: boolean; inserted?: number; updated?: number; productStocks?: Record<string, number>; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!input.units.length || input.units.length > 500) return { ok: false, error: 'Provide between 1 and 500 units' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
+  const unitRows = input.units.map(unit => ({
+    id: unit.id,
+    product_id: unit.productId,
+    imei: unit.imei || null,
+    serial: unit.serial || null,
+    expiry_date: unit.expiryDate || null,
+    status: unit.status,
+    cost: unit.cost ?? null,
+    purchase_id: unit.purchaseId || null,
+    sale_id: unit.saleId || null,
+    sale_bill_no: unit.saleBillNo || null,
+    note: unit.note || null,
+    created_at: unit.createdAt || new Date().toISOString(),
+    sold_at: unit.soldAt || null,
+    warranty_expires_at: unit.warrantyExpiresAt || null,
+  }));
+  const { data, error } = await supabase.rpc('add_inventory_units_atomic', {
+    p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId, p_units: unitRows,
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: row?.error || 'Tracked units were not committed' };
+  const productIds = [...new Set(input.units.map(unit => unit.productId))];
+  const { data: products } = await supabase.from('products').select('id,stock').eq('shop_id', input.shopId).in('id', productIds);
+  const productStocks: Record<string, number> = {};
+  for (const product of products || []) productStocks[product.id] = Number(product.stock) || 0;
+  try { await refreshCloudBranchStock(input.shopId, branch.branchId); } catch { /* refresh can retry on the next settings open */ }
+  return { ok: true, inserted: Number(row.inserted) || 0, updated: Number(row.updated) || 0, productStocks };
 }
 
 /** Refresh the selected branch's local offline stock cache after a cloud transaction. */
