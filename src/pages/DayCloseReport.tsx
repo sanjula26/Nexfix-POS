@@ -20,9 +20,9 @@ export default function DayCloseReport() {
       .map(session => {
         const totals = calculateDayEndTotals(state, session.date, session);
         const counted = Number(session.closing ?? 0);
-        const expected = Number.isFinite(session.expected) ? Number(session.expected) : totals.expected;
-        const variance = Number.isFinite(session.variance)
-          ? Number(session.variance)
+        const expected = session.expected != null && Number.isFinite(session.expected) ? session.expected : totals.expected;
+        const variance = session.variance != null && Number.isFinite(session.variance)
+          ? session.variance
           : Math.round((counted - expected) * 100) / 100;
         return { session, totals, counted, expected, variance };
       });
