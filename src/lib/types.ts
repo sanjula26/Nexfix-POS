@@ -68,7 +68,7 @@ export interface HeldSale {
   note?:string; salesmanId?:string; billingWhatsApp?:string;
   tradeIn?:TradeIn;
 }
-export interface DaySession { id:string; cashierId:string; cashierName:string; date:string; opening:number; closed:boolean; closing?:number; expected?:number; variance?:number; closedAt?:string; closedBy?:string; note?:string; }
+export interface DaySession { id:string; cashierId:string; cashierName:string; date:string; opening:number; openingConfirmed?:boolean; closed:boolean; closing?:number; expected?:number; variance?:number; closedAt?:string; closedBy?:string; note?:string; }
 export type RepairStatus='received'|'diagnosed'|'waiting_parts'|'in_repair'|'ready'|'delivered'|'cancelled';
 export interface RepairPart { productId?:string; name:string; qty:number; cost:number; }
 export interface RepairJob { id:string; jobNo:string; customerId?:string; customerName:string; customerPhone?:string; deviceType:string; deviceBrand:string; deviceModel:string; imei?:string; serial?:string; fault:string; diagnosis?:string; parts:RepairPart[]; laborCost:number; status:RepairStatus; receivedAt:string; promisedAt?:string; completedAt?:string; deliveredAt?:string; partsDeductedAt?:string; technicianId?:string; technicianName?:string; warrantyDays?:number; note?:string; notifyReadyNote?:string; advancePaid?:number; by:string; }
