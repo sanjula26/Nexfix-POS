@@ -99,6 +99,7 @@ export default function POS() {
   const [waReceipt, setWaReceipt] = useState(false);
   const [paid, setPaid] = useState('');
   const [paidAuto, setPaidAuto] = useState(true);
+  const [draftLoaded, setDraftLoaded] = useState(false);
   const [splitOn, setSplitOn] = useState(false);
   const [legs, setLegs] = useState<PaymentLeg[]>([{ method: 'cash', amount: 0 }]);
 
@@ -285,6 +286,86 @@ export default function POS() {
       setPaid(total > 0 ? String(total) : '');
     }
   }, [total, payment, splitOn, paidAuto]);
+
+  // Restore the current cashier's unfinished bill once per POS mount. Drafts
+  // are tab-session scoped and expire after 12 hours to avoid stale checkout.
+  const draftKey = `nexfix_pos_draft_v1:${user?.id || 'anonymous'}`;
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (raw) {
+        const draft = JSON.parse(raw) as {
+          savedAt?: number; lines?: Line[]; customerId?: string; custQuery?: string;
+          billingWhatsApp?: string; salesmanId?: string; note?: string; noteOpen?: boolean;
+          discMode?: 'rs' | 'pct'; discount?: string; taxPct?: string; shipOpen?: boolean;
+          shipping?: string; tradeInOpen?: boolean; tradeIn?: typeof tradeIn;
+          redeemOn?: boolean; points?: string; payment?: PaymentMethod;
+          creditTender?: Exclude<PaymentMethod, 'credit'>; waReceipt?: boolean;
+          paid?: string; paidAuto?: boolean; splitOn?: boolean; legs?: PaymentLeg[];
+        };
+        if (draft.savedAt && Date.now() - draft.savedAt < 12 * 60 * 60 * 1000 && Array.isArray(draft.lines) && draft.lines.length) {
+          setLines(draft.lines.filter(line => line && typeof line.productId === 'string' && Number.isFinite(line.qty) && line.qty > 0));
+          setCustomerId(draft.customerId || '');
+          setCustQuery(draft.custQuery || '');
+          setBillingWhatsApp(draft.billingWhatsApp || '');
+          setSalesmanId(draft.salesmanId || user?.id || '');
+          setNote(draft.note || '');
+          setNoteOpen(Boolean(draft.noteOpen));
+          setDiscMode(draft.discMode === 'pct' ? 'pct' : 'rs');
+          setDiscount(draft.discount || '');
+          setTaxPct(draft.taxPct ?? String(state.settings.taxDefault || ''));
+          setShipOpen(Boolean(draft.shipOpen));
+          setShipping(draft.shipping || '');
+          setTradeInOpen(Boolean(draft.tradeInOpen));
+          if (draft.tradeIn) setTradeIn(draft.tradeIn);
+          setRedeemOn(Boolean(draft.redeemOn));
+          setPoints(draft.points || '');
+          setPayment(draft.payment || 'cash');
+          setCreditTender(draft.creditTender || 'cash');
+          setWaReceipt(Boolean(draft.waReceipt));
+          setPaid(draft.paid || '');
+          setPaidAuto(Boolean(draft.paidAuto));
+          setSplitOn(Boolean(draft.splitOn));
+          if (draft.legs?.length) setLegs(draft.legs);
+          setError('');
+        } else if (raw) {
+          sessionStorage.removeItem(draftKey);
+        }
+      }
+    } catch {
+      try { sessionStorage.removeItem(draftKey); } catch { /* optional session storage */ }
+    } finally {
+      setDraftLoaded(true);
+    }
+  // Restore only once. Subsequent edits are handled by the debounced writer.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounce small sessionStorage writes so typing stays responsive. Empty
+  // carts remove the draft (clear, successful sale, and successful hold).
+  useEffect(() => {
+    if (!draftLoaded) return;
+    const timer = window.setTimeout(() => {
+      try {
+        if (!lines.length) {
+          sessionStorage.removeItem(draftKey);
+          return;
+        }
+        sessionStorage.setItem(draftKey, JSON.stringify({
+          savedAt: Date.now(), lines, customerId, custQuery, billingWhatsApp,
+          salesmanId, note, noteOpen, discMode, discount, taxPct, shipOpen,
+          shipping, tradeInOpen, tradeIn, redeemOn, points, payment, creditTender,
+          waReceipt, paid, paidAuto, splitOn, legs,
+        }));
+      } catch { /* draft persistence is best-effort if storage is unavailable */ }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [
+    draftLoaded, draftKey, lines, customerId, custQuery, billingWhatsApp, salesmanId,
+    note, noteOpen, discMode, discount, taxPct, shipOpen, shipping, tradeInOpen,
+    tradeIn, redeemOn, points, payment, creditTender, waReceipt, paid, paidAuto,
+    splitOn, legs,
+  ]);
 
   /* ---------- toasts ---------- */
   const toast = (msg: string, tone: Toast['tone'] = 'rose') => {
