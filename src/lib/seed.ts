@@ -104,6 +104,7 @@ const emptyState = (): POSState => {
     products: [], customers: [], suppliers: [], sales: [], purchases: [], expenses: [], exchanges: [],
     users: defaultUsers, audit: [], held: [], sessions: [],
     settings: {
+      branchId: 'local-main',
       shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
       taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20, promotions: [],
       adminPinHash: SEED_DEMO ? hashPin(DEMO_ADMIN_PASSWORD) : '', whatsappReceipts: false,
@@ -298,6 +299,7 @@ export const buildSeed = (): POSState => {
   ];
 
   const settings: Settings = {
+    branchId: 'local-main',
     shopName: 'NEXFIX Solution', tagline: 'POS & Inventory Management System', address: 'No 45, Galle Road, Colombo 04, Sri Lanka',
     phone: '+94 74 109 7350', email: 'info@nexfixsolution.com', receiptFooter: 'Thank you for shopping with us! 3-day exchange policy applies.',
     taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 10000, adminPinHash: hashPin(DEMO_ADMIN_PASSWORD),
