@@ -12,11 +12,11 @@ const client: SupabaseClient | null = url && publicKey ? createClient(url, publi
 }) : null;
 const TIME_ZONE = (import.meta.env.VITE_OWNER_WEB_TIME_ZONE || 'Asia/Colombo').trim();
 const PAGE_SIZE = 50;
-const CHUNK = 500;
-const MAX_ROWS = 10_000;
 
 type Shop = { id: string; name: string; currency: string | null };
-type Sale = { id: string; bill_no: string; customer_name: string | null; total: number; created_at: string; status: string; amount_paid: number | null; change_amount: number | null };
+type Sale = { id: string; bill_no: string; customer_name: string | null; total: number; created_at: string; status: string };
+type DailyAggregate = { sale_date: string; completed_sales_count: number; gross_total: number };
+type SalesPage = { rows: Sale[]; count: number };
 type AuthValue = { session: Session | null; shop: Shop | null; loading: boolean; error: string; refresh: () => Promise<void>; client: SupabaseClient | null };
 const Auth = createContext<AuthValue | null>(null);
 function useAuth() { const value = useContext(Auth); if (!value) throw new Error('Auth provider missing'); return value; }
@@ -101,17 +101,19 @@ function exportCsv(filename: string, rows: unknown[][]) {
   const blob = new Blob(['\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
   const href = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = href; anchor.download = filename; anchor.click(); URL.revokeObjectURL(href);
 }
-async function getSales(db: SupabaseClient, shopId: string, from: string, to: string): Promise<Sale[]> {
-  const rows: Sale[] = [];
-  for (let offset = 0; offset < MAX_ROWS; offset += CHUNK) {
-    const { data, error } = await db.from('sales').select('id,bill_no,customer_name,total,created_at,status,amount_paid,change_amount')
-      .eq('shop_id', shopId).eq('status', 'completed').gte('created_at', from).lt('created_at', to)
-      .order('created_at', { ascending: false }).range(offset, offset + CHUNK - 1);
-    if (error) throw error;
-    const page = (data || []) as Sale[]; rows.push(...page);
-    if (page.length < CHUNK) return rows;
-  }
-  throw new Error('More than 10,000 completed invoices were found. Narrow the date range.');
+async function getDailyAggregates(db: SupabaseClient, shopId: string, from: string, to: string): Promise<DailyAggregate[]> {
+  const { data, error } = await db.rpc('get_owner_daily_sales', { p_shop_id: shopId, p_from: from, p_to: to });
+  if (error) throw error;
+  return (data || []) as DailyAggregate[];
+}
+async function getSalesPage(db: SupabaseClient, shopId: string, from: string, to: string, page: number, pageSize: number): Promise<SalesPage> {
+  const start = page * pageSize;
+  const { data, error, count } = await db.from('sales')
+    .select('id,bill_no,customer_name,total,created_at,status', { count: 'exact' })
+    .eq('shop_id', shopId).eq('status', 'completed').gte('created_at', from).lt('created_at', to)
+    .order('created_at', { ascending: false }).range(start, start + pageSize - 1);
+  if (error) throw error;
+  return { rows: (data || []) as Sale[], count: count || 0 };
 }
 function Spinner({ label = 'Checking secure shop access…' }: { label?: string }) { return <div className="loading"><span className="spinner" />{label}</div>; }
 function ConfigMissing() { return <div className="center-screen"><section className="login-card"><div className="logo">N</div><p className="eyebrow">NEXFIX OWNER WEB</p><h1>Configuration required</h1><p>Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in the deployment environment. Use only the public anon/publishable key—never a service-role key.</p></section></div>; }
@@ -155,11 +157,17 @@ function Shell() {
   const title = location.pathname === '/sales' ? 'Invoices / Sales' : location.pathname === '/reports' ? 'Sales report' : 'Dashboard';
   return <div className="shell">{mobile && <button className="backdrop" aria-label="Close navigation" onClick={() => setMobile(false)} />}<aside className={mobile ? 'sidebar open' : 'sidebar'}><div className="brand"><div className="logo small">N</div><div><b>NexFix</b><small>OWNER WEB</small></div><button className="close-menu" onClick={() => setMobile(false)}><span>×</span></button></div><div className="shop-chip"><span className="shop-avatar">{(shop?.name || 'N').slice(0,1)}</span><div><b>{shop?.name}</b><small>Single shop · Read only</small></div><i /></div><nav>{nav.map((group) => <div className="nav-group" key={group.label}><small>{group.label}</small>{group.items.map((item) => { const Icon = item.icon; return item.soon ? <div className="nav-item disabled" key={item.label}><Icon size={17}/><span>{item.label}</span><em>Soon</em></div> : <NavLink key={item.path} to={item.path!} className={({isActive}) => 'nav-item ' + (isActive ? 'active' : '')}><Icon size={17}/><span>{item.label}</span></NavLink>; })}</div>)}</nav><div className="sidebar-bottom"><div className="read-only"><span>✓</span><div><b>Read-only mode</b><small>POS operations stay on desktop</small></div></div><div className="account"><div className="avatar">{(session?.user.email || 'N').slice(0,1).toUpperCase()}</div><div className="account-text"><b>{session?.user.email}</b><small>Supabase account</small></div><SignOut /></div></div></aside><main><header><button className="menu" onClick={() => setMobile(true)} aria-label="Open menu"><Menu size={21}/></button><div><p className="eyebrow">NEXFIX / OWNER WEB</p><h1>{title}</h1></div><span className="secure"><i/>Secure cloud session</span></header><section className="content"><Outlet /></section><footer>NexFix Owner Web · Read-only cloud view · Shop timezone: {TIME_ZONE}</footer></main></div>;
 }
-function useSalesLoader() {
+function useSalesLoaders() {
   const { client: db, shop } = useAuth();
-  return (from: string, to: string) => {
-    if (!db || !shop) return Promise.reject(new Error('Shop session is not ready.'));
-    return getSales(db, shop.id, from, to);
+  return {
+    aggregates: (from: string, to: string) => {
+      if (!db || !shop) return Promise.reject(new Error('Shop session is not ready.'));
+      return getDailyAggregates(db, shop.id, from, to);
+    },
+    page: (from: string, to: string, page: number, pageSize = PAGE_SIZE) => {
+      if (!db || !shop) return Promise.reject(new Error('Shop session is not ready.'));
+      return getSalesPage(db, shop.id, from, to, page, pageSize);
+    },
   };
 }
 function Banner({ error, retry }: { error: string; retry: () => void }) { return <div className="banner error"><b>Could not load cloud sales.</b><span>{error}</span><button onClick={retry}>Try again</button></div>; }
@@ -170,20 +178,35 @@ function SalesTable({ sales, currency, loading, empty = 'No completed cloud invo
   return <div className="table-scroll"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th className="right">Total</th><th>Status</th></tr></thead><tbody>{sales.map((s) => <tr key={s.id}><td><b className="bill">{s.bill_no}</b></td><td>{s.customer_name || 'Walk-in customer'}</td><td>{dateTime(s.created_at)}</td><td className="right amount">{money(Number(s.total), currency)}</td><td><span className="status">Completed</span></td></tr>)}</tbody></table></div>;
 }
 function Dashboard() {
-  const { shop } = useAuth(); const loadSales = useSalesLoader(); const [sales, setSales] = useState<Sale[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [updated, setUpdated] = useState('');
+  const { shop } = useAuth(); const loaders = useSalesLoaders();
+  const [daily, setDaily] = useState<DailyAggregate[]>([]); const [recent, setRecent] = useState<Sale[]>([]);
+  const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [updated, setUpdated] = useState('');
   const today = dayKey(new Date()); const month = today.slice(0,7) + '-01'; const chartStart = addDays(today, -13);
-  const reload = async () => { setLoading(true); setError(''); try { const rows = await loadSales(midnightIso([month,chartStart].sort()[0]), midnightIso(addDays(today,1))); setSales(rows); setUpdated(new Date().toISOString()); } catch (e) { setError(e instanceof Error ? e.message : 'Unknown query error'); } finally { setLoading(false); } };
+  const reload = async () => {
+    setLoading(true); setError('');
+    try {
+      const [aggregates, recentPage] = await Promise.all([
+        loaders.aggregates(month < chartStart ? month : chartStart, today),
+        loaders.page(midnightIso(month), midnightIso(addDays(today,1)), 0, 5),
+      ]);
+      setDaily(aggregates); setRecent(recentPage.rows); setUpdated(new Date().toISOString());
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unknown query error'); }
+    finally { setLoading(false); }
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void reload(); }, [shop?.id]);
-  const todaySales = sales.filter((s) => dayKey(new Date(s.created_at)) === today);
-  const monthSales = sales.filter((s) => s.created_at >= midnightIso(month) && s.created_at < midnightIso(addDays(today,1)));
-  const days = Array.from({length:14},(_,i) => { const key=addDays(chartStart,i); const matches=sales.filter((s)=>dayKey(new Date(s.created_at))===key); return {key,label:new Intl.DateTimeFormat('en',{weekday:'short',timeZone:'UTC'}).format(new Date(key+'T12:00:00Z')),amount:total(matches),count:matches.length}; });
+  const byDay = new Map(daily.map((d) => [d.sale_date, d]));
+  const todayRow = byDay.get(today); const monthRows = daily.filter((d) => d.sale_date >= month && d.sale_date <= today);
+  const todayTotal = Number(todayRow?.gross_total || 0); const todayCount = Number(todayRow?.completed_sales_count || 0);
+  const monthTotal = monthRows.reduce((sum, d) => sum + Number(d.gross_total || 0), 0);
+  const monthCount = monthRows.reduce((sum, d) => sum + Number(d.completed_sales_count || 0), 0);
+  const days = Array.from({length:14},(_,i) => { const key=addDays(chartStart,i); const row=byDay.get(key); return {key,label:new Intl.DateTimeFormat('en',{weekday:'short',timeZone:'UTC'}).format(new Date(key+'T12:00:00Z')),amount:Number(row?.gross_total || 0),count:Number(row?.completed_sales_count || 0)}; });
   const max = Math.max(1,...days.map((d)=>d.amount)); const currency = shop?.currency || 'LKR';
   return <div className="stack"><div className="welcome"><div><p className="eyebrow">SALES OVERVIEW</p><h2>Good to see you.</h2><p>Here's what's happening at {shop?.name}.</p></div><button className="secondary" onClick={() => void reload()} disabled={loading}><RefreshCw size={15}/>{loading?'Loading…':'Refresh data'}</button></div>
     {error && <Banner error={error} retry={() => void reload()}/>}<div className="notice"><span>i</span><p>Completed cloud invoice totals only. Amounts are gross invoice totals; partial returns are not netted. Offline POS sales appear after sync.</p>{updated && <small>Updated {dateTime(updated)}</small>}</div>
-    <div className="stats"><Stat label="Today's sales" value={loading?'—':money(total(todaySales),currency)} note={loading?'Loading cloud rows':todaySales.length+' completed invoices'} icon={CircleDollarSign} tone="blue"/><Stat label="Month to date" value={loading?'—':money(total(monthSales),currency)} note={loading?'Loading cloud rows':monthSales.length+' completed invoices'} icon={Wallet} tone="violet"/><Stat label="Invoices today" value={loading?'—':String(todaySales.length)} note="Completed invoices only" icon={FileText} tone="green"/><Stat label="Cash in hand" value="Not available" note="Available after POS day-end sync" icon={CircleDollarSign} tone="amber"/></div>
-    <section className="panel"><div className="panel-head"><div><h3>Sales over the last 14 days</h3><p>Daily completed invoice totals · {TIME_ZONE}</p></div><Link to="/reports">View report <ChevronRight size={15}/></Link></div>{loading?<div className="empty"><span className="spinner"/>Loading chart…</div>:<div className="chart"><div className="y-labels"><span>{money(max,currency)}</span><span>{money(max/2,currency)}</span><span>{money(0,currency)}</span></div><div className="bars">{days.map((d)=><div className="bar-col" key={d.key} title={d.key+' · '+money(d.amount,currency)+' · '+d.count+' invoices'}><div className="bar-track"><div className="bar-fill" style={{height:(d.amount?Math.max(3,d.amount/max*100):0)+'%'}}/></div><span>{d.label}</span><small>{d.key.slice(8)}</small></div>)}</div></div>}</section>
-    <section className="panel"><div className="panel-head"><div><h3>Recent invoices</h3><p>Latest completed cloud sales</p></div><Link to="/sales">All invoices <ChevronRight size={15}/></Link></div><SalesTable sales={sales.slice(0,5)} currency={currency} loading={loading}/></section>
+    <div className="stats"><Stat label="Today's sales" value={loading?'—':money(todayTotal,currency)} note={loading?'Loading aggregates':todayCount+' completed invoices'} icon={CircleDollarSign} tone="blue"/><Stat label="Month to date" value={loading?'—':money(monthTotal,currency)} note={loading?'Loading aggregates':monthCount+' completed invoices'} icon={Wallet} tone="violet"/><Stat label="Invoices today" value={loading?'—':String(todayCount)} note="Completed invoices only" icon={FileText} tone="green"/><Stat label="Cash in hand" value="Not available" note="Available after POS day-end sync" icon={CircleDollarSign} tone="amber"/></div>
+    <section className="panel"><div className="panel-head"><div><h3>Sales over the last 14 days</h3><p>Daily completed invoice aggregates · {TIME_ZONE}</p></div><Link to="/reports">View report <ChevronRight size={15}/></Link></div>{loading?<div className="empty"><span className="spinner"/>Loading daily aggregates…</div>:<div className="chart"><div className="y-labels"><span>{money(max,currency)}</span><span>{money(max/2,currency)}</span><span>{money(0,currency)}</span></div><div className="bars">{days.map((d)=><div className="bar-col" key={d.key} title={d.key+' · '+money(d.amount,currency)+' · '+d.count+' invoices'}><div className="bar-track"><div className="bar-fill" style={{height:(d.amount?Math.max(3,d.amount/max*100):0)+'%'}}/></div><span>{d.label}</span><small>{d.key.slice(8)}</small></div>)}</div></div>}</section>
+    <section className="panel"><div className="panel-head"><div><h3>Recent invoices</h3><p>Latest 5 completed invoices · limited columns</p></div><Link to="/sales">All invoices <ChevronRight size={15}/></Link></div><SalesTable sales={recent} currency={currency} loading={loading}/></section>
     <div className="deferred"><div><b>Gross profit</b><p>Deferred until cloud profit and return accounting are reconciled.</p><em>Not verified</em></div><div><b>Credit, expenses & payment mix</b><p>Deferred until full cloud coverage and balances are verified.</p><em>Not verified</em></div></div>
   </div>;
 }
@@ -195,28 +218,27 @@ function checkRange(from:string,to:string) {
   if ((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000>365) throw new Error('Choose a date range of 366 days or less.');
 }
 function SalesPage() {
-  const {shop}=useAuth(); const loadSales=useSalesLoader(); const today=dayKey(new Date());
-  const [from,setFrom]=useState(addDays(today,-29)); const [to,setTo]=useState(today); const [sales,setSales]=useState<Sale[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState(''); const [page,setPage]=useState(0);
-  const load=async()=>{setLoading(true);setError('');try{checkRange(from,to);setSales(await loadSales(midnightIso(from),midnightIso(addDays(to,1))));setPage(0);}catch(e){setError(e instanceof Error?e.message:'Could not load sales.');}finally{setLoading(false);}};
+  const {shop}=useAuth(); const loaders=useSalesLoaders(); const today=dayKey(new Date());
+  const [from,setFrom]=useState(addDays(today,-29)); const [to,setTo]=useState(today); const [sales,setSales]=useState<Sale[]>([]);
+  const [loading,setLoading]=useState(true); const [error,setError]=useState(''); const [page,setPage]=useState(0); const [totalCount,setTotalCount]=useState(0);
+  const load=async(nextPage=page)=>{setLoading(true);setError('');try{checkRange(from,to);const result=await loaders.page(midnightIso(from),midnightIso(addDays(to,1)),nextPage);setSales(result.rows);setTotalCount(result.count);setPage(nextPage);}catch(e){setError(e instanceof Error?e.message:'Could not load sales.');}finally{setLoading(false);}};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(()=>{void load(0);},[shop?.id]);
+  const currency=shop?.currency||'LKR'; const count=Math.max(1,Math.ceil(totalCount/PAGE_SIZE));
+  return <div className="stack"><div className="welcome"><div><p className="eyebrow">CLOUD SALES</p><h2>Invoices / Sales</h2><p>Read-only invoices synced from {shop?.name}.</p></div><button className="secondary" disabled={loading||!sales.length} onClick={()=>exportCsv('nexfix-sales-'+from+'-to-'+to+'-page-'+(page+1)+'.csv',[['Invoice','Customer','Created at','Total','Status'],...sales.map(s=>[s.bill_no,s.customer_name||'Walk-in customer',dateTime(s.created_at),Number(s.total).toFixed(2),'Completed'])])}><Download size={15}/>Export page CSV</button></div>
+    <section className="panel filter-panel"><DateFilters from={from} to={to} setFrom={(v)=>{setFrom(v);setPage(0);}} setTo={(v)=>{setTo(v);setPage(0);}} today={today} submit={()=>void load(0)} busy={loading} label="Apply range"/><div className="summary"><small>{loading?'Loading…':totalCount+' completed invoices · page '+(page+1)+' of '+count}</small><b>{loading?'—':money(sales.reduce((sum,s)=>sum+Number(s.total||0),0),currency)}</b><small>Visible page total · gross invoice total, partial returns not netted</small></div></section>{error&&<Banner error={error} retry={()=>void load(page)}/>}
+    <section className="panel"><div className="panel-head"><div><h3>Sales transactions</h3><p>{from} to {to} · {TIME_ZONE} · 50 rows per page</p></div><span className="pill">{totalCount} invoices</span></div><SalesTable sales={sales} currency={currency} loading={loading}/>{!loading&&totalCount>PAGE_SIZE&&<div className="pagination"><span>Page {pafunction ReportPage() {
+  const {shop}=useAuth(); const loaders=useSalesLoaders(); const today=dayKey(new Date());
+  const [from,setFrom]=useState(addDays(today,-13)); const [to,setTo]=useState(today); const [dailyRows,setDailyRows]=useState<DailyAggregate[]>([]);
+  const [range,setRange]=useState(''); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
+  const load=async()=>{setLoading(true);setError('');try{checkRange(from,to);const rows=await loaders.aggregates(from,to);setDailyRows(rows);setRange(from+' to '+to);}catch(e){setError(e instanceof Error?e.message:'Could not load report.');}finally{setLoading(false);}};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(()=>{void load();},[shop?.id]);
-  const currency=shop?.currency||'LKR'; const count=Math.max(1,Math.ceil(sales.length/PAGE_SIZE));
-  return <div className="stack"><div className="welcome"><div><p className="eyebrow">CLOUD SALES</p><h2>Invoices / Sales</h2><p>Read-only invoices synced from {shop?.name}.</p></div><button className="secondary" disabled={loading||!sales.length} onClick={()=>exportCsv('nexfix-sales-'+from+'-to-'+to+'.csv',[['Invoice','Customer','Created at','Total','Status'],...sales.map(s=>[s.bill_no,s.customer_name||'Walk-in customer',dateTime(s.created_at),Number(s.total).toFixed(2),'Completed'])])}><Download size={15}/>Export CSV</button></div>
-    <section className="panel filter-panel"><DateFilters from={from} to={to} setFrom={setFrom} setTo={setTo} today={today} submit={()=>void load()} busy={loading} label="Apply range"/><div className="summary"><small>{loading?'Loading…':sales.length+' completed invoices'}</small><b>{loading?'—':money(total(sales),currency)}</b><small>Gross invoice total · partial returns not netted</small></div></section>{error&&<Banner error={error} retry={()=>void load()}/>}
-    <section className="panel"><div className="panel-head"><div><h3>Sales transactions</h3><p>{from} to {to} · {TIME_ZONE}</p></div><span className="pill">{sales.length} invoices</span></div><SalesTable sales={sales.slice(page*PAGE_SIZE,(page+1)*PAGE_SIZE)} currency={currency} loading={loading}/>{!loading&&sales.length>PAGE_SIZE&&<div className="pagination"><span>Page {page+1} of {count}</span><div><button className="secondary" disabled={!page} onClick={()=>setPage((p)=>p-1)}>Previous</button><button className="secondary" disabled={page>=count-1} onClick={()=>setPage((p)=>p+1)}>Next</button></div></div>}</section>
-  </div>;
-}
-function ReportPage() {
-  const {shop}=useAuth(); const loadSales=useSalesLoader(); const today=dayKey(new Date());
-  const [from,setFrom]=useState(addDays(today,-13)); const [to,setTo]=useState(today); const [sales,setSales]=useState<Sale[]>([]); const [range,setRange]=useState(''); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
-  const load=async()=>{setLoading(true);setError('');try{checkRange(from,to);setSales(await loadSales(midnightIso(from),midnightIso(addDays(to,1))));setRange(from+' to '+to);}catch(e){setError(e instanceof Error?e.message:'Could not load report.');}finally{setLoading(false);}};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(()=>{void load();},[shop?.id]);
-  const currency=shop?.currency||'LKR'; const daily=useMemo(()=>{if(!range)return[];const n=Math.min(366,Math.floor((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1);return Array.from({length:Math.max(1,n)},(_,i)=>{const key=addDays(from,i);const list=sales.filter(s=>dayKey(new Date(s.created_at))===key);return{key,list,amount:total(list)};});},[sales,from,to,range]); const max=Math.max(1,...daily.map(d=>d.amount));
-  return <div className="stack"><div className="welcome"><div><p className="eyebrow">REPORTING</p><h2>Sales report</h2><p>Choose a date range to review completed cloud invoices.</p></div><button className="secondary" disabled={loading||!range} onClick={()=>exportCsv('nexfix-report-'+from+'-to-'+to+'.csv',[['Date','Completed invoices','Gross invoice total'],...daily.map(d=>[d.key,d.list.length,d.amount.toFixed(2)]),[],['Invoice','Customer','Created at','Total'],...sales.map(s=>[s.bill_no,s.customer_name||'Walk-in customer',dateTime(s.created_at),Number(s.total).toFixed(2)])])}><Download size={15}/>Export CSV</button></div>
-    <section className="panel filter-panel"><DateFilters from={from} to={to} setFrom={setFrom} setTo={setTo} today={today} submit={()=>void load()} busy={loading} label="Run report"/><div className="summary"><small>Completed invoice total</small><b>{loading?'—':money(total(sales),currency)}</b><small>{loading?'Loading cloud rows':sales.length+' invoices · '+range}</small></div></section>{error&&<Banner error={error} retry={()=>void load()}/>}
-    <div className="stats"><Stat label="Sales total" value={loading?'—':money(total(sales),currency)} note="Gross completed invoice total" icon={CircleDollarSign} tone="blue"/><Stat label="Invoice count" value={loading?'—':String(sales.length)} note="Completed invoices only" icon={FileText} tone="green"/><Stat label="Average invoice" value={loading?'—':money(sales.length?total(sales)/sales.length:0,currency)} note="Total divided by invoice count" icon={BarChart3} tone="violet"/><Stat label="Cash in hand" value="Not available" note="Available after POS day-end sync" icon={Wallet} tone="amber"/></div>
-    <section className="panel"><div className="panel-head"><div><h3>Daily sales breakdown</h3><p>Gross completed invoice totals by shop-local date</p></div></div>{loading?<div className="empty"><span className="spinner"/>Calculating report…</div>:<div className="daily-list">{daily.map(d=><div className="daily-row" key={d.key}><span>{d.key}</span><div className="daily-track"><div style={{width:(d.amount?Math.max(1,d.amount/max*100):0)+'%'}}/></div><small>{d.list.length} inv.</small><b>{money(d.amount,currency)}</b></div>)}</div>}</section>
+  const currency=shop?.currency||'LKR'; const daily=useMemo(()=>{if(!range)return[];const n=Math.min(366,Math.floor((Date.parse(to+'T00:00:00Z')-Date.parse(from+'T00:00:00Z'))/86400000)+1);const byDay=new Map(dailyRows.map(r=>[r.sale_date,r]));return Array.from({length:Math.max(1,n)},(_,i)=>{const key=addDays(from,i);const row=byDay.get(key);return{key,count:Number(row?.completed_sales_count||0),amount:Number(row?.gross_total||0)};});},[dailyRows,from,to,range]); const gross=daily.reduce((sum,d)=>sum+d.amount,0); const count=daily.reduce((sum,d)=>sum+d.count,0); const max=Math.max(1,...daily.map(d=>d.amount));
+  return <div className="stack"><div className="welcome"><div><p className="eyebrow">REPORTING</p><h2>Sales report</h2><p>Choose a date range to review daily completed-sales aggregates.</p></div><button className="secondary" disabled={loading||!range} onClick={()=>exportCsv('nexfix-report-'+from+'-to-'+to+'.csv',[['Date','Completed invoices','Gross invoice total'],...daily.map(d=>[d.key,d.count,d.amount.toFixed(2)])])}><Download size={15}/>Export report CSV</button></div>
+    <section className="panel filter-panel"><DateFilters from={from} to={to} setFrom={setFrom} setTo={setTo} today={today} submit={()=>void load()} busy={loading} label="Run report"/><div className="summary"><small>Completed invoice total</small><b>{loading?'—':money(gross,currency)}</b><small>{loading?'Loading aggregates':count+' invoices · '+range}</small></div></section>{error&&<Banner error={error} retry={()=>void load()}/>}
+    <div className="stats"><Stat label="Sales total" value={loading?'—':money(gross,currency)} note="Gross completed invoice total" icon={CircleDollarSign} tone="blue"/><Stat label="Invoice count" value={loading?'—':String(count)} note="Completed invoices only" icon={FileText} tone="green"/><Stat label="Average invoice" value={loading?'—':money(count?gross/count:0,currency)} note="Total divided by invoice count" icon={BarChart3} tone="violet"/><Stat label="Cash in hand" value="Not available" note="Available after POS day-end sync" icon={Wallet} tone="amber"/></div>
+    <section className="panel"><div className="panel-head"><div><h3>Daily sales breakdown</h3><p>Shop-local date · aggregate query only</p></div></div>{loading?<div className="empty"><span className="spinner"/>Loading daily aggregates…</div>:<div className="daily-list">{daily.map(d=><div className="daily-row" key={d.key}><span>{d.key}</span><div className="daily-track"><div style={{width:(d.amount?Math.max(1,d.amount/max*100):0)+'%'}}/></div><small>{d.count} inv.</small><b>{money(d.amount,currency)}</b></div>)}</div>}</section>
   </div>;
 }
 function App() { return <AuthProvider><HashRouter><Routes><Route path="/login" element={<Login/>}/><Route element={<Guard/>}><Route element={<Shell/>}><Route index element={<Navigate to="/dashboard" replace/>}/><Route path="/dashboard" element={<Dashboard/>}/><Route path="/sales" element={<SalesPage/>}/><Route path="/reports" element={<ReportPage/>}/></Route></Route><Route path="*" element={<Navigate to="/dashboard" replace/>}/></Routes></HashRouter></AuthProvider>; }
