@@ -148,9 +148,19 @@ export default function CashierBalances() {
       setOpeningInput('');
       return;
     }
-    const opening = Number(openingInput);
+    const opening = Math.round(Number(openingInput) * 100) / 100;
     if (openingInput.trim() === '' || !Number.isFinite(opening) || opening < 0) return;
-    openSession(openFloatId, Math.round(opening * 100) / 100);
+    if (existing && existing.opening !== opening) {
+      const cashierName = state.users.find(person => person.id === openFloatId)?.name || '';
+      const hasSales = state.sales.some(sale => dkey(sale.date) === today && sale.cashierId === openFloatId);
+      const hasCashExpenses = state.expenses.some(expense => dkey(expense.date) === today && (expense.paymentMethod || 'cash') === 'cash' && expense.by === cashierName);
+      if (hasSales || hasCashExpenses) {
+        setSignOffError('Opening float cannot be changed after sales or cash expenses. Confirm the existing opening amount instead.');
+        window.alert('Opening float cannot be changed after sales or cash expenses. Use the existing amount to confirm the opening float.');
+        return;
+      }
+    }
+    openSession(openFloatId, opening);
     setOpenFloatId(null);
     setOpeningInput('');
   };
