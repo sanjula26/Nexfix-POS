@@ -58,6 +58,7 @@ create or replace function public.complete_sale_atomic_for_branch(
 )
 returns jsonb
 language plpgsql
+security definer
 set search_path = ''
 as $function$
 declare
@@ -262,6 +263,7 @@ begin
     v_qty := (v_line->>'qty')::numeric;
     v_units := coalesce(array(select value::uuid from jsonb_array_elements_text(coalesce(v_line->'unit_ids','[]'::jsonb))), '{}'::uuid[]);
     if v_product_id is null or v_qty<=0 or v_qty<>trunc(v_qty) then raise exception 'Transfer quantity must be a positive whole number'; end if;
+    if cardinality(v_units) <> (select count(distinct x) from unnest(v_units) as x) then raise exception 'Duplicate IMEI/serial in transfer'; end if;
     select * into v_product from public.products p where p.id=v_product_id and p.shop_id=p_shop_id for update;
     if not found then raise exception 'Transfer product does not belong to this shop'; end if;
     if (coalesce(v_product.track_imei,false) or coalesce(v_product.track_serial,false)) and cardinality(v_units)<>v_qty then
@@ -282,9 +284,9 @@ begin
 
   -- Lock and validate all source rows before any mutation; transaction rollback is atomic.
   if exists(
-    select 1 from public.stock_transfer_lines l
+    select 1 from (select l.product_id, sum(l.qty) as required_qty from public.stock_transfer_lines l where l.transfer_id=p_transfer_id group by l.product_id) l
     left join public.branch_stock bs on bs.shop_id=p_shop_id and bs.branch_id=p_from_branch_id and bs.product_id=l.product_id
-    where l.transfer_id=p_transfer_id and coalesce(bs.qty,0)<l.qty
+    where coalesce(bs.qty,0)<l.required_qty
   ) then raise exception 'Insufficient source-branch stock for this transfer'; end if;
 
   for v_line in select to_jsonb(l) from public.stock_transfer_lines l where l.transfer_id=p_transfer_id order by l.product_id loop
