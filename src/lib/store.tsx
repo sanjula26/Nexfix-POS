@@ -1296,7 +1296,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
       try {
-        await queueBranchStockAdjustment({ shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+        await queueBranchStockAdjustment({ shopId: shopId || undefined, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, baseProduct: p });
       } catch (error) {
         if (cacheApplied) applyBranchStockDeltas(targetBranchId, { [id]: -amount });
         pushAudit('DENIED', 'Product', error instanceof Error ? error.message : 'Stock adjustment could not be queued safely.');
