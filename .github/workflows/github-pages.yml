@@ -39,6 +39,18 @@ jobs:
           export VITE_APP_VERSION
           npm run build -- --mode public-pages
 
+      - name: Build read-only Owner Web
+        working-directory: apps/owner-web
+        env:
+          VITE_SUPABASE_URL: https://ocmzgamnehwbkuwkjdrr.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-
+          VITE_OWNER_WEB_TIME_ZONE: Asia/Colombo
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run build -- --base=/Nexfix-POS-Public/owner/ --outDir ../../dist/owner
+
       - name: Verify public build is static and does not contain source maps
         run: |
           test -f dist/index.html
