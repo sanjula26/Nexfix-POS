@@ -70,6 +70,7 @@ export default function CashierBalances() {
       const session = state.sessions.find(item => item.cashierId === cashierId && item.date === today && effectiveBranch(item.branchId) === selectedBranchKey);
       const effectiveSession: DaySession = session || {
         id: 'preview-' + cashierId,
+        branchId: selectedBranchId,
         cashierId,
         cashierName: person?.name || user?.name || 'Cashier',
         date: today,
