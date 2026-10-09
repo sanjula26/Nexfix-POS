@@ -230,25 +230,25 @@ export default function CashierBalances() {
     if (!closed) return;
 
     if (typeof navigator !== 'undefined' && !navigator.onLine || connectivity !== 'online') {
-      setBackupStatus({ target: backupTarget, kind: 'offline', message: 'Day closed locally; Drive backup will retry when online.' });
+      setBackupStatus({ target: backupTarget, kind: 'offline', message: `${isDay ? 'Day closed' : 'Cashier session closed'} locally; Drive backup will retry when online.` });
       return;
     }
     const shopId = getLocalShopId();
     if (!isGoogleSyncEnabled() || !getGoogleScriptUrl() || !shopId || !hasRecoveryKey(shopId)) {
       attemptedBackup.current.add(backupTarget);
-      setBackupStatus({ target: backupTarget, kind: 'skipped', message: 'Day closed locally. Google Drive backup is not ready on this device (configuration or Recovery Key missing).' });
+      setBackupStatus({ target: backupTarget, kind: 'skipped', message: `${isDay ? 'Day closed' : 'Cashier session closed'} locally. Google Drive backup is not ready on this device (configuration or Recovery Key missing).` });
       return;
     }
     attemptedBackup.current.add(backupTarget);
-    setBackupStatus({ target: backupTarget, kind: 'backing-up', message: 'Day closed. Backing up encrypted POS data to Google Drive…' });
+    setBackupStatus({ target: backupTarget, kind: 'backing-up', message: `${isDay ? 'Day closed' : 'Cashier session closed'}. Backing up encrypted POS data to Google Drive…` });
     void (async () => {
       const result = await backupWithTimeout(downloadBackup(state, 'auto', { download: false, cloud: true }), 7000);
       if (!result) {
-        setBackupStatus({ target: backupTarget, kind: 'failed', message: 'Day closed locally. Drive backup timed out after 7 seconds; the upload may still finish in the background.' });
+        setBackupStatus({ target: backupTarget, kind: 'failed', message: `${isDay ? 'Day closed' : 'Cashier session closed'} locally. Drive backup timed out after 7 seconds; the upload may still finish in the background.` });
       } else if (result.cloud) {
-        setBackupStatus({ target: backupTarget, kind: 'success', message: 'Day closed and encrypted Google Drive backup confirmed.' });
+        setBackupStatus({ target: backupTarget, kind: 'success', message: `${isDay ? 'Day closed' : 'Cashier session closed'} and encrypted Google Drive backup confirmed.` });
       } else {
-        setBackupStatus({ target: backupTarget, kind: 'failed', message: `Day closed locally; Google Drive backup failed: ${result.error || 'No successful Drive confirmation'}` });
+        setBackupStatus({ target: backupTarget, kind: 'failed', message: `${isDay ? 'Day closed' : 'Cashier session closed'} locally; Google Drive backup failed: ${result.error || 'No successful Drive confirmation'}` });
       }
     })();
   }, [backupTarget, state, today, connectivity]);
