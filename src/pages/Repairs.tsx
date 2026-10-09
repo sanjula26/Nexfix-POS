@@ -22,7 +22,7 @@ const TONE: Record<string, string> = {
 
 const emptyJob = (): RepairJob => ({
   id: uid(), jobNo: 'JOB-TEMP', customerName: '', deviceType: 'Phone', deviceBrand: '', deviceModel: '',
-  fault: '', parts: [], laborCost: 0, status: 'received', receivedAt: new Date().toISOString(), by: '', warrantyDays: 30, advancePaid: 0,
+  fault: '', parts: [], laborCost: 0, status: 'received', receivedAt: new Date().toISOString(), by: '', warrantyDays: 30, advancePaid: 0, conditionNotes: '', accessoriesReceived: '',
 });
 
 export default function Repairs() {
@@ -97,6 +97,8 @@ export default function Repairs() {
       ...editing, status: original?.status || editing.status, parts, customerName: editing.customerName.trim(), deviceBrand: editing.deviceBrand.trim(),
       deviceModel: editing.deviceModel.trim(), fault: editing.fault.trim(), diagnosis: editing.diagnosis?.trim() || undefined,
       imei: editing.imei?.trim() || undefined, serial: editing.serial?.trim() || undefined, customerPhone: editing.customerPhone?.trim() || undefined,
+      conditionNotes: editing.conditionNotes?.trim() || undefined, accessoriesReceived: editing.accessoriesReceived?.trim() || undefined,
+      technicianId: editing.technicianId || undefined, technicianName: state.users.find(u => u.id === editing.technicianId)?.name || editing.technicianName || undefined,
     });
     if (statusChanged && original) updateRepairStatus(original.id, nextStatus);
     setEditing(null);
@@ -126,7 +128,7 @@ export default function Repairs() {
             <div className="flex items-start gap-3 flex-1 min-w-0"><div className="w-10 h-10 rounded-xl bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0">{j.deviceType === 'Laptop' ? <Laptop size={18} /> : j.deviceType === 'Desktop' ? <Monitor size={18} /> : <Phone size={18} />}</div>
               <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-bold text-ink">{j.jobNo}</span><Badge tone={(TONE[j.status] as any) || 'slate'}>{STATUS_LABEL[j.status]}</Badge></div>
                 <div className="text-[13px] text-ink mt-0.5 truncate">{j.deviceBrand} {j.deviceModel}<span className="text-faint"> · {j.customerName}</span></div><div className="text-[12px] text-faint mt-0.5 truncate">{j.fault}</div>
-                <div className="text-[11px] text-faint mt-1">Received {fmtDate(j.receivedAt)}{j.promisedAt ? ` · promised ${fmtDate(j.promisedAt)}` : ''}{j.imei ? ` · IMEI ${j.imei}` : ''}{j.serial ? ` · S/N ${j.serial}` : ''}</div>{j.status === 'ready' && j.notifyReadyNote && <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 truncate">Ready note: {j.notifyReadyNote}</div>}
+                <div className="text-[11px] text-faint mt-1">Received {fmtDate(j.receivedAt)}{j.promisedAt ? ` · promised ${fmtDate(j.promisedAt)}` : ''}{j.imei ? ` · IMEI ${j.imei}` : ''}{j.serial ? ` · S/N ${j.serial}` : ''}{j.technicianName ? ` · Tech: ${j.technicianName}` : ''}</div>{j.accessoriesReceived && <div className="text-[11px] text-sub mt-1 truncate">Accessories: {j.accessoriesReceived}</div>}{j.status === 'ready' && j.notifyReadyNote && <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 truncate">Ready note: {j.notifyReadyNote}</div>}
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0"><div className="text-right mr-1"><div className="font-bold text-ink num text-[14px]">{fmtRs(totalFor(j), false)}</div><div className="text-[10px] text-faint">parts + labor</div></div>
@@ -148,6 +150,9 @@ export default function Repairs() {
           <div className="grid grid-cols-2 gap-3"><Field label="IMEI"><input className="input num" value={editing.imei || ''} onChange={e => setEditing({ ...editing, imei: e.target.value })} /></Field><Field label="Serial"><input className="input num" value={editing.serial || ''} onChange={e => setEditing({ ...editing, serial: e.target.value })} /></Field></div>
           <Field label="Fault reported"><textarea className="input min-h-[64px]" value={editing.fault} onChange={e => setEditing({ ...editing, fault: e.target.value })} /></Field>
           <Field label="Diagnosis"><textarea className="input min-h-[56px]" value={editing.diagnosis || ''} onChange={e => setEditing({ ...editing, diagnosis: e.target.value })} /></Field>
+          <Field label="Device condition on receipt"><textarea className="input min-h-[56px]" value={editing.conditionNotes || ''} onChange={e => setEditing({ ...editing, conditionNotes: e.target.value })} placeholder="Cracks, dents, screen condition, water marks…" /></Field>
+          <Field label="Accessories received"><input className="input" value={editing.accessoriesReceived || ''} onChange={e => setEditing({ ...editing, accessoriesReceived: e.target.value })} placeholder="Charger, case, SIM tray, memory card…" /></Field>
+          <Field label="Assigned technician"><select className="input" value={editing.technicianId || ''} onChange={e => { const tech = state.users.find(u => u.id === e.target.value); setEditing({ ...editing, technicianId: tech?.id || undefined, technicianName: tech?.name || undefined }); }}><option value="">Unassigned</option>{state.users.filter(u => u.active && (u.role === 'technician' || u.role === 'admin')).map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}</select></Field>
           <div className="grid grid-cols-3 gap-2"><Field label="Labor (Rs)"><input className="input num" type="number" min="0" step="0.01" value={editing.laborCost} onChange={e => setEditing({ ...editing, laborCost: Number(e.target.value) || 0 })} /></Field>
             <Field label="Advance paid"><input className="input num" type="number" min="0" step="0.01" value={editing.advancePaid || 0} onChange={e => setEditing({ ...editing, advancePaid: Number(e.target.value) || 0 })} /></Field>
             <Field label="Warranty days"><input className="input num" type="number" min="0" step="1" value={editing.warrantyDays || 0} onChange={e => setEditing({ ...editing, warrantyDays: Number(e.target.value) || 0 })} /></Field></div>
