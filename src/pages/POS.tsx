@@ -1280,6 +1280,13 @@ export default function POS() {
               <span className="num text-[12.5px] font-bold text-emerald-600 dark:text-emerald-400">- {fmtRs(tradeInValue, false)}</span>
             </div>}
 
+            {customer && customer.creditBalance > 0.009 && (
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-2.5 flex items-center justify-between gap-3">
+                <div><div className="text-[11px] font-bold text-amber-600">Existing credit balance</div><div className="num text-sm font-extrabold">{fmtRs(customer.creditBalance)}</div></div>
+                <button className="btn btn-soft !px-3 !py-2 !text-xs !text-amber-600" onClick={() => navigate(`/credit-settle?customer=${encodeURIComponent(customer.id)}`)}>Settle credit</button>
+              </div>
+            )}
+
             {/* loyalty redeem */}
             {customer && customer.loyaltyPoints > 0 && (
               <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-2.5">
