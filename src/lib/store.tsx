@@ -2280,7 +2280,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
     const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || []);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
-    const created: Purchase = { ...p, id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
+    const created: Purchase = { ...p, branchId: stateRef.current.settings.branchId || p.branchId || 'local-main', id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
     pushAudit('CREATE', 'GRN', 'Draft ' + created.poNo + ' for ' + created.supplierName + ' · Rs. ' + created.total.toLocaleString());
     return { ok: true, purchase: created };
