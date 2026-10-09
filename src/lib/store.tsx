@@ -1129,7 +1129,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const branchCacheReady = targetBranchId !== 'local-main' && hasCachedBranchStock(targetBranchId);
       if (branchBound) {
         const cachedQty = getCachedBranchStock(targetBranchId, normalized.id);
-        if (!branchCacheReady || cachedQty === null || cachedQty + stockDelta < 0) {
+        if (!branchCacheReady || (exists && cachedQty === null) || (cachedQty !== null && cachedQty + stockDelta < 0)) {
           pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock is missing or insufficient. Connect online and refresh Settings.');
           return false;
         }
@@ -1200,6 +1200,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       if (!applyBranchStockDeltas(selectedBranchId, { [normalized.id]: stockDelta })) {
         pushAudit('DENIED', 'Product', 'Blocked initial stock because selected-branch stock would become negative.');
+        return false;
+      }
+    }
+    if (!exists && normalized.stock === 0 && selectedBranchId !== 'local-main' && hasCachedBranchStock(selectedBranchId)) {
+      if (!applyBranchStockDeltas(selectedBranchId, { [normalized.id]: 0 })) {
+        pushAudit('DENIED', 'Product', 'Could not initialize this product in the selected branch stock cache.');
         return false;
       }
     }
