@@ -2168,7 +2168,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           branchId: stateRef.current.settings.branchId || po.branchId || 'local-main',
           deviceId: getMachineIdentity().id,
           purchaseId: po.id,
-          deviceId: getMachineIdentity().id,
           purchase: po,
         });
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
