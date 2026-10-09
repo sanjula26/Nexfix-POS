@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Download, Landmark, CalendarDays, CheckCircle2, AlertTriangle, Printer } from 'lucide-react';
+import { Download, Landmark, CalendarDays, CheckCircle2, AlertTriangle, Printer, Copy } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, PageHeading } from '../components/ui';
 import { dkey, downloadFile, fmtRs, fmtNum } from '../lib/utils';
@@ -10,6 +10,7 @@ export default function DayCloseReport() {
   const today = dkey(new Date());
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
+  const [summaryCopied, setSummaryCopied] = useState('');
 
   const rows = useMemo(() => {
     const start = from <= to ? from : to;
@@ -69,6 +70,31 @@ export default function DayCloseReport() {
     downloadFile(`nexfix-day-close-${from}_to_${to}.csv`, lines.join('\n'), 'text/csv;charset=utf-8');
   };
 
+  const copyDaySummary = async () => {
+    const message = [
+      `${state.settings.shopName || 'NexFix POS'} — Day-end owner summary`,
+      `Period: ${from} to ${to}`,
+      `Closed drawer sessions: ${rows.length}`,
+      `Gross sales: ${fmtRs(summary.gross)}`,
+      `Returns / refunds: ${fmtRs(summary.refunds)}`,
+      `Net sales: ${fmtRs(summary.net)}`,
+      `Cash received from sales: ${fmtRs(summary.cash)}`,
+      `Credit issued (due created): ${fmtRs(summary.credit)}`,
+      `Credit collections: ${fmtRs(summary.settled)}`,
+      `Expenses: ${fmtRs(summary.expenses)}`,
+      `Expected cash: ${fmtRs(summary.expected)}`,
+      `Counted cash: ${fmtRs(summary.counted)}`,
+      `Variance: ${fmtRs(summary.variance)}`,
+      'Summary based on saved cashier sign-offs; drawer calculations are unchanged.',
+    ].join('\\n');
+    try {
+      await navigator.clipboard.writeText(message);
+      setSummaryCopied('Day summary copied. Paste it into WhatsApp or a message.');
+    } catch {
+      setSummaryCopied('Clipboard unavailable. Use Print or Export CSV instead.');
+    }
+  };
+
   return (
     <div className="space-y-5 print:space-y-3">
       <PageHeading
@@ -77,11 +103,14 @@ export default function DayCloseReport() {
         sub="Historical cashier sign-offs, tender breakdown, credit settlements and saved variance"
         actions={
           <div className="flex flex-wrap gap-2 print:hidden">
+            <button type="button" className="btn btn-soft" onClick={() => void copyDaySummary()} disabled={!rows.length}><Copy size={15} /> Copy day summary</button>
             <button type="button" className="btn btn-soft" onClick={() => window.print()}><Printer size={15} /> Print</button>
             <button type="button" className="btn btn-primary" onClick={exportCsv} disabled={!rows.length}><Download size={15} /> Export CSV</button>
           </div>
         }
       />
+
+      {summaryCopied && <div role="status" className="rounded-xl border border-line bg-raised px-4 py-3 text-sm print:hidden">{summaryCopied}</div>}
 
       <div className="card p-4 flex flex-wrap items-end gap-3 print:hidden">
         <div>
