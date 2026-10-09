@@ -65,3 +65,11 @@ export function getDefaultBranchId(shopId: string): string | null {
   if (!shopId) return null;
   try { return storage()?.getItem(`nexfix_default_branch_v1:${shopId}`) || null; } catch { return null; }
 }
+
+export function hasMultipleCachedBranches(shopId: string): boolean {
+  if (!shopId) return false;
+  try {
+    const parsed = JSON.parse(storage()?.getItem(`nexfix_branches_v1:${shopId}`) || '[]') as Array<{ active?: boolean }>;
+    return Array.isArray(parsed) && parsed.filter(branch => branch.active !== false).length > 1;
+  } catch { return false; }
+}
