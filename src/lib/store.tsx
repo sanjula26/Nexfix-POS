@@ -2231,6 +2231,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   /* ---------------- purchases ---------------- */
   const savePurchase = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase order creation because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return;
+    }
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase order creation without purchase access');
       return;
@@ -2360,6 +2365,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit, user, can, setStateWithInventoryLedger]);
 
   const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>): { ok: boolean; purchase?: Purchase; error?: string } => {
+    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
+      pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation because this shop has multiple branches and no branch is selected. Open Settings first.');
+      return { ok: false, error: 'Select a branch in Settings before creating a GRN.' };
+    }
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation without purchase access');
       return { ok: false, error: 'You do not have permission to manage purchases.' };
@@ -3012,6 +3022,7 @@ const deletePurchase = useCallback((id: string) => {
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') return;
     if (state.sessions.some(x => x.cashierId === user.id && x.date === today && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId))) return;
     const ns: DaySession = {
       id: uid(), branchId: stateRef.current.settings.branchId || 'local-main', cashierId: user.id, cashierName: user.name, date: today,
