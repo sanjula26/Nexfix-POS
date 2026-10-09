@@ -93,6 +93,26 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   return { ok: false, error: 'Cloud shop membership is not provisioned for this user' };
 }
 
+export async function adjustBranchStockAtomic(input: {
+  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string;
+}): Promise<{ ok: boolean; alreadyCommitted?: boolean; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
+  const { data, error } = await supabase.rpc('adjust_branch_stock_atomic', {
+    p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId,
+    p_product_id: input.productId, p_delta: input.delta, p_note: input.note, p_adjustment_id: input.adjustmentId,
+  });
+  if (error) return { ok: false, error: error.message };
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.ok) return { ok: false, error: row?.error || 'Branch stock adjustment was not committed' };
+  void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
+  return { ok: true, alreadyCommitted: row.already_committed === true };
+}
+
 /** Refresh the selected branch's local offline stock cache after a cloud transaction. */
 export async function refreshCloudBranchStock(shopId: string, branchId: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
