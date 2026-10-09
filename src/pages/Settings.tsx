@@ -48,6 +48,53 @@ export default function Settings() {
   const [shopIdCopied, setShopIdCopied] = useState(false);
   const phoneSalesMachine = getMachineIdentity();
   const phoneSalesShopId = getCloudShopId();
+  type BranchOption = { id: string; name: string; code: string; is_default: boolean; active: boolean };
+  const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState(() => state.settings.branchId && state.settings.branchId !== 'local-main' ? state.settings.branchId : '');
+  const [branchMsg, setBranchMsg] = useState('Checking branch configuration…');
+  useEffect(() => {
+    let cancelled = false;
+    const shopId = getCloudShopId();
+    const cacheKey = shopId ? `nexfix_branches_v1:${shopId}` : '';
+    const applyOptions = (rows: BranchOption[], fromCache = false) => {
+      if (cancelled) return;
+      setBranchOptions(rows);
+      const saved = state.settings.branchId || '';
+      const match = rows.find(branch => branch.id === saved && branch.active);
+      if (match) setSelectedBranchId(match.id);
+      else if (rows.length === 1) {
+        setSelectedBranchId(rows[0].id);
+        if (user?.role === 'admin' && saved !== rows[0].id) updateSettings({ branchId: rows[0].id });
+      } else setSelectedBranchId('');
+      setBranchMsg(fromCache ? 'Offline mode: using saved branch list.' : rows.length === 1
+        ? 'Main branch is selected automatically.'
+        : rows.length > 1 ? 'Select the branch assigned to this POS device.' : 'No active branch was returned for this shop.');
+    };
+    if (cacheKey) {
+      try {
+        const cached = JSON.parse(localStorage.getItem(cacheKey) || '[]') as BranchOption[];
+        if (Array.isArray(cached) && cached.length) applyOptions(cached, true);
+      } catch { /* use live branch list below */ }
+    }
+    if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!state.settings.branchId) setBranchMsg('Connect the POS online once to assign this device to a branch. Local sales remain available offline.');
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      try {
+        const { data, error } = await supabase.from('branches')
+          .select('id,name,code,is_default,active')
+          .eq('shop_id', shopId).eq('active', true).order('is_default', { ascending: false }).order('name');
+        if (error) throw error;
+        const rows = (data || []) as BranchOption[];
+        if (cacheKey) { try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ } }
+        applyOptions(rows, false);
+      } catch (error) {
+        if (!cancelled && !branchOptions.length) setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings]);
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
   const [phoneSalesToken, setPhoneSalesToken] = useState('');
   const [phoneSalesLink, setPhoneSalesLink] = useState('');
@@ -679,6 +726,20 @@ export default function Settings() {
         </section>
       )}
       <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v${appVersion}`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
+      <div className="card p-6 border border-indigo-500/20">
+        <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Store size={15} /></span>POS branch / Stock location</h3>
+        <p className="text-xs text-sub mb-3">Each device sells from one branch. A shop with only Main branch selects it automatically. This setting is local to this POS; cloud stock and IMEI checks enforce branch ownership.</p>
+        <div className="max-w-xl">
+          <label className="block text-xs font-semibold text-sub mb-1.5" htmlFor="pos-branch-select">Selected branch</label>
+          <select id="pos-branch-select" className="input" value={selectedBranchId} disabled={user?.role !== 'admin' || branchOptions.length === 0 || branchOptions.length === 1}
+            onChange={e => { const value = e.target.value; setSelectedBranchId(value); updateSettings({ branchId: value || undefined }); setBranchMsg(value ? 'Branch selection saved for this POS.' : 'Select an active branch before cloud sales or GRN receive.'); }}>
+            <option value="">Select a branch…</option>
+            {branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code}){branch.is_default ? ' — Main' : ''}</option>)}
+          </select>
+          <p className={`mt-2 text-xs ${selectedBranchId ? 'text-emerald-600' : 'text-amber-600'}`}>{branchMsg}</p>
+          {branchOptions.length > 1 && !selectedBranchId && <p className="mt-2 text-xs font-semibold text-amber-600">Branch selection is required before this device can sync a sale or receive stock.</p>}
+        </div>
+      </div>
       {user?.role === 'admin' && (
         <div className="card p-6 border border-sky-500/20">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
