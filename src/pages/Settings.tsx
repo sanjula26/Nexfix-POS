@@ -14,6 +14,7 @@ import { applyBackupRestore } from '../lib/restore';
 import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { getCloudShopId } from '../lib/cloudSync';
+import { cacheBranchStock } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -191,12 +192,21 @@ export default function Settings() {
         const rows = (data || []) as BranchOption[];
         if (cacheKey) { try { localStorage.setItem(cacheKey, JSON.stringify(rows)); } catch { /* cache is optional */ } }
         applyOptions(rows, false);
+        const preferred = rows.find(branch => branch.id === state.settings.branchId)?.id
+          || rows.find(branch => branch.id === selectedBranchId)?.id
+          || (rows.length === 1 ? rows[0].id : '');
+        if (preferred) {
+          const { data: stockRows, error: stockError } = await supabase.from('branch_stock')
+            .select('product_id,qty').eq('shop_id', shopId).eq('branch_id', preferred);
+          if (!stockError && stockRows) cacheBranchStock(preferred, stockRows as Array<{ product_id: string; qty: number | string }>);
+          else if (!cancelled) setBranchMsg(stockError?.message || 'Branch loaded, but offline stock cache could not be refreshed.');
+        }
       } catch (error) {
         if (!cancelled && !hasCachedOptions) setBranchMsg(error instanceof Error ? error.message : 'Could not load branches. Connect online and retry.');
       }
     })();
     return () => { cancelled = true; };
-  }, [phoneSalesShopId, state.settings.branchId, user?.role, updateSettings, phoneSalesMachine.id, bindBranchToDevice]);
+  }, [phoneSalesShopId, state.settings.branchId, selectedBranchId, user?.role, updateSettings, phoneSalesMachine.id, bindBranchToDevice]);
   const phoneSalesTimeZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
   const [phoneSalesToken, setPhoneSalesToken] = useState('');
   const [phoneSalesLink, setPhoneSalesLink] = useState('');
