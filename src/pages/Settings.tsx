@@ -52,6 +52,18 @@ export default function Settings() {
   const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState(() => state.settings.branchId && state.settings.branchId !== 'local-main' ? state.settings.branchId : '');
   const [branchMsg, setBranchMsg] = useState('Checking branch configuration…');
+  const [newBranchName, setNewBranchName] = useState('');
+  const [newBranchCode, setNewBranchCode] = useState('');
+  const [branchCreateMsg, setBranchCreateMsg] = useState('');
+  const [transferFromBranch, setTransferFromBranch] = useState('');
+  const [transferToBranch, setTransferToBranch] = useState('');
+  const [transferProductId, setTransferProductId] = useState('');
+  const [transferQty, setTransferQty] = useState('1');
+  const [transferUnitCodes, setTransferUnitCodes] = useState('');
+  const [transferNote, setTransferNote] = useState('');
+  const [transferLines, setTransferLines] = useState<Array<{ product_id: string; qty: number; unit_ids: string[]; label: string }>>([]);
+  const [transferMsg, setTransferMsg] = useState('');
+  const [transferBusy, setTransferBusy] = useState(false);
   const bindBranchToDevice = useCallback(async (branchId: string, shopId = getCloudShopId()) => {
     if (!shopId || !supabaseConfigured || !supabase || typeof navigator !== 'undefined' && !navigator.onLine) return false;
     if (user?.role !== 'admin' && user?.role !== 'manager') return false;
@@ -65,6 +77,79 @@ export default function Settings() {
     setBranchMsg('Selected branch saved and this POS device is bound to it.');
     return true;
   }, [user?.role, phoneSalesMachine.id]);
+  const createBranch = async () => {
+    const shopId = getCloudShopId();
+    if (!shopId || !supabase || !supabaseConfigured) { setBranchCreateMsg('Connect to the cloud before creating a branch.'); return; }
+    if (user?.role !== 'admin' && user?.role !== 'manager') { setBranchCreateMsg('Only an admin or manager can create a branch.'); return; }
+    const name = newBranchName.trim();
+    const code = newBranchCode.trim().toUpperCase();
+    if (name.length < 2 || name.length > 80 || !/^[A-Z0-9][A-Z0-9_-]{0,19}$/.test(code)) {
+      setBranchCreateMsg('Enter a branch name (2–80 characters) and code (1–20 letters/numbers/hyphen/underscore).'); return;
+    }
+    setBranchCreateMsg('Creating branch…');
+    const { data, error } = await supabase.rpc('create_shop_branch', { p_shop_id: shopId, p_name: name, p_code: code });
+    if (error || !data?.ok || !data?.branch?.id) { setBranchCreateMsg(error?.message || data?.error || 'Branch creation failed.'); return; }
+    const created = data.branch as BranchOption;
+    setBranchOptions(previous => {
+      const next = [...previous.filter(item => item.id !== created.id), created].sort((a,b) => Number(b.is_default)-Number(a.is_default) || a.name.localeCompare(b.name));
+      try { localStorage.setItem(`nexfix_branches_v1:${shopId}`, JSON.stringify(next)); } catch { /* optional cache */ }
+      return next;
+    });
+    setNewBranchName(''); setNewBranchCode('');
+    setBranchCreateMsg(`Branch ${created.name} created. Its opening stock is zero; transfer stock from Main to populate it.`);
+  };
+
+  const addTransferLine = async () => {
+    const shopId = getCloudShopId();
+    const product = state.products.find(item => item.id === transferProductId);
+    const qty = Number(transferQty);
+    if (!shopId || !supabase || !product || !transferFromBranch || !Number.isInteger(qty) || qty <= 0) {
+      setTransferMsg('Choose source branch and product, then enter a positive whole quantity.'); return;
+    }
+    if (transferLines.some(line => line.product_id === product.id)) { setTransferMsg('Use one line per product in a transfer.'); return; }
+    let unitIds: string[] = [];
+    if (product.trackImei || product.trackSerial) {
+      const codes = transferUnitCodes.split(/[\n,;]+/).map(value => value.trim().toLowerCase()).filter(Boolean);
+      if (codes.length !== qty) { setTransferMsg(`Enter exactly ${qty} IMEI/serial code(s) for this tracked product.`); return; }
+      const { data, error } = await supabase.from('inventory_units')
+        .select('id,imei,serial').eq('shop_id', shopId).eq('branch_id', transferFromBranch)
+        .eq('product_id', product.id).eq('status', 'in_stock');
+      if (error) { setTransferMsg(error.message); return; }
+      const units = (data || []) as Array<{ id: string; imei: string | null; serial: string | null }>;
+      const picked = codes.map(code => units.find(unit => (unit.imei || '').toLowerCase() === code || (unit.serial || '').toLowerCase() === code));
+      if (picked.some(unit => !unit) || new Set(picked.map(unit => unit?.id)).size !== qty) {
+        setTransferMsg('One or more IMEI/serial codes are not in stock at the source branch. No transfer was added.'); return;
+      }
+      unitIds = picked.map(unit => unit!.id);
+    }
+    setTransferLines(previous => [...previous, { product_id: product.id, qty, unit_ids: unitIds, label: product.name }]);
+    setTransferMsg(`Added ${product.name} × ${qty}.`);
+    setTransferProductId(''); setTransferQty('1'); setTransferUnitCodes('');
+  };
+
+  const completeTransfer = async () => {
+    const shopId = getCloudShopId();
+    if (!shopId || !supabase || !supabaseConfigured || user?.role !== 'admin' && user?.role !== 'manager') {
+      setTransferMsg('An online admin/manager session is required to complete transfers.'); return;
+    }
+    if (!transferFromBranch || !transferToBranch || transferFromBranch === transferToBranch || !transferLines.length) {
+      setTransferMsg('Choose different source/destination branches and add at least one line.'); return;
+    }
+    setTransferBusy(true); setTransferMsg('Completing stock transfer…');
+    try {
+      const { data, error } = await supabase.rpc('complete_stock_transfer', {
+        p_shop_id: shopId, p_transfer_id: uid(), p_from_branch_id: transferFromBranch, p_to_branch_id: transferToBranch,
+        p_lines: transferLines.map(({ product_id, qty, unit_ids }) => ({ product_id, qty, unit_ids })),
+        p_note: transferNote.trim() || null, p_idempotency_key: uid(),
+      });
+      if (error || !data?.ok) throw new Error(error?.message || data?.error || 'Stock transfer failed.');
+      setTransferMsg(`Transfer completed successfully (${transferLines.length} line(s)). Source and destination branch stock was updated atomically.`);
+      setTransferLines([]); setTransferNote('');
+    } catch (error) {
+      setTransferMsg(error instanceof Error ? error.message : 'Stock transfer failed. No partial transfer was committed.');
+    } finally { setTransferBusy(false); }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const shopId = getCloudShopId();
@@ -758,7 +843,35 @@ export default function Settings() {
         </div>
       </div>
       {user?.role === 'admin' && (
-        <div className="card p-6 border border-sky-500/20">
+        <div className="card p-6 border border-indigo-500/20">
+        <h3 className="font-bold text-ink mb-2">Create a branch</h3>
+        <p className="text-xs text-sub mb-4">New branches start with zero stock. Use the transfer tool below to move existing stock safely.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <Field label="Branch name"><input className="input" value={newBranchName} onChange={e => setNewBranchName(e.target.value)} placeholder="e.g. Kandy" maxLength={80} /></Field>
+          <Field label="Branch code"><input className="input" value={newBranchCode} onChange={e => setNewBranchCode(e.target.value.toUpperCase())} placeholder="e.g. KDY" maxLength={20} /></Field>
+          <div className="flex items-end"><button type="button" className="btn btn-primary w-full" onClick={() => void createBranch()} disabled={user?.role !== 'admin' && user?.role !== 'manager'}>Create branch</button></div>
+        </div>
+        {branchCreateMsg && <p className="mt-3 text-xs text-sub">{branchCreateMsg}</p>}
+      </div>
+      {branchOptions.length > 1 && <div className="card p-6 border border-amber-500/20">
+        <h3 className="font-bold text-ink mb-2">Stock transfer</h3>
+        <p className="text-xs text-sub mb-4">Transfer is atomic and audited. Tracked products require their exact in-stock IMEI/serial codes from the source branch.</p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Field label="From branch"><select className="input" value={transferFromBranch} onChange={e => setTransferFromBranch(e.target.value)}><option value="">Choose source…</option>{branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>)}</select></Field>
+          <Field label="To branch"><select className="input" value={transferToBranch} onChange={e => setTransferToBranch(e.target.value)}><option value="">Choose destination…</option>{branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>)}</select></Field>
+        </div>
+        <div className="grid sm:grid-cols-3 gap-3 mt-3">
+          <Field label="Product"><select className="input" value={transferProductId} onChange={e => setTransferProductId(e.target.value)}><option value="">Choose product…</option>{state.products.filter(product => product.active && !product.isService).map(product => <option key={product.id} value={product.id}>{product.name} · {product.sku || product.barcode || product.id.slice(0,8)}</option>)}</select></Field>
+          <Field label="Quantity"><input className="input" type="number" min="1" step="1" value={transferQty} onChange={e => setTransferQty(e.target.value)} /></Field>
+          <div className="flex items-end"><button type="button" className="btn btn-secondary w-full" onClick={() => void addTransferLine()}>Add line</button></div>
+        </div>
+        {state.products.find(product => product.id === transferProductId && (product.trackImei || product.trackSerial)) && <Field label="IMEI / Serial codes" hint="Enter one code per unit, separated by commas or new lines."><textarea className="input min-h-20" value={transferUnitCodes} onChange={e => setTransferUnitCodes(e.target.value)} placeholder="IMEI/serial 1, IMEI/serial 2" /></Field>}
+        {transferLines.length > 0 && <div className="mt-3 rounded-xl border border-line p-3"><div className="text-xs font-bold text-ink mb-2">Transfer lines</div>{transferLines.map((line,index) => <div key={line.product_id} className="flex items-center justify-between gap-3 py-1 text-xs text-sub"><span>{line.label} × {line.qty}{line.unit_ids.length ? ` · ${line.unit_ids.length} tracked unit(s)` : ''}</span><button type="button" className="text-red-500" onClick={() => setTransferLines(lines => lines.filter((_,i) => i !== index))}>Remove</button></div>)}</div>}
+        <Field label="Transfer note"><input className="input" value={transferNote} onChange={e => setTransferNote(e.target.value)} placeholder="Optional reason / reference" maxLength={500} /></Field>
+        <div className="flex flex-wrap items-center gap-3 mt-3"><button type="button" className="btn btn-primary" onClick={() => void completeTransfer()} disabled={transferBusy || user?.role !== 'admin' && user?.role !== 'manager'}>{transferBusy ? 'Transferring…' : 'Complete transfer'}</button><button type="button" className="btn btn-secondary" onClick={() => { setTransferLines([]); setTransferMsg('Transfer draft cleared.'); }}>Clear lines</button></div>
+        {transferMsg && <p className="mt-3 text-xs text-sub">{transferMsg}</p>}
+      </div>}
+      <div className="card p-6 border border-sky-500/20">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
           <p className="text-xs text-faint mb-4">Update inside the app without leaving the POS.</p>
           <div className="flex flex-wrap items-center gap-2"><span className="badge bg-raised text-ink">Current version: {appVersion}</span>{updateState.status==='available'&&<span className="badge bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">New version: {updateState.version}</span>}</div>
