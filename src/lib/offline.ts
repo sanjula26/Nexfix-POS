@@ -2,7 +2,7 @@
 import type { Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
 import { getMachineIdentity } from './machine';
-import { completeSaleAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
+import { completeSaleAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -56,6 +56,10 @@ export async function queueWrite(note?:string):Promise<void>{
   }
 }
 
+export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string}):Promise<void>{
+  const queued=await idbEnqueue({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify(input)});
+  if(!queued)throw new Error('Local sync storage is unavailable; stock adjustment was not queued safely.');
+}
 export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
 export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
@@ -77,6 +81,25 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const state=await idbLoadState();
 
     for(const op of ops){
+      if(op.type==='branch_stock_adjustment'){
+        try{
+          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string};
+          const shop=await ensureCloudShop('Nexfix Shop');
+          if(!shop.ok || !shop.shopId) break;
+          const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId});
+          if(!result.ok && result.error?.includes('Product is not synced to this cloud shop yet') && state){
+            const catalog=await syncNormalizedCatalog(state,shop.shopId);
+            if(!catalog.ok) break;
+            // Catalog bootstrap already includes this local product's final stock.
+            acknowledged.push(op.id); flushed++;
+            continue;
+          }
+          if(!result.ok) break;
+          acknowledged.push(op.id); flushed++;
+          continue;
+        }catch{break;}
+      }
+
       if(op.type==='sale_create'){
         try{
           const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
