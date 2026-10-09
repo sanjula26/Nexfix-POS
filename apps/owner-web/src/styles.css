@@ -3,3 +3,5 @@
 
 /* Phase 3: compact owner-web branch switcher and read-only inventory warnings. */
 .branch-switch{display:flex;flex-direction:column;gap:7px;padding:12px 10px;margin:-12px 0 18px;border:1px solid #ffffff13;background:#ffffff08;border-radius:11px}.branch-switch label{font-size:10px;font-weight:700;color:#dce5f7}.branch-switch select{width:100%;min-width:0;background:#0b1427;color:#eef3ff;border:1px solid #35415a;border-radius:7px;padding:8px;font-size:11px}.branch-switch small{font-size:9px;line-height:1.45;color:#9ba9c2;overflow-wrap:anywhere}.branch-switch .error{color:#ffb5b5}.low-stock{display:inline-block;background:#fff2df;color:#a8660d;border-radius:6px;padding:5px 8px;font-size:9px;font-weight:700}
+
+.branch-refresh{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;background:transparent;border:1px solid #35415a;color:#c9d5ec;border-radius:7px;padding:6px 8px;font-size:9px}.branch-refresh:hover{background:#ffffff0b}
