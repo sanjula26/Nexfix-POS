@@ -212,6 +212,13 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (membershipError) return { ok: false, error: membershipError.message };
   if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
 
+  const { data: activeBranches, error: branchLookupError } = await supabase.from('branches')
+    .select('id,is_default').eq('shop_id', shopId).eq('active', true);
+  if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
+  const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
+  const selectedBranch = await resolveCloudBranchId(shopId, state.settings.branchId);
+  if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Select a branch before syncing catalog stock' };
+
   const supplierRows = state.suppliers.map(s => ({
     id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
     phone: s.phone || null, email: s.email || null, address: s.address || null,
@@ -256,6 +263,17 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     if (missing.length) {
       const { error } = await supabase.from('products').insert(missing);
       if (error) return { ok: false, error: `Products: ${error.message}` };
+      if ((activeBranches || []).length > 1 && defaultBranch && selectedBranch.branchId !== defaultBranch.id) {
+        const missingIds = missing.map(row => row.id);
+        const { error: clearDefaultError } = await supabase.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
+          .eq('shop_id', shopId).eq('branch_id', defaultBranch.id).in('product_id', missingIds);
+        if (clearDefaultError) return { ok: false, error: `Initial branch stock allocation: ${clearDefaultError.message}` };
+        const { error: allocateError } = await supabase.from('branch_stock').upsert(
+          missing.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.id, qty: row.stock, updated_at: new Date().toISOString() })),
+          { onConflict: 'branch_id,product_id' },
+        );
+        if (allocateError) return { ok: false, error: `Initial branch stock allocation: ${allocateError.message}` };
+      }
     }
 
     // Reconcile catalog metadata edits without ever overwriting cloud stock.
@@ -292,6 +310,17 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
         p_rows: bootstrapRows,
       });
       if (bootstrapError) return { ok: false, error: `Initial cloud stock bootstrap: ${bootstrapError.message}` };
+      if ((activeBranches || []).length > 1) {
+        const bootstrapIds = bootstrapRows.map(row => row.product_id);
+        const { error: clearDefaultError } = await supabase.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
+          .eq('shop_id', shopId).eq('branch_id', defaultBranch?.id || '').in('product_id', bootstrapIds);
+        if (clearDefaultError) return { ok: false, error: `Bootstrap branch allocation: ${clearDefaultError.message}` };
+        const { error: allocateError } = await supabase.from('branch_stock').upsert(
+          bootstrapRows.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.product_id, qty: row.stock, updated_at: new Date().toISOString() })),
+          { onConflict: 'branch_id,product_id' },
+        );
+        if (allocateError) return { ok: false, error: `Bootstrap branch allocation: ${allocateError.message}` };
+      }
     }
   }
 
@@ -338,10 +367,6 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
 
-  const { data: activeBranches, error: branchLookupError } = await supabase.from('branches')
-    .select('id,is_default').eq('shop_id', shopId).eq('active', true);
-  if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
-  const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
   const unitRows = (state.units || []).filter(u => u.status === 'in_stock').map(u => {
     const requestedBranch = u.branchId || state.settings.branchId || 'local-main';
     const resolvedBranch = requestedBranch === 'local-main'
