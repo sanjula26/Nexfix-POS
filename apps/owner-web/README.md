@@ -30,3 +30,7 @@ Separate, read-only browser app for single-shop cloud sales. It is isolated from
 - Default shop timezone is `Asia/Colombo`; set `VITE_OWNER_WEB_TIME_ZONE` only after confirming the business timezone.
 
 Run `npm install`, `npm run typecheck`, `npm run lint`, and `npm run build`. Deploy with the public Supabase environment variables and SPA fallback to `index.html`.
+
+## Phase 5 — Distributor / super-admin
+
+**Skipped for now.** The connected production project currently has one shop and one active membership, and a multi-shop distributor business requirement has not been confirmed in the project record. No super-admin, tenant bootstrap, cross-shop support view or impersonation route is partially implemented. Revisit only if NexFix POS is explicitly being sold to many separate shops; use a separate test tenant to verify hard isolation and onboarding before enabling it. Normal Owner Web remains shop-scoped and unchanged.
