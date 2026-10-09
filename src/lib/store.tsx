@@ -1111,6 +1111,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
     const stockDelta = normalized.stock - (current?.stock || 0);
+    if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main' && stockDelta !== 0) {
+      pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: select this POS branch before changing stock.`);
+      return false;
+    }
     if (exists && selectedBranchId !== 'local-main' && stockDelta !== 0) {
       pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: use Adjust Stock so branch and shop totals are updated atomically.`);
       return false;
