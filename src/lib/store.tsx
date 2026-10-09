@@ -1313,15 +1313,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'CustomerCreditPayment', `Blocked settlement above outstanding for ${customer.name}`);
       return null;
     }
-    const methods = Array.isArray(p.methods) && p.methods.length
+    const rawMethods: PaymentLeg[] = Array.isArray(p.methods) && p.methods.length
       ? p.methods.map(leg => ({ method: leg.method, amount: Math.round(Number(leg.amount) * 100) / 100 }))
       : [{ method: p.method, amount }];
-    const validMethods = new Set<PaymentMethod>(['cash', 'card', 'bank', 'mobile']);
-    if (methods.some(leg => !validMethods.has(leg.method) || !Number.isFinite(leg.amount) || leg.amount <= 0)
-      || Math.abs(methods.reduce((sum, leg) => sum + leg.amount, 0) - amount) > 0.009) {
+    const validMethods = new Set<Exclude<PaymentMethod, 'credit'>>(['cash', 'card', 'bank', 'mobile']);
+    if (rawMethods.some(leg => !validMethods.has(leg.method as Exclude<PaymentMethod, 'credit'>) || !Number.isFinite(leg.amount) || leg.amount <= 0)
+      || Math.abs(rawMethods.reduce((sum, leg) => sum + leg.amount, 0) - amount) > 0.009) {
       pushAudit('DENIED', 'CustomerCreditPayment', 'Blocked settlement with invalid or mismatched tender amounts');
       return null;
     }
+    const methods = rawMethods as Array<{ method: Exclude<PaymentMethod, 'credit'>; amount: number }>;
     const previousPayments = snapshot.customerCreditPayments || [];
     let allocations: Array<{ saleId: string; billNo: string; amount: number }> = [];
     if (p.saleId) {
