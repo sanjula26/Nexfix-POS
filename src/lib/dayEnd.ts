@@ -72,12 +72,16 @@ export function calculateDayEndTotals(
       + sale.items.reduce((items, item) => items + Math.max(0, Number(item.discount) || 0), 0), 0);
   const tenders = emptyTenders();
   let creditSales = 0;
-  for (const sale of sales) {
+  // Count the original tender on a bill even if fully refunded later the same day;
+  // the separate refund event then subtracts the money actually returned.
+  for (const sale of billedSales) {
     for (const leg of tenderLegs(sale)) {
       if (METHODS.includes(leg.method as typeof METHODS[number])) {
         tenders[leg.method as keyof TenderTotals] += Math.max(0, Number(leg.amount) || 0);
       }
     }
+  }
+  for (const sale of sales) {
     creditSales += Math.max(0, (Number(sale.total) || 0) - (Number(sale.amountPaid) || 0));
   }
 
