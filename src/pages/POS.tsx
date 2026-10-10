@@ -10,6 +10,7 @@ import {
   Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
+import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
@@ -734,13 +735,18 @@ export default function POS() {
   };
 
   /* ---------- quick add customer ---------- */
-  const quickAddCustomer = () => {
+  const quickAddCustomer = async () => {
     const name = newCust.name.trim();
     const phone = newCust.phone.trim();
     if (!name || !phone) return;
     const normalized = normalizeWhatsAppPhone(phone);
     if (normalized.length < 9) {
       toast('Enter a valid WhatsApp phone number', 'rose');
+      return;
+    }
+    const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
+    if (normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national))) {
+      toast('That looks like a placeholder number. Enter the customer’s real phone number.', 'rose');
       return;
     }
     const existing = state.customers.find(c => normalizeWhatsAppPhone(c.phone) === normalized);
@@ -753,6 +759,27 @@ export default function POS() {
       toast('Existing customer selected — this WhatsApp number is already saved', 'amber');
       return;
     }
+
+    // Check cloud before minting a local customer ID. This prevents a local
+    // duplicate when the same phone is already registered under another ID.
+    const cloudShopId = getCloudShopId();
+    if (cloudShopId && typeof navigator !== 'undefined' && navigator.onLine) {
+      const cloudMatch = await findCloudCustomerByPhone(phone, cloudShopId);
+      if (!cloudMatch.ok && cloudMatch.error !== 'offline') {
+        toast(`Could not check cloud customers: ${cloudMatch.error || 'unknown error'}`, 'rose');
+        return;
+      }
+      if (cloudMatch.customer) {
+        setCustomerId(cloudMatch.customer.id);
+        setCustQuery(cloudMatch.customer.name || cloudMatch.customer.phone || phone);
+        setAddCustOpen(false);
+        setNewCust({ name: '', phone: '', nic: '', address: '' });
+        setBillingWhatsApp(cloudMatch.customer.phone || phone);
+        toast('Existing cloud customer selected by phone number', 'amber');
+        return;
+      }
+    }
+
     const c = { id: uid(), name, phone, nic: newCust.nic.trim() || undefined, address: newCust.address.trim() || undefined, createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 };
     saveCustomer(c);
     setCustomerId(c.id);
