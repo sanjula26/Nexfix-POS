@@ -29,6 +29,9 @@ declare
   v_expected_due numeric(12,2);
   v_previous_due numeric(12,2);
   v_change numeric(12,2);
+  v_customer_credit_balance numeric(12,2);
+  v_customer_credit_limit numeric(12,2);
+  v_credit_adjustment numeric(12,2);
 begin
   v_result := private.complete_sale_atomic(
     p_shop_id, p_sale_id, p_customer_id, p_shipping, p_discount, p_tax_pct,
@@ -73,7 +76,22 @@ begin
     -- Adjust by the difference so this remains safe if an earlier implementation
     -- already recorded some/all of the due.
     v_previous_due := greatest(0, round(v_sale.total - v_sale.amount_paid, 2));
+    v_credit_adjustment := v_expected_due - v_previous_due;
     v_change := 0;
+
+    select coalesce(c.credit_balance, 0), coalesce(c.credit_limit, 0)
+    into v_customer_credit_balance, v_customer_credit_limit
+    from public.customers c
+    where c.id = v_sale.customer_id and c.shop_id = p_shop_id
+    for update;
+
+    if not found then
+      raise exception 'Customer not found for this shop';
+    end if;
+    if v_customer_credit_limit > 0
+       and v_customer_credit_balance + v_credit_adjustment > v_customer_credit_limit then
+      raise exception 'Credit limit exceeded';
+    end if;
 
     update public.sales
     set amount_paid = v_received,
@@ -81,7 +99,7 @@ begin
     where id = p_sale_id and shop_id = p_shop_id;
 
     update public.customers
-    set credit_balance = coalesce(credit_balance, 0) + (v_expected_due - v_previous_due),
+    set credit_balance = v_customer_credit_balance + v_credit_adjustment,
         updated_at = now()
     where id = v_sale.customer_id and shop_id = p_shop_id;
 
