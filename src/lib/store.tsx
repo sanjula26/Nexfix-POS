@@ -1351,7 +1351,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (duplicatePhone || duplicateNic) { duplicate = true; return s; }
     const updated: Customer = existing
       ? { ...existing, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined }
-      : { ...c, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditBalance: 0, loyaltyPoints, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined };
+      : { ...c, name, phone, email: email || undefined, nic: nic || undefined, tin: tin || undefined, address: address || undefined, creditBalance: Math.max(0, Number(c.creditBalance) || 0), loyaltyPoints, creditLimit: creditLimit && creditLimit > 0 ? Math.round(creditLimit * 100) / 100 : undefined };
     const updatedCustomers = existing ? s.customers.map(x => x.id === c.id ? updated : x) : [updated, ...s.customers];
     syncToGoogleDrive('Customers', updatedCustomers);
     return { ...s, customers: updatedCustomers };
