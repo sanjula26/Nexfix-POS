@@ -12,6 +12,8 @@ type DesktopAuthStorage = {
   removeCloudAuthStorageItem?: (key: string) => Promise<{ ok?: boolean; error?: string }>;
   loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
   saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
+  getCloudAuthSignedOut?: () => Promise<{ ok?: boolean; signedOut?: boolean; error?: string }>;
+  setCloudAuthSignedOut?: (signedOut: boolean) => Promise<{ ok?: boolean; error?: string }>;
 };
 
 function getDesktopStorage(): DesktopAuthStorage | undefined {
@@ -99,6 +101,19 @@ export function restoreCloudSession(): Promise<{ ok: boolean; email?: string; er
   restorePromise = (async () => {
     if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
     try {
+      const desktop = getDesktopStorage();
+      let explicitlySignedOut = false;
+      try {
+        const secureMarker = await desktop?.getCloudAuthSignedOut?.();
+        if (secureMarker?.ok) explicitlySignedOut = secureMarker.signedOut === true;
+        else explicitlySignedOut = localStorage.getItem('nexfix_cloud_signed_out') === '1';
+      } catch {
+        try { explicitlySignedOut = localStorage.getItem('nexfix_cloud_signed_out') === '1'; } catch { /* optional */ }
+      }
+      if (explicitlySignedOut) {
+        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* clear unusable local state best-effort */ }
+        return { ok: false, error: 'Cloud sign-in required once in Settings.' };
+      }
       const { data, error } = await supabase.auth.getSession();
       if (error) return { ok: false, error: error.message };
       let session = data.session;
@@ -148,6 +163,15 @@ export function restoreCloudSession(): Promise<{ ok: boolean; email?: string; er
     }
   })().finally(() => { restorePromise = null; });
   return restorePromise;
+}
+
+export async function setCloudSignOutMarker(signedOut: boolean): Promise<void> {
+  try {
+    if (signedOut) localStorage.setItem('nexfix_cloud_signed_out', '1');
+    else localStorage.removeItem('nexfix_cloud_signed_out');
+  } catch { /* secure Electron marker below remains authoritative */ }
+  const desktop = getDesktopStorage();
+  try { await desktop?.setCloudAuthSignedOut?.(signedOut); } catch { /* optional outside installed Electron */ }
 }
 
 export function requireSupabase(): SupabaseClient {
