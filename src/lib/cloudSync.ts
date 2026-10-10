@@ -263,6 +263,74 @@ export async function registerDesktopUpdaterDevice(shopId: string): Promise<{ ok
  * Cloud stock, customer balances/points, and tracked-unit status are authoritative;
  * reconnecting an offline POS must never overwrite newer cloud state with stale local data.
  */
+export async function findCloudCustomerByPhone(
+  phone: string,
+  shopId = getCloudShopId(),
+): Promise<{ ok: boolean; customer?: { id: string; phone: string | null; name: string }; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const normalized = normalizeWhatsAppPhone(phone);
+  if (normalized.length < 9) return { ok: true };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await supabase.from('customers').select('id,phone,name')
+      .eq('shop_id', shopId).order('id').range(offset, offset + 499);
+    if (error) return { ok: false, error: error.message };
+    const page = data || [];
+    rows.push(...page);
+    if (page.length < 500) break;
+  }
+  const exact = rows.find(row => String(row.phone || '').trim() === phone.trim());
+  const match = exact || rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
+  return { ok: true, customer: match };
+}
+
+export async function ensureCloudCustomerForSale(
+  shopId: string,
+  customer: { id: string; name: string; phone?: string; email?: string; nic?: string; address?: string; creditLimit?: number },
+): Promise<{ ok: boolean; customerId?: string; error?: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  const byId = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', customer.id).maybeSingle();
+  if (byId.error) return { ok: false, error: byId.error.message };
+  if (byId.data?.id) return { ok: true, customerId: byId.data.id };
+
+  const normalized = normalizeWhatsAppPhone(customer.phone || '');
+  if (normalized.length >= 9) {
+    const found = await findCloudCustomerByPhone(customer.phone || '', shopId);
+    if (!found.ok) return { ok: false, error: found.error };
+    if (found.customer) return { ok: true, customerId: found.customer.id };
+  }
+  const rawPhone = String(customer.phone || '').trim();
+  const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
+  const placeholder = normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national));
+  const row = {
+    id: customer.id, shop_id: shopId, name: customer.name.trim(),
+    phone: rawPhone && !placeholder ? rawPhone : null,
+    email: customer.email || null, nic: customer.nic || null, address: customer.address || null,
+    credit_limit: Math.max(0, Number(customer.creditLimit || 0) || 0), notes: null,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+  const inserted = await supabase.from('customers').insert(row);
+  if (!inserted.error) return { ok: true, customerId: customer.id };
+  if (inserted.error.code === '23505' || /duplicate key|unique constraint/i.test(inserted.error.message)) {
+    if (rawPhone) {
+      const found = await findCloudCustomerByPhone(rawPhone, shopId);
+      if (!found.ok) return { ok: false, error: found.error };
+      if (found.customer) return { ok: true, customerId: found.customer.id };
+    }
+    const retryById = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', customer.id).maybeSingle();
+    if (retryById.data?.id) return { ok: true, customerId: retryById.data.id };
+  }
+  return { ok: false, error: inserted.error.message };
+}
+
 export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
