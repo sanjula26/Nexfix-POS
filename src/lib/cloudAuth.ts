@@ -308,6 +308,7 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
   const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+  if (!error) { try { localStorage.removeItem('nexfix_cloud_signed_out'); } catch { /* optional */ } }
   if (error) return { ok: false, error: error.message };
   // Do not wait for device/shop provisioning here. The caller may be the local
   // login path, which must stay fast and offline-capable. The updater refresh
@@ -329,6 +330,12 @@ export async function ensureCloudSession(
   if (role !== 'admin') return { ok: true };
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  // A deliberate Cloud sign-out must not be undone by the local POS login flow.
+  try { if (localStorage.getItem('nexfix_cloud_signed_out') === '1') return { ok: true }; } catch { /* storage is optional */ }
+  // A persisted cloud session takes precedence over the separate local POS credentials.
+  const restoredSession = await supabase.auth.getSession();
+  if (!restoredSession.error && restoredSession.data.session) return { ok: true };
+
 
   const loginPromise = (async () => {
     try {
@@ -371,6 +378,7 @@ export async function signOutFromCloud(): Promise<void> {
   // Do not clear native updater credentials here. The updater is authorized
   // once per Windows device and is intentionally independent of POS/cloud
   // login sessions.
+  try { localStorage.setItem('nexfix_cloud_signed_out', '1'); } catch { /* optional sign-out guard */ }
   if (!supabase) return;
-  try { await supabase.auth.signOut(); } catch { /* local session remains authoritative offline */ }
+  try { await supabase.auth.signOut(); } catch { /* secure storage adapter still clears local tokens when reachable */ }
 }
