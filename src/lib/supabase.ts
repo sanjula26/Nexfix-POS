@@ -10,6 +10,8 @@ type DesktopAuthStorage = {
   getCloudAuthStorageItem?: (key: string) => Promise<{ ok?: boolean; found?: boolean; value?: string; error?: string }>;
   setCloudAuthStorageItem?: (payload: { key: string; value: string }) => Promise<{ ok?: boolean; error?: string }>;
   removeCloudAuthStorageItem?: (key: string) => Promise<{ ok?: boolean; error?: string }>;
+  loadCloudUpdaterRecovery?: (email: string) => Promise<{ ok?: boolean; found?: boolean; userId?: string; refreshToken?: string; error?: string }>;
+  saveCloudUpdaterRecovery?: (payload: { email: string; userId: string; refreshToken: string }) => Promise<{ ok?: boolean; error?: string }>;
 };
 
 function getDesktopStorage(): DesktopAuthStorage | undefined {
@@ -100,7 +102,35 @@ export function restoreCloudSession(): Promise<{ ok: boolean; email?: string; er
       const { data, error } = await supabase.auth.getSession();
       if (error) return { ok: false, error: error.message };
       let session = data.session;
-      if (!session) return { ok: false };
+      if (!session) {
+        // Migrate existing installations that only have the previously saved,
+        // OS-encrypted refresh token. Never auto-restore after explicit sign-out.
+        let signedOut = false;
+        let savedEmail = '';
+        try {
+          signedOut = localStorage.getItem('nexfix_cloud_signed_out') === '1';
+          savedEmail = localStorage.getItem('nexfix_cloud_updater_email')?.trim().toLowerCase() || '';
+        } catch { /* optional migration hint */ }
+        const desktop = getDesktopStorage();
+        if (!signedOut && savedEmail && desktop?.loadCloudUpdaterRecovery) {
+          const stored = await desktop.loadCloudUpdaterRecovery(savedEmail);
+          if (stored?.ok && stored.found && stored.refreshToken && stored.userId) {
+            const migrated = await supabase.auth.refreshSession({ refresh_token: stored.refreshToken });
+            if (!migrated.error && migrated.data.session && migrated.data.user?.id === stored.userId &&
+                migrated.data.user.email?.trim().toLowerCase() === savedEmail) {
+              session = migrated.data.session;
+              await desktop.saveCloudUpdaterRecovery?.({
+                email: savedEmail,
+                userId: session.user.id,
+                refreshToken: session.refresh_token,
+              });
+            } else if (migrated.error && /invalid refresh token|refresh token.*(invalid|expired|not found|reuse)/i.test(migrated.error.message)) {
+              return { ok: false, error: 'Saved Cloud session expired. Sign in once in Settings to restore this PC.' };
+            }
+          }
+        }
+        if (!session) return { ok: false };
+      }
       if (session.expires_at && session.expires_at * 1000 <= Date.now() + 60_000) {
         const refreshed = await supabase.auth.refreshSession();
         if (refreshed.error || !refreshed.data.session) {
