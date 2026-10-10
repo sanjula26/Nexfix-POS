@@ -1,5 +1,5 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
-import { supabase, supabaseConfigured } from './supabase';
+import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
@@ -61,9 +61,15 @@ export function setCloudShopId(id: string): void {
 export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: boolean; shopId?: string; error?: string }> {
   void shopName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  // Sale/catalog work waits for the durable Electron session restore and any
+  // near-expiry refresh before deciding that the operator must sign in.
+  const restored = await restoreCloudSession();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
-  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
+  if (!sessionData.session) {
+    const detail = restored.error ? ` ${restored.error}` : '';
+    return { ok: false, error: `Cloud sign-in required once in Settings.${detail}` };
+  }
 
   const cached = getCloudShopId();
   if (cached) {
