@@ -39,7 +39,7 @@ export default function Customers() {
       setSaveError('Enter a valid customer phone number.');
       return;
     }
-    if (normalizedPhone === '94770000000' || (nationalPhone.length >= 8 && /^(\\d)\\1+$/.test(nationalPhone))) {
+    if (normalizedPhone === '94770000000' || (nationalPhone.length >= 8 && /^(\d)\1+$/.test(nationalPhone))) {
       setSaveError('That looks like a placeholder number. Enter the customer’s real phone number.');
       return;
     }
