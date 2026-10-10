@@ -5,7 +5,8 @@ import {
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState, PageHeading } from '../components/ui';
-import { fmtRs, fmtDate, timeAgo, uid, salePaymentLabel } from '../lib/utils';
+import { fmtRs, fmtDate, timeAgo, uid, salePaymentLabel, normalizeWhatsAppPhone } from '../lib/utils';
+import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
 import type { Customer } from '../lib/types';
 
 export default function Customers() {
@@ -16,6 +17,7 @@ export default function Customers() {
   const [isNew, setIsNew] = useState(false);
   const [deleting, setDeleting] = useState<Customer | null>(null);
   const [historyOf, setHistoryOf] = useState<Customer | null>(null);
+  const [saveError, setSaveError] = useState('');
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -27,8 +29,66 @@ export default function Customers() {
 
   const credited = state.customers.filter(c => c.creditBalance > 0);
 
-  const save = () => {
+  const save = async () => {
     if (!editing || !editing.name.trim() || !editing.phone.trim()) return;
+    setSaveError('');
+    const phone = editing.phone.trim();
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+    const nationalPhone = normalizedPhone.startsWith('94') ? normalizedPhone.slice(2) : normalizedPhone;
+    if (normalizedPhone.length < 9) {
+      setSaveError('Enter a valid customer phone number.');
+      return;
+    }
+    if (normalizedPhone === '94770000000' || (nationalPhone.length >= 8 && /^(\\d)\\1+$/.test(nationalPhone))) {
+      setSaveError('That looks like a placeholder number. Enter the customer’s real phone number.');
+      return;
+    }
+
+    const localMatch = state.customers.find(customer =>
+      customer.id !== editing.id && normalizeWhatsAppPhone(customer.phone) === normalizedPhone,
+    );
+    if (localMatch) {
+      if (isNew) {
+        setEditing({
+          ...editing, id: localMatch.id, creditBalance: localMatch.creditBalance,
+          loyaltyPoints: localMatch.loyaltyPoints, creditLimit: editing.creditLimit ?? localMatch.creditLimit,
+        });
+        setIsNew(false);
+        setSaveError('This phone already belongs to a local customer. The existing record is selected; review and save again.');
+      } else {
+        setSaveError(`This phone is already used by ${localMatch.name}. Use that customer record instead.`);
+      }
+      return;
+    }
+
+    const existingLocal = state.customers.find(customer => customer.id === editing.id);
+    const phoneChanged = !existingLocal || normalizeWhatsAppPhone(existingLocal.phone) !== normalizedPhone;
+    const cloudShopId = getCloudShopId();
+    if (phoneChanged && cloudShopId && typeof navigator !== 'undefined' && navigator.onLine) {
+      const cloudMatch = await findCloudCustomerByPhone(phone, cloudShopId);
+      if (!cloudMatch.ok && cloudMatch.error !== 'offline') {
+        setSaveError(`Could not check cloud customers: ${cloudMatch.error || 'unknown error'}`);
+        return;
+      }
+      if (cloudMatch.customer && cloudMatch.customer.id !== editing.id) {
+        const remote = cloudMatch.customer;
+        if (isNew) {
+          setEditing({
+            ...editing, id: remote.id, name: remote.name || editing.name,
+            phone: remote.phone || phone, email: remote.email || editing.email,
+            nic: remote.nic || editing.nic, address: remote.address || editing.address,
+            creditBalance: Number(remote.credit_balance) || 0,
+            loyaltyPoints: Number(remote.loyalty_points) || 0,
+            creditLimit: Number(remote.credit_limit) > 0 ? Number(remote.credit_limit) : undefined,
+          });
+          setIsNew(false);
+          setSaveError('This phone already exists in the cloud. The existing customer record is selected; review and save again.');
+        } else {
+          setSaveError(`This phone is already used by cloud customer ${remote.name}. Use that record instead.`);
+        }
+        return;
+      }
+    }
     saveCustomer(editing);
     setEditing(null);
   };
@@ -75,6 +135,7 @@ export default function Customers() {
           <button
             className="btn btn-primary"
             onClick={() => {
+              setSaveError('');
               setEditing({ id: uid(), name: '', phone: '', email: '', nic: '', address: '', createdAt: new Date().toISOString(), creditBalance: 0, loyaltyPoints: 0 });
               setIsNew(true);
             }}
@@ -189,6 +250,7 @@ export default function Customers() {
                 placeholder="0" inputMode="numeric"
               />
             </Field>
+            {saveError && <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-sm text-rose-600">{saveError}</div>}
             <div className="flex gap-2.5 pt-1">
               <button className="btn btn-primary flex-1" onClick={save} disabled={!editing.name.trim() || !editing.phone.trim()}>
                 <UserPlus size={15} /> {isNew ? 'Add customer' : 'Save changes'}
