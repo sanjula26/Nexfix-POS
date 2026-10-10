@@ -551,11 +551,11 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     for (const row of existingRows) {
       const phoneOwner = remoteForPhone(row.phone);
       const phoneCanUpdate = !phoneOwner || phoneOwner.id === row.id;
-      const updates: Record<string, unknown> = {
+      const updates = {
         name: row.name, email: row.email, nic: row.nic,
         address: row.address, credit_limit: row.credit_limit, updated_at: row.updated_at,
+        ...(phoneCanUpdate ? { phone: row.phone } : {}),
       };
-      if (phoneCanUpdate) updates.phone = row.phone;
       const { error } = await supabase.from('customers').update(updates).eq('id', row.id).eq('shop_id', shopId);
       if (error) return { ok: false, error: `Customers update: ${error.message}` };
     }
