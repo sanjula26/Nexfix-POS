@@ -52,7 +52,7 @@ export default function CreditSettle() {
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [lastSaved, setLastSaved] = useState<{ payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding: number; remainingBalance: number; cashierName: string } | null>(null);
+  const [lastSaved, setLastSaved] = useState<{ payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding?: number; remainingBalance?: number; cashierName: string } | null>(null);
   const [whatsappPhone, setWhatsappPhone] = useState('');
   const [whatsappError, setWhatsappError] = useState('');
 
