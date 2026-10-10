@@ -17,7 +17,7 @@ import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signOutFromCloud } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
-import { restoreCloudSession, supabase, supabaseConfigured } from '../lib/supabase';
+import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
@@ -1003,7 +1003,7 @@ export default function Settings() {
               try {
                 const { error } = await supabase.auth.signInWithPassword({ email: cloudSetupEmail.trim(), password: cloudSetupPassword });
                 if (error) { setCloudSetupMsg({ ok: false, text: error.message }); return; }
-                try { localStorage.removeItem('nexfix_cloud_signed_out'); } catch { /* optional */ }
+                await setCloudSignOutMarker(false);
                 await refreshCloudSessionStatus();
                 const membership = await ensureCloudShop(form.shopName || state.settings.shopName || 'Nexfix Shop');
                 if (!membership.ok || !membership.shopId) { setCloudSetupMsg({ ok: false, text: membership.error?.toLowerCase().includes('membership') ? 'Signed in, but this Cloud account has no active shop membership. Ask the shop owner to provision it.' : membership.error || 'Could not resolve the Cloud shop.' }); return; }
