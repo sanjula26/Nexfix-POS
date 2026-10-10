@@ -89,10 +89,32 @@ export default function CreditSettle() {
   });
   const totalReceivables = state.customers.reduce((sum, c) => sum + Math.max(0, c.creditBalance || 0), 0);
   const totalCollectedToday = payments.filter(p => fmtDate(p.date) === fmtDate(new Date().toISOString())).reduce((sum, p) => sum + p.amount, 0);
-  const recent = payments
+  const [recentSearch, setRecentSearch] = useState('');
+  const [recentFrom, setRecentFrom] = useState('');
+  const [recentTo, setRecentTo] = useState('');
+  const [visibleRecentCount, setVisibleRecentCount] = useState(5);
+  const [whatsappRowId, setWhatsappRowId] = useState('');
+  const [rowWhatsappPhone, setRowWhatsappPhone] = useState('');
+  const recentQuery = recentSearch.trim().toLocaleLowerCase();
+  const filteredRecent = payments
     .filter(p => !customerId || p.customerId === customerId)
-    .sort((a, b) => +new Date(b.date) - +new Date(a.date))
-    .slice(0, 12);
+    .filter(p => {
+      const paymentDay = new Date(p.date);
+      if (!Number.isFinite(paymentDay.getTime())) return false;
+      const day = [paymentDay.getFullYear(), String(paymentDay.getMonth() + 1).padStart(2, '0'), String(paymentDay.getDate()).padStart(2, '0')].join('-');
+      if (recentFrom && day < recentFrom) return false;
+      if (recentTo && day > recentTo) return false;
+      if (!recentQuery) return true;
+      const c = state.customers.find(x => x.id === p.customerId);
+      const searchable = [c?.name, c?.phone, c?.address, ...(p.allocations || []).map(a => a.billNo)]
+        .filter(Boolean).join(' ').toLocaleLowerCase();
+      return searchable.includes(recentQuery);
+    })
+    .sort((a, b) => {
+      const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      return diff || String(b.id).localeCompare(String(a.id));
+    });
+  const recent = filteredRecent.slice(0, visibleRecentCount);
   const canCollect = !!user && (user.role === 'admin' || (can('page:customers') && can('page:pos')));
   const today = dkey(new Date());
   const selectedBranchId = state.settings.branchId || 'local-main';
@@ -253,8 +275,57 @@ export default function CreditSettle() {
             <p className="text-[11px] text-sub">Payments reduce the customer balance immediately and are recorded with date, user, method and invoice allocations. Settlements cannot be deleted in this version.</p>
           </div>
           <div className="card overflow-hidden">
-            <div className="p-4 border-b border-line"><div className="font-bold">Recent credit collections</div><div className="text-xs text-sub mt-1">{customer ? `History for ${customer.name}` : 'Latest repayments across all customers'}</div></div>
-            {recent.length ? <div className="divide-y divide-line">{recent.map(p => { const c = state.customers.find(x => x.id === p.customerId); const legs = p.methods || [{ method: p.method, amount: p.amount }]; return <div key={p.id} className="p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-semibold truncate">{c?.name || 'Unknown customer'}</div><div className="text-[11px] text-sub">{fmtDateTime(p.date)} · {p.by}</div><div className="text-[11px] text-sub mt-1">{legs.map(x => `${x.method.toUpperCase()} ${fmtRs(x.amount)}`).join(' + ')}</div>{p.allocations?.length ? <div className="text-[11px] text-sub">Applied to {p.allocations.map(x => x.billNo).join(', ')}</div> : null}{p.note && <div className="text-xs text-sub mt-1">{p.note}</div>}<div className="flex flex-wrap gap-2 mt-2"><button type="button" className="btn btn-soft !text-xs" onClick={() => { const receipt = { payment: p, customerName: c?.name || 'Unknown customer', customerPhone: c?.phone || '', previousOutstanding: p.balanceBefore, remainingBalance: p.balanceAfter, cashierName: p.by || 'Cashier' }; setLastSaved(receipt); setWhatsappPhone(c?.phone || ''); setWhatsappError(''); window.setTimeout(() => window.print(), 250); }}><Printer size={13}/> Reprint</button><button type="button" className="btn btn-soft !text-xs" onClick={() => { const receipt = { payment: p, customerName: c?.name || 'Unknown customer', customerPhone: c?.phone || '', previousOutstanding: p.balanceBefore, remainingBalance: p.balanceAfter, cashierName: p.by || 'Cashier' }; setLastSaved(receipt); const entered = window.prompt('WhatsApp number (editable; include country code if needed):', c?.phone || ''); if (entered === null) return; const phone = normalizeWhatsAppPhone(entered); if (phone.length < 9 || phone.length > 15) { setWhatsappPhone(entered); setWhatsappError('Enter a valid WhatsApp number including country code if needed.'); return; } setWhatsappPhone(entered); setWhatsappError(''); openWhatsAppLink(phone, buildSettlementWhatsAppText(receipt, state.settings)); }}><MessageCircle size={13}/> Resend WhatsApp</button></div></div><div className="font-bold num text-emerald-600 whitespace-nowrap">{fmtRs(p.amount)}</div></div></div>; })}</div> : <div className="p-4 text-sm text-sub">No credit payments recorded yet.</div>}
+            <div className="p-4 border-b border-line space-y-3">
+              <div><div className="font-bold">Recent credit collections</div><div className="text-xs text-sub mt-1">{customer ? `History for ${customer.name}` : 'Latest repayments across all customers'}</div></div>
+              <SearchInput value={recentSearch} onChange={value => { setRecentSearch(value); setVisibleRecentCount(5); }} placeholder="Search customer, mobile, address, bill no…" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label className="text-xs text-sub">Date from<input className="input w-full mt-1" type="date" value={recentFrom} max={recentTo || undefined} onChange={e => { setRecentFrom(e.target.value); setVisibleRecentCount(5); }} /></label>
+                <label className="text-xs text-sub">Date to<input className="input w-full mt-1" type="date" value={recentTo} min={recentFrom || undefined} onChange={e => { setRecentTo(e.target.value); setVisibleRecentCount(5); }} /></label>
+              </div>
+              {(recentSearch || recentFrom || recentTo) && <button type="button" className="btn btn-soft !text-xs" onClick={() => { setRecentSearch(''); setRecentFrom(''); setRecentTo(''); setVisibleRecentCount(5); }}>Clear search and dates</button>}
+              <div className="text-xs text-sub">Showing {Math.min(visibleRecentCount, filteredRecent.length)} of {filteredRecent.length} matching payment{filteredRecent.length === 1 ? '' : 's'} · Newest first</div>
+            </div>
+            {recent.length ? <div className="divide-y divide-line">{recent.map(p => {
+              const c = state.customers.find(x => x.id === p.customerId);
+              const legs = p.methods || [{ method: p.method, amount: p.amount }];
+              const receipt = { payment: p, customerName: c?.name || 'Unknown customer', customerPhone: c?.phone || '', previousOutstanding: p.balanceBefore, remainingBalance: p.balanceAfter, cashierName: p.by || 'Cashier' };
+              return <div key={p.id} className="p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold">{c?.name || 'Unknown customer'}</div>
+                    <div className="text-[11px] text-sub">{fmtDateTime(p.date)} · {p.by}</div>
+                    {c?.phone && <div className="text-[11px] text-sub">{c.phone}</div>}
+                    {c?.address && <div className="text-[11px] text-sub">{c.address}</div>}
+                    <div className="text-[11px] text-sub mt-1">{legs.map(x => `${x.method.toUpperCase()} ${fmtRs(x.amount)}`).join(' + ')}</div>
+                    {p.allocations?.length ? <div className="text-[11px] text-sub">Applied to {p.allocations.map(x => x.billNo).join(', ')}</div> : null}
+                    {p.note && <div className="text-xs text-sub mt-1">{p.note}</div>}
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <button type="button" className="btn btn-soft !text-xs" onClick={() => {
+                        setLastSaved(receipt);
+                        setWhatsappPhone(c?.phone || '');
+                        setWhatsappError('');
+                        window.setTimeout(() => window.print(), 250);
+                      }}><Printer size={13}/> Reprint</button>
+                      <button type="button" className="btn btn-soft !text-xs" onClick={() => {
+                        setWhatsappRowId(whatsappRowId === p.id ? '' : p.id);
+                        setRowWhatsappPhone(c?.phone || '');
+                      }}><MessageCircle size={13}/> Resend WhatsApp</button>
+                    </div>
+                    {whatsappRowId === p.id && <div className="mt-3 rounded-lg border border-line p-3 space-y-2">
+                      <label className="block text-xs font-semibold text-sub">WhatsApp number (editable)<input className="input w-full mt-1" type="tel" inputMode="tel" value={rowWhatsappPhone} onChange={e => setRowWhatsappPhone(e.target.value)} placeholder="Include country code if needed" /></label>
+                      <div className="flex flex-wrap gap-2"><button type="button" className="btn btn-primary !text-xs" onClick={() => {
+                        const phone = normalizeWhatsAppPhone(rowWhatsappPhone);
+                        if (phone.length < 9 || phone.length > 15) { window.alert('Enter a valid WhatsApp number including country code if needed.'); return; }
+                        openWhatsAppLink(phone, buildSettlementWhatsAppText(receipt, state.settings));
+                        setWhatsappRowId('');
+                      }}><MessageCircle size={13}/> Open WhatsApp</button><button type="button" className="btn btn-soft !text-xs" onClick={() => setWhatsappRowId('')}>Cancel</button></div>
+                    </div>}
+                  </div>
+                  <div className="font-bold num text-emerald-600 whitespace-nowrap">{fmtRs(p.amount)}</div>
+                </div>
+              </div>;
+            })}</div> : <div className="p-4 text-sm text-sub">{filteredRecent.length ? 'No credit payments match these filters.' : 'No credit payments recorded for the selected filters.'}</div>}
+            {filteredRecent.length > recent.length && <div className="p-3 border-t border-line"><button type="button" className="btn btn-soft w-full justify-center" onClick={() => setVisibleRecentCount(count => Math.min(count + 5, filteredRecent.length))}>See more ({filteredRecent.length - recent.length} older payment{filteredRecent.length - recent.length === 1 ? '' : 's'})</button></div>}
           </div>
         </div>
       </div>
