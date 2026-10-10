@@ -1616,13 +1616,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const rawTradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
     if (tradeIn && (!tradeIn.productId || !Number.isFinite(tradeIn.value) || tradeIn.value <= 0)) return null;
     const tradeInProduct = tradeIn ? s.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
-    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn && !tradeInProduct) throw new Error('The selected trade-in product is unavailable. Refresh products and try again.');
     if (tradeIn?.addToInventory) {
-      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
-      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
-      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) throw new Error('Enter the trade-in IMEI.');
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) throw new Error('Enter the trade-in serial number.');
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) throw new Error('Configure IMEI/Serial tracking for the trade-in product before adding it to inventory.');
       const duplicate = (s.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
-      if (duplicate) return null;
+      if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
     const soldUnitIds: string[] = [];
     const requestedQtyByProduct = new Map<string, number>();
@@ -1826,29 +1826,53 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
-    if (!user || !can('page:pos') || input.lines.length === 0) {
-      if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
-      return null;
+    if (!user) throw new Error('Sign in again before completing this sale.');
+    if (!can('page:pos')) {
+      pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
+      throw new Error('Your role does not have permission to complete sales.');
     }
-    const selectedBranchId = stateRef.current.settings.branchId || 'local-main';
+    if (!input.lines.length) throw new Error('Add at least one item to the cart.');
+    if ((input.creditDue || 0) > 0.009 && !input.customerId) {
+      throw new Error('Select a customer before selling on credit.');
+    }
+
+    const snapshot = stateRef.current;
+    const selectedBranchId = snapshot.settings.branchId || 'local-main';
     const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
-    const todaySession = stateRef.current.sessions.find(session => session.cashierId === user.id && session.date === dkey(new Date()) && ((session.branchId || 'local-main') === selectedBranchId || ((session.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)));
-    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
-      pushAudit('DENIED', 'Sale', 'Blocked cloud sale because today\'s cash session is not open or opening float is not confirmed');
-      return null;
+    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
+    const today = dkey(new Date());
+    const todaysSessions = snapshot.sessions.filter(session => session.cashierId === user.id && session.date === today);
+    const todaySession = todaysSessions.find(session => effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId));
+    if (!todaySession) {
+      pushAudit('DENIED', 'Sale', 'Blocked sale because no open cash session matches the selected POS branch');
+      if (todaysSessions.length) {
+        throw new Error('Selected POS branch has no open session. Open float for this branch in Cashier Balance Report.');
+      }
+      throw new Error('Open today\'s cash drawer for this branch before selling.');
     }
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return completeSale(input);
+    if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for this branch. Open a new session before selling.');
+    if (todaySession.openingConfirmed === false) {
+      throw new Error('Confirm today\'s opening float in Cashier Balance Report before selling.');
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const localSale = completeSale(input);
+      if (!localSale) throw new Error('Offline sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
+      return localSale;
+    }
     const shop = await ensureCloudShop('Nexfix Shop');
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'Cloud session is not available' || shop.error === 'offline') {
-        return completeSale(input);
+        const localSale = completeSale(input);
+        if (!localSale) throw new Error('Local sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
+        return localSale;
       }
-      return null;
+      throw new Error(`Cloud shop setup failed: ${shop.error || 'membership is not provisioned'}`);
     }
     const saleLines = applyCategoryPromotions(input.lines, state.products, state.settings);
     const tradeIn = input.tradeIn;
     const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
-    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) return null;
+    if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) throw new Error('Select a trade-in product and enter a valid trade-in value.');
     const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
     if (tradeIn && !tradeInProduct) return null;
     if (tradeIn?.addToInventory) {
@@ -1861,7 +1885,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     if (user.role === 'admin' || user.role === 'manager') {
       const catalog = await syncNormalizedCatalog(state, shop.shopId);
-      if (!catalog.ok) return null;
+      if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
     }
     const localSalesman = input.salesmanId
       ? state.users.find(u => u.id === input.salesmanId && u.active)
@@ -1901,14 +1925,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     } else if (payments.length === 0 && input.payment !== 'credit' && input.amountPaid > 0) {
       payments.push({ method: input.payment, amount: Math.round(input.amountPaid * 100) / 100 });
     }
-    const cloud = await completeSaleAtomic({
+    let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
+    try {
+      cloud = await completeSaleAtomic({
       shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', deviceId: getMachineIdentity().id, saleId, customerId: input.customerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
-    });
-    if (!cloud.ok) throw new Error(cloud.error || 'Cloud sale could not be completed');
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error || 'unknown RPC error');
+      throw new Error(`Cloud sale failed: ${detail}`);
+    }
+    if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
