@@ -375,10 +375,9 @@ export async function ensureCloudSession(
   }
 }
 export async function signOutFromCloud(): Promise<void> {
-  // Do not clear native updater credentials here. The updater is authorized
-  // once per Windows device and is intentionally independent of POS/cloud
-  // login sessions.
+  // Sign out only this PC's Supabase session. Other PCs and the independent
+  // native updater device credential must remain authorized.
   try { localStorage.setItem('nexfix_cloud_signed_out', '1'); } catch { /* optional sign-out guard */ }
   if (!supabase) return;
-  try { await supabase.auth.signOut(); } catch { /* secure storage adapter still clears local tokens when reachable */ }
+  try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* local session cleanup is best-effort when storage is unavailable */ }
 }
