@@ -1874,13 +1874,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
     if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) throw new Error('Select a trade-in product and enter a valid trade-in value.');
     const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
-    if (tradeIn && !tradeInProduct) return null;
+    if (tradeIn && !tradeInProduct) throw new Error('The selected trade-in product is unavailable. Refresh products and try again.');
     if (tradeIn?.addToInventory) {
-      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) return null;
-      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) return null;
-      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) return null;
+      if (tradeInProduct!.trackImei && !tradeIn.imei?.trim()) throw new Error('Enter the trade-in IMEI.');
+      if (tradeInProduct!.trackSerial && !tradeIn.serial?.trim()) throw new Error('Enter the trade-in serial number.');
+      if (!tradeInProduct!.trackImei && !tradeInProduct!.trackSerial) throw new Error('Configure IMEI/Serial tracking for the trade-in product before adding it to inventory.');
       const duplicate = (state.units || []).some(u => u.status === 'in_stock' && ((tradeIn.imei && u.imei === tradeIn.imei.trim()) || (tradeIn.serial && u.serial === tradeIn.serial.trim())));
-      if (duplicate) return null;
+      if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
     if (user.role === 'admin' || user.role === 'manager') {
