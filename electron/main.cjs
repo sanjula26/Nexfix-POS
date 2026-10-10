@@ -576,6 +576,50 @@ app.on('before-quit',(event)=>{
   event.preventDefault();
   requestExitWithBackup();
 });
+
+function isCloudAuthStorageKey(key){
+  return typeof key==='string' && key.length<=120 && /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
+}
+ipcMain.handle('cloud-auth-storage:get',(event,key)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  if(!isCloudAuthStorageKey(key)) return {ok:false,error:'Invalid cloud session storage key'};
+  if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+  try{
+    const records=readSecureRecoveryFile().cloudAuthStorage;
+    const encrypted=records && typeof records==='object' ? records[key] : null;
+    if(typeof encrypted!=='string'||!encrypted) return {ok:true,found:false};
+    return {ok:true,found:true,value:safeStorage.decryptString(Buffer.from(encrypted,'base64'))};
+  }catch(error){return {ok:false,error:error?.message||'Stored cloud session could not be opened'};}
+});
+ipcMain.handle('cloud-auth-storage:set',(event,payload)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  const key=payload?.key;
+  const value=payload?.value;
+  if(!isCloudAuthStorageKey(key)||typeof value!=='string'||value.length>200000) return {ok:false,error:'Invalid cloud session storage payload'};
+  if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
+  try{
+    const current=readSecureRecoveryFile();
+    const records=current.cloudAuthStorage&&typeof current.cloudAuthStorage==='object'?{...current.cloudAuthStorage}:{};
+    records[key]=safeStorage.encryptString(value).toString('base64');
+    writeSecureRecoveryFile({...current,version:2,cloudAuthStorage:records});
+    return {ok:true};
+  }catch(error){return {ok:false,error:error?.message||'Cloud session could not be stored securely'};}
+});
+ipcMain.handle('cloud-auth-storage:remove',(event,key)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  if(!isCloudAuthStorageKey(key)) return {ok:false,error:'Invalid cloud session storage key'};
+  try{
+    const current=readSecureRecoveryFile();
+    const records=current.cloudAuthStorage&&typeof current.cloudAuthStorage==='object'?{...current.cloudAuthStorage}:{};
+    delete records[key];
+    if(Object.keys(records).length) current.cloudAuthStorage=records;
+    else delete current.cloudAuthStorage;
+    if(Object.keys(current).length===0){try{fs.rmSync(getSecureRecoveryFile(),{force:true});}catch{}}
+    else writeSecureRecoveryFile(current);
+    return {ok:true};
+  }catch(error){return {ok:false,error:error?.message||'Cloud session could not be cleared'};}
+});
+
 app.whenReady().then(()=>{
   if(process.platform==='win32' && app.isPackaged){
     try{ app.setAsDefaultProtocolClient(AUTH_PROTOCOL); }catch{}
