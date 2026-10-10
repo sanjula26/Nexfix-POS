@@ -66,7 +66,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   const restored = await restoreCloudSession();
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
-  if (!sessionData.session) {
+  if (!sessionData.session || (sessionData.session.expires_at && sessionData.session.expires_at * 1000 <= Date.now())) {
     const detail = restored.error ? ` ${restored.error}` : '';
     return { ok: false, error: `Cloud sign-in required once in Settings.${detail}` };
   }
