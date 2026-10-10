@@ -1,4 +1,4 @@
-import { supabase, supabaseConfigured } from './supabase';
+import { setCloudSignOutMarker, supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
@@ -377,7 +377,7 @@ export async function ensureCloudSession(
 export async function signOutFromCloud(): Promise<void> {
   // Sign out only this PC's Supabase session. Other PCs and the independent
   // native updater device credential must remain authorized.
-  try { localStorage.setItem('nexfix_cloud_signed_out', '1'); } catch { /* optional sign-out guard */ }
+  await setCloudSignOutMarker(true);
   if (!supabase) return;
   try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* local session cleanup is best-effort when storage is unavailable */ }
 }
