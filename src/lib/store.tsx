@@ -1862,7 +1862,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const shop = await ensureCloudShop('Nexfix Shop');
     if (!shop.ok || !shop.shopId) {
-      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'Cloud session is not available' || shop.error === 'offline') {
+      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
         const localSale = completeSale(input);
         if (!localSale) throw new Error('Local sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
         return localSale;
