@@ -19,7 +19,7 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
+import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
 import { supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
 
@@ -1883,9 +1883,32 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
+    let customerIdMap: Record<string, string> = {};
     if (user.role === 'admin' || user.role === 'manager') {
-      const catalog = await syncNormalizedCatalog(state, shop.shopId);
+      const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
       if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
+      customerIdMap = catalog.customerIdMap || {};
+    }
+    let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
+    if (input.customerId) {
+      const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
+      if (localCustomer) {
+        const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        if (resolvedCustomer.ok && resolvedCustomer.customerId) {
+          cloudCustomerId = resolvedCustomer.customerId;
+        } else if ((input.creditDue || 0) > 0.009) {
+          throw new Error(`Credit customer could not be resolved in the cloud: ${resolvedCustomer.error || 'customer was not found'}`);
+        } else {
+          // A walk-in/cash sale must not be blocked by an optional customer
+          // record that cannot be synchronized. The sale still commits without
+          // attaching that unresolved customer.
+          cloudCustomerId = undefined;
+        }
+      } else if ((input.creditDue || 0) > 0.009) {
+        throw new Error('Selected credit customer is missing from this POS customer list. Select the customer again before selling on credit.');
+      } else {
+        cloudCustomerId = undefined;
+      }
     }
     const localSalesman = input.salesmanId
       ? state.users.find(u => u.id === input.salesmanId && u.active)
@@ -1895,7 +1918,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
       lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
-      customerId: input.customerId || null, discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct || 0,
+      customerId: cloudCustomerId || null, discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct || 0,
       shipping: input.shipping || 0, pointsRedeemed: input.pointsRedeemed || 0,
       payment: input.payment, amountPaid: input.amountPaid, creditDue: input.creditDue || 0,
       payments: (input.payments || []).map(p => ({ method: p.method, amount: p.amount })),
@@ -1928,7 +1951,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
       cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', deviceId: getMachineIdentity().id, saleId, customerId: input.customerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: stateRef.current.settings.branchId || 'local-main', deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
