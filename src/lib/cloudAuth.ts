@@ -1,4 +1,4 @@
-import { setCloudSignOutMarker, supabase, supabaseConfigured } from './supabase';
+import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured } from './supabase';
 import { ensureCloudShop, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
@@ -330,6 +330,14 @@ export async function ensureCloudSession(
   if (role !== 'admin') return { ok: true };
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  // Honor the durable Electron sign-out marker before attempting any
+  // legacy local-password auto-login or updater recovery path.
+  const durableRestore = await restoreCloudSession();
+  if (durableRestore.ok) {
+    void refreshDesktopUpdaterCredentials().catch(() => {});
+    return { ok: true };
+  }
+  if (durableRestore.error === 'Cloud sign-in required once in Settings.') return { ok: true };
   // A deliberate Cloud sign-out must not be undone by the local POS login flow.
   try { if (localStorage.getItem('nexfix_cloud_signed_out') === '1') return { ok: true }; } catch { /* storage is optional */ }
   // A persisted cloud session takes precedence over the separate local POS credentials.
