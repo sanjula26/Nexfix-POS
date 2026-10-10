@@ -2,6 +2,7 @@ import type { InventoryUnit, POSState, Purchase } from './types';
 import { supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock } from './branchStock';
+import { normalizeWhatsAppPhone } from './utils';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -262,7 +263,7 @@ export async function registerDesktopUpdaterDevice(shopId: string): Promise<{ ok
  * Cloud stock, customer balances/points, and tracked-unit status are authoritative;
  * reconnecting an offline POS must never overwrite newer cloud state with stale local data.
  */
-export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string }> {
+export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -401,31 +402,120 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
 
-  const customerRows = state.customers.map(c => ({
-    id: c.id, shop_id: shopId, name: c.name, phone: c.phone || null, email: c.email || null,
-    nic: c.nic || null, address: c.address || null, credit_limit: Math.max(0, Number(c.creditLimit ?? 0) || 0), notes: null,
-    created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
-  }));
+  const isPlaceholderCustomerPhone = (phone: string | null) => {
+    if (!phone) return false;
+    const normalized = normalizeWhatsAppPhone(phone);
+    const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
+    return normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national));
+  };
+  const customerRows = state.customers.map(c => {
+    const rawPhone = String(c.phone || '').trim();
+    // Known demo/placeholder numbers are not real contact identities. Keep
+    // them local, but don't let them reserve a unique cloud phone.
+    const phone = !rawPhone || isPlaceholderCustomerPhone(rawPhone) ? null : rawPhone;
+    return {
+      id: c.id, shop_id: shopId, name: c.name, phone, email: c.email || null,
+      nic: c.nic || null, address: c.address || null, credit_limit: Math.max(0, Number(c.creditLimit ?? 0) || 0), notes: null,
+      created_at: c.createdAt || new Date().toISOString(), updated_at: new Date().toISOString(),
+    };
+  });
+  const customerIdMap: Record<string, string> = {};
   if (customerRows.length) {
-    const ids = customerRows.map(c => c.id);
-    const { data: existing, error: existingError } = await supabase.from('customers').select('id').eq('shop_id', shopId).in('id', ids);
-    if (existingError) return { ok: false, error: `Customers lookup: ${existingError.message}` };
-    const existingIds = new Set((existing || []).map(row => row.id));
-    const missing = customerRows.filter(row => !existingIds.has(row.id));
-    if (missing.length) {
-      const { error } = await supabase.from('customers').insert(missing);
-      if (error) return { ok: false, error: `Customers: ${error.message}` };
+    // Read the full shop customer set in bounded pages so phone matching does
+    // not silently miss records beyond PostgREST's default row limit.
+    const cloudCustomers: Array<{ id: string; phone: string | null }> = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase.from('customers')
+        .select('id,phone').eq('shop_id', shopId).order('id').range(offset, offset + 499);
+      if (error) return { ok: false, error: `Customers lookup: ${error.message}` };
+      const page = data || [];
+      cloudCustomers.push(...page);
+      if (page.length < 500) break;
+    }
+    const cloudById = new Map(cloudCustomers.map(row => [row.id, row]));
+    const cloudByExactPhone = new Map<string, { id: string; phone: string | null }>();
+    const cloudByNormalizedPhone = new Map<string, { id: string; phone: string | null }>();
+    for (const row of cloudCustomers) {
+      const exact = String(row.phone || '').trim();
+      if (exact && !cloudByExactPhone.has(exact)) cloudByExactPhone.set(exact, row);
+      const normalized = normalizeWhatsAppPhone(exact);
+      if (normalized && !cloudByNormalizedPhone.has(normalized)) cloudByNormalizedPhone.set(normalized, row);
+    }
+    const remoteForPhone = (phone: string | null) => {
+      const exact = String(phone || '').trim();
+      if (!exact) return undefined;
+      return cloudByExactPhone.get(exact) || cloudByNormalizedPhone.get(normalizeWhatsAppPhone(exact));
+    };
+
+    // De-duplicate the local upload batch by canonical phone. Keep blank and
+    // placeholder numbers out of the phone map so they can be inserted by ID.
+    const localPhoneOwner = new Map<string, string>();
+    const uniqueRows: typeof customerRows = [];
+    for (const row of customerRows) {
+      const normalized = row.phone ? normalizeWhatsAppPhone(row.phone) : '';
+      const remotePhone = remoteForPhone(row.phone);
+      if (cloudById.has(row.id)) {
+        // An existing cloud ID owns its transaction history. Keep that ID even
+        // if a differently formatted phone matches another cloud customer;
+        // never merge credit/history implicitly.
+        customerIdMap[row.id] = row.id;
+        if (normalized && !localPhoneOwner.has(normalized)) localPhoneOwner.set(normalized, row.id);
+        uniqueRows.push(row);
+        continue;
+      }
+      if (normalized && localPhoneOwner.has(normalized)) {
+        customerIdMap[row.id] = remotePhone?.id || customerIdMap[localPhoneOwner.get(normalized)!] || localPhoneOwner.get(normalized)!;
+        continue;
+      }
+      if (normalized) localPhoneOwner.set(normalized, row.id);
+      if (remotePhone) {
+        customerIdMap[row.id] = remotePhone.id;
+        continue;
+      }
+      customerIdMap[row.id] = row.id;
+      uniqueRows.push(row);
     }
 
-    // Reconcile editable customer identity/contact fields only. Credit balance
-    // and loyalty points are transaction-owned and must never be overwritten
-    // from an offline snapshot.
-    for (const row of customerRows.filter(item => existingIds.has(item.id))) {
-      const { error } = await supabase.from('customers').update({
-        name: row.name, phone: row.phone, email: row.email, nic: row.nic,
+    const existingRows = uniqueRows.filter(row => cloudById.has(row.id));
+    const missingRows = uniqueRows.filter(row => !cloudById.has(row.id) && customerIdMap[row.id] === row.id);
+    // Only update editable fields. Avoid changing a phone onto one already
+    // owned by a different cloud ID; preserve the existing customer's history.
+    for (const row of existingRows) {
+      const phoneOwner = remoteForPhone(row.phone);
+      const phoneCanUpdate = !phoneOwner || phoneOwner.id === row.id;
+      const updates: Record<string, unknown> = {
+        name: row.name, email: row.email, nic: row.nic,
         address: row.address, credit_limit: row.credit_limit, updated_at: row.updated_at,
-      }).eq('id', row.id).eq('shop_id', shopId);
+      };
+      if (phoneCanUpdate) updates.phone = row.phone;
+      const { error } = await supabase.from('customers').update(updates).eq('id', row.id).eq('shop_id', shopId);
       if (error) return { ok: false, error: `Customers update: ${error.message}` };
+    }
+
+    if (missingRows.length) {
+      const { error } = await supabase.from('customers').insert(missingRows);
+      if (error) {
+        // A concurrent customer create can race the lookup. Re-read and recover
+        // any phone-unique conflict; only fail if the row cannot be reconciled.
+        const uniqueConflict = error.code === '23505' || /duplicate key|unique constraint/i.test(error.message);
+        if (!uniqueConflict) return { ok: false, error: `Customers: ${error.message}` };
+        for (const row of missingRows) {
+          const current = await supabase.from('customers').select('id,phone').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
+          if (current.error) return { ok: false, error: `Customers conflict recovery lookup: ${current.error.message}` };
+          if (current.data?.id) { customerIdMap[row.id] = current.data.id; continue; }
+          const byPhone = remoteForPhone(row.phone);
+          if (byPhone) { customerIdMap[row.id] = byPhone.id; continue; }
+          const retry = await supabase.from('customers').insert(row);
+          if (retry.error) {
+            if (retry.error.code === '23505' || /duplicate key|unique constraint/i.test(retry.error.message)) {
+              const latest = await supabase.from('customers').select('id,phone').eq('shop_id', shopId).eq('phone', row.phone).maybeSingle();
+              if (latest.data?.id) { customerIdMap[row.id] = latest.data.id; continue; }
+            }
+            return { ok: false, error: `Customers insert could not be recovered: ${retry.error.message}` };
+          }
+          customerIdMap[row.id] = row.id;
+        }
+      }
     }
   }
 
@@ -452,7 +542,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       if (error) return { ok: false, error: `Inventory units: ${error.message}` };
     }
   }
-  return { ok: true };
+  return { ok: true, customerIdMap };
 }
 
 export async function deleteInventoryUnitAtomic(input: {
