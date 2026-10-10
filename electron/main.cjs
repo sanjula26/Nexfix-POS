@@ -620,6 +620,25 @@ ipcMain.handle('cloud-auth-storage:remove',(event,key)=>{
   }catch(error){return {ok:false,error:error?.message||'Cloud session could not be cleared'};}
 });
 
+
+ipcMain.handle('cloud-auth-signout:get',(event)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  try { return {ok:true,signedOut:readSecureRecoveryFile().cloudAuthSignedOut===true}; }
+  catch(error){ return {ok:false,error:error?.message||'Cloud sign-out status could not be read'}; }
+});
+ipcMain.handle('cloud-auth-signout:set',(event,signedOut)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  if(typeof signedOut!=='boolean') return {ok:false,error:'Invalid cloud sign-out status'};
+  try {
+    const current=readSecureRecoveryFile();
+    if(signedOut) current.cloudAuthSignedOut=true;
+    else delete current.cloudAuthSignedOut;
+    if(Object.keys(current).length===0){try{fs.rmSync(getSecureRecoveryFile(),{force:true});}catch{}}
+    else writeSecureRecoveryFile(current);
+    return {ok:true};
+  } catch(error){return {ok:false,error:error?.message||'Cloud sign-out status could not be saved'};}
+});
+
 app.whenReady().then(()=>{
   if(process.platform==='win32' && app.isPackaged){
     try{ app.setAsDefaultProtocolClient(AUTH_PROTOCOL); }catch{}
