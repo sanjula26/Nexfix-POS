@@ -53,6 +53,7 @@ export default function CreditSettle() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<{ payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding?: number; remainingBalance?: number; cashierName: string } | null>(null);
+  const [historyPrintOnly, setHistoryPrintOnly] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState('');
   const [whatsappError, setWhatsappError] = useState('');
 
@@ -190,6 +191,7 @@ export default function CreditSettle() {
     }
     const payment = result.payment;
     const remainingBalance = payment.balanceAfter ?? Math.max(0, Math.round((customer.creditBalance - payment.amount) * 100) / 100);
+    setHistoryPrintOnly(false);
     setLastSaved({ payment, customerName: customer.name, customerPhone: customer.phone || '', previousOutstanding: payment.balanceBefore ?? Math.max(0, customer.creditBalance), remainingBalance, cashierName: user?.name || payment.by || 'Cashier' });
     setWhatsappPhone(customer.phone || '');
     setWhatsappError('');
@@ -215,11 +217,11 @@ export default function CreditSettle() {
       {!canCollect && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /> Your role can view receivables, but needs Customers and POS permissions to collect payments.</div>}
       {user && sessionBlockReason && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /><div><div className="font-semibold">Cashier drawer required</div><div>{sessionBlockReason}</div><div className="mt-1 text-xs">Credit collections are recorded in today's drawer and included in day-end cash/card totals.</div></div></div>}
       {lastSaved && <>
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
+        {!historyPrintOnly && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
           <div className="flex items-start gap-2"><CheckCircle2 size={19} className="text-emerald-600 mt-0.5" /><div className="min-w-0 flex-1"><div className="font-bold text-emerald-700">Settlement receipt ready</div><div className="text-sm text-sub">{lastSaved.customerName} · {fmtRs(lastSaved.payment.amount)} paid</div>{lastSaved.remainingBalance !== undefined && <><div className="text-sm font-semibold mt-1">Remaining balance: {fmtRs(lastSaved.remainingBalance)}</div>{lastSaved.remainingBalance <= 0.009 && <div className="text-xs font-extrabold text-emerald-700 mt-1">PAID IN FULL · BALANCE CLEARED</div>}</>}{lastSaved.remainingBalance === undefined && <div className="text-xs text-sub mt-1">Historical balance was not recorded; remaining balance is unavailable.</div>}</div></div>
-          <div className="flex flex-wrap gap-2"><button type="button" className="btn btn-primary" onClick={() => window.print()}><Printer size={15}/> Print settlement receipt</button><button type="button" className="btn !text-white" style={{background:'linear-gradient(135deg,#25d366,#128c7e)'}} onClick={() => { const phone = normalizeWhatsAppPhone(whatsappPhone); if (phone.length < 9 || phone.length > 15) { setWhatsappError('Enter a valid WhatsApp number including country code if needed.'); return; } setWhatsappError(''); openWhatsAppLink(phone, buildSettlementWhatsAppText(lastSaved, state.settings)); }}><MessageCircle size={15}/> WhatsApp settlement</button><button type="button" className="btn btn-soft" onClick={() => setLastSaved(null)}>Dismiss</button></div>
+          <div className="flex flex-wrap gap-2"><button type="button" className="btn btn-primary" onClick={() => window.print()}><Printer size={15}/> Print settlement receipt</button><button type="button" className="btn !text-white" style={{background:'linear-gradient(135deg,#25d366,#128c7e)'}} onClick={() => { const phone = normalizeWhatsAppPhone(whatsappPhone); if (phone.length < 9 || phone.length > 15) { setWhatsappError('Enter a valid WhatsApp number including country code if needed.'); return; } setWhatsappError(''); openWhatsAppLink(phone, buildSettlementWhatsAppText(lastSaved, state.settings)); }}><MessageCircle size={15}/> WhatsApp settlement</button><button type="button" className="btn btn-soft" onClick={() => { setLastSaved(null); setHistoryPrintOnly(false); }}>Dismiss</button></div>
           <div><label className="block text-xs font-semibold text-sub mb-1">Customer WhatsApp number (editable)</label><input className="input w-full" type="tel" inputMode="tel" value={whatsappPhone} onChange={e => {setWhatsappPhone(e.target.value); setWhatsappError('');}} placeholder="e.g. 0771234567 or +94771234567" />{whatsappError && <div className="text-xs text-rose-500 mt-1">{whatsappError}</div>}<div className="text-[11px] text-sub mt-1">WhatsApp opens with a prefilled message. Review and send it in WhatsApp.</div></div>
-        </div>
+        </div>}
         <div className="print-area" style={{fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace'}}><div style={{width:'72mm',maxWidth:'72mm',padding:'4mm',background:'#fff',color:'#000',fontSize:'11px',lineHeight:1.45}}>
           <div style={{textAlign:'center',fontWeight:800,fontSize:'15px'}}>{state.settings.shopName || 'Shop'}</div>{state.settings.phone && <div style={{textAlign:'center'}}>Tel: {state.settings.phone}</div>}{state.settings.address && <div style={{textAlign:'center',fontSize:'10px'}}>{state.settings.address}</div>}
           <div style={{borderTop:'1px dashed #000',margin:'10px 0'}}/><div style={{textAlign:'center',fontWeight:800}}>CREDIT PAYMENT RECEIPT</div><div style={{textAlign:'center',fontWeight:700}}>ණය ගෙවීම</div>
@@ -301,6 +303,7 @@ export default function CreditSettle() {
                     {p.note && <div className="text-xs text-sub mt-1">{p.note}</div>}
                     <div className="flex flex-wrap gap-2 mt-2">
                       <button type="button" className="btn btn-soft !text-xs" onClick={() => {
+                        setHistoryPrintOnly(true);
                         setLastSaved(receipt);
                         setWhatsappPhone(c?.phone || '');
                         setWhatsappError('');
