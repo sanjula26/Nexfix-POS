@@ -745,7 +745,7 @@ export default function POS() {
       return;
     }
     const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
-    if (normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national))) {
+    if (normalized === '94770000000' || (national.length >= 8 && /^(\d)\1+$/.test(national))) {
       toast('That looks like a placeholder number. Enter the customer’s real phone number.', 'rose');
       return;
     }
