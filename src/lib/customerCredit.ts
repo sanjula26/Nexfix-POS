@@ -18,6 +18,10 @@ export interface CustomerCreditPayment {
   date: string;
   by: string;
   note?: string;
+  /** Snapshot of customer credit balance immediately before this settlement. */
+  balanceBefore?: number;
+  /** Snapshot of customer credit balance immediately after this settlement. */
+  balanceAfter?: number;
 }
 
 /** Amount still open on a completed credit invoice after recorded settlement allocations. */
