@@ -287,6 +287,7 @@ export default function CreditSettle() {
               {(recentSearch || recentFrom || recentTo) && <button type="button" className="btn btn-soft !text-xs" onClick={() => { setRecentSearch(''); setRecentFrom(''); setRecentTo(''); setVisibleRecentCount(5); }}>Clear search and dates</button>}
               <div className="text-xs text-sub">Showing {Math.min(visibleRecentCount, filteredRecent.length)} of {filteredRecent.length} matching payment{filteredRecent.length === 1 ? '' : 's'} · Newest first</div>
             </div>
+            <div className="max-h-[min(400px,55vh)] overflow-y-scroll overscroll-contain scroll-smooth [scrollbar-gutter:stable]">
             {recent.length ? <div className="divide-y divide-line">{recent.map(p => {
               const c = state.customers.find(x => x.id === p.customerId);
               const legs = p.methods || [{ method: p.method, amount: p.amount }];
@@ -323,6 +324,7 @@ export default function CreditSettle() {
               </div>;
             })}</div> : <div className="p-4 text-sm text-sub">{filteredRecent.length ? 'No credit payments match these filters.' : 'No credit payments recorded for the selected filters.'}</div>}
             {filteredRecent.length > recent.length && <div className="p-3 border-t border-line"><button type="button" className="btn btn-soft w-full justify-center" onClick={() => setVisibleRecentCount(count => Math.min(count + 5, filteredRecent.length))}>See more ({filteredRecent.length - recent.length} older payment{filteredRecent.length - recent.length === 1 ? '' : 's'})</button></div>}
+            </div>
           </div>
         </div>
       </div>
