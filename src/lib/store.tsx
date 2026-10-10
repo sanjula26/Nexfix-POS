@@ -1552,13 +1552,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (!currentCustomer || amount > currentOutstanding + 0.009) {
         return deny(`Customer outstanding changed to Rs. ${currentOutstanding.toLocaleString()}. Refresh the balance and retry.`, `Blocked stale credit settlement for ${customer.name}`);
       }
+      const newBalance = Math.max(0, Math.round((currentOutstanding - amount) * 100) / 100);
       const payment: CustomerCreditPayment = {
-        id: uid(), customerId: customer.id, cashierId: user.id, branchId: selectedBranchId, amount, method: methods[0].method,
+        id: uid(), customerId: customer.id, cashierId: user.id, branchId: selectedBranchId, amount, balanceBefore: currentOutstanding, balanceAfter: newBalance, method: methods[0].method,
         methods: methods.length > 1 ? methods : undefined,
         allocations,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
       };
-      const newBalance = Math.max(0, Math.round((currentOutstanding - amount) * 100) / 100);
       setState(s => ({
         ...s,
         customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
