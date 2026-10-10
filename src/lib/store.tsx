@@ -1998,7 +1998,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       id: String(row.id), branchId: String(row.branch_id || stateRef.current.settings.branchId || 'local-main'), billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
       cashierId: String(row.cashier_id ?? user.id), cashierName: String(row.cashier_name ?? user.name),
       machineId: getMachineIdentity().id, machineName: getMachineIdentity().name,
-      customerId: row.customer_id ? String(row.customer_id) : undefined,
+      // Preserve the selected local customer ID in local history when phone
+      // reconciliation mapped it to a different cloud ID. Cloud RPC already
+      // committed against the canonical cloud customer ID.
+      customerId: input.customerId || (row.customer_id ? String(row.customer_id) : undefined),
       customerName: String(row.customer_name ?? committed.customer?.name ?? 'Walk-in customer'),
       items: committedItems, subtotal: n(row.subtotal), discount: Math.max(0, n(row.discount) - tradeInValue), tax: n(row.tax),
       shipping: n(row.shipping) || undefined, total: n(row.total),
@@ -2034,7 +2037,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       const customer = committed.customer;
       const updatedCustomers = customer?.id
-        ? prev.customers.map(c => c.id === String(customer.id) ? {
+        ? prev.customers.map(c => (c.id === String(customer.id) || c.id === input.customerId) ? {
             ...c, name: String(customer.name ?? c.name), phone: String(customer.phone ?? c.phone ?? ''),
             email: customer.email ? String(customer.email) : c.email, nic: customer.nic ? String(customer.nic) : c.nic,
             address: customer.address ? String(customer.address) : c.address,
