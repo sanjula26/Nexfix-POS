@@ -15,9 +15,9 @@ import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
-import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials } from '../lib/cloudAuth';
+import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signOutFromCloud } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
-import { supabase, supabaseConfigured } from '../lib/supabase';
+import { restoreCloudSession, supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
@@ -385,9 +385,29 @@ export default function Settings() {
   const [cloudSetupPassword, setCloudSetupPassword] = useState('');
   const [cloudSetupBusy, setCloudSetupBusy] = useState(false);
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [cloudSessionStatus, setCloudSessionStatus] = useState<{ loading: boolean; email?: string; error?: string }>({ loading: true });
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getUpdateStatus?:()=>Promise<{supported?:boolean;authorized?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+
+  const refreshCloudSessionStatus = useCallback(async () => {
+    if (!supabaseConfigured || !supabase) {
+      setCloudSessionStatus({ loading: false, error: 'Cloud authentication is not configured on this POS.' });
+      return;
+    }
+    const restored = await restoreCloudSession();
+    const { data, error } = await supabase.auth.getSession();
+    if (!error && data.session) setCloudSessionStatus({ loading: false, email: data.session.user.email || undefined });
+    else setCloudSessionStatus({ loading: false, error: restored.error || error?.message || 'Cloud sign-in required once in Settings.' });
+  }, []);
+  useEffect(() => {
+    void refreshCloudSessionStatus();
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setCloudSessionStatus({ loading: false, email: session?.user.email || undefined, error: session ? undefined : 'Cloud sign-in required once in Settings.' });
+    });
+    return () => data.subscription.unsubscribe();
+  }, [refreshCloudSessionStatus]);
 
   useEffect(() => { setAutoHours(backupMeta.autoBackupHours ?? 6); }, [backupMeta.autoBackupHours]);
   useEffect(() => {
@@ -983,6 +1003,8 @@ export default function Settings() {
               try {
                 const { error } = await supabase.auth.signInWithPassword({ email: cloudSetupEmail.trim(), password: cloudSetupPassword });
                 if (error) { setCloudSetupMsg({ ok: false, text: error.message }); return; }
+                try { localStorage.removeItem('nexfix_cloud_signed_out'); } catch { /* optional */ }
+                await refreshCloudSessionStatus();
                 const membership = await ensureCloudShop(form.shopName || state.settings.shopName || 'Nexfix Shop');
                 if (!membership.ok || !membership.shopId) { setCloudSetupMsg({ ok: false, text: membership.error?.toLowerCase().includes('membership') ? 'Signed in, but this Cloud account has no active shop membership. Ask the shop owner to provision it.' : membership.error || 'Could not resolve the Cloud shop.' }); return; }
                 setBranchCloudAuthNeeded(false);
@@ -993,6 +1015,27 @@ export default function Settings() {
               finally { setCloudSetupBusy(false); }
             })()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || !cloudSetupPassword}>Sign in to Cloud account</button>
             <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
+          </div>
+          <div className="mt-4 rounded-xl border border-line bg-raised/30 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink">Cloud sync session</p>
+                <p className={`mt-1 text-xs ${cloudSessionStatus.email ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'}`}>
+                  {cloudSessionStatus.loading ? 'Checking saved Cloud session…' : cloudSessionStatus.email ? `Signed in as ${cloudSessionStatus.email}` : 'Not signed in — Cloud sign-in required once in Settings.'}
+                </p>
+                <p className="mt-1 text-[11px] text-faint">This PC stays signed in for cloud sync until you sign out. The cloud password is never saved.</p>
+                {cloudSessionStatus.error && !cloudSessionStatus.email && <p className="mt-1 text-[11px] text-faint">{cloudSessionStatus.error}</p>}
+              </div>
+              {cloudSessionStatus.email && <button type="button" className="btn btn-secondary" onClick={() => void (async () => {
+                if (!window.confirm('Sign out of Cloud sync on this PC? Cloud sales, catalog, branches and credit sync will require sign-in again. Windows updater device authorization will remain unchanged.')) return;
+                setCloudSetupBusy(true);
+                try {
+                  await signOutFromCloud();
+                  await refreshCloudSessionStatus();
+                  setCloudSetupMsg({ ok: true, text: 'Signed out of Cloud sync on this PC. Local POS login and Windows updater authorization are unchanged.' });
+                } finally { setCloudSetupBusy(false); }
+              })()} disabled={cloudSetupBusy}>Sign out of Cloud</button>}
+            </div>
           </div>
           {cloudSetupMsg && <p className={`mt-3 text-[12px] font-semibold ${cloudSetupMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{cloudSetupMsg.text}</p>}
           <p className="text-[11px] text-faint mt-3">If Supabase requires email confirmation, confirm the message sent to the cloud account and then sign in again before retrying this setup.</p>
