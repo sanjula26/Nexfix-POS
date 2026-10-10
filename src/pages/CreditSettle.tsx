@@ -94,8 +94,6 @@ export default function CreditSettle() {
   const [recentFrom, setRecentFrom] = useState('');
   const [recentTo, setRecentTo] = useState('');
   const [visibleRecentCount, setVisibleRecentCount] = useState(5);
-  const [whatsappRowId, setWhatsappRowId] = useState('');
-  const [rowWhatsappPhone, setRowWhatsappPhone] = useState('');
   const recentQuery = recentSearch.trim().toLocaleLowerCase();
   const filteredRecent = payments
     .filter(p => !customerId || p.customerId === customerId)
@@ -312,19 +310,13 @@ export default function CreditSettle() {
                         window.setTimeout(() => window.print(), 250);
                       }}><Printer size={13}/> Reprint</button>
                       <button type="button" className="btn btn-soft !text-xs" onClick={() => {
-                        setWhatsappRowId(whatsappRowId === p.id ? '' : p.id);
-                        setRowWhatsappPhone(c?.phone || '');
-                      }}><MessageCircle size={13}/> Resend WhatsApp</button>
-                    </div>
-                    {whatsappRowId === p.id && <div className="mt-3 rounded-lg border border-line p-3 space-y-2">
-                      <label className="block text-xs font-semibold text-sub">WhatsApp number (editable)<input className="input w-full mt-1" type="tel" inputMode="tel" value={rowWhatsappPhone} onChange={e => setRowWhatsappPhone(e.target.value)} placeholder="Include country code if needed" /></label>
-                      <div className="flex flex-wrap gap-2"><button type="button" className="btn btn-primary !text-xs" onClick={() => {
-                        const phone = normalizeWhatsAppPhone(rowWhatsappPhone);
+                        const entered = window.prompt('WhatsApp number (editable; include country code if needed):', c?.phone || '');
+                        if (entered === null) return;
+                        const phone = normalizeWhatsAppPhone(entered);
                         if (phone.length < 9 || phone.length > 15) { window.alert('Enter a valid WhatsApp number including country code if needed.'); return; }
                         openWhatsAppLink(phone, buildSettlementWhatsAppText(receipt, state.settings));
-                        setWhatsappRowId('');
-                      }}><MessageCircle size={13}/> Open WhatsApp</button><button type="button" className="btn btn-soft !text-xs" onClick={() => setWhatsappRowId('')}>Cancel</button></div>
-                    </div>}
+                      }}><MessageCircle size={13}/> Resend WhatsApp</button>
+                    </div>
                   </div>
                   <div className="font-bold num text-emerald-600 whitespace-nowrap">{fmtRs(p.amount)}</div>
                 </div>
