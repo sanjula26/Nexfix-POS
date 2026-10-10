@@ -309,7 +309,7 @@ export async function ensureCloudCustomerForSale(
   }
   const rawPhone = String(customer.phone || '').trim();
   const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
-  const placeholder = normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national));
+  const placeholder = normalized === '94770000000' || (national.length >= 8 && /^(\d)\1+$/.test(national));
   const row = {
     id: customer.id, shop_id: shopId, name: customer.name.trim(),
     phone: rawPhone && !placeholder ? rawPhone : null,
@@ -474,7 +474,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     if (!phone) return false;
     const normalized = normalizeWhatsAppPhone(phone);
     const national = normalized.startsWith('94') ? normalized.slice(2) : normalized;
-    return normalized === '94770000000' || (national.length >= 8 && /^(\\d)\\1+$/.test(national));
+    return normalized === '94770000000' || (national.length >= 8 && /^(\d)\1+$/.test(national));
   };
   const customerRows = state.customers.map(c => {
     const rawPhone = String(c.phone || '').trim();
