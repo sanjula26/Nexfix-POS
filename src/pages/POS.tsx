@@ -770,11 +770,22 @@ export default function POS() {
         return;
       }
       if (cloudMatch.customer) {
-        setCustomerId(cloudMatch.customer.id);
-        setCustQuery(cloudMatch.customer.name || cloudMatch.customer.phone || phone);
+        const remote = cloudMatch.customer;
+        // Keep the cloud ID and current credit/loyalty values locally so future
+        // sales, customer selection, and credit settlement all refer to one ID.
+        saveCustomer({
+          id: remote.id, name: remote.name || name, phone: remote.phone || phone,
+          email: remote.email || undefined, nic: remote.nic || undefined,
+          address: remote.address || undefined, createdAt: new Date().toISOString(),
+          creditBalance: Number(remote.credit_balance) || 0,
+          loyaltyPoints: Number(remote.loyalty_points) || 0,
+          creditLimit: Number(remote.credit_limit) > 0 ? Number(remote.credit_limit) : undefined,
+        });
+        setCustomerId(remote.id);
+        setCustQuery(remote.name || remote.phone || phone);
         setAddCustOpen(false);
         setNewCust({ name: '', phone: '', nic: '', address: '' });
-        setBillingWhatsApp(cloudMatch.customer.phone || phone);
+        setBillingWhatsApp(remote.phone || phone);
         toast('Existing cloud customer selected by phone number', 'amber');
         return;
       }
