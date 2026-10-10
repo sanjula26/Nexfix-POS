@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   getCloudAuthStorageItem: (key) => ipcRenderer.invoke('cloud-auth-storage:get', key),
   setCloudAuthStorageItem: (payload) => ipcRenderer.invoke('cloud-auth-storage:set', payload),
   removeCloudAuthStorageItem: (key) => ipcRenderer.invoke('cloud-auth-storage:remove', key),
+  getCloudAuthSignedOut: () => ipcRenderer.invoke('cloud-auth-signout:get'),
+  setCloudAuthSignedOut: (signedOut) => ipcRenderer.invoke('cloud-auth-signout:set', signedOut),
   saveCloudUpdaterDeviceToken: (payload) => ipcRenderer.invoke('cloud-updater-token:save', payload),
   loadCloudUpdaterDeviceToken: () => ipcRenderer.invoke('cloud-updater-token:load'),
   clearCloudUpdaterDeviceToken: () => ipcRenderer.invoke('cloud-updater-token:clear'),
