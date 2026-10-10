@@ -266,7 +266,7 @@ export async function registerDesktopUpdaterDevice(shopId: string): Promise<{ ok
 export async function findCloudCustomerByPhone(
   phone: string,
   shopId = getCloudShopId(),
-): Promise<{ ok: boolean; customer?: { id: string; phone: string | null; name: string }; error?: string }> {
+): Promise<{ ok: boolean; customer?: { id: string; phone: string | null; name: string; email?: string | null; nic?: string | null; address?: string | null; credit_limit?: number | null; credit_balance?: number | null; loyalty_points?: number | null }; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -275,9 +275,9 @@ export async function findCloudCustomerByPhone(
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
+  const rows: Array<{ id: string; phone: string | null; name: string; email?: string | null; nic?: string | null; address?: string | null; credit_limit?: number | null; credit_balance?: number | null; loyalty_points?: number | null }> = [];
   for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from('customers').select('id,phone,name')
+    const { data, error } = await supabase.from('customers').select('id,phone,name,email,nic,address,credit_limit,credit_balance,loyalty_points')
       .eq('shop_id', shopId).order('id').range(offset, offset + 499);
     if (error) return { ok: false, error: error.message };
     const page = data || [];
