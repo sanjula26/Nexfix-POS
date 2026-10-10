@@ -334,7 +334,12 @@ export async function ensureCloudSession(
   try { if (localStorage.getItem('nexfix_cloud_signed_out') === '1') return { ok: true }; } catch { /* storage is optional */ }
   // A persisted cloud session takes precedence over the separate local POS credentials.
   const restoredSession = await supabase.auth.getSession();
-  if (!restoredSession.error && restoredSession.data.session) return { ok: true };
+  if (!restoredSession.error && restoredSession.data.session) {
+    // Preserve the existing updater provisioning/refresh path without making
+    // cloud session persistence depend on updater authorization success.
+    void refreshDesktopUpdaterCredentials().catch(() => {});
+    return { ok: true };
+  }
 
 
   const loginPromise = (async () => {
