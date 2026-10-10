@@ -107,9 +107,11 @@ export default function CreditSettle() {
       if (recentTo && day > recentTo) return false;
       if (!recentQuery) return true;
       const c = state.customers.find(x => x.id === p.customerId);
-      const searchable = [c?.name, c?.phone, c?.address, ...(p.allocations || []).map(a => a.billNo)]
+      const searchable = [c?.name, c?.address, ...(p.allocations || []).map(a => a.billNo)]
         .filter(Boolean).join(' ').toLocaleLowerCase();
-      return searchable.includes(recentQuery);
+      const queryDigits = recentQuery.replace(/\\D/g, '');
+      const phoneDigits = String(c?.phone || '').replace(/\\D/g, '');
+      return searchable.includes(recentQuery) || (!!queryDigits && phoneDigits.includes(queryDigits));
     })
     .sort((a, b) => {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
