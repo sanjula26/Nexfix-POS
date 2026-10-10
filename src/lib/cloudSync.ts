@@ -510,7 +510,7 @@ export async function completeSaleAtomic(input: {
   const { data, error } = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row?.ok || !row.sale) return { ok: false, error: 'Cloud sale was not committed' };
+  if (!row?.ok || !row.sale) return { ok: false, error: String(row?.error || row?.message || 'Cloud sale was not committed') };
   void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return {
     ok: true,
