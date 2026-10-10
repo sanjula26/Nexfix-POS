@@ -576,10 +576,14 @@ export default function POS() {
       if (tradeIn.addToInventory && tp.trackSerial && !tradeIn.serial.trim()) return setError('Enter the trade-in serial number');
     }
     if (hasCredit && paidNum > total + 0.009) return setError('Amount received now cannot exceed the bill total.');
-    if (intentionalCredit && !customerId) return setError('A registered customer is required when any balance remains on credit.');
+    // Resolve a matching existing customer synchronously at click time too; do not
+    // rely only on the auto-link effect having rendered before Complete Sale.
+    const saleCustomerId = customerId || billingWhatsAppCustomer?.id || exactPhoneCustomer?.id;
+    const saleCustomer = saleCustomerId ? state.customers.find(c => c.id === saleCustomerId) : undefined;
+    if (intentionalCredit && !saleCustomerId) return setError('Select a customer before selling on credit. A matching saved WhatsApp/phone number will be linked automatically.');
     if (intentionalCredit && !can('act:creditSale')) return setError('Your role cannot make credit sales.');
-    if (intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit) {
-      return setError(`Credit limit exceeded. Existing due ${fmtRs(customer.creditBalance)} + this bill credit ${fmtRs(creditDue)} is above the ${fmtRs(customer.creditLimit)} limit.`);
+    if (intentionalCredit && saleCustomer?.creditLimit && saleCustomer.creditLimit > 0 && saleCustomer.creditBalance + creditDue > saleCustomer.creditLimit) {
+      return setError(`Credit limit exceeded. Existing due ${fmtRs(saleCustomer.creditBalance)} + this bill credit ${fmtRs(creditDue)} is above the ${fmtRs(saleCustomer.creditLimit)} limit.`);
     }
     // Require IMEI/serial for tracked lines
     for (const l of lines) {
@@ -623,7 +627,7 @@ export default function POS() {
         if (l.price !== undefined && l.price !== p.price) base.price = l.price;
         return base;
       }),
-      customerId: customerId || undefined,
+      customerId: saleCustomerId || undefined,
       // Promotions are already materialized into each line by the sale engine.
       // Only the cashier-entered cart-level discount belongs in input.discount;
       // sending promoDiscount here would apply the promotion twice.
