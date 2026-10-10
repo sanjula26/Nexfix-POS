@@ -388,19 +388,52 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     const ids = productRows.map(p => p.id);
     const { data: existing, error: existingError } = await supabase.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
     if (existingError) return { ok: false, error: `Products lookup: ${existingError.message}` };
-    const existingRows = (existing || []) as Array<{ id: string; stock?: number }>;
-    const existingIds = new Set(existingRows.map(row => row.id));
-    const missing = productRows.filter(row => !existingIds.has(row.id));
+    let existingRows = (existing || []) as Array<{ id: string; stock?: number }>;
+    let existingIds = new Set(existingRows.map(row => row.id));
+    let missing = productRows.filter(row => !existingIds.has(row.id));
+    let newlyInsertedRows: typeof productRows = [];
     if (missing.length) {
       const { error } = await supabase.from('products').insert(missing);
-      if (error) return { ok: false, error: `Products: ${error.message}` };
-      if ((activeBranches || []).length > 1 && defaultBranch && selectedBranch.branchId !== defaultBranch.id) {
-        const missingIds = missing.map(row => row.id);
+      if (!error) {
+        newlyInsertedRows = missing;
+      } else {
+        const uniqueConflict = error.code === '23505' || /duplicate key|unique constraint/i.test(error.message);
+        if (!uniqueConflict) return { ok: false, error: `Products: ${error.message}` };
+        // A background catalog sync can insert the same product after this
+        // lookup. Refresh by ID, then retry only rows that truly remain absent.
+        const refreshed = await supabase.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
+        if (refreshed.error) return { ok: false, error: `Products conflict recovery lookup: ${refreshed.error.message}` };
+        existingRows = (refreshed.data || []) as Array<{ id: string; stock?: number }>;
+        existingIds = new Set(existingRows.map(row => row.id));
+        missing = productRows.filter(row => !existingIds.has(row.id));
+        for (const row of missing) {
+          const retry = await supabase.from('products').insert(row);
+          if (!retry.error) {
+            newlyInsertedRows.push(row);
+            existingIds.add(row.id);
+            continue;
+          }
+          const retryUniqueConflict = retry.error.code === '23505' || /duplicate key|unique constraint/i.test(retry.error.message);
+          if (retryUniqueConflict) {
+            const sameShop = await supabase.from('products').select('id,shop_id,stock').eq('id', row.id).maybeSingle();
+            if (sameShop.error) return { ok: false, error: `Products conflict recovery for ${row.name}: ${sameShop.error.message}` };
+            if (sameShop.data?.id && sameShop.data.shop_id === shopId) {
+              existingIds.add(row.id);
+              existingRows.push({ id: row.id, stock: Number(sameShop.data.stock) || 0 });
+              continue;
+            }
+            return { ok: false, error: `Products: product ID conflict for “${row.name}”. The ID exists outside this shop or cannot be reconciled; no sale was committed.` };
+          }
+          return { ok: false, error: `Products insert recovery for ${row.name}: ${retry.error.message}` };
+        }
+      }
+      if (newlyInsertedRows.length && (activeBranches || []).length > 1 && defaultBranch && selectedBranch.branchId !== defaultBranch.id) {
+        const insertedIds = newlyInsertedRows.map(row => row.id);
         const { error: clearDefaultError } = await supabase.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
-          .eq('shop_id', shopId).eq('branch_id', defaultBranch.id).in('product_id', missingIds);
+          .eq('shop_id', shopId).eq('branch_id', defaultBranch.id).in('product_id', insertedIds);
         if (clearDefaultError) return { ok: false, error: `Initial branch stock allocation: ${clearDefaultError.message}` };
         const { error: allocateError } = await supabase.from('branch_stock').upsert(
-          missing.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.id, qty: row.stock, updated_at: new Date().toISOString() })),
+          newlyInsertedRows.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.id, qty: row.stock, updated_at: new Date().toISOString() })),
           { onConflict: 'branch_id,product_id' },
         );
         if (allocateError) return { ok: false, error: `Initial branch stock allocation: ${allocateError.message}` };
