@@ -537,9 +537,8 @@ export default function POS() {
   const finish = async () => {
     if (finishingSale) return;
     setError('');
-    const todaySession = state.sessions.find(s => s.cashierId === user?.id && s.date === dkey(new Date()));
-    if (!todaySession || todaySession.closed) return setError('Day cash session is closed. Open today\'s cash drawer before making a sale.');
-    if (todaySession.openingConfirmed === false) return setError('Set and confirm today\'s opening float in Cashier Balance Report before making a sale.');
+    // Cash-session and branch matching are enforced authoritatively by completeSaleCloud,
+    // which can distinguish a missing session from an unconfirmed opening float.
     if (lines.length === 0) return setError('Add at least one item to the cart');
 
     // Validate the aggregate quantity per product before calling Supabase.
@@ -659,7 +658,7 @@ export default function POS() {
       setTimeout(focusSearch, 150);
     } else {
       if (whatsappWindow) whatsappWindow.close();
-      setError('Sale could not be completed. No sale was committed. Please check the displayed validation or cloud status and try again.');
+      setError('Sale was not completed. The sale handler returned no receipt; check the cash session and cloud status, then retry. If this repeats, contact an admin before retrying to avoid duplicate billing.');
     }
   };
 
