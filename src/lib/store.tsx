@@ -20,7 +20,7 @@ import { appendInventoryTransaction, type InventoryTransaction } from './invento
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
-import { supabaseConfigured } from './supabase';
+import { restoreCloudSession, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId } from './branchStock';
 
 
@@ -1860,14 +1860,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (!localSale) throw new Error('Offline sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
       return localSale;
     }
-    const shop = await ensureCloudShop('Nexfix Shop');
+    // Restore durable Electron Auth before resolving the shop. A transient
+    // empty session gets one restore/resolve retry; explicit Cloud sign-out
+    // remains a single clear gate and never triggers an automatic re-login.
+    const restored = await restoreCloudSession();
+    let shop = await ensureCloudShop('Nexfix Shop');
+    if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
+      await restoreCloudSession();
+      shop = await ensureCloudShop('Nexfix Shop');
+    }
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
         const localSale = completeSale(input);
         if (!localSale) throw new Error('Local sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
         return localSale;
       }
-      throw new Error(`Cloud shop setup failed: ${shop.error || 'membership is not provisioned'}`);
+      if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
+        throw new Error('Cloud sign-in required once in Settings. Open Settings → Cloud account and sign in.');
+      }
+      throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
     const saleLines = applyCategoryPromotions(input.lines, state.products, state.settings);
     const tradeIn = input.tradeIn;
