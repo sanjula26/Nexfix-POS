@@ -403,8 +403,16 @@ export default function Settings() {
       if (membership.ok && membership.shopId) {
         const { data: shop } = await supabase.from('shops').select('name').eq('id', membership.shopId).maybeSingle();
         shopName = typeof shop?.name === 'string' && shop.name.trim() ? shop.name.trim() : undefined;
+        setCloudSessionStatus({ loading: false, email: data.session.user.email || undefined, shopName });
+      } else {
+        setCloudSessionStatus({
+          loading: false,
+          email: data.session.user.email || undefined,
+          error: membership.error?.toLowerCase().includes('membership')
+            ? 'No active shop membership. Ask the shop owner to add this user to shop_memberships.'
+            : membership.error || 'Could not resolve the Cloud shop membership.',
+        });
       }
-      setCloudSessionStatus({ loading: false, email: data.session.user.email || undefined, shopName });
     } else setCloudSessionStatus({ loading: false, error: restored.error || error?.message || 'Cloud sign-in required once in Settings.' });
   }, []);
   useEffect(() => {
@@ -1040,7 +1048,7 @@ export default function Settings() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">Cloud sync session</p>
                 <p className={`mt-1 text-xs ${cloudSessionStatus.email ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'}`}>
-                  {cloudSessionStatus.loading ? 'Checking…' : cloudSessionStatus.email ? (cloudSessionStatus.error ? `Signed in as ${cloudSessionStatus.email} — ${cloudSessionStatus.error}` : `Signed in as ${cloudSessionStatus.email}`) : cloudSessionStatus.error || 'Not signed in — sign in to Cloud once in Settings.'}
+                  {cloudSessionStatus.loading ? 'Checking…' : cloudSessionStatus.email ? (cloudSessionStatus.error && !cloudSetupMsg ? `Signed in as ${cloudSessionStatus.email} — ${cloudSessionStatus.error}` : `Signed in as ${cloudSessionStatus.email}`) : cloudSetupMsg && !cloudSetupMsg.ok ? 'Not signed in' : cloudSessionStatus.error || 'Not signed in — sign in to Cloud once in Settings.'}
                 </p>
                 <p className="mt-1 text-[11px] text-faint">This PC stays signed in for cloud sync until you sign out. The cloud password is never saved.</p>
               </div>
