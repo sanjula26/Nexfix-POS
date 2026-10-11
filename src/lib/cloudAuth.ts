@@ -270,17 +270,18 @@ export async function provisionCloudUpdaterAccount(
   }
   if (!current.data.session) {
     if (!password) return { ok: false, error: 'Sign in to the existing Cloud account first.' };
-    const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-    if (error || !data.session) {
-      return { ok: false, error: error?.message || 'Cloud sign-in failed. Check the existing Cloud account credentials.' };
-    }
+    const signIn = await signInToCloud(normalizedEmail, password);
+    if (!signIn.ok) return signIn;
   }
 
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError || !sessionData.session) {
-    return { ok: false, error: sessionError?.message || 'Cloud sign-in required once in Settings.' };
+    return { ok: false, error: sessionError?.message || 'Cloud sign-in succeeded but the session could not be read back.' };
   }
-  await saveCloudUpdaterRecovery(sessionData.session);
+  const persistence = await verifyCloudSessionPersistence(sessionData.session.refresh_token);
+  if (!persistence.ok) return { ok: false, error: persistence.error || 'Cloud session was not persisted.' };
+  const recovery = await saveCloudUpdaterRecovery(sessionData.session);
+  if (!recovery.ok) return { ok: false, error: recovery.error || 'Cloud restart recovery could not be saved.' };
 
   const existingShop = await ensureCloudShop();
   if (!existingShop.ok || !existingShop.shopId) {
