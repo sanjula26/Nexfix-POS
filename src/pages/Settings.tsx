@@ -17,7 +17,7 @@ import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInToCloud, signOutFromCloud } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
-import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured } from '../lib/supabase';
+import { restoreCloudSession, supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
@@ -410,8 +410,11 @@ export default function Settings() {
   useEffect(() => {
     void refreshCloudSessionStatus();
     if (!supabase) return;
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setCloudSessionStatus({ loading: false, email: session?.user.email || undefined, error: session ? undefined : 'Cloud sign-in required once in Settings.' });
+    const { data } = supabase.auth.onAuthStateChange(() => {
+      // Auth events can precede durable storage writes. Re-read through the
+      // verified restore path instead of optimistically painting green.
+      setCloudSessionStatus({ loading: true });
+      window.setTimeout(() => { void refreshCloudSessionStatus(); }, 0);
     });
     return () => data.subscription.unsubscribe();
   }, [refreshCloudSessionStatus]);
@@ -1037,7 +1040,7 @@ export default function Settings() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">Cloud sync session</p>
                 <p className={`mt-1 text-xs ${cloudSessionStatus.email ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'}`}>
-                  {cloudSessionStatus.loading ? 'Checking…' : cloudSessionStatus.email ? `Signed in as ${cloudSessionStatus.email}` : cloudSessionStatus.error || 'Not signed in — sign in to Cloud once in Settings.'}
+                  {cloudSessionStatus.loading ? 'Checking…' : cloudSessionStatus.email ? (cloudSessionStatus.error ? `Signed in as ${cloudSessionStatus.email} — ${cloudSessionStatus.error}` : `Signed in as ${cloudSessionStatus.email}`) : cloudSessionStatus.error || 'Not signed in — sign in to Cloud once in Settings.'}
                 </p>
                 <p className="mt-1 text-[11px] text-faint">This PC stays signed in for cloud sync until you sign out. The cloud password is never saved.</p>
               </div>
