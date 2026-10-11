@@ -1,4 +1,4 @@
-import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured } from './supabase';
+import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured, verifyCloudSessionPersistence } from './supabase';
 import { ensureCloudShop, setCloudShopId } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
@@ -18,16 +18,32 @@ function getDesktopUpdaterApi() {
   }).nexfixDesktop;
 }
 
-async function saveCloudUpdaterRecovery(session: { user?: { id?: string | null; email?: string | null } | null; refresh_token?: string | null }): Promise<void> {
+async function saveCloudUpdaterRecovery(session: { user?: { id?: string | null; email?: string | null } | null; refresh_token?: string | null }): Promise<{ ok: boolean; error?: string }> {
   const desktop = getDesktopUpdaterApi();
-  if (!desktop?.saveCloudUpdaterRecovery) return;
   const email = session.user?.email?.trim().toLowerCase() || '';
   const userId = session.user?.id?.trim() || '';
   const refreshToken = session.refresh_token?.trim() || '';
   // Supabase refresh tokens are opaque credentials; do not enforce a minimum length.
-  if (!email || !userId || !refreshToken || refreshToken.length > 16384) return;
-  await desktop.saveCloudUpdaterRecovery({ email, userId, refreshToken });
+  if (!email || !userId || !refreshToken || refreshToken.length > 16384) {
+    return { ok: false, error: 'Cloud sign-in did not return a valid refresh token.' };
+  }
+  if (desktop?.isDesktop) {
+    if (!desktop.saveCloudUpdaterRecovery || !desktop.loadCloudUpdaterRecovery) {
+      return { ok: false, error: 'Secure Cloud restart recovery is unavailable in this Windows POS build.' };
+    }
+    try {
+      const saved = await desktop.saveCloudUpdaterRecovery({ email, userId, refreshToken });
+      if (!saved?.ok) return { ok: false, error: saved?.error || 'Could not save the encrypted Cloud refresh token.' };
+      const readBack = await desktop.loadCloudUpdaterRecovery(email);
+      if (!readBack?.ok || !readBack.found || readBack.userId !== userId || readBack.refreshToken !== refreshToken) {
+        return { ok: false, error: readBack?.error || 'Encrypted Cloud refresh token could not be verified after saving.' };
+      }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Could not persist Cloud restart recovery.' };
+    }
+  }
   try { localStorage.setItem('nexfix_cloud_updater_email', email); } catch { /* optional recovery hint */ }
+  return { ok: true };
 }
 
 async function restoreCloudUpdaterRecovery(email: string): Promise<{ ok: boolean; error?: string }> {
@@ -302,13 +318,46 @@ if (supabase) {
 export async function signInToCloud(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail || !password) return { ok: false, error: 'Enter the Cloud account email and password.' };
 
-  const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-  if (!error) { try { localStorage.removeItem('nexfix_cloud_signed_out'); } catch { /* optional */ } }
-  if (error) return { ok: false, error: error.message };
-  // Do not wait for device/shop provisioning here. The caller may be the local
-  // login path, which must stay fast and offline-capable. The updater refresh
-  // path waits for this same in-flight login when necessary.
+  // Clear BOTH browser and Electron secure sign-out markers before Auth emits
+  // SIGNED_IN; otherwise startup/session listeners can immediately sign us out.
+  try { await setCloudSignOutMarker(false); }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not clear the Cloud sign-out marker.' }; }
+
+  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
+  });
+  if (signInError) return { ok: false, error: signInError.message };
+  if (!signInData.session) return { ok: false, error: 'Cloud sign-in returned no session. Please try again.' };
+
+  // Supabase Auth may emit SIGNED_IN before async storage writes have finished.
+  // Verify the public session and the configured durable storage before success.
+  const { data: verifiedData, error: verifyError } = await supabase.auth.getSession();
+  if (verifyError || !verifiedData.session) {
+    return { ok: false, error: verifyError?.message || 'Cloud sign-in succeeded but the session could not be read back.' };
+  }
+  if (verifiedData.session.user.id !== signInData.session.user.id ||
+      verifiedData.session.refresh_token !== signInData.session.refresh_token) {
+    return { ok: false, error: 'Cloud session read-back did not match the signed-in account.' };
+  }
+  const persistence = await verifyCloudSessionPersistence(verifiedData.session.refresh_token);
+  if (!persistence.ok) return { ok: false, error: persistence.error || 'Cloud session was not persisted.' };
+
+  const recovery = await saveCloudUpdaterRecovery(verifiedData.session);
+  if (!recovery.ok) return { ok: false, error: recovery.error || 'Cloud restart recovery could not be saved.' };
+
+  const membership = await ensureCloudShop();
+  if (!membership.ok || !membership.shopId) {
+    const detail = membership.error || '';
+    if (/membership is not provisioned|no active.*membership|shop membership/i.test(detail)) {
+      return { ok: false, error: 'Cloud sign-in succeeded, but this user has no active shop membership. Ask the shop owner to add this user to shop_memberships.' };
+    }
+    return { ok: false, error: detail || 'Could not resolve the Cloud shop membership.' };
+  }
+  setCloudShopId(membership.shopId);
   return { ok: true };
 }
 
