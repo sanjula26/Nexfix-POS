@@ -61,14 +61,22 @@ export function setCloudShopId(id: string): void {
 export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: boolean; shopId?: string; error?: string }> {
   void shopName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
-  // Sale/catalog work waits for the durable Electron session restore and any
-  // near-expiry refresh before deciding that the operator must sign in.
-  const restored = await restoreCloudSession();
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  // Restore first, then read back the session. Retry once because Electron's
+  // secure-storage IPC and Supabase token refresh can complete just after the
+  // first getSession() call. Never concatenate the same auth error twice.
+  let restored = await restoreCloudSession();
+  let sessionResult = await supabase.auth.getSession();
+  for (let attempt = 0; attempt < 1 && !sessionResult.error && !sessionResult.data.session && restored.ok; attempt += 1) {
+    restored = await restoreCloudSession();
+    sessionResult = await supabase.auth.getSession();
+  }
+  const { data: sessionData, error: sessionError } = sessionResult;
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session || (sessionData.session.expires_at && sessionData.session.expires_at * 1000 <= Date.now())) {
-    const detail = restored.error ? ` ${restored.error}` : '';
-    return { ok: false, error: `Cloud sign-in required once in Settings.${detail}` };
+    if (restored.error && !/Cloud sign-in required once in Settings\.?/i.test(restored.error)) {
+      return { ok: false, error: restored.error };
+    }
+    return { ok: false, error: 'Cloud sign-in required once in Settings.' };
   }
 
   const cached = getCloudShopId();
