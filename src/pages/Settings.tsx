@@ -17,7 +17,7 @@ import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInToCloud, signOutFromCloud } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
-import { restoreCloudSession, supabase, supabaseConfigured } from '../lib/supabase';
+import { restoreCloudSession, supabase, supabaseConfigured, verifyCloudSessionPersistence } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
@@ -398,6 +398,11 @@ export default function Settings() {
     const restored = await restoreCloudSession();
     const { data, error } = await supabase.auth.getSession();
     if (!error && data.session) {
+      const persistence = await verifyCloudSessionPersistence(data.session.refresh_token);
+      if (!persistence.ok) {
+        setCloudSessionStatus({ loading: false, error: persistence.error || 'Cloud session persistence could not be verified.' });
+        return;
+      }
       const membership = await ensureCloudShop();
       let shopName: string | undefined;
       if (membership.ok && membership.shopId) {
