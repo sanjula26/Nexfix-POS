@@ -1103,7 +1103,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Product', `Blocked disabling tracking for ${name}: ${inStockUnits} in-stock unit(s) remain`);
       return false;
     }
-    const normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
+    let normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
     if (state.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase())
       || state.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode)) {
       pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
@@ -1114,10 +1114,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const multipleBranches = hasMultipleCachedBranches(shopId);
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
     const targetBranchId = selectedBranchId === 'local-main' ? defaultBranchId : selectedBranchId;
-    const stockDelta = normalized.stock - (current?.stock || 0);
+    let stockDelta = normalized.stock - (current?.stock || 0);
     if (multipleBranches && selectedBranchId === 'local-main' && stockDelta !== 0) {
-      pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: select this POS branch before changing stock.`);
-      return false;
+      if (!exists) { normalized = { ...normalized, stock: 0 }; stockDelta = 0; pushAudit('WARNING', 'Product', `Created ${name} with stock 0 because no branch is selected; select a branch in Settings before receiving stock.`); }
+      else { pushAudit('DENIED', 'Product', `Blocked stock edit for ${name}: select this POS branch before changing stock.`); return false; }
     }
 
     if (stockDelta !== 0) {
