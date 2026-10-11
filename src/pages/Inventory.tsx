@@ -14,13 +14,25 @@ import { getCloudShopId } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
-const blankProduct = (lowDefault: number): Product => ({
-  id: uid(), name: '', sku: `NFX-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
-  barcode: String(4790000000 + Math.floor(Math.random() * 9999999)),
-  category: 'Accessories', brand: '', cost: 0, price: 0, stock: 0,
-  reorderLevel: lowDefault, trackImei: false, trackSerial: false, warrantyMonths: 0,
-  active: true, createdAt: new Date().toISOString(),
-});
+const blankProduct = (lowDefault: number, products: Product[] = []): Product => {
+  const usedSkus = new Set(products.map(p => p.sku.trim().toLowerCase()).filter(Boolean));
+  const usedBarcodes = new Set(products.map(p => p.barcode.trim()).filter(Boolean));
+  let sku = ''; let barcode = '';
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = 'NFX-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+    if (!usedSkus.has(candidate.toLowerCase())) { sku = candidate; break; }
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = String(4790000000 + Math.floor(Math.random() * 9999999));
+    if (!usedBarcodes.has(candidate)) { barcode = candidate; break; }
+  }
+  return {
+    id: uid(), name: '', sku, barcode,
+    category: 'Accessories', brand: '', cost: 0, price: 0, stock: 0,
+    reorderLevel: lowDefault, trackImei: false, trackSerial: false, warrantyMonths: 0,
+    active: true, createdAt: new Date().toISOString(),
+  };
+};
 
 export default function Inventory() {
   const { state, saveProduct, saveUnitsBulk, deleteProduct, adjustStock, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
@@ -168,7 +180,7 @@ export default function Inventory() {
       }
       const savedProduct = await saveProduct({ ...editing, stock: 0 });
       if (!savedProduct) {
-        alert('The product could not be saved. Check the SKU/barcode and try again.');
+        alert('The product could not be saved. Check required fields, permissions, branch selection, or duplicate SKU/barcode.');
         return;
       }
       const result = await saveUnitsBulk(newUnits, [editing]);
@@ -177,10 +189,13 @@ export default function Inventory() {
         return;
       }
     } else {
-      if (!(await saveProduct(editing))) {
-        alert('The product could not be saved. Check the SKU/barcode and try again.');
+      const forceZeroStock = isNew && !branchStockReady && !nextTracked && editing.stock > 0;
+      const saved = await saveProduct(forceZeroStock ? { ...editing, stock: 0 } : editing);
+      if (!saved) {
+        alert('The product could not be saved. Check required fields, permissions, branch selection, or duplicate SKU/barcode.');
         return;
       }
+      if (forceZeroStock) alert('Product created successfully. Initial stock was set to 0 because no branch is selected. Open Settings and select the correct branch, then adjust stock.');
     }
     setEditing(null);
     setNewUnitText('');
@@ -210,7 +225,7 @@ export default function Inventory() {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault)); setNewUnitText(''); setIsNew(true); }}
+                onClick={() => { setEditing(blankProduct(state.settings.lowStockDefault, state.products)); setNewUnitText(''); setIsNew(true); }}
               >
                 <Plus size={15} /> Add Product
               </button>
@@ -345,7 +360,7 @@ export default function Inventory() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Field label="Cost (Rs.)"><input className="input num" value={editing.cost || ''} onChange={e => setEditing({ ...editing, cost: num(e.target.value) })} /></Field>
               <Field label="Sell price (Rs.)"><input className="input num" value={editing.price || ''} onChange={e => setEditing({ ...editing, price: num(e.target.value) })} /></Field>
-              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : (!isNew && selectedBranchId !== 'local-main' ? 'Shop total is shown; use Adjust Stock to change this branch quantity.' : undefined)}><input className="input num" value={editing.stock || ''} disabled={tracked || (!isNew && selectedBranchId !== 'local-main')} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
+              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : (!branchStockReady ? 'Select a branch in Settings first to set initial stock.' : (!isNew && selectedBranchId !== 'local-main' ? 'Shop total is shown; use Adjust Stock to change this branch quantity.' : undefined))}><input className="input num" value={editing.stock || ''} disabled={tracked || (!branchStockReady && isNew) || (!isNew && selectedBranchId !== 'local-main')} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{!branchStockReady && isNew && !tracked && <div className="mt-1 text-xs text-amber-700">Select a branch in Settings first to set initial stock.</div>}{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
               <Field label="Low-stock alert at"><input className="input num" value={editing.reorderLevel || ''} onChange={e => setEditing({ ...editing, reorderLevel: Math.round(num(e.target.value)) })} /></Field>
             </div>
             {editing.price > 0 && editing.cost > 0 && <div className="rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20 px-4 py-3 text-sm flex justify-between"><span className="text-sub">Margin per unit</span><span className="num font-bold text-emerald-500">{fmtRs(editing.price - editing.cost)} ({Math.round(((editing.price - editing.cost) / editing.price) * 100)}%)</span></div>}
