@@ -385,7 +385,7 @@ export default function Settings() {
   const [cloudSetupPassword, setCloudSetupPassword] = useState('');
   const [cloudSetupBusy, setCloudSetupBusy] = useState(false);
   const [cloudSetupMsg, setCloudSetupMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [cloudSessionStatus, setCloudSessionStatus] = useState<{ loading: boolean; email?: string; error?: string }>({ loading: true });
+  const [cloudSessionStatus, setCloudSessionStatus] = useState<{ loading: boolean; email?: string; error?: string; shopName?: string }>({ loading: true });
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getUpdateStatus?:()=>Promise<{supported?:boolean;authorized?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
@@ -397,8 +397,15 @@ export default function Settings() {
     }
     const restored = await restoreCloudSession();
     const { data, error } = await supabase.auth.getSession();
-    if (!error && data.session) setCloudSessionStatus({ loading: false, email: data.session.user.email || undefined });
-    else setCloudSessionStatus({ loading: false, error: restored.error || error?.message || 'Cloud sign-in required once in Settings.' });
+    if (!error && data.session) {
+      const membership = await ensureCloudShop();
+      let shopName: string | undefined;
+      if (membership.ok && membership.shopId) {
+        const { data: shop } = await supabase.from('shops').select('name').eq('id', membership.shopId).maybeSingle();
+        shopName = typeof shop?.name === 'string' && shop.name.trim() ? shop.name.trim() : undefined;
+      }
+      setCloudSessionStatus({ loading: false, email: data.session.user.email || undefined, shopName });
+    } else setCloudSessionStatus({ loading: false, error: restored.error || error?.message || 'Cloud sign-in required once in Settings.' });
   }, []);
   useEffect(() => {
     void refreshCloudSessionStatus();
@@ -990,11 +997,11 @@ export default function Settings() {
 
       {user?.role === 'admin' && (
         <div id="cloud-update-authorization" className="card p-6 border border-emerald-500/20 mt-5">
-          <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Cloud update authorization</h3>
-          <p className="text-xs text-faint mb-4">One-time setup for the private Windows updater. This creates the cloud account and first shop only when you explicitly start this setup; normal local POS login remains unchanged.</p>
+          <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Cloud account & Windows PC authorization</h3>
+          <p className="text-xs text-faint mb-4">Sign in to an existing Cloud account that already belongs to your shop, then authorize this Windows PC for private updates. This action never creates a new Cloud account or shop. New Supabase projects must be bootstrapped by the project owner.</p>
           <div className="grid sm:grid-cols-2 gap-3.5">
             <Field label="Cloud account email" hint="Use the Supabase Auth Admin email; it may be different from the local POS login email."><input type="email" className="input" value={cloudSetupEmail} onChange={e => { setCloudSetupEmail(e.target.value); setCloudSetupMsg(null); }} placeholder="cloud-admin@example.com" autoComplete="email" /></Field>
-            <Field label="Cloud account password" hint="Minimum 12 characters"><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder="Choose a separate cloud password" autoComplete="new-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>          </div>
+            <Field label="Cloud account password" hint={cloudSessionStatus.email ? "Already signed in? Leave blank to reuse this session." : "Enter the existing Cloud account password."}><input type="password" className="input" value={cloudSetupPassword} onChange={e => { setCloudSetupPassword(e.target.value); setCloudSetupMsg(null); }} placeholder={cloudSessionStatus.email ? "Optional — current session can be reused" : "Existing Cloud account password"} autoComplete="current-password" onKeyDown={e => { if (e.key === 'Enter') void provisionCloudUpdater(); }} /></Field>          </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
             <button type="button" className="btn btn-secondary" onClick={() => void (async () => {
               if (!supabase || !supabaseConfigured) { setCloudSetupMsg({ ok: false, text: 'Cloud service is not configured.' }); return; }
@@ -1014,7 +1021,7 @@ export default function Settings() {
               } catch (error) { setCloudSetupMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud sign-in failed.' }); }
               finally { setCloudSetupBusy(false); }
             })()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || !cloudSetupPassword}>Sign in to Cloud account</button>
-            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || cloudSetupPassword.length < 12}>{cloudSetupBusy ? 'Setting up cloud authorization…' : 'Initialize cloud updater'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{form.shopName || state.settings.shopName || 'Nexfix Shop'}</b></span>
+            <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || (!cloudSessionStatus.email && !cloudSetupPassword)}>{cloudSetupBusy ? 'Authorizing this PC…' : 'Authorize this Windows PC'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{cloudSessionStatus.shopName || (cloudSessionStatus.email ? 'Membership not resolved' : 'Sign in to load shop')}</b></span>
           </div>
           <div className="mt-4 rounded-xl border border-line bg-raised/30 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
