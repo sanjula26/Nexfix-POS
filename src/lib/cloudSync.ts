@@ -66,7 +66,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
   // first getSession() call. Never concatenate the same auth error twice.
   let restored = await restoreCloudSession();
   let sessionResult = await supabase.auth.getSession();
-  for (let attempt = 0; attempt < 1 && !sessionResult.error && !sessionResult.data.session && restored.ok; attempt += 1) {
+  for (let attempt = 0; attempt < 1 && !sessionResult.error && !sessionResult.data.session && !restored.error; attempt += 1) {
     restored = await restoreCloudSession();
     sessionResult = await supabase.auth.getSession();
   }
