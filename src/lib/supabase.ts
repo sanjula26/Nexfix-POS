@@ -37,6 +37,7 @@ function localStorageSafe() {
 const authStorage = {
   async getItem(key: string): Promise<string | null> {
     const desktop = getDesktopStorage();
+    if (desktop?.isDesktop && !desktop.getCloudAuthStorageItem) return null;
     if (desktop?.isDesktop && desktop.getCloudAuthStorageItem) {
       try {
         const result = await desktop.getCloudAuthStorageItem(key);
@@ -61,6 +62,9 @@ const authStorage = {
   },
   async setItem(key: string, value: string): Promise<void> {
     const desktop = getDesktopStorage();
+    if (desktop?.isDesktop && !desktop.setCloudAuthStorageItem) {
+      throw new Error('Secure Cloud session storage is unavailable in this Windows POS build.');
+    }
     if (desktop?.isDesktop && desktop.setCloudAuthStorageItem) {
       try {
         const result = await desktop.setCloudAuthStorageItem({ key, value });
@@ -178,17 +182,19 @@ export async function setCloudSignOutMarker(signedOut: boolean): Promise<void> {
     if (!signedOut) throw new Error(error instanceof Error ? error.message : 'Could not clear the local Cloud sign-out marker.');
   }
   const desktop = getDesktopStorage();
-  if (desktop?.isDesktop && desktop.setCloudAuthSignedOut) {
+  if (desktop?.isDesktop) {
+    if (!desktop.setCloudAuthSignedOut || !desktop.getCloudAuthSignedOut) {
+      throw new Error('Secure Cloud sign-out marker storage is unavailable in this Windows POS build.');
+    }
     let result: { ok?: boolean; error?: string } | undefined;
     try { result = await desktop.setCloudAuthSignedOut(signedOut); }
     catch (error) {
-      if (!signedOut) throw new Error(error instanceof Error ? error.message : 'Could not clear the secure Cloud sign-out marker.');
-      return;
+      throw new Error(error instanceof Error ? error.message : 'Could not update the secure Cloud sign-out marker.');
     }
-    if (!result?.ok && !signedOut) throw new Error(result?.error || 'Could not clear the secure Cloud sign-out marker.');
-    if (!signedOut) {
-      const verify = await desktop.getCloudAuthSignedOut?.();
-      if (!verify?.ok || verify.signedOut === true) throw new Error(verify?.error || 'Secure Cloud sign-out marker is still active.');
+    if (!result?.ok) throw new Error(result?.error || 'Could not update the secure Cloud sign-out marker.');
+    const verify = await desktop.getCloudAuthSignedOut();
+    if (!verify?.ok || verify.signedOut !== signedOut) {
+      throw new Error(verify?.error || 'Secure Cloud sign-out marker read-back did not match.');
     }
   }
 }
