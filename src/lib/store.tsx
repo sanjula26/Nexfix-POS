@@ -1104,8 +1104,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
     let normalized: Product = { ...p, name, sku, barcode, cost: Math.round(p.cost * 100) / 100, price: Math.round(p.price * 100) / 100, stock: Math.round(p.stock), reorderLevel: Math.round(p.reorderLevel), ...(p.warrantyMonths === undefined ? {} : { warrantyMonths: Math.round(p.warrantyMonths) }) };
-    if (state.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase())
-      || state.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode)) {
+    if (state.products.some(x => x.id !== normalized.id && !!normalized.sku && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase())
+      || (!!normalized.barcode && state.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode))) {
       pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
       return false;
     }
@@ -1206,7 +1206,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let duplicate = false;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
-      const duplicateBarcode = s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
+      const duplicateBarcode = !!normalized.barcode && s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
       if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
       const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
       syncToGoogleDrive('Products', updatedProducts);
