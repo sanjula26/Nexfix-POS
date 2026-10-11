@@ -46,14 +46,16 @@ const authStorage = {
           const oldValue = localStorageSafe()?.getItem(key);
           if (oldValue !== null && oldValue !== undefined) {
             const saved = await desktop.setCloudAuthStorageItem?.({ key, value: oldValue });
-            if (saved?.ok) {
-              try { localStorageSafe()?.removeItem(key); } catch { /* optional cleanup */ }
-            }
+            if (!saved?.ok) return null;
+            try { localStorageSafe()?.removeItem(key); } catch { /* optional cleanup */ }
             return oldValue;
           }
           return null;
         }
-      } catch { /* use browser storage as a compatibility fallback */ }
+        // On Electron, never hide a secure-store failure by silently accepting
+        // a browser-only session that will disappear after restart.
+        return null;
+      } catch { return null; }
     }
     return localStorageSafe()?.getItem(key) ?? null;
   },
@@ -62,13 +64,16 @@ const authStorage = {
     if (desktop?.isDesktop && desktop.setCloudAuthStorageItem) {
       try {
         const result = await desktop.setCloudAuthStorageItem({ key, value });
-        if (result?.ok) {
-          try { localStorageSafe()?.removeItem(key); } catch { /* optional cleanup */ }
-          return;
-        }
-      } catch { /* use browser storage as a compatibility fallback */ }
+        if (!result?.ok) throw new Error(result?.error || 'Secure Cloud session storage failed.');
+        try { localStorageSafe()?.removeItem(key); } catch { /* optional cleanup */ }
+        return;
+      } catch (error) {
+        throw error instanceof Error ? error : new Error('Secure Cloud session storage failed.');
+      }
     }
-    localStorageSafe()?.setItem(key, value);
+    const local = localStorageSafe();
+    if (!local) throw new Error('Cloud session storage is unavailable.');
+    local.setItem(key, value);
   },
   async removeItem(key: string): Promise<void> {
     const desktop = getDesktopStorage();
@@ -169,9 +174,40 @@ export async function setCloudSignOutMarker(signedOut: boolean): Promise<void> {
   try {
     if (signedOut) localStorage.setItem('nexfix_cloud_signed_out', '1');
     else localStorage.removeItem('nexfix_cloud_signed_out');
-  } catch { /* secure Electron marker below remains authoritative */ }
+  } catch (error) {
+    if (!signedOut) throw new Error(error instanceof Error ? error.message : 'Could not clear the local Cloud sign-out marker.');
+  }
   const desktop = getDesktopStorage();
-  try { await desktop?.setCloudAuthSignedOut?.(signedOut); } catch { /* optional outside installed Electron */ }
+  if (desktop?.isDesktop && desktop.setCloudAuthSignedOut) {
+    let result: { ok?: boolean; error?: string } | undefined;
+    try { result = await desktop.setCloudAuthSignedOut(signedOut); }
+    catch (error) {
+      if (!signedOut) throw new Error(error instanceof Error ? error.message : 'Could not clear the secure Cloud sign-out marker.');
+      return;
+    }
+    if (!result?.ok && !signedOut) throw new Error(result?.error || 'Could not clear the secure Cloud sign-out marker.');
+    if (!signedOut) {
+      const verify = await desktop.getCloudAuthSignedOut?.();
+      if (!verify?.ok || verify.signedOut === true) throw new Error(verify?.error || 'Secure Cloud sign-out marker is still active.');
+    }
+  }
+}
+
+/** Verify that the configured Supabase auth adapter can read the durable session back. */
+export async function verifyCloudSessionPersistence(refreshToken: string): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Cloud authentication is not configured' };
+  const projectRef = (() => { try { return new URL(url).hostname.split('.')[0]; } catch { return ''; } })();
+  if (!projectRef) return { ok: false, error: 'Could not identify the Cloud session storage key.' };
+  try {
+    const raw = await authStorage.getItem(`sb-${projectRef}-auth-token`);
+    if (!raw) return { ok: false, error: 'Cloud session was not saved to persistent storage.' };
+    const stored = JSON.parse(raw) as { refresh_token?: string };
+    return stored.refresh_token === refreshToken
+      ? { ok: true }
+      : { ok: false, error: 'Cloud session storage read-back did not match the signed-in session.' };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not verify durable Cloud session storage.' };
+  }
 }
 
 export function requireSupabase(): SupabaseClient {
