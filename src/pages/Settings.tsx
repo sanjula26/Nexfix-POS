@@ -15,7 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { queueWrite } from '../lib/offline';
 import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
-import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signOutFromCloud } from '../lib/cloudAuth';
+import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInToCloud, signOutFromCloud } from '../lib/cloudAuth';
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
@@ -1006,21 +1006,30 @@ export default function Settings() {
             <button type="button" className="btn btn-secondary" onClick={() => void (async () => {
               if (!supabase || !supabaseConfigured) { setCloudSetupMsg({ ok: false, text: 'Cloud service is not configured.' }); return; }
               if (!cloudSetupEmail.trim() || !cloudSetupPassword) { setCloudSetupMsg({ ok: false, text: 'Enter the Cloud account email and password first.' }); return; }
-              setCloudSetupBusy(true); setCloudSetupMsg(null);
+              setCloudSetupBusy(true);
+              setCloudSetupMsg(null);
+              setCloudSessionStatus({ loading: true });
               try {
-                const { error } = await supabase.auth.signInWithPassword({ email: cloudSetupEmail.trim(), password: cloudSetupPassword });
-                if (error) { setCloudSetupMsg({ ok: false, text: error.message }); return; }
-                await setCloudSignOutMarker(false);
+                const result = await signInToCloud(cloudSetupEmail, cloudSetupPassword);
+                if (!result.ok) {
+                  setCloudSetupMsg({ ok: false, text: result.error || 'Cloud sign-in failed.' });
+                  await refreshCloudSessionStatus();
+                  return;
+                }
+                setCloudSetupPassword('');
                 await refreshCloudSessionStatus();
-                const membership = await ensureCloudShop(form.shopName || state.settings.shopName || 'Nexfix Shop');
-                if (!membership.ok || !membership.shopId) { setCloudSetupMsg({ ok: false, text: membership.error?.toLowerCase().includes('membership') ? 'Signed in, but this Cloud account has no active shop membership. Ask the shop owner to provision it.' : membership.error || 'Could not resolve the Cloud shop.' }); return; }
                 setBranchCloudAuthNeeded(false);
                 setBranchMsg('Cloud sign-in successful. Loading branches…');
                 setBranchReloadKey(value => value + 1);
-                setCloudSetupMsg({ ok: true, text: 'Cloud account signed in and active shop membership confirmed. Branches will refresh now.' });
-              } catch (error) { setCloudSetupMsg({ ok: false, text: error instanceof Error ? error.message : 'Cloud sign-in failed.' }); }
-              finally { setCloudSetupBusy(false); }
-            })()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || !cloudSetupPassword}>Sign in to Cloud account</button>
+                setCloudSetupMsg({ ok: true, text: 'Cloud sign-in verified, session saved, and shop membership confirmed.' });
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'Cloud sign-in failed.';
+                setCloudSetupMsg({ ok: false, text: message });
+                await refreshCloudSessionStatus();
+              } finally {
+                setCloudSetupBusy(false);
+              }
+            })()} disabled={cloudSetupBusy || !cloudSetupEmail.trim() || !cloudSetupPassword}>{cloudSetupBusy ? 'Checking…' : 'Sign in to Cloud account'}</button>
             <button type="button" className="btn btn-primary" onClick={() => void provisionCloudUpdater()} disabled={cloudSetupBusy || legacyOtpBusy || !cloudSetupEmail.trim() || (!cloudSessionStatus.email && !cloudSetupPassword)}>{cloudSetupBusy ? 'Authorizing this PC…' : 'Authorize this Windows PC'}</button>            <span className="text-[11px] text-faint">Shop: <b className="text-ink">{cloudSessionStatus.shopName || (cloudSessionStatus.email ? 'Membership not resolved' : 'Sign in to load shop')}</b></span>
           </div>
           <div className="mt-4 rounded-xl border border-line bg-raised/30 p-4">
@@ -1028,10 +1037,9 @@ export default function Settings() {
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">Cloud sync session</p>
                 <p className={`mt-1 text-xs ${cloudSessionStatus.email ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600'}`}>
-                  {cloudSessionStatus.loading ? 'Checking saved Cloud session…' : cloudSessionStatus.email ? `Signed in as ${cloudSessionStatus.email}` : 'Not signed in — Cloud sign-in required once in Settings.'}
+                  {cloudSessionStatus.loading ? 'Checking…' : cloudSessionStatus.email ? `Signed in as ${cloudSessionStatus.email}` : cloudSessionStatus.error || 'Not signed in — sign in to Cloud once in Settings.'}
                 </p>
                 <p className="mt-1 text-[11px] text-faint">This PC stays signed in for cloud sync until you sign out. The cloud password is never saved.</p>
-                {cloudSessionStatus.error && !cloudSessionStatus.email && <p className="mt-1 text-[11px] text-faint">{cloudSessionStatus.error}</p>}
               </div>
               {cloudSessionStatus.email && <button type="button" className="btn btn-secondary" onClick={() => void (async () => {
                 if (!window.confirm('Sign out of Cloud sync on this PC? Cloud sales, catalog, branches and credit sync will require sign-in again. Windows updater device authorization will remain unchanged.')) return;
