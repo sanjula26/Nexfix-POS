@@ -7,6 +7,7 @@ type CloudUpdaterRecovery = { email: string; userId: string; refreshToken: strin
 function getDesktopUpdaterApi() {
   return (window as Window & {
     nexfixDesktop?: {
+      isDesktop?: boolean;
       setUpdateCredentials?: (payload: { token: string; deviceId: string; mode?: 'bearer' | 'device' }) => Promise<unknown>;
       clearUpdateCredentials?: () => Promise<unknown>;
       saveCloudUpdaterRecovery?: (payload: CloudUpdaterRecovery) => Promise<{ ok?: boolean; error?: string }>;
@@ -321,6 +322,9 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail || !password) return { ok: false, error: 'Enter the Cloud account email and password.' };
 
+  // Drain any startup restore already in flight before clearing markers;
+  // otherwise a stale restore can sign out the newly authenticated session.
+  await restoreCloudSession();
   // Clear BOTH browser and Electron secure sign-out markers before Auth emits
   // SIGNED_IN; otherwise startup/session listeners can immediately sign us out.
   try { await setCloudSignOutMarker(false); }
