@@ -64,7 +64,7 @@ Verify the selected email exists before running. If the function is missing or b
 ## Cloud session persistence forensic note (2026-10-11)
 
 - `signInWithPassword` emits an Auth event before the UI had verified that the session was readable from the configured storage. Settings also used a separate direct sign-in implementation, so it could report success without using the same durable-session checks.
-- The Electron secure `nexfix_cloud_signed_out` marker is separate from browser `localStorage`. The old Settings path removed only the browser marker before other flows could observe the still-active secure marker and sign the session out again.
+- The Electron secure `nexfix_cloud_signed_out` marker is separate from browser `localStorage`. The old `signInToCloud` helper cleared only the browser marker; Settings had a separate direct-sign-in path that cleared both markers but did not wait for an already-running startup `restoreCloudSession()`. That in-flight restore could observe the old signed-out marker and sign out the newly created session after the login appeared successful.
 - The old auth-storage adapter silently fell back to browser-only storage when Electron secure writes failed. That could make the current window look signed in while no durable session existed for relaunch.
 - `ensureCloudShop` appended the restore error to an existing sign-in-required message, producing the duplicated `Cloud sign-in required once in Settings.` string.
 - `completeSaleCloud` called `ensureCloudShop` without an explicit restore at the sale boundary and surfaced that concatenated error.
