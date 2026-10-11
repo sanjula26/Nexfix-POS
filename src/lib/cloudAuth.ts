@@ -228,71 +228,67 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
 }
 
 /**
- * One-time first-shop provisioning for an explicitly initiated admin setup.
- * It never runs from normal login/background sync paths.
+ * Authorize this Windows PC for an already-provisioned shop.
+ * First-shop creation is intentionally not part of this client flow: only a
+ * trusted project owner should bootstrap an empty Supabase project.
  */
 export async function provisionCloudUpdaterAccount(
   email: string,
   password: string,
-  shopName: string,
+  _shopName: string,
 ): Promise<{ ok: boolean; needsEmailConfirmation?: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
 
-  const normalizedEmail = email.trim();
-  const normalizedShopName = shopName.trim();
+  const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return { ok: false, error: 'Cloud account email is required' };
-  if (password.length < 12) return { ok: false, error: 'Cloud account password must be at least 12 characters' };
-  if (normalizedShopName.length < 2) return { ok: false, error: 'Shop name must be at least 2 characters' };
 
-  // First try the supplied credentials as an existing cloud account. This
-  // makes the setup retryable after email confirmation without creating a
-  // second account.
-  const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-    email: normalizedEmail,
-    password,
-  });
-
-  if (signInError || !signInData.session) {
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password,
-      options: { data: { full_name: normalizedShopName } },
-    });
-    if (signUpError) return { ok: false, error: signUpError.message };
-    if (!signUpData.session) {
-      return {
-        ok: false,
-        needsEmailConfirmation: true,
-        error: 'Cloud account created or pending confirmation. Confirm the email, then run this setup again with the same cloud credentials.',
-      };
+  // Reuse the current authenticated session when it is already the intended
+  // cloud account; do not ask the owner to type the password again.
+  const current = await supabase.auth.getSession();
+  if (current.error) return { ok: false, error: current.error.message };
+  const currentEmail = current.data.session?.user.email?.trim().toLowerCase() || '';
+  if (current.data.session && currentEmail && currentEmail !== normalizedEmail) {
+    return { ok: false, error: `This POS is signed in as ${currentEmail}. Use that email, or sign out and sign in with the intended shop account.` };
+  }
+  if (!current.data.session) {
+    if (!password) return { ok: false, error: 'Sign in to the existing Cloud account first.' };
+    const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+    if (error || !data.session) {
+      return { ok: false, error: error?.message || 'Cloud sign-in failed. Check the existing Cloud account credentials.' };
     }
   }
 
-  const { data: provisionedSession } = await supabase.auth.getSession();
-  if (provisionedSession.session) await saveCloudUpdaterRecovery(provisionedSession.session);
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError || !sessionData.session) {
+    return { ok: false, error: sessionError?.message || 'Cloud sign-in required once in Settings.' };
+  }
+  await saveCloudUpdaterRecovery(sessionData.session);
 
-  const existingShop = await ensureCloudShop(normalizedShopName);
-  if (existingShop.ok && existingShop.shopId) {
-    const updaterReady = await refreshDesktopUpdaterCredentials();
-    return updaterReady
-      ? { ok: true }
-      : { ok: false, error: 'Cloud membership exists, but this machine is not yet authorized for updates' };
+  const existingShop = await ensureCloudShop();
+  if (!existingShop.ok || !existingShop.shopId) {
+    const detail = existingShop.error || '';
+    if (/membership is not provisioned|no active.*membership|shop membership/i.test(detail)) {
+      return {
+        ok: false,
+        error: 'This cloud user has no shop membership. Ask the owner to add this user in shop_memberships, or use the existing cloud admin account that already owns the shop.',
+      };
+    }
+    // Never leak a revoked bootstrap RPC permission error to the operator.
+    if (/bootstrap_first_shop|permission denied for function/i.test(detail)) {
+      return {
+        ok: false,
+        error: 'This cloud user has no shop membership. Ask the owner to add this user in shop_memberships, or use the existing cloud admin account that already owns the shop.',
+      };
+    }
+    return { ok: false, error: detail || 'Could not resolve the existing Cloud shop membership.' };
   }
 
-  const { data: shopId, error: bootstrapError } = await supabase.rpc('bootstrap_first_shop', {
-    shop_name: normalizedShopName,
-  });
-  if (bootstrapError || !shopId) {
-    return { ok: false, error: bootstrapError?.message || 'Cloud shop bootstrap failed' };
-  }
-
-  setCloudShopId(String(shopId));
+  setCloudShopId(existingShop.shopId);
   const updaterReady = await refreshDesktopUpdaterCredentials();
-  if (!updaterReady) {
-    return { ok: false, error: 'Cloud account and shop were created, but this machine is not yet authorized for updates' };
-  }
-  return { ok: true };
+  return updaterReady
+    ? { ok: true }
+    : { ok: false, error: 'Cloud shop membership is confirmed, but this Windows PC is not yet authorized for updates. Retry authorization while online.' };
 }
 
 if (supabase) {
