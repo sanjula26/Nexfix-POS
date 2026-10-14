@@ -765,11 +765,14 @@ export default function Settings() {
         // A failed restore must not leave a newly imported Recovery Key active.
         // Restore the key that was already working on this browser.
         if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
-          if (previousRecoveryKey) setRecoveryKey(previousRecoveryKey, recoveryScope);
-          else {
-            clearRecoveryKey(recoveryScope);
+          const rollback = previousRecoveryKey
+            ? setRecoveryKey(previousRecoveryKey, recoveryScope)
+            : clearRecoveryKey(recoveryScope);
+          setRecoveryKeyReady(Boolean(previousRecoveryKey && rollback.ok));
+          if (!rollback.ok) {
+            const originalMessage = error instanceof Error ? error.message : 'Restore failed';
+            throw new Error(`${originalMessage}. The previous Recovery Key could not be restored: ${rollback.error || 'Recovery Key storage failed.'}`);
           }
-          setRecoveryKeyReady(Boolean(previousRecoveryKey));
         }
         throw error;
       }
