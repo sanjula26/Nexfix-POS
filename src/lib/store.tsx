@@ -1130,7 +1130,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (branchBound) {
         const cachedQty = getCachedBranchStock(targetBranchId, normalized.id);
         if (!branchCacheReady || (exists && cachedQty === null) || (cachedQty !== null && cachedQty + stockDelta < 0)) {
-          pushAudit('DENIED', 'Product', 'Blocked stock edit because selected-branch stock is missing or insufficient. Connect online and refresh default-branch stock.');
+          pushAudit('DENIED', 'Product', 'Blocked stock edit because assigned-branch stock is missing or insufficient. Connect online and refresh branch stock.');
           return false;
         }
       }
@@ -1263,7 +1263,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (branchBound) {
       const cachedQty = getCachedBranchStock(targetBranchId, id);
       if (!branchCacheReady || cachedQty === null || cachedQty + amount < 0) {
-        pushAudit('DENIED', 'Product', 'Blocked stock adjustment because selected-branch stock is missing or insufficient. Connect online and refresh default-branch stock.');
+        pushAudit('DENIED', 'Product', 'Blocked stock adjustment because assigned-branch stock is missing or insufficient. Connect online and refresh branch stock.');
         return false;
       }
     }
@@ -1293,7 +1293,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return false;
         }
       } else if (branchBound) {
-        pushAudit('DENIED', 'Product', 'Blocked offline stock adjustment because selected-branch stock is not cached.');
+        pushAudit('DENIED', 'Product', 'Blocked offline stock adjustment because assigned-branch stock is not cached.');
         return false;
       }
       try {
