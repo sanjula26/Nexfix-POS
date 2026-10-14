@@ -2057,7 +2057,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           } : c)
         : prev.customers;
       const tradeInUnit = tradeInUnitId && tradeIn ? {
-        id: tradeInUnitId, productId: tradeIn.productId, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
+        id: tradeInUnitId, productId: tradeIn.productId, branchId: sale.branchId,
+        imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined,
         status: 'in_stock' as const, cost: tradeInValue, note: 'Trade-in', createdAt: sale.date,
       } : undefined;
       const updatedUnits = [
