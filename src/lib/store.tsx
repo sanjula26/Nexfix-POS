@@ -1878,8 +1878,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
+        const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
+        if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
+          throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling.');
+        }
+        assertOpenSessionForBranch(localBranchId);
         const localSale = completeSale(input);
-        if (!localSale) throw new Error('Local sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
+        if (!localSale) throw new Error('Local sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
         return localSale;
       }
       if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
