@@ -194,13 +194,13 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
   if (!branches.length) return { ok: false, error: 'No active branch exists for this shop' };
   if (preferredBranchId && preferredBranchId !== 'local-main') {
     const selected = branches.find(branch => branch.id === preferredBranchId);
-    if (!selected) return { ok: false, error: 'Selected branch is not active for this shop. Open Settings and select an active branch.' };
+    if (!selected) return { ok: false, error: 'This POS is assigned to a branch that is no longer active. Ask the shop admin to assign this PC to an active branch.' };
     return { ok: true, branchId: selected.id };
   }
   if (branches.length === 1) return { ok: true, branchId: branches[0].id };
   const main = branches.find(branch => branch.is_default);
   if (preferredBranchId === 'local-main' && main) return { ok: true, branchId: main.id };
-  return { ok: false, error: 'Select a branch in Settings before syncing sales or receiving stock' };
+  return { ok: false, error: 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC to a branch before syncing sales or receiving stock' };
 }
 
 /** Register this machine with the currently authenticated cloud shop.
@@ -362,7 +362,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
   const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
   const selectedBranch = await resolveCloudBranchId(shopId, state.settings.branchId);
-  if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Select a branch before syncing catalog stock' };
+  if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Assign this POS to an active branch before syncing catalog stock' };
 
   const supplierRows = state.suppliers.map(s => ({
     id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
@@ -645,7 +645,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       note: u.note || null, created_at: u.createdAt || new Date().toISOString(),
     };
   });
-  if (unitRows.some(row => !row.branch_id)) return { ok: false, error: 'An in-stock IMEI/serial unit has no valid branch. Open Settings and assign this device before cloud sync.' };
+  if (unitRows.some(row => !row.branch_id)) return { ok: false, error: 'An in-stock IMEI/serial unit has no valid branch. Ask the shop admin to assign this POS to an active branch before cloud sync.' };
   if (unitRows.length) {
     const ids = unitRows.map(u => u.id);
     const { data: existing, error: existingError } = await supabase.from('inventory_units').select('id').eq('shop_id', shopId).in('id', ids);
