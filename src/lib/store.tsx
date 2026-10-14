@@ -1611,6 +1611,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (user && !can('page:pos')) pushAudit('DENIED', 'Sale', 'Blocked sale completion without POS access');
       return null;
     }
+    // A held/stale cart can outlive a product being deactivated in Inventory.
+    // Revalidate against the current catalog at commit time, not only when adding
+    // an item to the visible POS cart.
+    const inactiveLine = input.lines.find(line => {
+      const product = stateRef.current.products.find(item => item.id === line.productId);
+      return !product || product.active === false;
+    });
+    if (inactiveLine) {
+      pushAudit('DENIED', 'Sale', 'Blocked sale containing an inactive or missing product');
+      return null;
+    }
     const selectedBranchId = getPOSBranchId(getCloudShopId(), state.settings.branchId);
     const shopIdForBranch = getCloudShopId();
     if (hasMultipleCachedBranches(shopIdForBranch) && selectedBranchId === 'local-main') {
@@ -1854,6 +1865,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Your role does not have permission to complete sales.');
     }
     if (!input.lines.length) throw new Error('Add at least one item to the cart.');
+    // Validate active status before online/offline branching so resumed held carts
+    // cannot sell products disabled in Inventory while this cart was parked.
+    const inactiveLine = input.lines.find(line => {
+      const product = stateRef.current.products.find(item => item.id === line.productId);
+      return !product || product.active === false;
+    });
+    if (inactiveLine) {
+      const product = stateRef.current.products.find(item => item.id === inactiveLine.productId);
+      throw new Error(product
+        ? `“${product.name}” is inactive and cannot be sold. Remove it from the cart or reactivate it in Inventory.`
+        : 'A cart product no longer exists in Inventory. Remove it and add the correct product again.');
+    }
     if ((input.creditDue || 0) > 0.009 && !input.customerId) {
       throw new Error('Select a customer before selling on credit.');
     }
