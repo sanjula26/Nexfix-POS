@@ -45,6 +45,9 @@ begin
   -- consume stock only from the currently assigned device branch, and fail
   -- closed if the device has no valid assignment.
   select count(*) into v_active_branch_count from public.branches b where b.shop_id=p_shop_id and b.active;
+  if v_active_branch_count < 1 then
+    raise exception 'No active branch is configured; repair parts were not deducted';
+  end if;
   if v_active_branch_count > 1 then
     select pb.branch_id into v_branch_id
     from public.pos_device_branches pb
