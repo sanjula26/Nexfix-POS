@@ -117,6 +117,9 @@ export function calculateDayEndTotals(
   }
 
   const allRefundEvents = state.sales.flatMap(sale => (sale.refunds || [])
+    // Older refund events did not store a branch; inherit the original sale's
+    // branch so a legacy refund is not incorrectly assigned to today's branch.
+    .map(refund => ({ ...refund, branchId: refund.branchId || sale.branchId }))
     .filter(refund => dkey(refund.date) === date && belongsToSession(refund, session))
     .map(refund => ({ amount: Math.max(0, Number(refund.amount) || 0), cashAmount: refund.cashAmount == null ? undefined : Math.max(0, Number(refund.cashAmount) || 0), method: refund.method || 'cash' })));
   // Compatibility for pre-upgrade records, which had no refund timestamp/event.
