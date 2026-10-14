@@ -1254,7 +1254,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const shopId = getCloudShopId();
     const selectedBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Product', 'Blocked stock adjustment because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return false;
     }
     const targetBranchId = selectedBranchId === 'local-main' ? (getDefaultBranchId(shopId) || 'local-main') : selectedBranchId;
@@ -2429,7 +2429,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const savePurchase = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => {
     const selectedBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Purchase', 'Blocked purchase order creation because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Purchase', 'Blocked purchase order creation because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return;
     }
     if (!user || !can('page:purchases')) {
@@ -2459,7 +2459,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (multipleBranches && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return { ok: false, error: 'The default branch is unavailable. Connect online and refresh branch data before receiving stock.' };
     }
     const po = stateRef.current.purchases.find(x => x.id === id);
@@ -2563,7 +2563,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const saveGRNDraft = useCallback((p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>): { ok: boolean; purchase?: Purchase; error?: string } => {
     const selectedBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'GRN', 'Blocked GRN draft creation because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return { ok: false, error: 'The default branch is unavailable. Connect online and refresh branch data before creating a GRN.' };
     }
     if (!user || !can('page:purchases')) {
@@ -2831,7 +2831,7 @@ const deletePurchase = useCallback((id: string) => {
     }
     const selectedBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Expense', 'Blocked expense creation because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Expense', 'Blocked expense creation because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return;
     }
     const amount = Math.round(Number(e.amount) * 100) / 100;
@@ -3091,7 +3091,7 @@ const deletePurchase = useCallback((id: string) => {
     const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Session', 'Blocked day-session close because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Session', 'Blocked day-session close because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return false;
     }
     const current = snapshot.sessions.find(x => x.cashierId === cashierId && x.date === today && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId));
@@ -3146,7 +3146,7 @@ const deletePurchase = useCallback((id: string) => {
     const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'DayClose', 'Blocked day close because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'DayClose', 'Blocked day close because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return false;
     }
     const openSessions = snapshot.sessions.filter(x => x.date === today && !x.closed && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId));
@@ -3350,7 +3350,7 @@ const deletePurchase = useCallback((id: string) => {
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Unit', 'Blocked unit save because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Unit', 'Blocked unit save because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return false;
     }
     const targetBranchId = effectiveBranch(selectedBranchId);
@@ -3570,7 +3570,7 @@ const deletePurchase = useCallback((id: string) => {
     const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(shopId) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Unit', 'Blocked unit delete because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Unit', 'Blocked unit delete because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return false;
     }
     const targetBranchId = effectiveBranch(selectedBranchId);
@@ -3838,7 +3838,7 @@ const deletePurchase = useCallback((id: string) => {
     const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
     const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
     if (hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main') {
-      pushAudit('DENIED', 'Session', 'Blocked day-session open because this shop has multiple branches and no branch is selected. ensure the shop's default branch is configured.');
+      pushAudit('DENIED', 'Session', 'Blocked day-session open because this shop has multiple branches and no branch is selected. ensure the shop default branch is configured.');
       return;
     }
     const normalizedOpening = Math.round(Math.max(0, Number(opening)) * 100) / 100;
