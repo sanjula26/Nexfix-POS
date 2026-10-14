@@ -194,7 +194,7 @@ export default function ShopSwitcher() {
           <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-500" />
           <span>Cloud shop mismatch — syncing is blocked to protect the previous shop's data.</span>
         </div>
-        <p className="mt-2 text-xs text-faint">This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account, or have an admin arrange an explicit rebind after safely syncing and backing up the previous shop. No shop data was switched or uploaded.</p>
+        <p className="mt-2 text-xs text-faint">This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available. No shop data was switched or uploaded.</p>
       </div>
     );
   }
