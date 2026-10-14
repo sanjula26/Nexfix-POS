@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Package, Plus, Pencil, Trash2, Boxes, Banknote, AlertTriangle, Layers,
-  Barcode, Tag, Minus, ScanBarcode, ClipboardCheck,
+  Barcode, Tag, Minus, ScanBarcode, ClipboardCheck, PackageCheck,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
@@ -35,7 +35,7 @@ const blankProduct = (lowDefault: number, products: Product[] = []): Product => 
 };
 
 export default function Inventory() {
-  const { state, saveProduct, saveUnitsBulk, deleteProduct, adjustStock, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
+  const { state, saveProduct, saveUnitsBulk, deleteProduct, adjustStock, saveGRNDraft, processGRN, can, user, saveCategory, removeCategory, renameCategory } = usePOS() as ReturnType<typeof usePOS> & { renameCategory?: (a: string, b: string) => void };
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [cat, setCat] = useState('all');
@@ -44,6 +44,14 @@ export default function Inventory() {
   const [isNew, setIsNew] = useState(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
+  const [restocking, setRestocking] = useState<Product | null>(null);
+  const [restockQty, setRestockQty] = useState('1');
+  const [restockCost, setRestockCost] = useState('');
+  const [restockSupplierId, setRestockSupplierId] = useState('');
+  const [updateRestockPrice, setUpdateRestockPrice] = useState(false);
+  const [restockSellPrice, setRestockSellPrice] = useState('');
+  const [restockUnitText, setRestockUnitText] = useState('');
+  const [restockBusy, setRestockBusy] = useState(false);
   const [adjDelta, setAdjDelta] = useState('');
   const [adjReason, setAdjReason] = useState('Restock');
   const [catMgrOpen, setCatMgrOpen] = useState(false);
@@ -203,6 +211,103 @@ export default function Inventory() {
 
   const num = (v: string) => Number(v.replace(/[^\d.]/g, '')) || 0;
 
+  const openRestock = (product: Product) => {
+    setRestocking(product);
+    setRestockQty('1');
+    setRestockCost(String(product.cost ?? 0));
+    setRestockSupplierId(product.supplierId && state.suppliers.some(s => s.id === product.supplierId) ? product.supplierId : '');
+    setUpdateRestockPrice(false);
+    setRestockSellPrice(String(product.price ?? 0));
+    setRestockUnitText('');
+  };
+
+  const submitRestock = async () => {
+    const product = restocking;
+    if (!product || restockBusy) return;
+    if (!can('page:purchases')) {
+      alert('You need Purchases / GRN permission to receive stock with a supplier and purchase-cost history.');
+      return;
+    }
+    const supplier = state.suppliers.find(s => s.id === restockSupplierId);
+    const qty = Number(restockQty);
+    const cost = Number(restockCost);
+    const sellingPrice = Number(restockSellPrice);
+    if (!supplier) { alert('Select a supplier before receiving stock.'); return; }
+    if (!Number.isInteger(qty) || qty <= 0) { alert('Quantity must be a positive whole number.'); return; }
+    if (!Number.isFinite(cost) || cost < 0) { alert('Unit cost cannot be negative.'); return; }
+    if (updateRestockPrice && (!Number.isFinite(sellingPrice) || sellingPrice < 0)) { alert('Selling price is invalid.'); return; }
+
+    let unitIdentifiers: Array<{ imei?: string; serial?: string }> | undefined;
+    if (product.trackImei || product.trackSerial) {
+      const lines = restockUnitText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      if (lines.length !== qty) {
+        alert(`Enter exactly ${qty} IMEI/Serial line(s) for this tracked product.`);
+        return;
+      }
+      unitIdentifiers = [];
+      for (let index = 0; index < lines.length; index++) {
+        const parts = lines[index].split(',').map(part => part.trim());
+        let imei: string | undefined;
+        let serial: string | undefined;
+        if (product.trackImei && product.trackSerial) {
+          if (parts.length !== 2 || !parts[0] || !parts[1]) {
+            alert(`Line ${index + 1}: enter IMEI,SERIAL.`);
+            return;
+          }
+          imei = parts[0]; serial = parts[1];
+        } else if (product.trackImei) {
+          if (parts.length !== 1 || !parts[0]) {
+            alert(`Line ${index + 1}: enter one IMEI.`);
+            return;
+          }
+          imei = parts[0];
+        } else {
+          if (parts.length !== 1 || !parts[0]) {
+            alert(`Line ${index + 1}: enter one serial number.`);
+            return;
+          }
+          serial = parts[0];
+        }
+        unitIdentifiers.push({ ...(imei ? { imei } : {}), ...(serial ? { serial } : {}) });
+      }
+    }
+
+    setRestockBusy(true);
+    try {
+      const draft = saveGRNDraft({
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        notes: 'Inventory quick restock for ' + product.name,
+        items: [{
+          productId: product.id,
+          name: product.name,
+          qty,
+          cost,
+          sellingPrice: updateRestockPrice ? sellingPrice : product.price,
+          updateSellingPrice: updateRestockPrice,
+          ...(unitIdentifiers ? { unitIdentifiers } : {}),
+        }],
+        total: qty * cost,
+      });
+      if (!draft.ok || !draft.purchase) {
+        alert(draft.error || 'The restock GRN could not be created. Stock was not intentionally changed.');
+        return;
+      }
+      const received = await processGRN(draft.purchase.id, user?.name || 'Unknown');
+      if (!received.ok) {
+        alert((received.error || 'The stock receipt did not complete.') + '\nThe GRN draft was kept so you can review or retry it from Goods Received Notes. Check its status before creating another receipt.');
+        return;
+      }
+      setRestocking(null);
+      setRestockUnitText('');
+      alert(`Stock received: ${product.name} +${qty}. Existing stock was retained; the purchase cost was recorded in GRN history.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'The stock receipt could not be completed. Check the GRN status before retrying.');
+    } finally {
+      setRestockBusy(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
@@ -305,7 +410,8 @@ export default function Inventory() {
                     {can('act:viewCost') && <td className="td num text-sub">{currentStock === null ? '—' : fmtRs(currentStock * p.cost)}</td>}
                     {can('act:manageStock') && <td className="td"><div className="flex items-center justify-end gap-1">
                       <button className={`icon-btn !w-8 !h-8 ${tracked || !branchStockReady ? 'opacity-40 cursor-not-allowed' : ''}`} title={!branchStockReady ? 'Load default branch stock first' : tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked || !branchStockReady} onClick={() => { setStockAdj({ ...p, stock: stockFor(p) ?? p.stock }); setAdjDelta(''); }}><Boxes size={14} /></button>
-                      <button className="icon-btn !w-8 !h-8" title="Edit" onClick={() => { setEditing({ ...p }); setIsNew(false); }}><Pencil size={14} /></button>
+                      <button className="icon-btn !w-8 !h-8" title="Edit product details" onClick={() => { setEditing({ ...p }); setIsNew(false); }}><Pencil size={14} /></button>
+                      {can('page:purchases') && <button className="icon-btn !w-8 !h-8" title="Receive more stock for this existing product" disabled={!branchStockReady} onClick={() => openRestock(p)}><PackageCheck size={14} /></button>}
                       {can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Delete" onClick={() => setDeleting(p)}><Trash2 size={14} /></button>}
                     </div></td>}
                   </tr>;
@@ -401,6 +507,48 @@ export default function Inventory() {
             
           </div>;
         })()}
+      </Modal>
+
+      <Modal open={!!restocking} onClose={() => { if (!restockBusy) setRestocking(null); }} title="Receive stock for existing product" sub={restocking?.name} wide>
+        {restocking && <div className="space-y-4">
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3 text-sm text-sub">
+            This adds the new quantity to the existing product. It does not create a duplicate item. The received purchase cost is recorded in GRN history; the current product cost updates to this receipt's unit cost.
+          </div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="Supplier">
+              <select className="input" value={restockSupplierId} onChange={e => setRestockSupplierId(e.target.value)} disabled={restockBusy}>
+                <option value="">Select supplier...</option>
+                {state.suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Quantity to add" hint={restocking.trackImei || restocking.trackSerial ? 'Must match the number of IMEI/Serial entries below.' : 'Added to the current stock balance.'}>
+              <input className="input num" type="number" min={1} step={1} value={restockQty} onChange={e => setRestockQty(e.target.value)} disabled={restockBusy} />
+            </Field>
+            <Field label="New unit cost (Rs.)">
+              <input className="input num" type="number" min={0} step="0.01" value={restockCost} onChange={e => setRestockCost(e.target.value)} disabled={restockBusy} />
+            </Field>
+            <Field label="Update selling price too?">
+              <div className="flex items-center gap-3 min-h-10">
+                <input type="checkbox" className="accent-violet-600 w-4 h-4" checked={updateRestockPrice} onChange={e => setUpdateRestockPrice(e.target.checked)} disabled={restockBusy} />
+                <span className="text-sm text-sub">Keep current price unless checked</span>
+              </div>
+              {updateRestockPrice && <input className="input num mt-2" type="number" min={0} step="0.01" value={restockSellPrice} onChange={e => setRestockSellPrice(e.target.value)} disabled={restockBusy} />}
+            </Field>
+          </div>
+          {(restocking.trackImei || restocking.trackSerial) && <Field label="IMEI / Serial numbers" hint={restocking.trackImei && restocking.trackSerial ? 'One pair per line: IMEI,SERIAL' : restocking.trackImei ? 'One IMEI per line' : 'One serial number per line'}>
+            <textarea className="input min-h-[130px] font-mono text-sm" value={restockUnitText} onChange={e => setRestockUnitText(e.target.value)} placeholder={restocking.trackImei && restocking.trackSerial ? '356789012345678,ABC123' : restocking.trackImei ? '356789012345678' : 'SN-ABC123'} disabled={restockBusy} />
+          </Field>}
+          <div className="flex items-center justify-between rounded-xl bg-raised border border-line px-4 py-3">
+            <span className="text-sm font-semibold text-sub">Receipt total</span>
+            <span className="num text-lg font-extrabold text-ink">{fmtRs(Math.max(0, Number(restockQty) || 0) * Math.max(0, Number(restockCost) || 0))}</span>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button type="button" className="btn btn-soft" onClick={() => setRestocking(null)} disabled={restockBusy}>Cancel</button>
+            <button type="button" className="btn btn-primary" onClick={submitRestock} disabled={restockBusy || !branchStockReady || !restockSupplierId || !Number.isInteger(Number(restockQty)) || Number(restockQty) <= 0}>
+              <PackageCheck size={15} /> {restockBusy ? 'Receiving…' : 'Receive stock'}
+            </button>
+          </div>
+        </div>}
       </Modal>
 
       <Modal open={!!deleting} onClose={() => setDeleting(null)} title="Delete product?" sub={deleting?.name}>
