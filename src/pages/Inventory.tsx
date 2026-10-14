@@ -509,6 +509,10 @@ export default function Inventory() {
               </div>
             )}
             <Field label="Warranty (months)" hint="Printed on receipt for this product"><input className="input num" value={editing.warrantyMonths || ''} onChange={e => setEditing({ ...editing, warrantyMonths: Math.round(num(e.target.value)) || undefined })} placeholder="e.g. 12" /></Field>
+            <label className="flex items-center justify-between gap-3 rounded-xl bg-raised border border-line px-4 py-3 cursor-pointer">
+              <span><span className="block text-sm font-semibold text-ink">Active in POS</span><span className="block text-xs text-sub mt-0.5">Turn off to hide this product from normal selling lists without deleting its history.</span></span>
+              <input type="checkbox" className="accent-violet-600 w-4 h-4 shrink-0" checked={editing.active !== false} onChange={e => setEditing({ ...editing, active: e.target.checked })} />
+            </label>
             
           </div>;
         })()}
