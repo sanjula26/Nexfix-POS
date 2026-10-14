@@ -434,6 +434,13 @@ async function persistState(state: POSState): Promise<void> {
     // duplicate or silently syncing older state.
     if (!saved) {
       console.error('[POS Storage] IndexedDB state save failed; offline sync enqueue skipped to avoid stale-state sync.');
+      // Surface durability failures to the active POS screen. Do not pretend the
+      // state is saved, and do not enqueue a potentially stale snapshot.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
+          detail: { message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
+        }));
+      }
       return;
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
