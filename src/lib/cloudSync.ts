@@ -1,4 +1,6 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
+import { idbLoadState } from './db';
+import { hasLocalBusinessData, hasStoredLocalBusinessData } from './shopBindingSafety';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
@@ -108,6 +110,20 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     .maybeSingle();
   if (membershipError) return { ok: false, error: membershipError.message };
   if (membership?.shop_id) {
+    // A missing binding is not proof this is a clean first-run PC. Inspect the
+    // persisted POS state before associating it with the first cloud membership.
+    // This guard lives here as well as in ShopSwitcher because background
+    // Settings/backup/queue paths also call ensureCloudShop().
+    const localState = await idbLoadState();
+    if (!localState) {
+      return { ok: false, error: 'Could not safely inspect local POS data. Cloud-shop binding was not changed; retry after local storage is available.' };
+    }
+    if (hasLocalBusinessData(localState) || hasStoredLocalBusinessData()) {
+      return {
+        ok: false,
+        error: 'This PC has existing local POS data but no saved cloud-shop binding. For safety, cloud sync is blocked; restore the original shop binding or request a verified migration before syncing.',
+      };
+    }
     setCloudShopId(membership.shop_id);
     return { ok: true, shopId: membership.shop_id };
   }
