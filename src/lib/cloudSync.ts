@@ -81,9 +81,21 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
 
   const cached = getCloudShopId();
   if (cached) {
-    const { data } = await supabase.from('shop_memberships').select('shop_id').eq('shop_id', cached).eq('user_id', sessionData.session.user.id).eq('active', true).maybeSingle();
+    const { data, error: cachedMembershipError } = await supabase
+      .from('shop_memberships')
+      .select('shop_id')
+      .eq('shop_id', cached)
+      .eq('user_id', sessionData.session.user.id)
+      .eq('active', true)
+      .maybeSingle();
+    if (cachedMembershipError) return { ok: false, error: cachedMembershipError.message };
     if (data?.shop_id) return { ok: true, shopId: data.shop_id };
-    try { storage()?.removeItem(SHOP_KEY); } catch { /* ignore */ }
+    // Never silently bind an existing local POS dataset and pending offline
+    // writes to another shop when the signed-in cloud account changes.
+    return {
+      ok: false,
+      error: 'This PC is already bound to a different cloud shop. For safety, cloud sync is blocked; sign in with the original shop account or explicitly switch shops after syncing the current shop.',
+    };
   }
 
   const { data: membership, error: membershipError } = await supabase
