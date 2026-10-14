@@ -78,5 +78,9 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
 export function getPOSBranchId(shopId: string, configuredBranchId?: string | null): string {
   const configured = String(configuredBranchId || '').trim();
   if (configured && configured !== 'local-main') return configured;
+  // A multi-branch shop must never silently route an unassigned POS to Main.
+  // Preserve the local sentinel so UI guards and the server-side device-binding
+  // RPC fail closed until this device has an explicit active-branch assignment.
+  if (hasMultipleCachedBranches(shopId)) return 'local-main';
   return getDefaultBranchId(shopId) || 'local-main';
 }
