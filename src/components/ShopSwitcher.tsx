@@ -134,7 +134,7 @@ export default function ShopSwitcher() {
       const selected = getCloudShopId();
       const selectedMembership = selected ? items.find(item => item.id === selected) : undefined;
       if (selected && !selectedMembership) {
-        setError('This PC is bound to a different cloud shop. No local data was copied or uploaded. Sign in with the original shop account, or ask an admin to arrange a safe shop rebind.');
+        setError('This PC is bound to a different cloud shop. No local data was copied or uploaded. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available.');
         setBootstrapping(false);
         return;
       }
