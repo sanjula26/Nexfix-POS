@@ -1226,17 +1226,37 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     }
     let duplicate = false;
+    let savedProducts: Product[] | null = null;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
       const duplicateBarcode = !!normalized.barcode && s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
       if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
       const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
+      savedProducts = updatedProducts;
       syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
     if (duplicate) {
       pushAudit('DENIED', 'Product', `Blocked duplicate SKU/barcode for ${normalized.name}`);
       return false;
+    }
+    // Product edits that do not change stock (especially Active in POS) used to
+    // stay local until some later sale/GRN triggered a full catalog sync. Sync
+    // the saved metadata promptly when this is an online cloud admin/manager;
+    // syncNormalizedCatalog reconciles metadata but keeps cloud stock authoritative.
+    if (exists && stockDelta === 0 && savedProducts && supabaseConfigured
+      && getConnectivity() === 'online' && (user.role === 'admin' || user.role === 'manager')) {
+      try {
+        const shop = await ensureCloudShop('Nexfix Shop');
+        if (!shop.ok || !shop.shopId) {
+          pushAudit('WARNING', 'Product', `Product saved locally, but cloud metadata sync failed: ${shop.error || 'Cloud shop unavailable'}`);
+        } else {
+          const catalog = await syncNormalizedCatalog({ ...stateRef.current, products: savedProducts }, shop.shopId);
+          if (!catalog.ok) pushAudit('WARNING', 'Product', `Product saved locally, but cloud metadata sync failed: ${catalog.error || 'unknown catalog error'}`);
+        }
+      } catch (error) {
+        pushAudit('WARNING', 'Product', `Product saved locally, but cloud metadata sync failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
     }
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'Product', `${exists ? 'Updated' : 'Added'} product ${normalized.name}`);
     return true;
