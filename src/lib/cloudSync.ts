@@ -1,6 +1,6 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
 import { idbLoadState } from './db';
-import { hasLocalBusinessData } from './shopBindingSafety';
+import { hasLocalBusinessData, hasStoredLocalBusinessData } from './shopBindingSafety';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
@@ -118,7 +118,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     if (!localState) {
       return { ok: false, error: 'Could not safely inspect local POS data. Cloud-shop binding was not changed; retry after local storage is available.' };
     }
-    if (hasLocalBusinessData(localState)) {
+    if (hasLocalBusinessData(localState) || hasStoredLocalBusinessData()) {
       return {
         ok: false,
         error: 'This PC has existing local POS data but no saved cloud-shop binding. For safety, cloud sync is blocked; restore the original shop binding or request a verified migration before syncing.',
