@@ -1,7 +1,7 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
-import { cacheBranchStock, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
+import { cacheBranchStock, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 
 const DEVICE_KEY = 'nexfix_device_id';
@@ -203,6 +203,11 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
     .order('is_default', { ascending: false });
   if (error) return { ok: false, error: `Branch lookup: ${error.message}` };
   const branches = (rows || []) as Array<{ id: string; is_default: boolean; active: boolean }>;
+  // Cashier sessions may still carry the legacy local-main sentinel. Cache the
+  // server-authoritative Main ID before comparing those sessions with the
+  // resolved device branch, even when the operator has not opened Settings.
+  const mainBranch = branches.find(branch => branch.is_default);
+  if (mainBranch) cacheDefaultBranchId(shopId, mainBranch.id);
   if (!branches.length) {
     clearCachedPOSDeviceBranchId(shopId);
     return { ok: false, error: 'No active branch exists for this shop' };
