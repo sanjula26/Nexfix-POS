@@ -19,7 +19,7 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId } from './cloudSync';
+import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId } from './branchStock';
 
@@ -1836,28 +1836,35 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Select a customer before selling on credit.');
     }
 
-    const snapshot = stateRef.current;
-    const selectedBranchId = getPOSBranchId(getCloudShopId(), snapshot.settings.branchId);
-    const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
-    const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
-    const today = dkey(new Date());
-    const todaysSessions = snapshot.sessions.filter(session => session.cashierId === user.id && session.date === today);
-    const todaySession = todaysSessions.find(session => effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId));
-    if (!todaySession) {
-      pushAudit('DENIED', 'Sale', 'Blocked sale because no open cash session matches the selected POS branch');
-      if (todaysSessions.length) {
-        throw new Error('Selected POS branch has no open session. Open float for this branch in Cashier Balance Report.');
+    const assertOpenSessionForBranch = (branchId: string) => {
+      const sessionState = stateRef.current;
+      const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+      const effectiveBranch = (id?: string) => !id || id === 'local-main' ? defaultBranchId : id;
+      const targetBranchId = effectiveBranch(branchId);
+      const today = dkey(new Date());
+      const todaysSessions = sessionState.sessions.filter(session => session.cashierId === user.id && session.date === today);
+      const todaySession = todaysSessions.find(session => effectiveBranch(session.branchId) === targetBranchId);
+      if (!todaySession) {
+        pushAudit('DENIED', 'Sale', 'Blocked sale because no open cash session matches the resolved POS branch');
+        if (todaysSessions.length) {
+          throw new Error('Assigned POS branch has no open session. Open float for this branch in Cashier Balance Report.');
+        }
+        throw new Error('Open today\'s cash drawer for the assigned branch before selling.');
       }
-      throw new Error('Open today\'s cash drawer for this branch before selling.');
-    }
-    if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for this branch. Open a new session before selling.');
-    if (todaySession.openingConfirmed === false) {
-      throw new Error('Confirm today\'s opening float in Cashier Balance Report before selling.');
-    }
+      if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
+      if (todaySession.openingConfirmed === false) {
+        throw new Error('Confirm today\'s opening float in Cashier Balance Report before selling.');
+      }
+    };
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
+      if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
+        throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling offline.');
+      }
+      assertOpenSessionForBranch(localBranchId);
       const localSale = completeSale(input);
-      if (!localSale) throw new Error('Offline sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
+      if (!localSale) throw new Error('Offline sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
       return localSale;
     }
     // Restore durable Electron Auth before resolving the shop. A transient
@@ -1871,8 +1878,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
+        const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
+        if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
+          throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling.');
+        }
+        assertOpenSessionForBranch(localBranchId);
         const localSale = completeSale(input);
-        if (!localSale) throw new Error('Local sale was not completed. Check selected-branch stock, IMEI/serial selections, and payment details.');
+        if (!localSale) throw new Error('Local sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
         return localSale;
       }
       if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
@@ -1880,6 +1892,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
+    const branchResolution = await resolveCloudBranchId(
+      shop.shopId,
+      getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
+    );
+    if (!branchResolution.ok || !branchResolution.branchId) {
+      throw new Error(branchResolution.error || 'This POS is not assigned to an active branch.');
+    }
+    const saleBranchId = branchResolution.branchId;
+    assertOpenSessionForBranch(saleBranchId);
+
     const saleLines = applyCategoryPromotions(input.lines, state.products, state.settings);
     const tradeIn = input.tradeIn;
     const rawTradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
@@ -1974,7 +1996,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
       cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId), deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
