@@ -115,6 +115,9 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     // This guard lives here as well as in ShopSwitcher because background
     // Settings/backup/queue paths also call ensureCloudShop().
     const localState = await idbLoadState();
+    if (!localState) {
+      return { ok: false, error: 'Could not safely inspect local POS data. Cloud-shop binding was not changed; retry after local storage is available.' };
+    }
     if (hasLocalBusinessData(localState)) {
       return {
         ok: false,
