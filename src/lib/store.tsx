@@ -2442,6 +2442,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       cashierId: user.id,
       cashierName: user.name,
       by: user.name,
+      branchId: sale.branchId || getDefaultBranchId(getCloudShopId()) || 'local-main',
     };
     setStateWithInventoryLedger('REFUND', s => {
       const currentSale = s.sales.find(x => x.id === saleId);
