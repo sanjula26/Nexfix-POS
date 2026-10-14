@@ -173,7 +173,7 @@ export default function ShopSwitcher() {
         setBootstrapping(false);
         return;
       }
-      if (!selected && hasLocalBusinessData(state)) {
+      if (!selected && unboundLocalData) {
         setError('This PC has existing local POS data but no saved cloud-shop binding. For safety, automatic cloud setup is blocked so local data is not uploaded to the wrong shop. Restore the original shop binding or request a verified migration before syncing.');
         setBootstrapping(false);
         return;
