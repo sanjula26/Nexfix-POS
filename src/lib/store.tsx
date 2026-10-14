@@ -20,7 +20,7 @@ import { appendInventoryTransaction, type InventoryTransaction } from './invento
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
-import { restoreCloudSession, supabaseConfigured } from './supabase';
+import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId } from './branchStock';
 
 
@@ -1969,21 +1969,138 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments: (input.payments || []).map(p => ({ method: p.method, amount: p.amount })),
       note: input.note || '', salesmanId: cloudSalesmanId || null,
     });
+    const tradeInFingerprint = JSON.stringify(tradeIn ? {
+      productId: tradeIn.productId,
+      value: tradeInValue,
+      imei: tradeIn.imei?.trim() || null,
+      serial: tradeIn.serial?.trim() || null,
+      addToInventory: tradeIn.addToInventory === true,
+    } : null);
+    type PendingCloudSale = {
+      saleId?: string;
+      fingerprint?: string;
+      tradeInUnitId?: string;
+      tradeInFingerprint?: string;
+      shopId?: string;
+      branchId?: string;
+    };
+    const lookupPendingSale = async (pendingSaleId: string) => {
+      if (!supabase) throw new Error('Cloud connection is not ready. The previous sale was not replaced.');
+      const { data, error } = await supabase.from('sales')
+        .select('id,branch_id')
+        .eq('shop_id', shop.shopId)
+        .eq('id', pendingSaleId)
+        .maybeSingle();
+      if (error) throw new Error(`Could not verify the previous cloud sale. No new sale was started: ${error.message}`);
+      return data;
+    };
+    const lookupPendingTradeInUnit = async (unitId: string) => {
+      if (!supabase) throw new Error('Cloud connection is not ready. The previous sale was not replaced.');
+      const { data, error } = await supabase.from('inventory_units')
+        .select('id,sale_id,product_id,imei,serial,cost,branch_id')
+        .eq('shop_id', shop.shopId)
+        .eq('id', unitId)
+        .maybeSingle();
+      if (error) throw new Error(`Could not verify the previous trade-in unit. No new sale was started: ${error.message}`);
+      return data;
+    };
+    const tradeInUnitMatches = (unit: NonNullable<Awaited<ReturnType<typeof lookupPendingTradeInUnit>>>, pendingSaleId: string) => (
+      unit.sale_id === pendingSaleId
+      && unit.product_id === tradeIn?.productId
+      && String(unit.imei || '') === String(tradeIn?.imei?.trim() || '')
+      && String(unit.serial || '') === String(tradeIn?.serial?.trim() || '')
+      && Math.round(Number(unit.cost || 0) * 100) === Math.round(tradeInValue * 100)
+      && unit.branch_id === saleBranchId
+    );
     let saleId = input._saleId || '';
     let tradeInUnitId = tradeIn?.addToInventory ? '' : undefined;
+    let pending: PendingCloudSale | null = null;
+    let pendingRaw = '';
     try {
-      const raw = localStorage.getItem(pendingKey);
-      if (raw) {
-        const pending = JSON.parse(raw) as { saleId?: string; fingerprint?: string; tradeInUnitId?: string };
-        if (!saleId && pending.saleId && pending.fingerprint === fingerprint) saleId = pending.saleId;
-        if (tradeIn?.addToInventory && pending.saleId === saleId && pending.fingerprint === fingerprint && pending.tradeInUnitId) {
+      pendingRaw = localStorage.getItem(pendingKey) || '';
+    } catch {
+      throw new Error('The local cloud-sale retry state cannot be read. No sale was sent to the cloud.');
+    }
+    if (pendingRaw) {
+      try {
+        pending = JSON.parse(pendingRaw) as PendingCloudSale;
+      } catch {
+        throw new Error('The previous cloud-sale retry state is damaged. No new sale was started; recover the pending sale before continuing.');
+      }
+    }
+    if (pending?.saleId && pending.shopId && pending.shopId !== shop.shopId) {
+      throw new Error('A previous cloud sale is still pending for another shop. Return to that shop and reconcile it before starting a new sale.');
+    }
+    if (pending?.saleId && saleId && saleId !== pending.saleId && (!pending.shopId || pending.shopId === shop.shopId)) {
+      const existingSale = await lookupPendingSale(pending.saleId);
+      if (existingSale) {
+        throw new Error('A previous cloud sale is already committed but not fully reconciled. Finish its reconciliation before using a different sale ID.');
+      }
+    }
+    if (pending?.saleId && (!saleId || saleId === pending.saleId)) {
+      const samePayload = pending.fingerprint === fingerprint;
+      const sameShop = !pending.shopId || pending.shopId === shop.shopId;
+      const sameBranch = !pending.branchId || pending.branchId === saleBranchId;
+      const modernTradeInMarker = typeof pending.tradeInFingerprint === 'string';
+      const sameTradeIn = modernTradeInMarker && pending.tradeInFingerprint === tradeInFingerprint;
+
+      if (samePayload && sameShop && sameBranch && modernTradeInMarker && sameTradeIn) {
+        saleId = pending.saleId;
+        if (tradeIn?.addToInventory && pending.tradeInUnitId) {
           tradeInUnitId = pending.tradeInUnitId;
+        } else if (tradeIn?.addToInventory) {
+          const existingSale = await lookupPendingSale(pending.saleId);
+          if (existingSale) {
+            throw new Error('The previous cloud sale is committed but its trade-in unit ID is missing. No new sale was started; ask the shop admin to reconcile the trade-in.');
+          }
+        }
+      } else if (samePayload && sameShop && sameBranch && modernTradeInMarker && sameTradeIn === false) {
+        const existingSale = await lookupPendingSale(pending.saleId);
+        if (existingSale) {
+          throw new Error('A previous cloud sale is already committed with different trade-in details. The pending sale ID was preserved; restore the original cart and trade-in details before retrying.');
+        }
+      } else if (samePayload && sameShop && sameBranch && !modernTradeInMarker && !tradeIn && !pending.tradeInUnitId) {
+        // Legacy markers without tracked trade-ins remain safe to retry.
+        saleId = pending.saleId;
+      } else if (samePayload && sameShop && sameBranch && !modernTradeInMarker) {
+        // Older markers did not store trade-in identity. If the sale already
+        // committed, only reuse the unit id when the persisted identity matches.
+        const existingSale = await lookupPendingSale(pending.saleId);
+        if (!existingSale) {
+          saleId = pending.saleId;
+          if (tradeIn?.addToInventory && pending.tradeInUnitId) tradeInUnitId = pending.tradeInUnitId;
+        } else if (pending.tradeInUnitId && tradeIn?.addToInventory) {
+          const existingUnit = await lookupPendingTradeInUnit(pending.tradeInUnitId);
+          if (existingUnit && tradeInUnitMatches(existingUnit, pending.saleId)) {
+            saleId = pending.saleId;
+            tradeInUnitId = pending.tradeInUnitId;
+          } else {
+            throw new Error('The previous cloud sale is committed, but its older trade-in retry marker cannot be verified against the saved unit. No new sale was started; ask the shop admin to reconcile this trade-in.');
+          }
+        } else {
+          throw new Error('The previous cloud sale is committed, but its older trade-in details cannot be verified. No new sale was started; ask the shop admin to reconcile the pending sale.');
+        }
+      } else {
+        // Never overwrite a pending sale id if the cloud already committed it.
+        // A different cart/payment/branch must not accidentally create a duplicate.
+        if (sameShop) {
+          const existingSale = await lookupPendingSale(pending.saleId);
+          if (existingSale) {
+            throw new Error('A previous cloud sale is already committed but not fully reconciled. Restore the original cart, payment, and trade-in details and retry before starting another sale.');
+          }
         }
       }
-    } catch { /* ignore malformed pending state */ }
+    }
     if (!saleId) saleId = uid();
     if (tradeIn?.addToInventory && !tradeInUnitId) tradeInUnitId = uid();
-    try { localStorage.setItem(pendingKey, JSON.stringify({ saleId, fingerprint, tradeInUnitId })); } catch { /* ignore */ }
+    try {
+      localStorage.setItem(pendingKey, JSON.stringify({
+        saleId, fingerprint, tradeInUnitId, tradeInFingerprint,
+        shopId: shop.shopId, branchId: saleBranchId,
+      }));
+    } catch {
+      throw new Error('The local cloud-sale retry state could not be saved. The sale was not sent to the cloud.');
+    }
 
     const payments: PaymentLeg[] = (input.payments || [])
       .filter(p => p.amount > 0 && p.method !== 'credit')
