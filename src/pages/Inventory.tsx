@@ -273,6 +273,7 @@ export default function Inventory() {
     }
 
     setRestockBusy(true);
+    let draftCreated = false;
     try {
       const draft = saveGRNDraft({
         supplierId: supplier.id,
@@ -293,16 +294,20 @@ export default function Inventory() {
         alert(draft.error || 'The restock GRN could not be created. Stock was not intentionally changed.');
         return;
       }
+      draftCreated = true;
       const received = await processGRN(draft.purchase.id, user?.name || 'Unknown');
       if (!received.ok) {
-        alert((received.error || 'The stock receipt did not complete.') + '\nThe GRN draft was kept so you can review or retry it from Goods Received Notes. Check its status before creating another receipt.');
+        setRestocking(null);
+        setRestockUnitText('');
+        alert((received.error || 'The stock receipt did not complete.') + '\nThe GRN draft was kept. Open Goods Received Notes to review or retry that draft; do not create another receipt for the same delivery until its status is checked.');
         return;
       }
       setRestocking(null);
       setRestockUnitText('');
       alert(`Stock received: ${product.name} +${qty}. Existing stock was retained; the purchase cost was recorded in GRN history.`);
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'The stock receipt could not be completed. Check the GRN status before retrying.');
+      if (draftCreated) { setRestocking(null); setRestockUnitText(''); }
+      alert((error instanceof Error ? error.message : 'The stock receipt could not be completed.') + (draftCreated ? '\nA GRN draft may already exist. Check Goods Received Notes before retrying to avoid duplicate receipts.' : ''));
     } finally {
       setRestockBusy(false);
     }
