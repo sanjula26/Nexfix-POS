@@ -94,7 +94,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     // writes to another shop when the signed-in cloud account changes.
     return {
       ok: false,
-      error: 'This PC is already bound to a different cloud shop. For safety, cloud sync is blocked; sign in with the original shop account or explicitly switch shops after syncing the current shop.',
+      error: 'This PC is already bound to a different cloud shop. For safety, cloud sync is blocked; sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available.',
     };
   }
 
