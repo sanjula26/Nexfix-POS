@@ -34,6 +34,38 @@ function validState(input: unknown): input is POSState {
     && !!s.permissions && typeof s.permissions === 'object';
 }
 
+/**
+ * A first cloud setup may safely start with a clean local seed. If a shop
+ * binding is missing but business records/settings already exist, do not
+ * silently associate that data with whichever cloud membership happens to
+ * appear first. An explicit, verified migration/rebind flow is needed instead.
+ */
+function hasLocalBusinessData(state: POSState): boolean {
+  const collections: unknown[] = [
+    state.products, state.customers, state.suppliers, state.sales, state.purchases,
+    state.expenses, state.exchanges, state.purchaseReturns, state.held, state.sessions,
+    state.units, state.repairs, state.kitItems, state.quotations, state.warrantyClaims,
+    state.inventoryTransactions, state.supplierPayments, state.customerCreditPayments,
+    state.grns, state.reverseRequests,
+  ];
+  if (collections.some(value => Array.isArray(value) && value.length > 0)) return true;
+  if (Object.values(state.counters || {}).some(value => Number(value) > 0)) return true;
+
+  const settings = state.settings as unknown as Record<string, unknown>;
+  const nonDefaultSettings: Array<[string, unknown]> = [
+    ['shopName', 'Nexfix Solution'], ['tagline', ''], ['address', ''], ['phone', ''],
+    ['email', ''], ['receiptFooter', ''], ['taxDefault', 0], ['lowStockDefault', 5],
+    ['exchangeDays', 3], ['openingFloat', 10000], ['loyaltyPointsPerRs', 0.001],
+    ['loyaltyPointValue', 20], ['taxRegistrationNo', ''], ['invoicePlaceOfSupply', ''],
+  ];
+  return nonDefaultSettings.some(([key, fallback]) => {
+    const value = settings[key];
+    return typeof value === 'string'
+      ? value.trim() !== String(fallback).trim()
+      : value !== fallback;
+  });
+}
+
 function validShopOptions(input: unknown): input is ShopOption[] {
   return Array.isArray(input) && input.every(item => !!item && typeof item === 'object'
     && typeof (item as ShopOption).id === 'string' && (item as ShopOption).id.length > 0
@@ -118,12 +150,15 @@ export default function ShopSwitcher() {
   const [bootstrapping, setBootstrapping] = useState(false);
   const [error, setError] = useState('');
   const activeId = getCloudShopId();
-  // A persisted binding that is not in this user's memberships is a hard stop,
-  // not a reason to fall back to the first shop and hydrate it with local data.
+  const unboundLocalData = !activeId && hasLocalBusinessData(state);
+  // A persisted binding that is not in this user's memberships is a hard stop.
+  // Likewise, don't guess a first shop for a previously used local POS whose
+  // shop binding has disappeared.
   const activeShop = useMemo(() => {
     if (activeId) return shops.find(shop => shop.id === activeId) || null;
+    if (hasLocalBusinessData(state)) return null;
     return shops[0] || null;
-  }, [shops, activeId]);
+  }, [shops, activeId, state]);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,12 +173,17 @@ export default function ShopSwitcher() {
         setBootstrapping(false);
         return;
       }
+      if (!selected && hasLocalBusinessData(state)) {
+        setError('This PC has existing local POS data but no saved cloud-shop binding. For safety, automatic cloud setup is blocked so local data is not uploaded to the wrong shop. Restore the original shop binding or request a verified migration before syncing.');
+        setBootstrapping(false);
+        return;
+      }
       const resolved = selectedMembership?.id || items[0]?.id;
       if (!resolved) { setBootstrapping(false); return; }
       if (!selected) setCloudShopId(resolved);
     });
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, [user?.id, unboundLocalData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,14 +227,19 @@ export default function ShopSwitcher() {
 
   if (!user) return null;
   if (!activeShop) {
-    if (!shops.length || !getCloudShopId()) return null;
+    if (!shops.length) return null;
+    const hasSavedBinding = Boolean(getCloudShopId());
+    const localDataDetected = hasLocalBusinessData(state);
+    if (!hasSavedBinding && !localDataDetected) return null;
     return (
       <div className="fixed top-3 right-3 z-[100] w-[min(92vw,420px)] rounded-2xl border border-amber-500/30 bg-panel p-4 shadow-2xl">
         <div className="flex items-start gap-2 text-sm font-semibold text-ink">
           <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-500" />
-          <span>Cloud shop mismatch — syncing is blocked to protect the previous shop's data.</span>
+          <span>{hasSavedBinding ? 'Cloud shop mismatch — syncing is blocked to protect the previous shop’s data.' : 'Existing local POS data is not bound to a cloud shop.'}</span>
         </div>
-        <p className="mt-2 text-xs text-faint">This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available. No shop data was switched or uploaded.</p>
+        <p className="mt-2 text-xs text-faint">{hasSavedBinding
+          ? 'This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available. No shop data was switched or uploaded.'
+          : 'Automatic cloud setup is blocked because this PC has local business data but no saved shop binding. No local data was copied or uploaded. Restore the original shop binding or request a verified migration before syncing.'}</p>
       </div>
     );
   }
