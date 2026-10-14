@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
+  Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -947,51 +947,7 @@ export default function Settings() {
         </section>
       )}
       <PageHeading chip="System" chipTone="slate" title="Settings" sub={`${state.settings.shopName} · v${appVersion}`} actions={<button className="btn btn-primary" onClick={save}><CheckCircle2 size={15} /> {saved ? 'Saved!' : 'Save changes'}</button>} />
-      <div className="card p-6 border border-indigo-500/20">
-        <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 flex items-center justify-center"><Store size={15} /></span>POS branch / Stock location</h3>
-        <p className="text-xs text-sub mb-3">Each device sells from one branch. A shop with only Main branch selects it automatically. This setting is local to this POS; cloud stock and IMEI checks enforce branch ownership.</p>
-        <div className="max-w-xl">
-          <label className="block text-xs font-semibold text-sub mb-1.5" htmlFor="pos-branch-select">Selected branch</label>
-          <select id="pos-branch-select" className="input" value={selectedBranchId} disabled={(user?.role !== 'admin' && user?.role !== 'manager') || branchOptions.length === 0 || branchOptions.length === 1}
-            onChange={e => { const value = e.target.value; setSelectedBranchId(value); updateSettings({ branchId: value || undefined }); if (value) void bindBranchToDevice(value); else setBranchMsg('Select an active branch before cloud sales or GRN receive.'); }}>
-            <option value="">Select a branch…</option>
-            {branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code}){branch.is_default ? ' — Main' : ''}</option>)}
-          </select>
-          <p className={`mt-2 text-xs ${selectedBranchId ? 'text-emerald-600' : 'text-amber-600'}`}>{branchMsg}</p>
-          {branchCloudAuthNeeded && <p className="mt-2 text-xs"><a className="text-indigo-500 underline font-semibold" href="#cloud-update-authorization">Open Cloud account sign-in / authorization</a></p>}
-          {branchOptions.length > 1 && !selectedBranchId && <p className="mt-2 text-xs font-semibold text-amber-600">Branch selection is required before this device can sync a sale or receive stock.</p>}
-        </div>
-      </div>
-      {(user?.role === 'admin' || user?.role === 'manager') && (
-        <div className="card p-6 border border-indigo-500/20">
-        <h3 className="font-bold text-ink mb-2">Create a branch</h3>
-        <p className="text-xs text-sub mb-4">New branches start with zero stock. Use the transfer tool below to move existing stock safely.</p>
-        <div className="grid sm:grid-cols-3 gap-3">
-          <Field label="Branch name"><input className="input" value={newBranchName} onChange={e => { setNewBranchName(e.target.value); setBranchCreateMsg(''); }} placeholder="e.g. Kandy" maxLength={80} /></Field>
-          <div className="rounded-xl border border-line bg-raised/40 p-3 text-xs text-sub"><span className="font-semibold text-ink">Auto branch code preview:</span> <code className="font-bold">{newBranchName.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 20) || 'BRANCH'}</code><p className="mt-1">Generated from the name; if already used, the cloud adds -2, -3, etc. (max 20 characters).</p></div>
-          <div className="flex items-end"><button type="button" className="btn btn-primary w-full" onClick={() => void createBranch()} disabled={branchCreateBusy || user?.role !== 'admin' && user?.role !== 'manager'}>{branchCreateBusy ? 'Creating…' : 'Create branch'}</button></div>
-        </div>
-        {branchCreateMsg && <p className="mt-3 text-xs text-sub">{branchCreateMsg}</p>}
-      </div>
-      )}
-      {branchOptions.length > 1 && <div className="card p-6 border border-amber-500/20">
-        <h3 className="font-bold text-ink mb-2">Stock transfer</h3>
-        <p className="text-xs text-sub mb-4">Transfer is atomic and audited. Tracked products require their exact in-stock IMEI/serial codes from the source branch.</p>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Field label="From branch"><select className="input" value={transferFromBranch} onChange={e => setTransferFromBranch(e.target.value)}><option value="">Choose source…</option>{branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>)}</select></Field>
-          <Field label="To branch"><select className="input" value={transferToBranch} onChange={e => setTransferToBranch(e.target.value)}><option value="">Choose destination…</option>{branchOptions.map(branch => <option key={branch.id} value={branch.id}>{branch.name} ({branch.code})</option>)}</select></Field>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-3 mt-3">
-          <Field label="Product"><select className="input" value={transferProductId} onChange={e => setTransferProductId(e.target.value)}><option value="">Choose product…</option>{state.products.filter(product => product.active && !product.isService).map(product => <option key={product.id} value={product.id}>{product.name} · {product.sku || product.barcode || product.id.slice(0,8)}</option>)}</select></Field>
-          <Field label="Quantity"><input className="input" type="number" min="1" step="1" value={transferQty} onChange={e => setTransferQty(e.target.value)} /></Field>
-          <div className="flex items-end"><button type="button" className="btn btn-secondary w-full" onClick={() => void addTransferLine()}>Add line</button></div>
-        </div>
-        {state.products.find(product => product.id === transferProductId && (product.trackImei || product.trackSerial)) && <Field label="IMEI / Serial codes" hint="Enter one code per unit, separated by commas or new lines."><textarea className="input min-h-20" value={transferUnitCodes} onChange={e => setTransferUnitCodes(e.target.value)} placeholder="IMEI/serial 1, IMEI/serial 2" /></Field>}
-        {transferLines.length > 0 && <div className="mt-3 rounded-xl border border-line p-3"><div className="text-xs font-bold text-ink mb-2">Transfer lines</div>{transferLines.map((line,index) => <div key={line.product_id} className="flex items-center justify-between gap-3 py-1 text-xs text-sub"><span>{line.label} × {line.qty}{line.unit_ids.length ? ` · ${line.unit_ids.length} tracked unit(s)` : ''}</span><button type="button" className="text-red-500" onClick={() => setTransferLines(lines => lines.filter((_,i) => i !== index))}>Remove</button></div>)}</div>}
-        <Field label="Transfer note"><input className="input" value={transferNote} onChange={e => setTransferNote(e.target.value)} placeholder="Optional reason / reference" maxLength={500} /></Field>
-        <div className="flex flex-wrap items-center gap-3 mt-3"><button type="button" className="btn btn-primary" onClick={() => void completeTransfer()} disabled={transferBusy || user?.role !== 'admin' && user?.role !== 'manager'}>{transferBusy ? 'Transferring…' : 'Complete transfer'}</button><button type="button" className="btn btn-secondary" onClick={() => { setTransferLines([]); setTransferMsg('Transfer draft cleared.'); }}>Clear lines</button></div>
-        {transferMsg && <p className="mt-3 text-xs text-sub">{transferMsg}</p>}
-      </div>}
+      {/* Branch UI deactivated in POS Settings — backend retained for future multi-branch. */}
       {user?.role === 'admin' && (
       <div className="card p-6 border border-sky-500/20">
           <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 flex items-center justify-center"><Download size={15} /></span>App updates</h3>
