@@ -2031,6 +2031,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (pending?.saleId && pending.shopId && pending.shopId !== shop.shopId) {
       throw new Error('A previous cloud sale is still pending for another shop. Return to that shop and reconcile it before starting a new sale.');
     }
+    if (pending?.saleId && saleId && saleId !== pending.saleId && (!pending.shopId || pending.shopId === shop.shopId)) {
+      const existingSale = await lookupPendingSale(pending.saleId);
+      if (existingSale) {
+        throw new Error('A previous cloud sale is already committed but not fully reconciled. Finish its reconciliation before using a different sale ID.');
+      }
+    }
     if (pending?.saleId && (!saleId || saleId === pending.saleId)) {
       const samePayload = pending.fingerprint === fingerprint;
       const sameShop = !pending.shopId || pending.shopId === shop.shopId;
@@ -2040,7 +2046,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       if (samePayload && sameShop && sameBranch && modernTradeInMarker && sameTradeIn) {
         saleId = pending.saleId;
-        if (tradeIn?.addToInventory && pending.tradeInUnitId) tradeInUnitId = pending.tradeInUnitId;
+        if (tradeIn?.addToInventory && pending.tradeInUnitId) {
+          tradeInUnitId = pending.tradeInUnitId;
+        } else if (tradeIn?.addToInventory) {
+          const existingSale = await lookupPendingSale(pending.saleId);
+          if (existingSale) {
+            throw new Error('The previous cloud sale is committed but its trade-in unit ID is missing. No new sale was started; ask the shop admin to reconcile the trade-in.');
+          }
+        }
       } else if (samePayload && sameShop && sameBranch && modernTradeInMarker && sameTradeIn === false) {
         const existingSale = await lookupPendingSale(pending.saleId);
         if (existingSale) {
