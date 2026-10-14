@@ -456,6 +456,15 @@ async function persistState(state: POSState): Promise<void> {
         }
       }
     } catch { /* ignore malformed/stale marker */ }
+  } else {
+    // The POS can boot from its legacy cache when IndexedDB is unavailable,
+    // but it cannot safely claim that changes are durably stored.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
+        detail: { message: 'IndexedDB is unavailable on this PC. POS changes cannot be safely saved locally. Do not retry a sale until its status is checked in Sales History/cloud.' },
+      }));
+    }
+    return;
   }
   // Track write for offline queue (future cloud sync)
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
