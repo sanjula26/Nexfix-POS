@@ -26,7 +26,17 @@ async function create(req:Request) {
   const oldToken=String(body.oldToken||"").trim();
   if(oldToken){
     const oldHash=await sha256(oldToken);
-    await admin.from("phone_sales_tokens").update({revoked_at:new Date().toISOString()}).eq("token_hash",oldHash).eq("shop_id",shopId).is("revoked_at",null);
+    const { error: revokeError } = await admin.from("phone_sales_tokens")
+      .update({revoked_at:new Date().toISOString()})
+      .eq("token_hash",oldHash)
+      .eq("shop_id",shopId)
+      .is("revoked_at",null);
+    // Never report successful rotation if revocation failed. Otherwise the
+    // previous bearer link could remain valid while the UI claims it was revoked.
+    if (revokeError) {
+      console.error("[phone-sales] previous token revocation failed", revokeError.message);
+      return json({ok:false,error:"Could not revoke the previous phone sales link. No new link was created; please retry."},500);
+    }
   }
   const token=base64Url(crypto.getRandomValues(new Uint8Array(32))), hash=await sha256(token);
   const {error}=await admin.from("phone_sales_tokens").insert({token_hash:hash,shop_id:shopId,device_id:String(body.deviceId||"").trim().slice(0,200)||null,created_by:uid,label:String(body.label||"Phone Sales").trim().slice(0,80)||"Phone Sales"});
