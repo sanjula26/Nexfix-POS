@@ -32,7 +32,7 @@ const emptyTenders = (): TenderTotals => ({ cash: 0, card: 0, bank: 0, mobile: 0
 const METHODS = ['cash', 'card', 'bank', 'mobile'] as const;
 
 function belongsToSession(
-  item: { cashierId?: string; cashierName?: string; by?: string },
+  item: { cashierId?: string; cashierName?: string; by?: string; branchId?: string },
   session?: DaySession,
 ): boolean {
   if (!session) return true;
@@ -136,7 +136,7 @@ export function calculateDayEndTotals(
 
   const creditSettled = emptyTenders();
   const creditPayments = (state.customerCreditPayments || []).filter(payment =>
-    dkey(payment.date) === date && belongsToSession({ cashierId: payment.cashierId, by: payment.by }, session),
+    dkey(payment.date) === date && belongsToSession(payment, session),
   );
   for (const payment of creditPayments) {
     for (const leg of settlementLegs(payment)) {
