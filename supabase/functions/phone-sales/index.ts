@@ -43,6 +43,37 @@ async function revoke(req:Request) {
   const {error}=await admin.from("phone_sales_tokens").update({revoked_at:new Date().toISOString()}).eq("id",row.id);
   if(error)return json({ok:false,error:error.message},400); return json({ok:true});
 }
+/** Load all line/payment rows for one bounded sales page without silently
+ * truncating at the Supabase REST API's default row cap. A failed child query
+ * must fail the request rather than return an apparently successful but
+ * incomplete receipt/history response.
+ */
+async function loadSaleChildren(table: "sale_items" | "sale_payments", columns: string, saleIds: string[]) {
+  const rows: any[] = [];
+  if (!saleIds.length) return rows;
+  let cursor = "";
+  while (true) {
+    let query = admin.from(table)
+      .select(columns)
+      .in("sale_id", saleIds)
+      .order("id", { ascending: true })
+      .limit(1000);
+    if (cursor) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    if (error) throw new Error(`Could not load ${table} for Phone Sales: ${error.message}`);
+    const batch = data || [];
+    rows.push(...batch);
+    if (rows.length > 20000) {
+      throw new Error(`This Phone Sales page contains too many ${table} rows. Reduce the page size and retry.`);
+    }
+    if (batch.length < 1000) return rows;
+    const nextCursor = String(batch[batch.length - 1]?.id || "");
+    if (!nextCursor || nextCursor <= cursor) {
+      throw new Error(`Could not safely paginate ${table} for Phone Sales.`);
+    }
+    cursor = nextCursor;
+  }
+}
 async function read(req:Request) {
   const u=new URL(req.url), token=(u.searchParams.get("token")||"").trim();
   if(token.length<32)return json({ok:false,error:"Invalid phone sales link"},401);
@@ -71,8 +102,10 @@ async function read(req:Request) {
   const hasMore=(sales||[]).length>pageSize;
   const next=hasMore && pageSales.length ? pageSales[pageSales.length-1] : null;
   const ids=pageSales.map(s=>s.id);
-  const items=ids.length?(await admin.from("sale_items").select("id,sale_id,product_id,name,qty,price,cost,discount,price_overridden,warranty_months,unit_ids").in("sale_id",ids)).data||[]:[];
-  const pays=ids.length?(await admin.from("sale_payments").select("id,sale_id,method,amount").in("sale_id",ids)).data||[]:[];
+  const [items, pays] = await Promise.all([
+    loadSaleChildren("sale_items", "id,sale_id,product_id,name,qty,price,cost,discount,price_overridden,warranty_months,unit_ids", ids),
+    loadSaleChildren("sale_payments", "id,sale_id,method,amount", ids),
+  ]);
   const im=new Map<string,any[]>(), pm=new Map<string,any[]>();
   for(const x of items){const a=im.get(x.sale_id)||[];a.push({productId:String(x.product_id),name:String(x.name||"Item"),qty:Number(x.qty||0),price:Number(x.price||0),cost:Number(x.cost||0),discount:Number(x.discount||0),priceOverridden:x.price_overridden===true||undefined,warrantyMonths:Number(x.warranty_months||0)||undefined,unitIds:Array.isArray(x.unit_ids)&&x.unit_ids.length?x.unit_ids.map(String):undefined});im.set(x.sale_id,a);}
   for(const x of pays){const a=pm.get(x.sale_id)||[];a.push({method:String(x.method),amount:Number(x.amount||0)});pm.set(x.sale_id,a);}
