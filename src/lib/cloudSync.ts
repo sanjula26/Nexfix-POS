@@ -1,7 +1,7 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
-import { cacheBranchStock } from './branchStock';
+import { cacheBranchStock, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 
 const DEVICE_KEY = 'nexfix_device_id';
@@ -180,7 +180,7 @@ export async function refreshCloudBranchStock(shopId: string, branchId: string):
   return { ok: true };
 }
 
-/** Resolve a selected branch against the active shop membership. Local-only branch IDs are mapped to Main for queued legacy offline sales. */
+/** Resolve a branch from the server-authoritative device binding in multi-branch shops. */
 export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string): Promise<{ ok: boolean; branchId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
@@ -191,16 +191,41 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
     .order('is_default', { ascending: false });
   if (error) return { ok: false, error: `Branch lookup: ${error.message}` };
   const branches = (rows || []) as Array<{ id: string; is_default: boolean; active: boolean }>;
-  if (!branches.length) return { ok: false, error: 'No active branch exists for this shop' };
-  if (preferredBranchId && preferredBranchId !== 'local-main') {
-    const selected = branches.find(branch => branch.id === preferredBranchId);
-    if (!selected) return { ok: false, error: 'This POS is assigned to a branch that is no longer active. Ask the shop admin to assign this PC to an active branch.' };
-    return { ok: true, branchId: selected.id };
+  if (!branches.length) {
+    clearCachedPOSDeviceBranchId(shopId);
+    return { ok: false, error: 'No active branch exists for this shop' };
   }
-  if (branches.length === 1) return { ok: true, branchId: branches[0].id };
-  const main = branches.find(branch => branch.is_default);
-  if (preferredBranchId === 'local-main' && main) return { ok: true, branchId: main.id };
-  return { ok: false, error: 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC to a branch before syncing sales or receiving stock' };
+  // A single active branch is unambiguous and preserves legacy single-branch
+  // operation even when the local Settings value points to a retired branch.
+  if (branches.length === 1) {
+    cachePOSDeviceBranchId(shopId, branches[0].id);
+    return { ok: true, branchId: branches[0].id };
+  }
+
+  // Never map a local-only sentinel to Main in a multi-branch shop. Resolve the
+  // registered device assignment and require the active branch to match it.
+  const currentDeviceId = deviceId();
+  const { data: binding, error: bindingError } = await supabase
+    .from('pos_device_branches')
+    .select('branch_id')
+    .eq('shop_id', shopId)
+    .eq('device_id', currentDeviceId)
+    .maybeSingle();
+  if (bindingError) return { ok: false, error: `Device branch assignment lookup: ${bindingError.message}` };
+  const boundBranchId = typeof binding?.branch_id === 'string' ? binding.branch_id : '';
+  const boundBranch = branches.find(branch => branch.id === boundBranchId);
+  if (!boundBranch) {
+    clearCachedPOSDeviceBranchId(shopId);
+    return { ok: false, error: 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC to an active branch.' };
+  }
+  if (preferredBranchId && preferredBranchId !== 'local-main' && preferredBranchId !== boundBranch.id) {
+    // The server binding is authoritative. Cache it so the POS can recover from
+    // a stale local branch id without exposing a branch selector in Settings.
+    cachePOSDeviceBranchId(shopId, boundBranch.id);
+  } else {
+    cachePOSDeviceBranchId(shopId, boundBranch.id);
+  }
+  return { ok: true, branchId: boundBranch.id };
 }
 
 /** Register this machine with the currently authenticated cloud shop.

@@ -1,3 +1,5 @@
+import { getMachineIdentity } from './machine';
+
 export interface BranchStockRow { productId: string; qty: number }
 
 function storage(): Storage | null {
@@ -66,6 +68,31 @@ export function getDefaultBranchId(shopId: string): string | null {
   try { return storage()?.getItem(`nexfix_default_branch_v1:${shopId}`) || null; } catch { return null; }
 }
 
+/** Cache the server-resolved branch for this exact shop and desktop identity. */
+export function cachePOSDeviceBranchId(shopId: string, branchId: string): void {
+  if (!shopId || !branchId) return;
+  try {
+    const deviceId = getMachineIdentity().id;
+    storage()?.setItem(`nexfix_device_branch_v1:${shopId}:${deviceId}`, branchId);
+  } catch { /* the server remains authoritative when local caching is unavailable */ }
+}
+
+export function getCachedPOSDeviceBranchId(shopId: string): string | null {
+  if (!shopId) return null;
+  try {
+    const deviceId = getMachineIdentity().id;
+    return storage()?.getItem(`nexfix_device_branch_v1:${shopId}:${deviceId}`) || null;
+  } catch { return null; }
+}
+
+export function clearCachedPOSDeviceBranchId(shopId: string): void {
+  if (!shopId) return;
+  try {
+    const deviceId = getMachineIdentity().id;
+    storage()?.removeItem(`nexfix_device_branch_v1:${shopId}:${deviceId}`);
+  } catch { /* optional cache cleanup */ }
+}
+
 export function hasMultipleCachedBranches(shopId: string): boolean {
   if (!shopId) return false;
   try {
@@ -76,11 +103,13 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
 
 /** Resolve the branch used by the single-branch POS UI without requiring a Settings selector. */
 export function getPOSBranchId(shopId: string, configuredBranchId?: string | null): string {
+  // Once resolved online, the device's server-side branch assignment is the
+  // source of truth even if the old local Settings value is stale.
+  const cachedDeviceBranchId = getCachedPOSDeviceBranchId(shopId);
+  if (cachedDeviceBranchId) return cachedDeviceBranchId;
   const configured = String(configuredBranchId || '').trim();
   if (configured && configured !== 'local-main') return configured;
   // A multi-branch shop must never silently route an unassigned POS to Main.
-  // Preserve the local sentinel so UI guards and the server-side device-binding
-  // RPC fail closed until this device has an explicit active-branch assignment.
   if (hasMultipleCachedBranches(shopId)) return 'local-main';
   return getDefaultBranchId(shopId) || 'local-main';
 }
