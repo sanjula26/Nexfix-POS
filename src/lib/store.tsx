@@ -1882,7 +1882,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const saleLines = applyCategoryPromotions(input.lines, state.products, state.settings);
     const tradeIn = input.tradeIn;
-    const tradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    const rawTradeInValue = tradeIn ? Math.max(0, Number(tradeIn.value) || 0) : 0;
+    // Match the local sale calculation exactly: trade-in credit cannot exceed
+    // the taxable merchandise subtotal after the ordinary bill discount.
+    const saleSubtotal = saleLines.reduce((sum, line) => {
+      const product = state.products.find(item => item.id === line.productId);
+      if (!product) throw new Error('A cart item is no longer available. Refresh the cart and try again.');
+      const unitPrice = line.price !== undefined && line.price >= 0 ? line.price : product.price;
+      const gross = unitPrice * line.qty;
+      const lineDiscount = Math.min(Math.max(line.discount || 0, 0), gross);
+      return sum + gross - lineDiscount;
+    }, 0);
+    const discountBeforeTradeIn = Math.min(input.discount || 0, saleSubtotal);
+    const tradeInValue = Math.min(rawTradeInValue, Math.max(0, saleSubtotal - discountBeforeTradeIn));
     if (tradeIn && (!tradeIn.productId || tradeInValue <= 0)) throw new Error('Select a trade-in product and enter a valid trade-in value.');
     const tradeInProduct = tradeIn ? state.products.find(p => p.id === tradeIn.productId && p.active) : undefined;
     if (tradeIn && !tradeInProduct) throw new Error('The selected trade-in product is unavailable. Refresh products and try again.');
