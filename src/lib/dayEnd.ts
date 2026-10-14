@@ -128,7 +128,7 @@ export function calculateDayEndTotals(
   // Exchanges are dated independently from the original bill. The existing
   // model does not store an exchange tender method, so refunds are treated as cash.
   for (const exchange of state.exchanges || []) {
-    if (dkey(exchange.date) !== date || (session && exchange.by !== session.cashierName)) continue;
+    if (dkey(exchange.date) !== date || !belongsToSession(exchange, session)) continue;
     if (Number(exchange.refund) > 0) allRefundEvents.push({ amount: Number(exchange.refund), cashAmount: Number(exchange.refund), method: 'cash' });
   }
   const refunds = allRefundEvents.reduce((sum, refund) => sum + refund.amount, 0);
