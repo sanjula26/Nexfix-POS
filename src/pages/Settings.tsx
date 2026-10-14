@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
+  Store, Database, Download, Upload, RotateCcw, Cloud, SlidersHorizontal, Copy, ExternalLink,
   CheckCircle2, AlertTriangle, ReceiptText, ShieldCheck, Lock, Eye, EyeOff, MessageCircle,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
