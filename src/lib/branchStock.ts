@@ -73,3 +73,10 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
     return Array.isArray(parsed) && parsed.filter(branch => branch.active !== false).length > 1;
   } catch { return false; }
 }
+
+/** Resolve the branch used by the single-branch POS UI without requiring a Settings selector. */
+export function getPOSBranchId(shopId: string, configuredBranchId?: string | null): string {
+  const configured = String(configuredBranchId || '').trim();
+  if (configured && configured !== 'local-main') return configured;
+  return getDefaultBranchId(shopId) || 'local-main';
+}
