@@ -46,7 +46,7 @@ begin
 
   d := left(d, insert_pos)
     || E'\n\n    if not coalesce(v_product.active, true) then\n'
-    || '      raise exception ''Product is inactive and cannot be sold'';\n'
+    || E'      raise exception ''Product is inactive and cannot be sold'';\n'
     || '    end if;'
     || substring(d from insert_pos + 1);
 
