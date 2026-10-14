@@ -124,7 +124,7 @@ async function getSalesPage(db: SupabaseClient, shopId: string, from: string, to
   let query = db.from('sales').select('id,bill_no,customer_name,total,created_at,status', { count: 'exact' })
     .eq('shop_id', shopId).eq('status', 'completed').gte('created_at', from).lt('created_at', to);
   if (branchId !== 'all') query = query.eq('branch_id', branchId);
-  const { data, error, count } = await query.order('created_at', { ascending: false }).range(start, start + pageSize - 1);
+  const { data, error, count } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).range(start, start + pageSize - 1);
   if (error) throw error;
   return { rows: (data || []) as Sale[], count: count || 0 };
 }
