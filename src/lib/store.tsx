@@ -3181,6 +3181,7 @@ const deletePurchase = useCallback((id: string) => {
         id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
         billNo: sale.billNo, customerName: sale.customerName, reason,
         items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
+        branchId: sale.branchId || getPOSBranchId(getCloudShopId(), s.settings.branchId), cashierId: user.id,
       };
       const allReturned = sale.items.every((it, idx) => {
         const returned = priorReturnedByLine.has('i:' + idx)
