@@ -4,7 +4,7 @@ import { Banknote, CreditCard, Landmark, Smartphone, UserRound, ReceiptText, Che
 import { usePOS } from '../lib/store';
 import { EmptyState, Field, PageHeading, SearchInput } from '../components/ui';
 import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsAppLink } from '../lib/utils';
-import { getDefaultBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
+import { getDefaultBranchId, getPOSBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
@@ -118,15 +118,16 @@ export default function CreditSettle() {
   const recent = filteredRecent.slice(0, visibleRecentCount);
   const canCollect = !!user && (user.role === 'admin' || (can('page:customers') && can('page:pos')));
   const today = dkey(new Date());
-  const selectedBranchId = state.settings.branchId || 'local-main';
-  const defaultBranchId = getDefaultBranchId(getCloudShopId()) || 'local-main';
+  const shopId = getCloudShopId();
+  const selectedBranchId = getPOSBranchId(shopId, state.settings.branchId);
+  const defaultBranchId = getDefaultBranchId(shopId) || 'local-main';
   const effectiveBranch = (branchId?: string) => !branchId || branchId === 'local-main' ? defaultBranchId : branchId;
   const todaySession = state.sessions.find(session =>
     session.cashierId === user?.id && session.date === today &&
     effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId),
   );
   const sessionBlockReason = hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main'
-    ? 'Select this POS branch in Settings before collecting credit payments.'
+    ? 'The shop's default branch is unavailable on this POS. Connect online and refresh branch data, then retry.'
     : !todaySession
       ? "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session."
       : todaySession.closed
