@@ -428,21 +428,27 @@ async function persistState(state: POSState): Promise<void> {
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
     const saved = await idbSaveState(state);
+    // Never enqueue an offline state sync from a stale IndexedDB snapshot when
+    // this authoritative write failed. Keep the cloud-sale marker so a later
+    // successful persist can safely reconcile the sale instead of risking a
+    // duplicate or silently syncing older state.
+    if (!saved) {
+      console.error('[POS Storage] IndexedDB state save failed; offline sync enqueue skipped to avoid stale-state sync.');
+      return;
+    }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
     // durably persisted locally. This closes the crash window between the
     // cloud transaction commit and the debounced local state write.
-    if (saved) {
-      try {
-        const pendingKey = 'nexfix_pending_cloud_sale_v2';
-        const raw = localStorage.getItem(pendingKey);
-        if (raw) {
-          const pending = JSON.parse(raw) as { saleId?: string };
-          if (pending.saleId && state.sales.some(sale => sale.id === pending.saleId)) {
-            localStorage.removeItem(pendingKey);
-          }
+    try {
+      const pendingKey = 'nexfix_pending_cloud_sale_v2';
+      const raw = localStorage.getItem(pendingKey);
+      if (raw) {
+        const pending = JSON.parse(raw) as { saleId?: string };
+        if (pending.saleId && state.sales.some(sale => sale.id === pending.saleId)) {
+          localStorage.removeItem(pendingKey);
         }
-      } catch { /* ignore malformed/stale marker */ }
-    }
+      }
+    } catch { /* ignore malformed/stale marker */ }
   }
   // Track write for offline queue (future cloud sync)
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
