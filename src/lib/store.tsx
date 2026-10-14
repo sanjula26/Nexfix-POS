@@ -1226,13 +1226,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     }
     let duplicate = false;
-    let savedProducts: Product[] | null = null;
     setState(s => {
       const duplicateSku = s.products.some(x => x.id !== normalized.id && x.sku.trim().toLowerCase() === normalized.sku.toLowerCase());
       const duplicateBarcode = !!normalized.barcode && s.products.some(x => x.id !== normalized.id && x.barcode.trim() === normalized.barcode);
       if (duplicateSku || duplicateBarcode) { duplicate = true; return s; }
       const updatedProducts = s.products.some(x => x.id === normalized.id) ? s.products.map(x => x.id === normalized.id ? normalized : x) : [normalized, ...s.products];
-      savedProducts = updatedProducts;
       syncToGoogleDrive('Products', updatedProducts);
       return { ...s, products: updatedProducts };
     });
@@ -1244,14 +1242,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // stay local until some later sale/GRN triggered a full catalog sync. Sync
     // the saved metadata promptly when this is an online cloud admin/manager;
     // syncNormalizedCatalog reconciles metadata but keeps cloud stock authoritative.
-    if (exists && stockDelta === 0 && savedProducts && supabaseConfigured
+    if (exists && stockDelta === 0 && supabaseConfigured
       && getConnectivity() === 'online' && (user.role === 'admin' || user.role === 'manager')) {
       try {
         const shop = await ensureCloudShop('Nexfix Shop');
         if (!shop.ok || !shop.shopId) {
           pushAudit('WARNING', 'Product', `Product saved locally, but cloud metadata sync failed: ${shop.error || 'Cloud shop unavailable'}`);
         } else {
-          const catalog = await syncNormalizedCatalog({ ...stateRef.current, products: savedProducts }, shop.shopId);
+          const latestState = stateRef.current;
+          const cloudProducts = latestState.products.some(item => item.id === normalized.id)
+            ? latestState.products.map(item => item.id === normalized.id ? normalized : item)
+            : [normalized, ...latestState.products];
+          const catalog = await syncNormalizedCatalog({ ...latestState, products: cloudProducts }, shop.shopId);
           if (!catalog.ok) pushAudit('WARNING', 'Product', `Product saved locally, but cloud metadata sync failed: ${catalog.error || 'unknown catalog error'}`);
         }
       } catch (error) {
