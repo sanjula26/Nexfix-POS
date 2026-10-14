@@ -385,6 +385,17 @@ export default function POS() {
     splitOn, legs,
   ]);
 
+  // IndexedDB is the authoritative local POS store. If a durable write
+  // fails, warn the cashier so they verify sale status before retrying.
+  useEffect(() => {
+    const onStorageError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setError(detail?.message || 'Local POS storage failed. Verify the sale status before retrying.');
+    };
+    window.addEventListener('nexfix:storage-error', onStorageError);
+    return () => window.removeEventListener('nexfix:storage-error', onStorageError);
+  }, []);
+
   /* ---------- toasts ---------- */
   const toast = (msg: string, tone: Toast['tone'] = 'rose') => {
     const id = uid();
