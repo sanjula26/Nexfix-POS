@@ -6,7 +6,7 @@ import type { POSState } from './types';
  * silently associate that data with whichever cloud membership happens to
  * appear first. An explicit, verified migration/rebind flow is needed instead.
  */
-function hasLocalBusinessData(state: POSState): boolean {
+export function hasLocalBusinessData(state: POSState): boolean {
   const collections: unknown[] = [
     state.products, state.customers, state.suppliers, state.sales, state.purchases,
     state.expenses, state.exchanges, state.purchaseReturns, state.held, state.sessions,
