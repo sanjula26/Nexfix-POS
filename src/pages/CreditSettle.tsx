@@ -127,7 +127,7 @@ export default function CreditSettle() {
     effectiveBranch(session.branchId) === effectiveBranch(selectedBranchId),
   );
   const sessionBlockReason = hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main'
-    ? 'The shop's default branch is unavailable on this POS. Connect online and refresh branch data, then retry.'
+    ? "The shop default branch is unavailable on this POS. Connect online and refresh branch data, then retry."
     : !todaySession
       ? "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session."
       : todaySession.closed
