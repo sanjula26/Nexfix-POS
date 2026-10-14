@@ -118,7 +118,12 @@ export default function ShopSwitcher() {
   const [bootstrapping, setBootstrapping] = useState(false);
   const [error, setError] = useState('');
   const activeId = getCloudShopId();
-  const activeShop = useMemo(() => shops.find(shop => shop.id === activeId) || shops[0] || null, [shops, activeId]);
+  // A persisted binding that is not in this user's memberships is a hard stop,
+  // not a reason to fall back to the first shop and hydrate it with local data.
+  const activeShop = useMemo(() => {
+    if (activeId) return shops.find(shop => shop.id === activeId) || null;
+    return shops[0] || null;
+  }, [shops, activeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,9 +132,15 @@ export default function ShopSwitcher() {
       if (cancelled) return;
       setShops(items);
       const selected = getCloudShopId();
-      const resolved = selected && items.some(item => item.id === selected) ? selected : items[0]?.id;
+      const selectedMembership = selected ? items.find(item => item.id === selected) : undefined;
+      if (selected && !selectedMembership) {
+        setError('This PC is bound to a different cloud shop. No local data was copied or uploaded. Sign in with the original shop account, or ask an admin to arrange a safe shop rebind.');
+        setBootstrapping(false);
+        return;
+      }
+      const resolved = selectedMembership?.id || items[0]?.id;
       if (!resolved) { setBootstrapping(false); return; }
-      if (!selected || selected !== resolved) setCloudShopId(resolved);
+      if (!selected) setCloudShopId(resolved);
     });
     return () => { cancelled = true; };
   }, [user?.id]);
@@ -174,7 +185,19 @@ export default function ShopSwitcher() {
     return () => { cancelled = true; };
   }, [user?.id, activeShop?.id]);
 
-  if (!user || !activeShop) return null;
+  if (!user) return null;
+  if (!activeShop) {
+    if (!shops.length || !getCloudShopId()) return null;
+    return (
+      <div className="fixed top-3 right-3 z-[100] w-[min(92vw,420px)] rounded-2xl border border-amber-500/30 bg-panel p-4 shadow-2xl">
+        <div className="flex items-start gap-2 text-sm font-semibold text-ink">
+          <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-500" />
+          <span>Cloud shop mismatch — syncing is blocked to protect the previous shop's data.</span>
+        </div>
+        <p className="mt-2 text-xs text-faint">This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account, or have an admin arrange an explicit rebind after safely syncing and backing up the previous shop. No shop data was switched or uploaded.</p>
+      </div>
+    );
+  }
 
   const switchShop = async (target: ShopOption) => {
     if (busy || bootstrapping || target.id === activeShop.id) { setOpen(false); return; }
