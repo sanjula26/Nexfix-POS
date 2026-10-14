@@ -19,18 +19,36 @@ function normalizeRecoveryScope(scope?: string): string {
 }
 
 function readRecoveryKeyMap(): Record<string, string> {
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(RECOVERY_KEY_MAP_STORAGE);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const entries = Object.entries(parsed).filter(([k, v]) => k && typeof v === 'string') as Array<[string, string]>;
-    return Object.fromEntries(entries) as Record<string, string>;
-  } catch { return {}; }
+    raw = localStorage.getItem(RECOVERY_KEY_MAP_STORAGE);
+  } catch {
+    throw new Error('Could not read saved Recovery Keys. Backup was stopped to protect existing keys.');
+  }
+  if (!raw) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('The saved Recovery Key map is damaged. Backup was stopped to protect existing keys.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('The saved Recovery Key map is invalid. Backup was stopped to protect existing keys.');
+  }
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.some(([scope, value]) => !scope || typeof value !== 'string')) {
+    throw new Error('The saved Recovery Key map contains invalid entries. Backup was stopped to protect existing keys.');
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
 }
 
 function writeRecoveryKeyMap(map: Record<string, string>): void {
-  try { localStorage.setItem(RECOVERY_KEY_MAP_STORAGE, JSON.stringify(map)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(RECOVERY_KEY_MAP_STORAGE, JSON.stringify(map));
+  } catch {
+    throw new Error('Could not save the Recovery Key map on this browser. Backup was stopped to protect existing keys.');
+  }
 }
 
 export interface EncryptedBackupEnvelopeV1 {
@@ -172,22 +190,35 @@ export function setRecoveryKey(value: string, scope?: string): { ok: boolean; er
       localStorage.setItem(RECOVERY_KEY_STORAGE, key);
     }
     return { ok: true };
-  } catch { return { ok: false, error: 'Could not save the Recovery Key on this browser.' }; }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not save the Recovery Key on this browser.',
+    };
+  }
 }
 
 export function hasRecoveryKey(scope?: string): boolean { return !!getRecoveryKey(scope); }
 
-export function clearRecoveryKey(scope?: string): void {
+export function clearRecoveryKey(scope?: string): { ok: boolean; error?: string } {
   const normalizedScope = normalizeRecoveryScope(scope);
   try {
     if (normalizedScope) {
       const map = readRecoveryKeyMap();
-      if (map[normalizedScope]) delete map[normalizedScope];
-      writeRecoveryKeyMap(map);
+      if (map[normalizedScope]) {
+        delete map[normalizedScope];
+        writeRecoveryKeyMap(map);
+      }
     } else {
       localStorage.removeItem(RECOVERY_KEY_STORAGE);
     }
-  } catch { /* ignore */ }
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not clear the Recovery Key on this browser.',
+    };
+  }
 }
 
 export function ensureRecoveryKey(scope?: string): string {
