@@ -33,6 +33,12 @@ begin
     raise exception 'Registered active POS device required';
   end if;
 
+  select * into v_repair from public.repairs where id=p_repair_id and shop_id=p_shop_id for update;
+  if found and v_repair.parts_deducted_at is not null then
+    return query select true,true,p_repair_id;
+    return;
+  end if;
+
   -- Repair parts have no historical branch column. For a multi-branch shop,
   -- consume stock only from the currently assigned device branch, and fail
   -- closed if the device has no valid assignment.
@@ -46,12 +52,6 @@ begin
     if v_branch_id is null then
       raise exception 'This POS device is not assigned to an active branch; repair parts were not deducted';
     end if;
-  end if;
-
-  select * into v_repair from public.repairs where id=p_repair_id and shop_id=p_shop_id for update;
-  if found and v_repair.parts_deducted_at is not null then
-    return query select true,true,p_repair_id;
-    return;
   end if;
 
   if coalesce(p_repair->>'status','') <> 'delivered' then raise exception 'Repair must be delivered'; end if;
