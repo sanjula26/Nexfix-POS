@@ -24,23 +24,23 @@ async function create(req:Request) {
   const {data:m}=await admin.from("shop_memberships").select("role").eq("shop_id",shopId).eq("user_id",uid).eq("active",true).maybeSingle();
   if(!m||!["admin","manager"].includes(String(m.role)))return json({ok:false,error:"Only an active shop admin or manager can create a phone sales link"},403);
   const oldToken=String(body.oldToken||"").trim();
-  if(oldToken){
-    const oldHash=await sha256(oldToken);
-    const { error: revokeError } = await admin.from("phone_sales_tokens")
-      .update({revoked_at:new Date().toISOString()})
-      .eq("token_hash",oldHash)
-      .eq("shop_id",shopId)
-      .is("revoked_at",null);
-    // Never report successful rotation if revocation failed. Otherwise the
-    // previous bearer link could remain valid while the UI claims it was revoked.
-    if (revokeError) {
-      console.error("[phone-sales] previous token revocation failed", revokeError.message);
-      return json({ok:false,error:"Could not revoke the previous phone sales link. No new link was created; please retry."},500);
-    }
-  }
   const token=base64Url(crypto.getRandomValues(new Uint8Array(32))), hash=await sha256(token);
-  const {error}=await admin.from("phone_sales_tokens").insert({token_hash:hash,shop_id:shopId,device_id:String(body.deviceId||"").trim().slice(0,200)||null,created_by:uid,label:String(body.label||"Phone Sales").trim().slice(0,80)||"Phone Sales"});
-  if(error)return json({ok:false,error:error.message},400);
+  const deviceId=String(body.deviceId||"").trim().slice(0,200)||null;
+  const label=String(body.label||"Phone Sales").trim().slice(0,80)||"Phone Sales";
+  // Rotation is a single database transaction: the old token is not revoked
+  // unless the replacement token is inserted successfully in the same commit.
+  const {data:rotation,error:rotationError}=await admin.rpc("rotate_phone_sales_token",{
+    p_user_id:uid,
+    p_shop_id:shopId,
+    p_old_token_hash:oldToken ? await sha256(oldToken) : null,
+    p_new_token_hash:hash,
+    p_device_id:deviceId,
+    p_label:label,
+  });
+  if(rotationError || !rotation?.ok){
+    console.error("[phone-sales] atomic token rotation failed",rotationError?.message || "RPC returned no success");
+    return json({ok:false,error:rotationError?.message || "Could not safely create or rotate the phone sales link. The previous link was preserved; please retry."},500);
+  }
   return json({ok:true,token});
 }
 async function revoke(req:Request) {
