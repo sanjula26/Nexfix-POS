@@ -12,6 +12,7 @@ declare
   v_uid uuid := auth.uid();
   v_role text;
   v_repair public.repairs;
+  v_repair_exists boolean := false;
   v_part jsonb;
   v_product public.products;
   v_qty numeric;
@@ -34,7 +35,8 @@ begin
   end if;
 
   select * into v_repair from public.repairs where id=p_repair_id and shop_id=p_shop_id for update;
-  if found and v_repair.parts_deducted_at is not null then
+  v_repair_exists := found;
+  if v_repair_exists and v_repair.parts_deducted_at is not null then
     return query select true,true,p_repair_id;
     return;
   end if;
@@ -55,7 +57,7 @@ begin
   end if;
 
   if coalesce(p_repair->>'status','') <> 'delivered' then raise exception 'Repair must be delivered'; end if;
-  if not found then
+  if not v_repair_exists then
     insert into public.repairs(
       id,shop_id,job_no,customer_id,customer_name,customer_phone,device_type,device_brand,device_model,
       imei,serial,fault,diagnosis,labor_cost,status,received_at,promised_at,completed_at,delivered_at,
