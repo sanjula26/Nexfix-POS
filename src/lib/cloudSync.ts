@@ -398,6 +398,7 @@ export async function ensureCloudCustomerForSale(
       if (found.customer) return { ok: true, customerId: found.customer.id };
     }
     const retryById = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', customer.id).maybeSingle();
+    if (retryById.error) return { ok: false, error: retryById.error.message };
     if (retryById.data?.id) return { ok: true, customerId: retryById.data.id };
   }
   return { ok: false, error: inserted.error.message };
