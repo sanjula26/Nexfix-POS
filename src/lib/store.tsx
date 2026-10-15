@@ -355,6 +355,19 @@ function migrate(s: POSState): POSState {
   let adminPinHash = String(s.settings?.adminPinHash || '');
   if (adminPinHash && verifyPassword(RETIRED_DEMO_PASSWORDS[0], adminPinHash)) adminPinHash = '';
   if (adminPinHash && (adminPinHash.includes('.') || adminPinHash.length < 32)) adminPinHash = '';
+  // Keep a selectable generic supplier for purchases where the invoice has no named vendor.
+  // Match by name (not ID) so older shops never receive duplicate AUTO General entries.
+  const existingSuppliers = Array.isArray(s.suppliers) ? s.suppliers : [];
+  const suppliers = existingSuppliers.some(sp => String(sp.name || '').trim().toLowerCase() === 'auto general')
+    ? existingSuppliers
+    : [...existingSuppliers, {
+        id: uid(),
+        name: 'AUTO General',
+        contactPerson: 'General purchases',
+        phone: '',
+        address: 'General purchases',
+        createdAt: new Date().toISOString(),
+      }];
   const defaultAdminPermissions: Record<string, boolean> = Object.fromEntries(PERMISSION_KEYS.map(k => [k.key, true]));
   const permissions: Permissions = {
     admin: { ...defaultAdminPermissions, ...(s.permissions?.admin || {}) },
@@ -367,6 +380,7 @@ function migrate(s: POSState): POSState {
     ...s,
     permissions,
     users,
+    suppliers,
     units: s.units || [],
     repairs: s.repairs || [],
     counters: {
