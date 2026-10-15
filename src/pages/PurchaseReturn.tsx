@@ -20,7 +20,7 @@ function printDebitNote(dn: PurchaseReturn, shopName: string) {
   const w = window.open('', '_blank', 'width=800,height=600');
   if (!w) return;
   const rows = dn.items.filter(i => i.qty > 0).map(i =>
-    `<tr><td>${escapeHtml(i.name)}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">Rs.${i.cost.toLocaleString('en-US',{minimumFractionDigits:2})}</td><td style="text-align:right">Rs.${(i.qty*i.cost).toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`
+    `<tr><td>${escapeHtml(i.name)}</td><td style="text-align:right">${escapeHtml(i.qty)}</td><td style="text-align:right">Rs.${escapeHtml(Number(i.cost).toLocaleString('en-US',{minimumFractionDigits:2}))}</td><td style="text-align:right">Rs.${escapeHtml((Number(i.qty)*Number(i.cost)).toLocaleString('en-US',{minimumFractionDigits:2}))}</td></tr>`
   ).join('');
   w.document.write(`<!DOCTYPE html><html><head><title>Debit Note ${escapeHtml(dn.dnNo)}</title>
   <style>body{font-family:Arial,sans-serif;font-size:13px;margin:24px}h2{margin:0 0 4px}p{margin:2px 0;color:#555}
@@ -34,7 +34,7 @@ function printDebitNote(dn: PurchaseReturn, shopName: string) {
   <table><thead><tr><th>Item</th><th>Return Qty</th><th>Unit Cost</th><th>Total</th></tr></thead>
   <tbody>${rows}</tbody>
   <tfoot><tr><td colspan="3" style="text-align:right;font-weight:700">Total Debit</td>
-  <td style="text-align:right;font-weight:700">Rs.${dn.total.toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr></tfoot>
+  <td style="text-align:right;font-weight:700">Rs.${escapeHtml(Number(dn.total).toLocaleString('en-US',{minimumFractionDigits:2}))}</td></tr></tfoot>
   </table>
   <p style="margin-top:16px;font-size:11px;color:#666">This is a computer generated debit note.</p>
   <button onclick="window.print()" style="margin-top:12px;padding:8px 20px;cursor:pointer">Print</button>
