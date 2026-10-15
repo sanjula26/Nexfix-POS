@@ -101,7 +101,10 @@ const emptyState = (): POSState => {
     'act:discount': true,
   };
   return {
-    products: [], customers: [], suppliers: [], sales: [], purchases: [], expenses: [], exchanges: [],
+    products: [], customers: [], suppliers: [{
+      id: uid(), name: 'AUTO General', contactPerson: 'General purchases', phone: '',
+      address: 'General purchases', createdAt: now,
+    }], sales: [], purchases: [], expenses: [], exchanges: [],
     users: defaultUsers, audit: [], held: [], sessions: [],
     settings: {
       branchId: 'local-main',
@@ -146,6 +149,7 @@ export const buildSeed = (): POSState => {
     { id: 's-pcb', name: 'Power Cell Batteries Ltd', contactPerson: 'Ruwan Bandara', phone: '+94 11 256 7890', email: 'info@powercell.lk', address: 'Kelaniya, Sri Lanka', createdAt: iso(daysAgo(350)) },
     { id: 's-tdl', name: 'Tech Distributors Lanka', contactPerson: 'Saman Kumara', phone: '+94 11 234 5678', email: 'sales@techdist.lk', address: 'Colombo 10, Sri Lanka', createdAt: iso(daysAgo(320)) },
     { id: 's-gha', name: 'Gadget Hub Asia', contactPerson: 'Nirosha Silva', phone: '+94 76 555 0134', email: 'hello@gadgethub.lk', address: 'Bambalapitiya, Colombo 04', createdAt: iso(daysAgo(180)) },
+    { id: 's-auto-general', name: 'AUTO General', contactPerson: 'General purchases', phone: '', address: 'General purchases', createdAt: iso(daysAgo(1)) },
   ];
 
   const P = (
