@@ -12,9 +12,22 @@ import SearchableSelect from '../components/SearchableSelect';
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
 const emptyRow = (): Row => ({ productId: '', qty: 1, cost: 0, sellingPrice: 0, updateSellingPrice: false, unitText: '' });
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function grnPrintHtml(grn: Purchase, shopName: string) {
-  const rows = grn.items.map(i => `<tr><td>${i.name}</td><td class="num">${i.qty}</td><td class="num">${fmtRs(i.cost)}</td><td class="num">${fmtRs(i.qty * i.cost)}</td></tr>`).join('');
-  return `<!doctype html><html><head><title>${grn.poNo}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:12px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:18px}.head h1{margin:0;font-size:24px}.meta{text-align:right}.meta h2{margin:0 0 6px;font-size:20px}p{margin:5px 0;color:#555}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border-bottom:1px solid #ddd;padding:9px;text-align:left}th{background:#f3f4f6}.num{text-align:right}.total{margin-left:auto;width:280px;text-align:right;font-size:18px;font-weight:700;border-top:2px solid #111;padding-top:9px;margin-top:18px}.notes{margin-top:24px;white-space:pre-line}@media print{button{display:none}}</style></head><body><div class="head"><div><h1>${shopName}</h1><p>Goods Received Note</p></div><div class="meta"><h2>${grn.poNo}</h2><div>${fmtDate(grn.date)}</div><div>Status: <b>${grn.status === 'received' ? 'PROCESSED' : 'DRAFT'}</b></div></div></div><p><b>Supplier:</b> ${grn.supplierName}</p>${grn.supplierInvoiceNo ? `<p><b>Supplier Invoice:</b> ${grn.supplierInvoiceNo}</p>` : ''}<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">Total</th></tr></thead><tbody>${rows}</tbody></table><div class="total">Total: ${fmtRs(grn.total)}</div>${grn.notes ? `<div class="notes"><b>Notes</b><p>${grn.notes}</p></div>` : ''}</body></html>`;
+  // GRN names, supplier details and notes are user-controlled. Escape every
+  // text value before embedding it in the printable HTML document.
+  const rows = grn.items.map(i => `<tr><td>${escapeHtml(i.name)}</td><td class="num">${escapeHtml(i.qty)}</td><td class="num">${escapeHtml(fmtRs(i.cost))}</td><td class="num">${escapeHtml(fmtRs(i.qty * i.cost))}</td></tr>`).join('');
+  const invoice = grn.supplierInvoiceNo ? `<p><b>Supplier Invoice:</b> ${escapeHtml(grn.supplierInvoiceNo)}</p>` : '';
+  const notes = grn.notes ? `<div class="notes"><b>Notes</b><p>${escapeHtml(grn.notes)}</p></div>` : '';
+  return `<!doctype html><html><head><title>${escapeHtml(grn.poNo)}</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#111;margin:0;font-size:12px}.head{display:flex;justify-content:space-between;border-bottom:2px solid #111;padding-bottom:14px;margin-bottom:18px}.head h1{margin:0;font-size:24px}.meta{text-align:right}.meta h2{margin:0 0 6px;font-size:20px}p{margin:5px 0;color:#555}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border-bottom:1px solid #ddd;padding:9px;text-align:left}th{background:#f3f4f6}.num{text-align:right}.total{margin-left:auto;width:280px;text-align:right;font-size:18px;font-weight:700;border-top:2px solid #111;padding-top:9px;margin-top:18px}.notes{margin-top:24px;white-space:pre-line}@media print{button{display:none}}</style></head><body><div class="head"><div><h1>${escapeHtml(shopName)}</h1><p>Goods Received Note</p></div><div class="meta"><h2>${escapeHtml(grn.poNo)}</h2><div>${escapeHtml(fmtDate(grn.date))}</div><div>Status: <b>${grn.status === 'received' ? 'PROCESSED' : 'DRAFT'}</b></div></div></div><p><b>Supplier:</b> ${escapeHtml(grn.supplierName)}</p>${invoice}<table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Cost</th><th class="num">Total</th></tr></thead><tbody>${rows}</tbody></table><div class="total">Total: ${escapeHtml(fmtRs(grn.total))}</div>${notes}</body></html>`;
 }
 
 export default function GRN() {
