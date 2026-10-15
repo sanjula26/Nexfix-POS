@@ -22,13 +22,13 @@ function printDebitNote(dn: PurchaseReturn, shopName: string) {
   const rows = dn.items.filter(i => i.qty > 0).map(i =>
     `<tr><td>${escapeHtml(i.name)}</td><td style="text-align:right">${i.qty}</td><td style="text-align:right">Rs.${i.cost.toLocaleString('en-US',{minimumFractionDigits:2})}</td><td style="text-align:right">Rs.${(i.qty*i.cost).toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`
   ).join('');
-  w.document.write(`<!DOCTYPE html><html><head><title>Debit Note ${dn.dnNo}</title>
+  w.document.write(`<!DOCTYPE html><html><head><title>Debit Note ${escapeHtml(dn.dnNo)}</title>
   <style>body{font-family:Arial,sans-serif;font-size:13px;margin:24px}h2{margin:0 0 4px}p{margin:2px 0;color:#555}
   table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #ddd;padding:6px 10px;font-size:12px}
   th{background:#f5f5f5;font-weight:600}.total{font-weight:700}@media print{button{display:none}}</style></head><body>
   <h2>${escapeHtml(shopName)}</h2>
   <p><strong>DEBIT NOTE</strong> &nbsp;|&nbsp; <strong>${escapeHtml(dn.dnNo)}</strong></p>
-  <p>Date: ${fmtDate(dn.date)}</p>
+  <p>Date: ${escapeHtml(fmtDate(dn.date))}</p>
   <p>Supplier: ${escapeHtml(dn.supplierName)}</p>
   <p>Reason: ${escapeHtml(dn.reason)}</p>
   <table><thead><tr><th>Item</th><th>Return Qty</th><th>Unit Cost</th><th>Total</th></tr></thead>
