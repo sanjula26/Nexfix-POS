@@ -433,7 +433,7 @@ function loadStateFromLocalStorage(): POSState | null {
 }
 
 function loadState(): POSState {
-  return loadStateFromLocalStorage() || migrate(buildSeed());
+  return loadStateFromLocalStorage() || buildSeed();
 }
 
 /** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
