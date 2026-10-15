@@ -62,10 +62,14 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
   if ('purchaseReturns' in state && !hasArray(state.purchaseReturns)) return false;
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
+  // Credit settlement history is optional for older backups, but if present it
+  // must remain a collection with unique IDs so restore cannot silently accept
+  // a malformed or duplicate financial-history payload.
+  if ('customerCreditPayments' in state && !hasArray(state.customerCreditPayments)) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
   if ('reverseRequests' in state && !hasArray(state.reverseRequests)) return false;
-  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns', 'reverseRequests'];
+  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'customerCreditPayments', 'grns', 'reverseRequests'];
   for (const key of idCollections) {
     const collection = state[key];
     if (collection !== undefined && (!hasArray(collection) || !hasUniqueStringIds(collection))) return false;
@@ -97,6 +101,7 @@ function normalizeRestoredState(state: POSState): POSState {
     warrantyClaims: state.warrantyClaims ?? [],
     purchaseReturns: state.purchaseReturns ?? [],
     supplierPayments: state.supplierPayments ?? [],
+    customerCreditPayments: state.customerCreditPayments ?? [],
     inventoryTransactions: state.inventoryTransactions ?? [],
     grns: state.grns ?? [],
     reverseRequests: state.reverseRequests ?? [],
