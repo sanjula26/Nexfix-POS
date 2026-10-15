@@ -518,6 +518,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
   const customerCreditPaymentLockRef = useRef(false);
+  // Keep the settlement lock until React commits the new payment collection.
+  // Releasing it in the synchronous function's finally block leaves a window
+  // where a second invocation can still read the old customer balance.
+  useEffect(() => {
+    customerCreditPaymentLockRef.current = false;
+  }, [state.customerCreditPayments]);
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
@@ -1603,6 +1609,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     customerCreditPaymentLockRef.current = true;
+    let committed = false;
     try {
       // Recheck the current balance immediately before committing to avoid an overpayment.
       const currentCustomer = stateRef.current.customers.find(x => x.id === customer.id);
@@ -1622,11 +1629,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
         customerCreditPayments: [payment, ...(s.customerCreditPayments || [])],
       }));
+      committed = true;
       pushAudit('CREATE', 'CustomerCreditPayment', `Collected Rs. ${amount.toLocaleString()} from ${customer.name} by ${methods.map(x => x.method).join('+')}; outstanding Rs. ${newBalance.toLocaleString()}`);
       scheduleGoogleBackup(() => stateRef.current, 'settings');
       return { ok: true, payment };
     } finally {
-      customerCreditPaymentLockRef.current = false;
+      // On failure release immediately. On success, the effect above releases
+      // only after the updated payment history has committed to React state.
+      if (!committed) customerCreditPaymentLockRef.current = false;
     }
   }, [can, pushAudit, user]);
 
