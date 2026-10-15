@@ -5,7 +5,7 @@ import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { syncNormalizedCatalog } from './lib/cloudSync';
-import { refreshDesktopUpdaterCredentials, signOutFromCloud } from './lib/cloudAuth';
+import { refreshDesktopUpdaterCredentials } from './lib/cloudAuth';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -47,21 +47,13 @@ const AuditLog = lazy(() => import('./pages/AuditLog'));
 
 function CloudAuthLifecycle() {
   const { user } = usePOS();
-  const hadLocalSession = useRef(Boolean(user));
   useEffect(() => {
-    if (user) {
-      hadLocalSession.current = true;
-      // Windows updater authorization belongs to the physical POS device,
-      // not to the currently signed-in local role. Once an admin authorizes this
-      // PC, the encrypted device token remains valid for future launches,
-      // cashier/admin switching, and app updates until an explicit server-side
-      // device revocation occurs.
-      void refreshDesktopUpdaterCredentials().catch(() => {});
-      return;
-    }
-    if (!hadLocalSession.current) return;
-    hadLocalSession.current = false;
-    void signOutFromCloud().catch(() => {});
+    if (!user) return;
+    // Local POS authentication is independent from the one-time cloud account
+    // session. Keep the cloud session across local cashier/admin logout and
+    // app restarts; explicit Cloud sign-out in Settings remains the sign-out path.
+    // Updater authorization belongs to this physical PC, not the local role.
+    void refreshDesktopUpdaterCredentials().catch(() => {});
   }, [user]);
   return null;
 }
