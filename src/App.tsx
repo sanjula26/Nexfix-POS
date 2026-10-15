@@ -123,7 +123,7 @@ function CloudSyncStateBridge() {
     suppliers: state.suppliers.map(s => [s.id, s.name, s.contactPerson, s.phone, s.email, s.address]),
     kits: (state.kitItems || []).map(k => [k.id, k.kitProductId, k.componentProductId, k.qty]),
     units: (state.units || []).map(u => [u.id, u.productId, u.imei, u.serial, u.expiryDate, u.status, u.cost]),
-  }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.suppliers, state.kitItems, state.units]);
+  }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.customerCreditPayments, state.suppliers, state.kitItems, state.units]);
 
   useEffect(() => {
     if (!user || connectivity !== 'online') return;
