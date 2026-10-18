@@ -9,7 +9,7 @@ export function normalizeCreditSearchDigits(value: string): string {
 
 function normalizeSriLankanPhoneDigits(value: string): string {
   const digits = normalizeCreditSearchDigits(value);
-  if (digits.startsWith('94') && digits.length >= 11) return digits.slice(2);
+  if (digits.startsWith('94') && digits.length > 2) return digits.slice(2);
   if (digits.startsWith('0')) return digits.slice(1);
   return digits;
 }
