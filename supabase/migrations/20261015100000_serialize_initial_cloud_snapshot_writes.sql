@@ -64,7 +64,7 @@ BEGIN
       '{users}',
       COALESCE(
         (
-          SELECT jsonb_agg(jsonb_set(u, '{password}', '""'::jsonb, true))
+          SELECT jsonb_agg(jsonb_set(u, '{password}', '\"\"'::jsonb, true))
           FROM jsonb_array_elements(safe_state->'users') AS u
         ),
         '[]'::jsonb
@@ -74,7 +74,7 @@ BEGIN
   END IF;
 
   IF jsonb_typeof(safe_state->'settings') = 'object' THEN
-    safe_state := jsonb_set(safe_state, '{settings,adminPinHash}', '""'::jsonb, true);
+    safe_state := jsonb_set(safe_state, '{settings,adminPinHash}', '\"\"'::jsonb, true);
   END IF;
 
   SELECT revision
@@ -107,6 +107,7 @@ BEGIN
 END;
 $function$;
 
--- Preserve the narrowly scoped access used by the SECURITY INVOKER wrapper.
-REVOKE ALL ON FUNCTION private.upsert_pos_snapshot_impl(text,text,bigint,jsonb) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION private.upsert_pos_snapshot_impl(text,text,bigint,jsonb) TO authenticated, service_role;
+-- The public SECURITY DEFINER wrapper is the client entry point. Keep the
+-- private implementation unavailable to authenticated/anon/public callers.
+REVOKE ALL ON FUNCTION private.upsert_pos_snapshot_impl(text,text,bigint,jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION private.upsert_pos_snapshot_impl(text,text,bigint,jsonb) TO service_role;
