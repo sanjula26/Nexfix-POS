@@ -39,6 +39,47 @@ function hasUniqueStringIds(value: unknown[]): boolean {
   return true;
 }
 
+/** Validate financial fields in settlement history before accepting a restore. */
+function hasValidCustomerCreditPayment(value: unknown): boolean {
+  if (!hasPlainObjectShape(value)) return false;
+  const payment = value;
+  const validMethods = new Set(['cash', 'card', 'bank', 'mobile']);
+  if (typeof payment.id !== 'string' || !payment.id.trim()
+    || typeof payment.customerId !== 'string' || !payment.customerId.trim()
+    || typeof payment.by !== 'string' || !payment.by.trim()
+    || !isValidIsoDate(payment.date)
+    || typeof payment.amount !== 'number' || !Number.isFinite(payment.amount) || payment.amount <= 0
+    || typeof payment.method !== 'string' || !validMethods.has(payment.method)) return false;
+  for (const field of ['balanceBefore', 'balanceAfter'] as const) {
+    const balance = payment[field];
+    if (balance !== undefined && (typeof balance !== 'number' || !Number.isFinite(balance) || balance < 0)) return false;
+  }
+  // Newer records include both snapshots. When both exist, reject internally
+  // inconsistent history while still accepting older backups without snapshots.
+  if (typeof payment.balanceBefore === 'number' && typeof payment.balanceAfter === 'number'
+    && Math.abs(Math.round((payment.balanceBefore - payment.amount) * 100) / 100 - payment.balanceAfter) > 0.009) return false;
+  if (payment.methods !== undefined) {
+    if (!hasArray(payment.methods) || payment.methods.length === 0 || !payment.methods.every(leg =>
+      hasPlainObjectShape(leg) && typeof leg.method === 'string' && validMethods.has(leg.method)
+      && typeof leg.amount === 'number' && Number.isFinite(leg.amount) && leg.amount > 0)) return false;
+    const splitTotal = (payment.methods as Array<{ amount: number }>).reduce((sum, leg) => sum + leg.amount, 0);
+    if (Math.abs(splitTotal - payment.amount) > 0.009) return false;
+  }
+  if (payment.allocations !== undefined) {
+    if (!hasArray(payment.allocations) || !payment.allocations.every(allocation =>
+      hasPlainObjectShape(allocation) && typeof allocation.saleId === 'string' && !!allocation.saleId.trim()
+      && typeof allocation.billNo === 'string' && !!allocation.billNo.trim()
+      && typeof allocation.amount === 'number' && Number.isFinite(allocation.amount) && allocation.amount > 0)) return false;
+    // Customer-level repayments remain valid even when legacy invoice history is
+    // incomplete. Allocations are supporting invoice detail, not the source of
+    // truth for the amount collected. Reject over-allocation, but allow partial
+    // or empty allocations so older backups can still be restored safely.
+    const allocated = (payment.allocations as Array<{ amount: number }>).reduce((sum, allocation) => sum + allocation.amount, 0);
+    if (allocated - payment.amount > 0.009) return false;
+  }
+  return true;
+}
+
 function hasValidCounters(value: Record<string, unknown>): boolean {
   const keys = ['bill', 'po', 'ex', 'job', 'quote', 'claim'];
   if (value.grn !== undefined) keys.push('grn');
@@ -62,10 +103,14 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
   if ('purchaseReturns' in state && !hasArray(state.purchaseReturns)) return false;
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
+  // Credit settlement history is optional for older backups, but if present it
+  // must remain a collection with unique IDs so restore cannot silently accept
+  // a malformed or duplicate financial-history payload.
+  if ('customerCreditPayments' in state && (!hasArray(state.customerCreditPayments) || !state.customerCreditPayments.every(hasValidCustomerCreditPayment))) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
   if ('reverseRequests' in state && !hasArray(state.reverseRequests)) return false;
-  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns', 'reverseRequests'];
+  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'customerCreditPayments', 'grns', 'reverseRequests'];
   for (const key of idCollections) {
     const collection = state[key];
     if (collection !== undefined && (!hasArray(collection) || !hasUniqueStringIds(collection))) return false;
@@ -97,6 +142,7 @@ function normalizeRestoredState(state: POSState): POSState {
     warrantyClaims: state.warrantyClaims ?? [],
     purchaseReturns: state.purchaseReturns ?? [],
     supplierPayments: state.supplierPayments ?? [],
+    customerCreditPayments: state.customerCreditPayments ?? [],
     inventoryTransactions: state.inventoryTransactions ?? [],
     grns: state.grns ?? [],
     reverseRequests: state.reverseRequests ?? [],
