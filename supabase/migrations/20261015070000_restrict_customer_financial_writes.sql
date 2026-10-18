@@ -3,6 +3,10 @@
 -- (atomic sales and returns). Normal customer create/edit sync only needs the non-financial columns.
 
 revoke insert, update on table public.customers from public, anon, authenticated;
+-- Table-level REVOKE does not remove separately granted column-level privileges.
+-- Explicitly revoke these financial columns as defense in depth against older grants.
+revoke insert (credit_balance, loyalty_points), update (credit_balance, loyalty_points)
+  on table public.customers from public, anon, authenticated;
 
 grant insert (
   id, shop_id, name, phone, email, nic, address, credit_limit, notes, created_at, updated_at
