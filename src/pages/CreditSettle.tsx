@@ -7,6 +7,7 @@ import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsApp
 import { getDefaultBranchId, getPOSBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
+import { matchesCreditPhoneDigits, normalizeCreditPhoneSearch } from '../lib/creditSearch';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
 
 const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; icon: typeof Banknote }> = [
