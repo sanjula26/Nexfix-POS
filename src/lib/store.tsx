@@ -518,10 +518,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
   const customerCreditPaymentLockRef = useRef(false);
-  // Keep the settlement lock until React commits the new payment collection.
-  // Releasing it in the synchronous function's finally block leaves a window
-  // where a second invocation can still read the old customer balance.
+  const customerCreditPaymentPendingIdRef = useRef<string | null>(null);
+  // Release a successful settlement lock only after its own payment record is
+  // visible in committed state; unrelated history updates must not unlock it.
   useEffect(() => {
+    const pendingId = customerCreditPaymentPendingIdRef.current;
+    if (!pendingId || !(state.customerCreditPayments || []).some(payment => payment.id === pendingId)) return;
+    customerCreditPaymentPendingIdRef.current = null;
     customerCreditPaymentLockRef.current = false;
   }, [state.customerCreditPayments]);
   const expenseLockRef = useRef(false);
@@ -1624,6 +1627,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         allocations,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
       };
+      customerCreditPaymentPendingIdRef.current = payment.id;
       setState(s => ({
         ...s,
         customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
