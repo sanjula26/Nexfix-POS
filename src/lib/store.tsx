@@ -518,6 +518,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const purchaseReturnLockRef = useRef(false);
   const supplierPaymentLockRef = useRef(false);
   const customerCreditPaymentLockRef = useRef(false);
+  const customerCreditPaymentPendingIdRef = useRef<string | null>(null);
+  // Release a successful settlement lock only after its own payment record is
+  // visible in committed state; unrelated history updates must not unlock it.
+  useEffect(() => {
+    const pendingId = customerCreditPaymentPendingIdRef.current;
+    if (!pendingId || !(state.customerCreditPayments || []).some(payment => payment.id === pendingId)) return;
+    customerCreditPaymentPendingIdRef.current = null;
+    customerCreditPaymentLockRef.current = false;
+  }, [state.customerCreditPayments]);
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
@@ -1603,6 +1612,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     customerCreditPaymentLockRef.current = true;
+    let committed = false;
     try {
       // Recheck the current balance immediately before committing to avoid an overpayment.
       const currentCustomer = stateRef.current.customers.find(x => x.id === customer.id);
@@ -1617,16 +1627,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         allocations,
         date: new Date().toISOString(), by: user.name, note: p.note?.trim() || undefined,
       };
+      customerCreditPaymentPendingIdRef.current = payment.id;
       setState(s => ({
         ...s,
         customers: s.customers.map(x => x.id === customer.id ? { ...x, creditBalance: newBalance } : x),
         customerCreditPayments: [payment, ...(s.customerCreditPayments || [])],
       }));
+      committed = true;
       pushAudit('CREATE', 'CustomerCreditPayment', `Collected Rs. ${amount.toLocaleString()} from ${customer.name} by ${methods.map(x => x.method).join('+')}; outstanding Rs. ${newBalance.toLocaleString()}`);
       scheduleGoogleBackup(() => stateRef.current, 'settings');
       return { ok: true, payment };
     } finally {
-      customerCreditPaymentLockRef.current = false;
+      // On failure release immediately. On success, the effect above releases
+      // only after the updated payment history has committed to React state.
+      if (!committed) customerCreditPaymentLockRef.current = false;
     }
   }, [can, pushAudit, user]);
 
