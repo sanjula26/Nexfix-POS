@@ -54,6 +54,10 @@ function hasValidCustomerCreditPayment(value: unknown): boolean {
     const balance = payment[field];
     if (balance !== undefined && (typeof balance !== 'number' || !Number.isFinite(balance) || balance < 0)) return false;
   }
+  // Newer records include both snapshots. When both exist, reject internally
+  // inconsistent history while still accepting older backups without snapshots.
+  if (payment.balanceBefore !== undefined && payment.balanceAfter !== undefined
+    && Math.abs(Math.round((payment.balanceBefore - payment.amount) * 100) / 100 - payment.balanceAfter) > 0.009) return false;
   if (payment.methods !== undefined) {
     if (!hasArray(payment.methods) || payment.methods.length === 0 || !payment.methods.every(leg =>
       hasPlainObjectShape(leg) && typeof leg.method === 'string' && validMethods.has(leg.method)
