@@ -7,16 +7,14 @@ import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsApp
 import { getDefaultBranchId, getPOSBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
+import { matchesCreditPhoneDigits, normalizeCreditPhoneSearch } from '../lib/creditSearch';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
-
 const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; icon: typeof Banknote }> = [
   { value: 'cash', label: 'Cash', icon: Banknote },
   { value: 'card', label: 'Card', icon: CreditCard },
   { value: 'bank', label: 'Bank / Online', icon: Landmark },
   { value: 'mobile', label: 'Mobile', icon: Smartphone },
 ];
-
-
 function buildSettlementWhatsAppText(saved: { payment: import('../lib/customerCredit').CustomerCreditPayment; customerName: string; customerPhone: string; previousOutstanding?: number; remainingBalance?: number; cashierName: string }, settings: { shopName?: string; phone?: string; address?: string; email?: string }): string {
   const money = (value: number) => `Rs. ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const payment = saved.payment;
@@ -35,7 +33,6 @@ function buildSettlementWhatsAppText(saved: { payment: import('../lib/customerCr
   if (settings.phone) lines.push(`Contact: ${settings.phone}`);
   return lines.join('\n');
 }
-
 export default function CreditSettle() {
   const { state, user, can, saveCustomerCreditPayment } = usePOS();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -56,7 +53,6 @@ export default function CreditSettle() {
   const [historyPrintOnly, setHistoryPrintOnly] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState('');
   const [whatsappError, setWhatsappError] = useState('');
-
   const payments = state.customerCreditPayments || [];
   const customer = state.customers.find(c => c.id === customerId);
   const invoices = useMemo(() => {
@@ -81,12 +77,13 @@ export default function CreditSettle() {
   const q = search.trim().toLowerCase();
   const customerRows = state.customers
     .filter(c => filter === 'all' || c.creditBalance > 0.009)
-    .filter(c => !q || c.name.toLowerCase().includes(q) || c.phone.replace(/\\s/g, '').includes(q.replace(/\\s/g, '')))
+    .filter(c => !q || c.name.toLowerCase().includes(q) || normalizeCreditPhoneSearch(c.phone).includes(normalizeCreditPhoneSearch(q)) || matchesCreditPhoneDigits(c.phone, q))
     .sort((a, b) => b.creditBalance - a.creditBalance);
   const invoiceRows = invoices.filter(({ sale }) => {
     if (filter === 'balance' && !(sale.customerId && (state.customers.find(c => c.id === sale.customerId)?.creditBalance || 0) > 0)) return false;
     return !q || sale.billNo.toLowerCase().includes(q) || sale.customerName.toLowerCase().includes(q) ||
-      (state.customers.find(c => c.id === sale.customerId)?.phone || '').replace(/\\s/g, '').includes(q.replace(/\\s/g, ''));
+      normalizeCreditPhoneSearch(state.customers.find(c => c.id === sale.customerId)?.phone || '').includes(normalizeCreditPhoneSearch(q)) ||
+      matchesCreditPhoneDigits(state.customers.find(c => c.id === sale.customerId)?.phone || '', q);
   });
   const totalReceivables = state.customers.reduce((sum, c) => sum + Math.max(0, c.creditBalance || 0), 0);
   const totalCollectedToday = payments.filter(p => fmtDate(p.date) === fmtDate(new Date().toISOString())).reduce((sum, p) => sum + p.amount, 0);
@@ -107,9 +104,7 @@ export default function CreditSettle() {
       const c = state.customers.find(x => x.id === p.customerId);
       const searchable = [c?.name, c?.address, ...(p.allocations || []).map(a => a.billNo)]
         .filter(Boolean).join(' ').toLocaleLowerCase();
-      const queryDigits = recentQuery.replace(/\\D/g, '');
-      const phoneDigits = String(c?.phone || '').replace(/\\D/g, '');
-      return searchable.includes(recentQuery) || (!!queryDigits && phoneDigits.includes(queryDigits));
+      return searchable.includes(recentQuery) || matchesCreditPhoneDigits(c?.phone || '', recentQuery);
     })
     .sort((a, b) => {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
@@ -135,7 +130,6 @@ export default function CreditSettle() {
         : todaySession.openingConfirmed === false
           ? "Confirm today's opening float in Cashier Balance Report before collecting credit."
           : '';
-
   const selectCustomer = (id: string) => {
     setCustomerId(id);
     setSaleId('');
@@ -156,7 +150,6 @@ export default function CreditSettle() {
     next.set('sale', id);
     setSearchParams(next, { replace: true });
   };
-
   const save = () => {
     if (saving) return;
     setError('');
@@ -205,7 +198,6 @@ export default function CreditSettle() {
     }
     setSaving(false);
   };
-
   return (
     <div className="space-y-5">
       <PageHeading chip="Receivables" chipTone="amber" title="Credit Settle" sub="Collect full or partial customer credit repayments." actions={<Link to="/credit-statements" className="btn btn-soft"><ReceiptText size={15}/> Credit statements</Link>} />
@@ -214,7 +206,6 @@ export default function CreditSettle() {
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-sub">Collected today</div><div className="text-2xl font-extrabold num mt-1">{fmtRs(totalCollectedToday)}</div><div className="text-xs text-sub mt-1">Recorded repayments</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-sub">Open credit invoices</div><div className="text-2xl font-extrabold num mt-1">{invoices.length}</div><div className="text-xs text-sub mt-1">Unpaid invoice balances after allocations</div></div>
       </div>
-
       {!canCollect && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /> Your role can view receivables, but needs Customers and POS permissions to collect payments.</div>}
       {user && sessionBlockReason && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 flex gap-2"><AlertTriangle size={17} /><div><div className="font-semibold">Cashier drawer required</div><div>{sessionBlockReason}</div><div className="mt-1 text-xs">Credit collections are recorded in today's drawer and included in day-end cash/card totals.</div></div></div>}
       {lastSaved && <>
@@ -234,7 +225,6 @@ export default function CreditSettle() {
           <div style={{borderTop:'1px dashed #000',margin:'8px 0'}}/><div style={{textAlign:'center'}}>Thank you! Please contact us if you need assistance.</div>{state.settings.phone && <div style={{textAlign:'center'}}>Contact: {state.settings.phone}</div>}
         </div></div>
       </>}
-
       <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-5 items-start">
         <div className="space-y-4">
           <div className="card overflow-hidden">
@@ -258,7 +248,6 @@ export default function CreditSettle() {
             ) : <EmptyState icon={<ReceiptText size={24} />} title="No open credit invoices" sub="Unpaid completed invoices appear here." />}
           </div>
         </div>
-
         <div className="space-y-4">
           <div className="card p-5 space-y-4">
             <div><div className="text-xs font-bold uppercase tracking-wider text-sub">Collect payment</div><h2 className="text-lg font-extrabold mt-1">{customer?.name || 'Select a customer'}</h2><div className="text-sm text-sub">{customer?.phone || 'Choose a customer or an open invoice from the list.'}</div></div>
