@@ -70,8 +70,12 @@ function hasValidCustomerCreditPayment(value: unknown): boolean {
       hasPlainObjectShape(allocation) && typeof allocation.saleId === 'string' && !!allocation.saleId.trim()
       && typeof allocation.billNo === 'string' && !!allocation.billNo.trim()
       && typeof allocation.amount === 'number' && Number.isFinite(allocation.amount) && allocation.amount > 0)) return false;
+    // Customer-level repayments remain valid even when legacy invoice history is
+    // incomplete. Allocations are supporting invoice detail, not the source of
+    // truth for the amount collected. Reject over-allocation, but allow partial
+    // or empty allocations so older backups can still be restored safely.
     const allocated = (payment.allocations as Array<{ amount: number }>).reduce((sum, allocation) => sum + allocation.amount, 0);
-    if (Math.abs(allocated - payment.amount) > 0.009) return false;
+    if (allocated - payment.amount > 0.009) return false;
   }
   return true;
 }
