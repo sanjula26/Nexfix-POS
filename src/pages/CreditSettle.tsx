@@ -77,12 +77,13 @@ export default function CreditSettle() {
   const q = search.trim().toLowerCase();
   const customerRows = state.customers
     .filter(c => filter === 'all' || c.creditBalance > 0.009)
-    .filter(c => !q || c.name.toLowerCase().includes(q) || normalizeCreditPhoneSearch(c.phone).includes(normalizeCreditPhoneSearch(q)))
+    .filter(c => !q || c.name.toLowerCase().includes(q) || normalizeCreditPhoneSearch(c.phone).includes(normalizeCreditPhoneSearch(q)) || matchesCreditPhoneDigits(c.phone, q))
     .sort((a, b) => b.creditBalance - a.creditBalance);
   const invoiceRows = invoices.filter(({ sale }) => {
     if (filter === 'balance' && !(sale.customerId && (state.customers.find(c => c.id === sale.customerId)?.creditBalance || 0) > 0)) return false;
     return !q || sale.billNo.toLowerCase().includes(q) || sale.customerName.toLowerCase().includes(q) ||
-      normalizeCreditPhoneSearch(state.customers.find(c => c.id === sale.customerId)?.phone || '').includes(normalizeCreditPhoneSearch(q));
+      normalizeCreditPhoneSearch(state.customers.find(c => c.id === sale.customerId)?.phone || '').includes(normalizeCreditPhoneSearch(q)) ||
+      matchesCreditPhoneDigits(state.customers.find(c => c.id === sale.customerId)?.phone || '', q);
   });
   const totalReceivables = state.customers.reduce((sum, c) => sum + Math.max(0, c.creditBalance || 0), 0);
   const totalCollectedToday = payments.filter(p => fmtDate(p.date) === fmtDate(new Date().toISOString())).reduce((sum, p) => sum + p.amount, 0);
