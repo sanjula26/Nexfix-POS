@@ -347,9 +347,13 @@ export async function findCloudCustomerByPhone(
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const rows: Array<{ id: string; phone: string | null; name: string; email?: string | null; nic?: string | null; address?: string | null; credit_limit?: number | null; credit_balance?: number | null; loyalty_points?: number | null }> = [];
+
+  // Keep the paged fallback compatible with legacy phone formats, but transfer
+  // only the fields needed to identify a match. Financial/contact details are
+  // fetched for the single matched customer only.
+  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
   for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from('customers').select('id,phone,name,email,nic,address,credit_limit,credit_balance,loyalty_points')
+    const { data, error } = await supabase.from('customers').select('id,phone,name')
       .eq('shop_id', shopId).order('id').range(offset, offset + 499);
     if (error) return { ok: false, error: error.message };
     const page = data || [];
@@ -358,7 +362,13 @@ export async function findCloudCustomerByPhone(
   }
   const exact = rows.find(row => String(row.phone || '').trim() === phone.trim());
   const match = exact || rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
-  return { ok: true, customer: match };
+  if (!match) return { ok: true };
+
+  const { data: customer, error: detailError } = await supabase.from('customers')
+    .select('id,phone,name,email,nic,address,credit_limit,credit_balance,loyalty_points')
+    .eq('shop_id', shopId).eq('id', match.id).maybeSingle();
+  if (detailError) return { ok: false, error: detailError.message };
+  return { ok: true, customer: customer || undefined };
 }
 
 export async function ensureCloudCustomerForSale(
