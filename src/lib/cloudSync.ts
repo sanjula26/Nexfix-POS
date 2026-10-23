@@ -347,9 +347,13 @@ export async function findCloudCustomerByPhone(
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const rows: Array<{ id: string; phone: string | null; name: string; email?: string | null; nic?: string | null; address?: string | null; credit_limit?: number | null; credit_balance?: number | null; loyalty_points?: number | null }> = [];
+
+  // Keep the paged fallback compatible with legacy phone formats, but transfer
+  // only the fields needed to identify a match. Financial/contact details are
+  // fetched for the single matched customer only.
+  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
   for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from('customers').select('id,phone,name,email,nic,address,credit_limit,credit_balance,loyalty_points')
+    const { data, error } = await supabase.from('customers').select('id,phone,name')
       .eq('shop_id', shopId).order('id').range(offset, offset + 499);
     if (error) return { ok: false, error: error.message };
     const page = data || [];
@@ -358,7 +362,13 @@ export async function findCloudCustomerByPhone(
   }
   const exact = rows.find(row => String(row.phone || '').trim() === phone.trim());
   const match = exact || rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
-  return { ok: true, customer: match };
+  if (!match) return { ok: true };
+
+  const { data: customer, error: detailError } = await supabase.from('customers')
+    .select('id,phone,name,email,nic,address,credit_limit,credit_balance,loyalty_points')
+    .eq('shop_id', shopId).eq('id', match.id).maybeSingle();
+  if (detailError) return { ok: false, error: detailError.message };
+  return { ok: true, customer: customer || undefined };
 }
 
 export async function ensureCloudCustomerForSale(
@@ -398,6 +408,7 @@ export async function ensureCloudCustomerForSale(
       if (found.customer) return { ok: true, customerId: found.customer.id };
     }
     const retryById = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', customer.id).maybeSingle();
+    if (retryById.error) return { ok: false, error: retryById.error.message };
     if (retryById.data?.id) return { ok: true, customerId: retryById.data.id };
   }
   return { ok: false, error: inserted.error.message };
@@ -676,13 +687,27 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
           const current = await supabase.from('customers').select('id,phone').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
           if (current.error) return { ok: false, error: `Customers conflict recovery lookup: ${current.error.message}` };
           if (current.data?.id) { customerIdMap[row.id] = current.data.id; continue; }
-          const byPhone = remoteForPhone(row.phone);
-          if (byPhone) { customerIdMap[row.id] = byPhone.id; continue; }
+          // The initial catalog lookup may be stale: another POS can create a
+          // customer after our first lookup, and the unique index may match a
+          // differently formatted Sri Lankan phone number. Re-read through the
+          // canonical phone matcher before retrying instead of relying on the
+          // pre-insert remoteForPhone map or exact raw phone equality.
+          if (row.phone) {
+            const byPhone = await findCloudCustomerByPhone(row.phone, shopId);
+            if (!byPhone.ok) return { ok: false, error: `Customers conflict recovery phone lookup: ${byPhone.error}` };
+            if (byPhone.customer) { customerIdMap[row.id] = byPhone.customer.id; continue; }
+          }
           const retry = await supabase.from('customers').insert(row);
           if (retry.error) {
             if (retry.error.code === '23505' || /duplicate key|unique constraint/i.test(retry.error.message)) {
-              const latest = await supabase.from('customers').select('id,phone').eq('shop_id', shopId).eq('phone', row.phone).maybeSingle();
-              if (latest.data?.id) { customerIdMap[row.id] = latest.data.id; continue; }
+              if (row.phone) {
+                const latest = await findCloudCustomerByPhone(row.phone, shopId);
+                if (!latest.ok) return { ok: false, error: `Customers retry conflict lookup: ${latest.error}` };
+                if (latest.customer) { customerIdMap[row.id] = latest.customer.id; continue; }
+              }
+              const latestById = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
+              if (latestById.error) return { ok: false, error: `Customers retry ID lookup: ${latestById.error.message}` };
+              if (latestById.data?.id) { customerIdMap[row.id] = latestById.data.id; continue; }
             }
             return { ok: false, error: `Customers insert could not be recovered: ${retry.error.message}` };
           }
