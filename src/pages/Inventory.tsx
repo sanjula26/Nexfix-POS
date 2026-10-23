@@ -10,7 +10,7 @@ import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
-import { getCloudShopId } from '../lib/cloudSync';
+import { getCloudShopId, refreshCloudBranchStock } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -118,10 +118,11 @@ export default function Inventory() {
     const nextTracked = !!(editing.trackImei || editing.trackSerial);
     const inStockUnits = isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length;
 
-    if (nextTracked && editing.stock !== inStockUnits) {
+    const stockForTrackingValidation = !isNew && selectedBranchId !== 'local-main' ? (current?.stock ?? editing.stock) : editing.stock;
+    if (nextTracked && stockForTrackingValidation !== inStockUnits) {
       alert(isNew
         ? 'Tracked products must start with stock 0. Receive stock through GRN or add individual units.'
-        : `Cannot save this tracked product because stock (${editing.stock}) does not match its in-stock units (${inStockUnits}). Reconcile the units first.`);
+        : `Cannot save this tracked product because stock (${stockForTrackingValidation}) does not match its in-stock units (${inStockUnits}). Reconcile the units first.`);
       return;
     }
     if (currentTracked && !nextTracked && inStockUnits > 0) {
@@ -197,11 +198,49 @@ export default function Inventory() {
         return;
       }
     } else {
+      const branchScopedExisting = !isNew && selectedBranchId !== 'local-main' && !!current;
+      const branchStockEdit = branchScopedExisting && !currentTracked && !nextTracked;
+      // Never derive a branch-stock delta from the offline cache: another POS
+      // may have changed the server quantity since this cache was populated.
+      // Refresh the selected branch from Supabase immediately before calculating
+      // the target delta; if the authoritative refresh fails, leave stock alone.
+      if (branchStockEdit) {
+        if (!shopId || selectedBranchId === 'local-main') {
+          alert('The selected branch could not be verified. Stock was not changed.');
+          return;
+        }
+        const refreshed = await refreshCloudBranchStock(shopId, selectedBranchId);
+        if (!refreshed.ok) {
+          alert('Could not refresh the selected branch stock from the server. Stock was not changed. Connect to the cloud and retry.');
+          return;
+        }
+      }
+      const currentBranchStock = branchStockEdit ? stockFor(current!) : null;
+      if (branchStockEdit && (!branchStockReady || currentBranchStock === null)) {
+        alert('This branch stock is not loaded. Refresh branch stock before editing this quantity.');
+        return;
+      }
+      const branchStockDelta = branchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
+      if (branchStockEdit && (!Number.isInteger(editing.stock) || editing.stock < 0)) {
+        alert('Stock must be a whole number equal to or greater than zero.');
+        return;
+      }
+      // For an assigned branch, saveProduct expects the shop-level product stock.
+      // Preserve that value here and apply the branch-specific quantity change via
+      // the audited, idempotent stock-adjustment path below.
+      const productForSave = branchScopedExisting ? { ...editing, stock: current!.stock } : editing;
       const forceZeroStock = isNew && !branchStockReady && !nextTracked && editing.stock > 0;
-      const saved = await saveProduct(forceZeroStock ? { ...editing, stock: 0 } : editing);
+      const saved = await saveProduct(forceZeroStock ? { ...productForSave, stock: 0 } : productForSave);
       if (!saved) {
         alert('The product could not be saved. Check required fields, permissions, branch selection, or duplicate SKU/barcode.');
         return;
+      }
+      if (branchStockEdit && branchStockDelta !== 0) {
+        const adjusted = await adjustStock(editing.id, branchStockDelta, 'Inventory product editor stock change');
+        if (!adjusted) {
+          alert('Product details were saved, but the branch stock quantity was not changed. Stock remains unchanged. Refresh branch stock, then retry the stock edit.');
+          return;
+        }
       }
       if (forceZeroStock) alert('Product created successfully. Initial stock was set to 0 because the default branch is unavailable. Connect online, refresh branch data, then adjust stock.');
     }
@@ -415,7 +454,7 @@ export default function Inventory() {
                     {can('act:viewCost') && <td className="td num text-sub">{currentStock === null ? '—' : fmtRs(currentStock * p.cost)}</td>}
                     {can('act:manageStock') && <td className="td"><div className="flex items-center justify-end gap-1">
                       <button className={`icon-btn !w-8 !h-8 ${tracked || !branchStockReady ? 'opacity-40 cursor-not-allowed' : ''}`} title={!branchStockReady ? 'Load default branch stock first' : tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked || !branchStockReady} onClick={() => { setStockAdj({ ...p, stock: stockFor(p) ?? p.stock }); setAdjDelta(''); }}><Boxes size={14} /></button>
-                      <button className="icon-btn !w-8 !h-8" title="Edit product details" onClick={() => { setEditing({ ...p }); setIsNew(false); }}><Pencil size={14} /></button>
+                      <button className="icon-btn !w-8 !h-8" title="Edit product details" onClick={() => { setEditing({ ...p, stock: !(p.trackImei || p.trackSerial) && selectedBranchId !== 'local-main' ? (stockFor(p) ?? p.stock) : p.stock }); setIsNew(false); }}><Pencil size={14} /></button>
                       {can('page:purchases') && <button className="icon-btn !w-8 !h-8" title="Receive more stock for this existing product" disabled={!branchStockReady} onClick={() => openRestock(p)}><PackageCheck size={14} /></button>}
                       {can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Delete" onClick={() => setDeleting(p)}><Trash2 size={14} /></button>}
                     </div></td>}
@@ -471,7 +510,7 @@ export default function Inventory() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <Field label="Cost (Rs.)"><input className="input num" value={editing.cost || ''} onChange={e => setEditing({ ...editing, cost: num(e.target.value) })} /></Field>
               <Field label="Sell price (Rs.)"><input className="input num" value={editing.price || ''} onChange={e => setEditing({ ...editing, price: num(e.target.value) })} /></Field>
-              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : (!branchStockReady ? 'Load the default branch stock before setting initial stock.' : (!isNew && selectedBranchId !== 'local-main' ? 'Shop total is shown; use Adjust Stock to change this branch quantity.' : undefined))}><input className="input num" value={editing.stock || ''} disabled={tracked || (!branchStockReady && isNew) || (!isNew && selectedBranchId !== 'local-main')} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{!branchStockReady && isNew && !tracked && <div className="mt-1 text-xs text-amber-700">Load the default branch stock before setting initial stock.</div>}{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
+              <Field label="Stock" hint={tracked ? `Controlled by ${currentTracked ? 'tracked units / GRN' : 'GRN / Units'}` : (!branchStockReady ? 'Load the branch stock before editing this quantity.' : (!isNew && selectedBranchId !== 'local-main' ? 'Sets the selected branch quantity. Use GRN for supplier receipts and purchase-cost history.' : undefined))}><input className="input num" type="number" min={0} step={1} value={editing.stock} disabled={tracked || !branchStockReady} onChange={e => setEditing({ ...editing, stock: Math.round(num(e.target.value)) })} />{!branchStockReady && <div className="mt-1 text-xs text-amber-700">Connect online and refresh branch data before changing stock.</div>}{!tracked && !isNew && selectedBranchId !== 'local-main' && <div className="mt-1 text-xs text-sub">Current branch quantity: {stockFor(current ?? editing) ?? 'not loaded'}. Saving a changed quantity posts an audited stock adjustment; other branches are not changed.</div>}{tracked && <div className={`mt-1 text-xs ${stockAligned ? 'text-emerald-600' : 'text-amber-600'}`}>{isNew ? 'Start at 0; receive stock through GRN or add units.' : `In-stock units: ${inStockUnits}. Stock is ${stockAligned ? 'aligned.' : 'not aligned — reconcile units before enabling/saving tracking.'}`}</div>}</Field>
               <Field label="Low-stock alert at"><input className="input num" value={editing.reorderLevel || ''} onChange={e => setEditing({ ...editing, reorderLevel: Math.round(num(e.target.value)) })} /></Field>
             </div>
             {editing.price > 0 && editing.cost > 0 && <div className="rounded-xl bg-emerald-500/[0.07] border border-emerald-500/20 px-4 py-3 text-sm flex justify-between"><span className="text-sub">Margin per unit</span><span className="num font-bold text-emerald-500">{fmtRs(editing.price - editing.cost)} ({Math.round(((editing.price - editing.cost) / editing.price) * 100)}%)</span></div>}
