@@ -10,7 +10,7 @@ import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
-import { getCloudShopId } from '../lib/cloudSync';
+import { getCloudShopId, refreshCloudBranchStock } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -200,9 +200,24 @@ export default function Inventory() {
     } else {
       const branchScopedExisting = !isNew && selectedBranchId !== 'local-main' && !!current;
       const branchStockEdit = branchScopedExisting && !currentTracked && !nextTracked;
+      // Never derive a branch-stock delta from the offline cache: another POS
+      // may have changed the server quantity since this cache was populated.
+      // Refresh the selected branch from Supabase immediately before calculating
+      // the target delta; if the authoritative refresh fails, leave stock alone.
+      if (branchStockEdit) {
+        if (!shopId || selectedBranchId === 'local-main') {
+          alert('The selected branch could not be verified. Stock was not changed.');
+          return;
+        }
+        const refreshed = await refreshCloudBranchStock(shopId, selectedBranchId);
+        if (!refreshed.ok) {
+          alert('Could not refresh the selected branch stock from the server. Stock was not changed. Connect to the cloud and retry.');
+          return;
+        }
+      }
       const currentBranchStock = branchStockEdit ? stockFor(current!) : null;
       if (branchStockEdit && (!branchStockReady || currentBranchStock === null)) {
-        alert('This branch stock is not loaded. Connect online and refresh branch stock before editing this quantity.');
+        alert('This branch stock is not loaded. Refresh branch stock before editing this quantity.');
         return;
       }
       const branchStockDelta = branchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
