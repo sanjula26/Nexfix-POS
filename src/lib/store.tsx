@@ -1298,13 +1298,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('DELETE', 'Product', `Deleted product ${p.name}`);
   }, [can, pushAudit, state.products, state.units, state.sales, state.purchases, state.purchaseReturns, state.exchanges, state.repairs, state.kitItems, state.quotations, state.warrantyClaims, user]);
 
-  const adjustStock = useCallback(async (id: string, delta: number, reason: string): Promise<boolean> => {
+  const adjustStock = useCallback(async (id: string, delta: number, reason: string, expectedBranchQty?: number): Promise<boolean> => {
     if (stockAdjustmentLockRef.current) { pushAudit('DENIED', 'Product', 'Another stock adjustment is already in progress.'); return false; }
     stockAdjustmentLockRef.current = true;
     try {
     if (!user || !can('act:manageStock')) { pushAudit('DENIED', 'Product', `Blocked stock adjustment for ${id}`); return false; }
     const amount = Number(delta);
     const note = String(reason || '').trim();
+    if (expectedBranchQty !== undefined && (!Number.isSafeInteger(expectedBranchQty) || expectedBranchQty < 0 || getConnectivity() !== 'online')) {
+      pushAudit('DENIED', 'Product', 'Inventory quantity edit requires a fresh online branch quantity; no stock change was queued.');
+      return false;
+    }
     if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0 || !note) { pushAudit('DENIED', 'Product', `Blocked invalid stock adjustment for ${id}`); return false; }
     const p = stateRef.current.products.find(x => x.id === id);
     if (!p || !Number.isFinite(p.stock) || p.stock + amount < 0) { pushAudit('DENIED', 'Product', `Blocked stock adjustment below zero for ${id}`); return false; }
@@ -1332,7 +1336,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
         return false;
       }
-      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId });
+      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty });
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
         return false;
