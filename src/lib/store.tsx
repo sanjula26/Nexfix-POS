@@ -118,7 +118,7 @@ interface StoreCtx {
   deleteProduct: (id: string) => void;
   saveKitItems: (items: KitItem[]) => void;
   saveQuotations: (quotations: import('./types').Quotation[], quoteCounter?: number) => void;
-  adjustStock: (id: string, delta: number, reason: string) => Promise<boolean>;
+  adjustStock: (id: string, delta: number, reason: string, expectedBranchQty?: number) => Promise<boolean>;
   // customers / suppliers
   saveCustomer: (c: Customer) => void;
   deleteCustomer: (id: string) => void;
