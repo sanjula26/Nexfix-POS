@@ -36,13 +36,6 @@ BEGIN
   END IF;
   SELECT count(*) INTO v_branch_count FROM public.branches b WHERE b.shop_id = p_shop_id AND b.active;
   IF v_branch_count > 1 THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM public.pos_devices pd
-      WHERE pd.shop_id = p_shop_id::text AND pd.device_id = btrim(coalesce(p_device_id,''))
-        AND pd.user_id = v_uid AND pd.revoked_at IS NULL
-    ) THEN
-      RAISE EXCEPTION 'POS device is not registered to this user for this shop';
-    END IF;
     SELECT d.branch_id INTO v_binding FROM public.pos_device_branches d
     WHERE d.shop_id = p_shop_id AND d.device_id = btrim(coalesce(p_device_id,'')) LIMIT 1;
     IF v_binding IS NULL OR v_binding <> p_branch_id THEN
