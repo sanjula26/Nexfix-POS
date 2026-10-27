@@ -236,7 +236,7 @@ export default function Inventory() {
         return;
       }
       if (branchStockEdit && branchStockDelta !== 0) {
-        const adjusted = await adjustStock(editing.id, branchStockDelta, 'Inventory product editor stock change');
+        const adjusted = await adjustStock(editing.id, branchStockDelta, 'Inventory product editor stock change', currentBranchStock as number);
         if (!adjusted) {
           alert('Product details were saved, but the branch stock quantity was not changed. Stock remains unchanged. Refresh branch stock, then retry the stock edit.');
           return;
