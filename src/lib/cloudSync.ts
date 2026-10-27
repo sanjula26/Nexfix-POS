@@ -137,7 +137,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
 }
 
 export async function adjustBranchStockAtomic(input: {
-  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string;
+  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string; expectedBranchQty?: number;
 }): Promise<{ ok: boolean; alreadyCommitted?: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -145,10 +145,13 @@ export async function adjustBranchStockAtomic(input: {
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   const branch = await resolveCloudBranchId(input.shopId, input.branchId);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('adjust_branch_stock_atomic', {
+  const rpcName = input.expectedBranchQty === undefined ? 'adjust_branch_stock_atomic' : 'adjust_branch_stock_atomic_expected';
+  const rpcArgs: Record<string, unknown> = {
     p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId,
     p_product_id: input.productId, p_delta: input.delta, p_note: input.note, p_adjustment_id: input.adjustmentId,
-  });
+  };
+  if (input.expectedBranchQty !== undefined) rpcArgs.p_expected_branch_qty = input.expectedBranchQty;
+  const { data, error } = await supabase.rpc(rpcName, rpcArgs);
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: row?.error || 'Branch stock adjustment was not committed' };
