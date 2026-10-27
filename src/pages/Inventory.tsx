@@ -254,7 +254,7 @@ export default function Inventory() {
     setRestocking(product);
     setRestockQty('1');
     setRestockCost(String(product.cost ?? 0));
-    setRestockSupplierId(product.supplierId && state.suppliers.some(s => s.id === product.supplierId) ? product.supplierId : '');
+    setRestockSupplierId(product.supplierId && state.suppliers.some(s => s.id === product.supplierId) ? product.supplierId : (state.suppliers.find(s => String(s.name || '').trim().toLowerCase() === 'auto general')?.id || ''));
     setUpdateRestockPrice(false);
     setRestockSellPrice(String(product.price ?? 0));
     setRestockUnitText('');
