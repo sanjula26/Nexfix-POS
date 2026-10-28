@@ -432,18 +432,21 @@ function setupAutoUpdater(){
       };
     });
     const checkForUpdatesWithTimeout = async()=>{
-      if(updateCheckPromise)return updateCheckPromise;
-      updateCheckPromise=(async()=>{
-        try{
-          return await Promise.race([
-            autoUpdater.checkForUpdates(),
-            new Promise((_,reject)=>setTimeout(()=>reject(new Error(`Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS/1000} seconds. Please check your internet connection and try again.`)),UPDATE_CHECK_TIMEOUT_MS)),
-          ]);
-        }finally{
-          updateCheckPromise=null;
-        }
-      })();
-      return updateCheckPromise;
+      if(!updateCheckPromise){
+        const internal=Promise.resolve().then(()=>autoUpdater.checkForUpdates());
+        updateCheckPromise=internal;
+        void internal.finally(()=>{
+          if(updateCheckPromise===internal) updateCheckPromise=null;
+        }).catch(()=>{});
+      }
+      const pending=updateCheckPromise;
+      return new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error(`Update check timed out after ${UPDATE_CHECK_TIMEOUT_MS/1000} seconds. Please check your internet connection and try again.`)),UPDATE_CHECK_TIMEOUT_MS);
+        pending.then(
+          value=>{clearTimeout(timer);resolve(value);},
+          error=>{clearTimeout(timer);reject(error);},
+        );
+      });
     };
     ipcMain.handle('update:check',async(event)=>{
       if(!isTrustedRenderer(event)) return{supported:true,available:false,error:'Untrusted renderer'};
