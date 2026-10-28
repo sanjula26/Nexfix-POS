@@ -221,10 +221,6 @@ export default function Inventory() {
       const currentBranchStock = branchStockEdit
         ? getCachedBranchStock(selectedBranchId, current!.id) ?? 0
         : null;
-      if (branchStockEdit && currentBranchStock === null) {
-        alert('Could not read the refreshed branch quantity. Stock was not changed; retry after refreshing branch data.');
-        return;
-      }
       const branchStockDelta = branchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
       if (branchStockEdit && (!Number.isInteger(editing.stock) || editing.stock < 0)) {
         alert('Stock must be a whole number equal to or greater than zero.');
