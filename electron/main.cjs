@@ -415,7 +415,7 @@ function setupAutoUpdater(){
       updateAuthMode=mode;
       pendingUpdateInfo=null;
       const ok=configureUpdaterCredentials();
-      if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
+      if(ok) setTimeout(()=>{ void checkForUpdatesWithTimeout().catch(error=>{ logUpdaterInstall('Automatic update check failed: '+(error?.message||String(error))); }); },250);
       return {ok};
     });
     ipcMain.handle('update:clear-credentials',(event)=>{ if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'}; updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
