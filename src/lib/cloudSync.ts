@@ -137,7 +137,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
 }
 
 export async function adjustBranchStockAtomic(input: {
-  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string;
+  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string; expectedBranchQty?: number;
 }): Promise<{ ok: boolean; alreadyCommitted?: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -145,10 +145,13 @@ export async function adjustBranchStockAtomic(input: {
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   const branch = await resolveCloudBranchId(input.shopId, input.branchId);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('adjust_branch_stock_atomic', {
+  const rpcName = input.expectedBranchQty === undefined ? 'adjust_branch_stock_atomic' : 'adjust_branch_stock_atomic_expected';
+  const rpcArgs: Record<string, unknown> = {
     p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId,
     p_product_id: input.productId, p_delta: input.delta, p_note: input.note, p_adjustment_id: input.adjustmentId,
-  });
+  };
+  if (input.expectedBranchQty !== undefined) rpcArgs.p_expected_branch_qty = input.expectedBranchQty;
+  const { data, error } = await supabase.rpc(rpcName, rpcArgs);
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: row?.error || 'Branch stock adjustment was not committed' };
@@ -206,6 +209,26 @@ export async function refreshCloudBranchStock(shopId: string, branchId: string):
   if (error) return { ok: false, error: error.message };
   cacheBranchStock(branchId, (data || []) as Array<{ product_id: string; qty: number | string }>);
   return { ok: true };
+}
+
+/** Read one product's authoritative branch quantity without relying on the potentially paginated full-branch cache. */
+export async function getCloudBranchStockQuantity(
+  shopId: string,
+  branchId: string,
+  productId: string,
+): Promise<{ ok: true; qty: number } | { ok: false; error: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId || !branchId || !productId || branchId === 'local-main') {
+    return { ok: false, error: 'A valid cloud shop, branch, and product are required' };
+  }
+  const { data, error } = await supabase.from('branch_stock').select('qty')
+    .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  const qty = data ? Number(data.qty) : 0;
+  if (!Number.isSafeInteger(qty) || qty < 0) {
+    return { ok: false, error: 'The server returned an invalid branch stock quantity' };
+  }
+  return { ok: true, qty };
 }
 
 /** Resolve a branch from the server-authoritative device binding in multi-branch shops. */

@@ -108,33 +108,52 @@ async function syncDesktopUpdaterCredentials(accessToken?: string): Promise<void
 }
 
 const UPDATER_AUTH_TIMEOUT_MS = 12000;
+let lastUpdaterAuthorizationError = '';
+
+export function getLastUpdaterAuthorizationError(): string {
+  return lastUpdaterAuthorizationError;
+}
 
 async function issueDesktopUpdaterDeviceToken(shopId: string, currentToken = ''): Promise<string> {
   const desktop = getDesktopUpdaterApi();
-  if (!desktop?.saveCloudUpdaterDeviceToken || !supabase) return '';
-  const rpcPromise = supabase.rpc('authorize_pos_updater_device', {
+  if (!desktop?.saveCloudUpdaterDeviceToken || !supabase) {
+    lastUpdaterAuthorizationError = 'Secure Windows updater token storage or Cloud authentication is unavailable in this POS build.';
+    return '';
+  }
+  // The caller applies its own timeout for UI responsiveness. Do not race this
+  // RPC internally: resolving this helper early would release the single-flight
+  // lock while the server request could still issue/store a device token.
+  const { data, error } = await supabase.rpc('authorize_pos_updater_device', {
     p_shop_id: shopId,
     p_device_id: getMachineId(),
     p_current_token: currentToken,
   });
-  const { data, error } = await Promise.race([
-    rpcPromise,
-    new Promise<{ data: null; error: { message: string } }>((resolve) =>
-      window.setTimeout(() => resolve({ data: null, error: { message: 'Windows update authorization timed out. Please check the internet connection and try again.' } }), UPDATER_AUTH_TIMEOUT_MS),
-    ),
-  ]);
   const token = typeof data?.token === 'string' ? data.token.trim() : '';
-  if (error || data?.ok !== true || token.length < 64) return '';
+  if (error) {
+    lastUpdaterAuthorizationError = error.message || 'The Cloud service rejected Windows update authorization.';
+    return '';
+  }
+  if (data?.ok !== true || token.length < 64) {
+    lastUpdaterAuthorizationError = typeof data?.error === 'string' ? data.error : 'The Cloud service did not return a valid updater device token. Check that this account is an active shop admin and the updater authorization migration is deployed.';
+    return '';
+  }
   const saved = await desktop.saveCloudUpdaterDeviceToken({ token, deviceId: getMachineId() });
-  return saved?.ok ? token : '';
+  if (!saved?.ok) {
+    lastUpdaterAuthorizationError = saved?.error || 'Windows could not securely save the updater authorization token.';
+    return '';
+  }
+  lastUpdaterAuthorizationError = '';
+  return token;
 }
 
 async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
+  lastUpdaterAuthorizationError = '';
   const desktop = getDesktopUpdaterApi();
-  if (!desktop?.setUpdateCredentials) return false;
+  if (!desktop?.setUpdateCredentials) { lastUpdaterAuthorizationError = 'Windows updater bridge is missing. Install the supported Windows Setup build.'; return false; }
   const currentDeviceId = getMachineId();
   if (!currentDeviceId) {
     await desktop.clearUpdateCredentials?.();
+    lastUpdaterAuthorizationError = 'This PC could not create a stable device identity.';
     return false;
   }
 
@@ -167,6 +186,7 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
 
   if (!supabaseConfigured || !supabase) {
     await desktop.clearUpdateCredentials?.();
+    lastUpdaterAuthorizationError = 'Cloud authentication is not configured in this POS build.';
     return false;
   }
 
@@ -199,12 +219,14 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
 
   if (error || !data.session?.access_token) {
     await desktop.clearUpdateCredentials?.();
+    lastUpdaterAuthorizationError = error?.message || 'No active Cloud session was found. Sign in to the existing Cloud admin account in Settings.';
     return false;
   }
 
   const shop = await ensureCloudShop('Nexfix Shop');
   if (!shop.ok || !shop.shopId) {
     await desktop.clearUpdateCredentials?.();
+    lastUpdaterAuthorizationError = shop.error || 'Could not resolve this account’s active shop membership.';
     return false;
   }
 
@@ -219,29 +241,46 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
     deviceId: currentDeviceId,
     mode: 'device',
   });
-  return Boolean((result as { ok?: boolean } | null)?.ok);
+  const ready = Boolean((result as { ok?: boolean } | null)?.ok);
+  if (!ready) lastUpdaterAuthorizationError = 'Windows rejected the updater credentials. Check secure storage and restart the POS before retrying.';
+  return ready;
 }
 
 let updaterRefreshPromise: Promise<boolean> | null = null;
 
 export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
-  if (updaterRefreshPromise) return updaterRefreshPromise;
-  const promise = (async () => {
-    const internal = refreshDesktopUpdaterCredentialsInternal();
-    const result = await Promise.race([
-      internal,
-      new Promise<boolean>((resolve) =>
-        window.setTimeout(() => resolve(false), UPDATER_AUTH_TIMEOUT_MS),
-      ),
-    ]);
-    return result;
-  })();
-  updaterRefreshPromise = promise;
-  try {
-    return await promise;
-  } finally {
-    if (updaterRefreshPromise === promise) updaterRefreshPromise = null;
-  }
+  // Keep the single-flight lock until the underlying authorization work really
+  // settles. Timing out only the caller must not release the lock while an RPC
+  // is still running, otherwise a second attempt can race token storage.
+  const timeoutResult = (promise: Promise<boolean>): Promise<boolean> => new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      lastUpdaterAuthorizationError = 'Windows update authorization timed out. Check the internet connection and retry after the current request settles.';
+      resolve(false);
+    }, UPDATER_AUTH_TIMEOUT_MS);
+    promise.then(
+      value => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        window.clearTimeout(timer);
+        lastUpdaterAuthorizationError = error instanceof Error ? error.message : 'Windows update authorization failed.';
+        resolve(false);
+      },
+    );
+  });
+
+  if (updaterRefreshPromise) return timeoutResult(updaterRefreshPromise);
+
+  const internal = refreshDesktopUpdaterCredentialsInternal();
+  updaterRefreshPromise = internal;
+  void internal.finally(() => {
+    if (updaterRefreshPromise === internal) updaterRefreshPromise = null;
+  }).catch(() => {
+    // The caller receives failures through timeoutResult; this handler avoids
+    // an unhandled rejection from the cleanup chain.
+  });
+  return timeoutResult(internal);
 }
 
 /**
@@ -306,7 +345,7 @@ export async function provisionCloudUpdaterAccount(
   const updaterReady = await refreshDesktopUpdaterCredentials();
   return updaterReady
     ? { ok: true }
-    : { ok: false, error: 'Cloud shop membership is confirmed, but this Windows PC is not yet authorized for updates. Retry authorization while online.' };
+    : { ok: false, error: getLastUpdaterAuthorizationError() || 'Cloud shop membership is confirmed, but this Windows PC is not yet authorized for updates. Retry authorization while online.' };
 }
 
 if (supabase) {
