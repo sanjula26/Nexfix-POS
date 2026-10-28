@@ -120,17 +120,14 @@ async function issueDesktopUpdaterDeviceToken(shopId: string, currentToken = '')
     lastUpdaterAuthorizationError = 'Secure Windows updater token storage or Cloud authentication is unavailable in this POS build.';
     return '';
   }
-  const rpcPromise = supabase.rpc('authorize_pos_updater_device', {
+  // The caller applies its own timeout for UI responsiveness. Do not race this
+  // RPC internally: resolving this helper early would release the single-flight
+  // lock while the server request could still issue/store a device token.
+  const { data, error } = await supabase.rpc('authorize_pos_updater_device', {
     p_shop_id: shopId,
     p_device_id: getMachineId(),
     p_current_token: currentToken,
   });
-  const { data, error } = await Promise.race([
-    rpcPromise,
-    new Promise<{ data: null; error: { message: string } }>((resolve) =>
-      window.setTimeout(() => resolve({ data: null, error: { message: 'Windows update authorization timed out. Please check the internet connection and try again.' } }), UPDATER_AUTH_TIMEOUT_MS),
-    ),
-  ]);
   const token = typeof data?.token === 'string' ? data.token.trim() : '';
   if (error) {
     lastUpdaterAuthorizationError = error.message || 'The Cloud service rejected Windows update authorization.';
