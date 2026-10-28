@@ -252,15 +252,23 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
   // Keep the single-flight lock until the underlying authorization work really
   // settles. Timing out only the caller must not release the lock while an RPC
   // is still running, otherwise a second attempt can race token storage.
-  const timeoutResult = (promise: Promise<boolean>) => Promise.race([
-    promise,
-    new Promise<boolean>((resolve) =>
-      window.setTimeout(() => {
-        lastUpdaterAuthorizationError = 'Windows update authorization timed out. Check the internet connection and retry after the current request settles.';
+  const timeoutResult = (promise: Promise<boolean>): Promise<boolean> => new Promise((resolve) => {
+    const timer = window.setTimeout(() => {
+      lastUpdaterAuthorizationError = 'Windows update authorization timed out. Check the internet connection and retry after the current request settles.';
+      resolve(false);
+    }, UPDATER_AUTH_TIMEOUT_MS);
+    promise.then(
+      value => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      error => {
+        window.clearTimeout(timer);
+        lastUpdaterAuthorizationError = error instanceof Error ? error.message : 'Windows update authorization failed.';
         resolve(false);
-      }, UPDATER_AUTH_TIMEOUT_MS),
-    ),
-  ]);
+      },
+    );
+  });
 
   if (updaterRefreshPromise) return timeoutResult(updaterRefreshPromise);
 
