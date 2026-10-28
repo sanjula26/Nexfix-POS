@@ -211,6 +211,26 @@ export async function refreshCloudBranchStock(shopId: string, branchId: string):
   return { ok: true };
 }
 
+/** Read one product's authoritative branch quantity without relying on the potentially paginated full-branch cache. */
+export async function getCloudBranchStockQuantity(
+  shopId: string,
+  branchId: string,
+  productId: string,
+): Promise<{ ok: true; qty: number } | { ok: false; error: string }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId || !branchId || !productId || branchId === 'local-main') {
+    return { ok: false, error: 'A valid cloud shop, branch, and product are required' };
+  }
+  const { data, error } = await supabase.from('branch_stock').select('qty')
+    .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  const qty = data ? Number(data.qty) : 0;
+  if (!Number.isSafeInteger(qty) || qty < 0) {
+    return { ok: false, error: 'The server returned an invalid branch stock quantity' };
+  }
+  return { ok: true, qty };
+}
+
 /** Resolve a branch from the server-authoritative device binding in multi-branch shops. */
 export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string): Promise<{ ok: boolean; branchId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
