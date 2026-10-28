@@ -215,9 +215,14 @@ export default function Inventory() {
           return;
         }
       }
-      const currentBranchStock = branchStockEdit ? stockFor(current!) : null;
-      if (branchStockEdit && (!branchStockReady || currentBranchStock === null)) {
-        alert('This branch stock is not loaded. Refresh branch stock before editing this quantity.');
+      // Read the cache only AFTER the successful refresh. branchStockReady is
+      // derived during render and can be stale across the await above. A branch
+      // with no row for this product has an authoritative quantity of zero.
+      const currentBranchStock = branchStockEdit
+        ? getCachedBranchStock(selectedBranchId, current!.id) ?? 0
+        : null;
+      if (branchStockEdit && currentBranchStock === null) {
+        alert('Could not read the refreshed branch quantity. Stock was not changed; retry after refreshing branch data.');
         return;
       }
       const branchStockDelta = branchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
