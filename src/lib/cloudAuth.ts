@@ -255,7 +255,10 @@ export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
   const timeoutResult = (promise: Promise<boolean>) => Promise.race([
     promise,
     new Promise<boolean>((resolve) =>
-      window.setTimeout(() => resolve(false), UPDATER_AUTH_TIMEOUT_MS),
+      window.setTimeout(() => {
+        lastUpdaterAuthorizationError = 'Windows update authorization timed out. Check the internet connection and retry after the current request settles.';
+        resolve(false);
+      }, UPDATER_AUTH_TIMEOUT_MS),
     ),
   ]);
 
