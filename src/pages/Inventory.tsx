@@ -10,7 +10,7 @@ import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
-import { getCloudShopId, refreshCloudBranchStock } from '../lib/cloudSync';
+import { getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -215,12 +215,18 @@ export default function Inventory() {
           return;
         }
       }
-      // Read the cache only AFTER the successful refresh. branchStockReady is
-      // derived during render and can be stale across the await above. A branch
-      // with no row for this product has an authoritative quantity of zero.
-      const currentBranchStock = branchStockEdit
-        ? getCachedBranchStock(selectedBranchId, current!.id) ?? 0
+      // Query this product directly after the refresh. The full branch cache may
+      // be truncated by API row limits on large inventories, so a missing cache
+      // entry must not be mistaken for zero stock.
+      const authoritativeStock = branchStockEdit
+        ? await getCloudBranchStockQuantity(shopId, selectedBranchId, current!.id)
         : null;
+      if (branchStockEdit && (!authoritativeStock || !authoritativeStock.ok)) {
+        alert('Could not verify this product stock directly from the server. Stock was not changed. ' +
+          (authoritativeStock && !authoritativeStock.ok ? authoritativeStock.error : 'Refresh branch stock and retry.'));
+        return;
+      }
+      const currentBranchStock = branchStockEdit && authoritativeStock?.ok ? authoritativeStock.qty : null;
       const branchStockDelta = branchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
       if (branchStockEdit && (!Number.isInteger(editing.stock) || editing.stock < 0)) {
         alert('Stock must be a whole number equal to or greater than zero.');
