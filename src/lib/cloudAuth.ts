@@ -252,23 +252,27 @@ async function refreshDesktopUpdaterCredentialsInternal(): Promise<boolean> {
 let updaterRefreshPromise: Promise<boolean> | null = null;
 
 export async function refreshDesktopUpdaterCredentials(): Promise<boolean> {
-  if (updaterRefreshPromise) return updaterRefreshPromise;
-  const promise = (async () => {
-    const internal = refreshDesktopUpdaterCredentialsInternal();
-    const result = await Promise.race([
-      internal,
-      new Promise<boolean>((resolve) =>
-        window.setTimeout(() => resolve(false), UPDATER_AUTH_TIMEOUT_MS),
-      ),
-    ]);
-    return result;
-  })();
-  updaterRefreshPromise = promise;
-  try {
-    return await promise;
-  } finally {
-    if (updaterRefreshPromise === promise) updaterRefreshPromise = null;
-  }
+  // Keep the single-flight lock until the underlying authorization work really
+  // settles. Timing out only the caller must not release the lock while an RPC
+  // is still running, otherwise a second attempt can race token storage.
+  const timeoutResult = (promise: Promise<boolean>) => Promise.race([
+    promise,
+    new Promise<boolean>((resolve) =>
+      window.setTimeout(() => resolve(false), UPDATER_AUTH_TIMEOUT_MS),
+    ),
+  ]);
+
+  if (updaterRefreshPromise) return timeoutResult(updaterRefreshPromise);
+
+  const internal = refreshDesktopUpdaterCredentialsInternal();
+  updaterRefreshPromise = internal;
+  void internal.finally(() => {
+    if (updaterRefreshPromise === internal) updaterRefreshPromise = null;
+  }).catch(() => {
+    // The caller receives failures through timeoutResult; this handler avoids
+    // an unhandled rejection from the cleanup chain.
+  });
+  return timeoutResult(internal);
 }
 
 /**
