@@ -148,12 +148,20 @@ async function downloadDirectPrivateUpdate() {
 
   const expectedSize = Number(manifest.size);
   const expectedHash = String(manifest.sha512 || '').trim();
-  if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) throw new Error('Invalid installer size from the private update gateway.');
+  const maxInstallerBytes = 5 * 1024 * 1024 * 1024;
+  if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0 || expectedSize > maxInstallerBytes) throw new Error('Invalid installer size from the private update gateway.');
   if (!/^[a-f0-9]{128}$/i.test(expectedHash) && !/^[A-Za-z0-9+/]{86}==$/.test(expectedHash)) {
     throw new Error('Invalid installer SHA-512 from the private update gateway.');
   }
 
+  let downloadUrl;
+  try { downloadUrl = new URL(manifest.url); } catch { throw new Error('Invalid installer URL from the private update gateway.'); }
+  if (downloadUrl.protocol !== 'https:' || !downloadUrl.hostname.toLowerCase().endsWith('.r2.cloudflarestorage.com') || downloadUrl.username || downloadUrl.password || !downloadUrl.searchParams.has('X-Amz-Signature')) {
+    throw new Error('Installer URL is not a signed Cloudflare R2 URL.');
+  }
+
   const safeName = path.basename(String(manifest.name || 'Nexfix-POS-update.exe')).replace(/[^A-Za-z0-9._-]/g, '_');
+  if (!safeName || safeName === '.' || safeName === '..' || !safeName.toLowerCase().endsWith('.exe')) throw new Error('Invalid installer filename from the private update gateway.');
   const tempDir = path.join(app.getPath('temp'), 'Nexfix-POS-Updater');
   fs.mkdirSync(tempDir, { recursive: true });
   const tempPath = path.join(tempDir, safeName + '.download');
@@ -161,9 +169,13 @@ async function downloadDirectPrivateUpdate() {
   try { fs.rmSync(tempPath, { force: true }); } catch {}
   try { fs.rmSync(installerPath, { force: true }); } catch {}
 
-  const response = await fetch(manifest.url);
+  const response = await fetch(downloadUrl);
   if (!response.ok || !response.body) {
     throw new Error(`Private installer download failed (HTTP ${response.status}).`);
+  }
+  const finalUrl = new URL(response.url || downloadUrl.href);
+  if (finalUrl.protocol !== 'https:' || finalUrl.hostname !== downloadUrl.hostname) {
+    throw new Error('Private installer download redirected outside its Cloudflare R2 host.');
   }
 
   const contentLength = Number(response.headers.get('content-length') || 0);
@@ -181,7 +193,13 @@ async function downloadDirectPrivateUpdate() {
       if (done) break;
       const buffer = Buffer.from(value);
       if (!buffer.length) continue;
-      await handle.write(buffer, 0, buffer.length, total);
+      if (total + buffer.length > expectedSize) throw new Error('Installer download exceeded the expected size.');
+      let written = 0;
+      while (written < buffer.length) {
+        const result = await handle.write(buffer, written, buffer.length - written, total + written);
+        if (result.bytesWritten <= 0) throw new Error('Could not write the complete installer download.');
+        written += result.bytesWritten;
+      }
       hash.update(buffer);
       total += buffer.length;
       sendUpdateEvent('progress', { percent: Math.min(99, (total / expectedSize) * 100) });
@@ -267,9 +285,9 @@ function setupAutoUpdater(){
         }
       }
     });
-    const handoffDownloadedInstaller=async()=>{
+    const handoffDownloadedInstaller=async(downloadedInstallerPath='')=>{
       if(!autoUpdater)throw new Error('Windows updater is unavailable.');
-      const installerPath=typeof autoUpdater.installerPath==='string'?autoUpdater.installerPath:'';
+      const installerPath=typeof downloadedInstallerPath==='string'&&downloadedInstallerPath?downloadedInstallerPath:(typeof autoUpdater.installerPath==='string'?autoUpdater.installerPath:'');
       if(!installerPath)throw new Error('Downloaded update installer path is unavailable.');
       if(!fs.existsSync(installerPath))throw new Error('Downloaded update installer is missing: '+installerPath);
       const stat=fs.statSync(installerPath);
@@ -470,14 +488,27 @@ function setupAutoUpdater(){
           pendingUpdateInfo=result.updateInfo;
         }
 
-        // IMPORTANT: use electron-updater for the actual install handoff.
-        // The private gateway already returns standard electron-updater YAML whose
-        // installer URL is a short-lived, authorized Cloudflare R2 presigned URL.
-        // This lets electron-updater own the Windows NSIS lifecycle and relaunch
-        // instead of manually spawning a second PowerShell installer process.
+        // Keep the updater credential on the Supabase feed request only. electron-updater
+        // 6.x forwards requestHeaders to file URLs, which would send the bearer/device
+        // credential to the cross-origin R2 host. Fetch the R2 URL separately without
+        // auth headers, then verify its size and SHA-512 before the installer handoff.
+        const expectedVersion=String(pendingUpdateInfo?.version||'');
         updateDownloadActive=true;
         sendUpdateEvent('progress',{percent:0});
-        await autoUpdater.downloadUpdate();
+        const downloaded=await downloadDirectPrivateUpdate();
+        if(!downloaded.version || (expectedVersion && downloaded.version!==expectedVersion)) throw new Error('The published update changed during download. Check for updates and try again.');
+        pendingUpdateInfo={...(pendingUpdateInfo||{}),version:downloaded.version};
+        updateDownloadActive=false;
+        sendUpdateEvent('downloaded',{version:downloaded.version});
+        updateInstallScheduled=true;
+        setTimeout(()=>{
+          void handoffDownloadedInstaller(downloaded.installerPath).catch(error=>{
+            updateInstallScheduled=false;
+            const message=error?.message||String(error);
+            logUpdaterInstall('INSTALL HANDOFF FAILED: '+message);
+            sendUpdateEvent('error',{message});
+          });
+        },600);
         return{supported:true,started:true};
       }catch(error){
         updateDownloadActive=false;
