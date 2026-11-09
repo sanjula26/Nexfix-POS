@@ -7,12 +7,26 @@ const SECRET = SECRET_KEYS.default || "";
 const admin = createClient(URL, SECRET, { auth: { persistSession: false } });
 const cors = { "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers":"authorization, apikey, content-type, x-nexfix-action", "Access-Control-Allow-Methods":"GET,POST,OPTIONS", "Content-Type":"application/json" };
 const json = (body: unknown, status=200) => new Response(JSON.stringify(body), {status,headers:cors});
+class RequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message); this.name = "RequestError"; }
+}
 const bearer = (req: Request) => { const v=req.headers.get("authorization")||""; return v.startsWith("Bearer ") ? v.slice(7).trim() : ""; };
 function base64Url(bytes: Uint8Array) { let s=""; for(const b of bytes)s+=String.fromCharCode(b); return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,""); }
 async function sha256(value:string) { return base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value)))); }
-async function userId(req:Request) { const token=bearer(req); if(!token) throw new Error("Missing authorization"); const {data,error}=await admin.auth.getUser(token); if(error||!data.user) throw new Error("Invalid authorization"); return data.user.id; }
+async function userId(req:Request) {
+  const token=bearer(req);
+  if(!token) throw new RequestError("Missing authorization",401);
+  const {data,error}=await admin.auth.getUser(token);
+  if(error||!data.user) throw new RequestError("Invalid authorization",401);
+  return data.user.id;
+}
 function bounds(date:string,tz:string) {
-  const safe=/^\d{4}-\d{2}-\d{2}$/.test(date)?date:new Date().toISOString().slice(0,10);
+  const safe=date || new Date().toISOString().slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(safe)) throw new RequestError("Invalid date",400);
+  const safeMs=Date.parse(safe+"T00:00:00.000Z");
+  if(!Number.isFinite(safeMs) || new Date(safeMs).toISOString().slice(0,10)!==safe) throw new RequestError("Invalid date",400);
+  if(tz.length>100) throw new RequestError("Invalid time zone",400);
+  if(tz){try{new Intl.DateTimeFormat("en-US",{timeZone:tz}).format(new Date());}catch{throw new RequestError("Invalid time zone",400);}}
   if(!tz)return {start:safe+"T00:00:00.000Z",end:safe+"T23:59:59.999Z"};
   const offset=(d:Date)=>{const p=new Intl.DateTimeFormat("en-US",{timeZone:tz,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(d);const n=(t:string)=>Number(p.find(x=>x.type===t)?.value||0);return Math.round((Date.UTC(n("year"),n("month")-1,n("day"),n("hour"),n("minute"),n("second"))-d.getTime())/60000);};
   const conv=(time:string)=>{const g=new Date(safe+"T"+time+"Z");return new Date(g.getTime()-offset(g)*60000).toISOString();};
@@ -102,8 +116,12 @@ async function read(req:Request) {
     .select("id,shop_id,bill_no,customer_id,customer_name,cashier_id,cashier_name,subtotal,discount,tax,shipping,total,amount_paid,change_amount,profit,points_earned,points_redeemed,status,note,created_at")
     .eq("shop_id",g.shop_id).gte("created_at",start).lte("created_at",end)
     .order("created_at",{ascending:false}).order("id",{ascending:false});
+  if(Boolean(cursorDate)!==Boolean(cursorId)) return json({ok:false,error:"Invalid sales cursor"},400);
   if(cursorDate && cursorId){
-    if(!/^\d{4}-\d{2}-\d{2}T/.test(cursorDate) || cursorId.length>100) return json({ok:false,error:"Invalid sales cursor"},400);
+    const timestampPattern=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+    const cursorMs=Date.parse(cursorDate);
+    const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if(!timestampPattern.test(cursorDate) || !Number.isFinite(cursorMs) || !uuidPattern.test(cursorId)) return json({ok:false,error:"Invalid sales cursor"},400);
     salesQuery=salesQuery.or(`created_at.lt.${cursorDate},and(created_at.eq.${cursorDate},id.lt.${cursorId})`);
   }
   const {data:sales,error:se}=await salesQuery.limit(pageSize + 1);
@@ -121,4 +139,4 @@ async function read(req:Request) {
   for(const x of pays){const a=pm.get(x.sale_id)||[];a.push({method:String(x.method),amount:Number(x.amount||0)});pm.set(x.sale_id,a);}
   return json({ok:true,shopId:g.shop_id,authorizedDeviceId:g.device_id,date:u.searchParams.get("date")||"",count:pageSales.length,hasMore,nextCursor:next?{date:String(next.created_at),id:String(next.id)}:null,sales:pageSales.map(s=>{const legs=pm.get(s.id)||[];return {id:String(s.id),billNo:String(s.bill_no||""),date:String(s.created_at),cashierId:String(s.cashier_id||""),cashierName:String(s.cashier_name||""),customerId:s.customer_id?String(s.customer_id):undefined,customerName:String(s.customer_name||"Walk-in customer"),items:im.get(s.id)||[],subtotal:Number(s.subtotal||0),discount:Number(s.discount||0),tax:Number(s.tax||0),shipping:Number(s.shipping||0),total:Number(s.total||0),amountPaid:Number(s.amount_paid||0),change:Number(s.change_amount||0),profit:Number(s.profit||0),pointsEarned:Number(s.points_earned||0)||undefined,pointsRedeemed:Number(s.points_redeemed||0)||undefined,note:s.note?String(s.note):undefined,status:String(s.status||"completed"),payment:legs[0]?.method||"cash",payments:legs.length>1?legs:undefined};})});
 }
-Deno.serve(async req=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});try{if(req.method==="GET")return await read(req);if(req.method==="POST")return (req.headers.get("x-nexfix-action")||"").toLowerCase()==="revoke"?await revoke(req):await create(req);return json({ok:false,error:"Method not allowed"},405);}catch(e){return json({ok:false,error:e instanceof Error?e.message:"Request failed"},500);}});
+Deno.serve(async req=>{if(req.method==="OPTIONS")return new Response("ok",{headers:cors});try{if(req.method==="GET")return await read(req);if(req.method==="POST")return (req.headers.get("x-nexfix-action")||"").toLowerCase()==="revoke"?await revoke(req):await create(req);return json({ok:false,error:"Method not allowed"},405);}catch(e){return json({ok:false,error:e instanceof Error?e.message:"Request failed"},e instanceof RequestError?e.status:500);}});
