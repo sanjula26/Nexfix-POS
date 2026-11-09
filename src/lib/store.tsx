@@ -1324,7 +1324,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const branchCacheReady = targetBranchId !== 'local-main' && hasCachedBranchStock(targetBranchId);
     if (branchBound) {
       const cachedQty = getCachedBranchStock(targetBranchId, id);
-      if (!branchCacheReady || cachedQty === null || cachedQty + amount < 0) {
+      // Inventory's explicit quantity editor supplies a fresh server-read
+      // expectedBranchQty and is online-only. In that compare-and-set path the
+      // server quantity is authoritative, so a truncated/missing local cache
+      // must not block the edit; the RPC rejects stale quantities atomically.
+      const serverVerifiedEdit = expectedBranchQty !== undefined;
+      const branchQuantityWouldBeNegative = serverVerifiedEdit
+        ? expectedBranchQty + amount < 0
+        : cachedQty === null || cachedQty + amount < 0;
+      if ((!branchCacheReady && !serverVerifiedEdit) || branchQuantityWouldBeNegative) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment because assigned-branch stock is missing or insufficient. Connect online and refresh branch stock.');
         return false;
       }
