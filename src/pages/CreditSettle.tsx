@@ -7,6 +7,7 @@ import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsApp
 import { getDefaultBranchId, getPOSBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
+import { matchesCreditPhoneDigits, normalizeCreditPhoneSearch } from '../lib/creditSearch';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
 
 const METHODS: Array<{ value: Exclude<PaymentMethod, 'credit'>; label: string; icon: typeof Banknote }> = [
@@ -81,12 +82,13 @@ export default function CreditSettle() {
   const q = search.trim().toLowerCase();
   const customerRows = state.customers
     .filter(c => filter === 'all' || c.creditBalance > 0.009)
-    .filter(c => !q || c.name.toLowerCase().includes(q) || c.phone.replace(/\\s/g, '').includes(q.replace(/\\s/g, '')))
+    .filter(c => !q || c.name.toLowerCase().includes(q) || normalizeCreditPhoneSearch(c.phone).includes(normalizeCreditPhoneSearch(q)) || matchesCreditPhoneDigits(c.phone, q))
     .sort((a, b) => b.creditBalance - a.creditBalance);
   const invoiceRows = invoices.filter(({ sale }) => {
     if (filter === 'balance' && !(sale.customerId && (state.customers.find(c => c.id === sale.customerId)?.creditBalance || 0) > 0)) return false;
     return !q || sale.billNo.toLowerCase().includes(q) || sale.customerName.toLowerCase().includes(q) ||
-      (state.customers.find(c => c.id === sale.customerId)?.phone || '').replace(/\\s/g, '').includes(q.replace(/\\s/g, ''));
+      normalizeCreditPhoneSearch(state.customers.find(c => c.id === sale.customerId)?.phone || '').includes(normalizeCreditPhoneSearch(q)) ||
+      matchesCreditPhoneDigits(state.customers.find(c => c.id === sale.customerId)?.phone || '', q);
   });
   const totalReceivables = state.customers.reduce((sum, c) => sum + Math.max(0, c.creditBalance || 0), 0);
   const totalCollectedToday = payments.filter(p => fmtDate(p.date) === fmtDate(new Date().toISOString())).reduce((sum, p) => sum + p.amount, 0);
@@ -107,9 +109,7 @@ export default function CreditSettle() {
       const c = state.customers.find(x => x.id === p.customerId);
       const searchable = [c?.name, c?.address, ...(p.allocations || []).map(a => a.billNo)]
         .filter(Boolean).join(' ').toLocaleLowerCase();
-      const queryDigits = recentQuery.replace(/\\D/g, '');
-      const phoneDigits = String(c?.phone || '').replace(/\\D/g, '');
-      return searchable.includes(recentQuery) || (!!queryDigits && phoneDigits.includes(queryDigits));
+      return searchable.includes(recentQuery) || matchesCreditPhoneDigits(c?.phone || '', recentQuery);
     })
     .sort((a, b) => {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
