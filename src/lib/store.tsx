@@ -19,9 +19,9 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
+import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
-import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId } from './branchStock';
+import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1359,6 +1359,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         applyBranchStockDeltas(targetBranchId, { [id]: amount });
       }
       try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
+      if (expectedBranchQty !== undefined) {
+        if (cloudResult.alreadyCommitted) {
+          // A replay may have been committed before another POS changed stock;
+          // read the latest row instead of caching an assumed expected+delta.
+          try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* the next editor open will re-read */ }
+        } else {
+          cacheBranchStockProduct(targetBranchId, id, expectedBranchQty + amount);
+        }
+      }
     } else if (supabaseConfigured) {
       let cacheApplied = false;
       if (branchCacheReady) {
