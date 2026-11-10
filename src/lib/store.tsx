@@ -1349,7 +1349,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
         return false;
       }
-      if (branchCacheReady && applyBranchStockDeltas(targetBranchId, { [id]: amount })) {
+      // A cache can exist but be incomplete/truncated. Never treat a missing
+      // product entry as zero when applying an optimistic delta; refresh from
+      // the server and leave the product unknown if it is not in the cached page.
+      const cachedProductQty = getCachedBranchStock(targetBranchId, id);
+      if (branchCacheReady && cachedProductQty !== null && applyBranchStockDeltas(targetBranchId, { [id]: amount })) {
         try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* the delta is applied locally; refresh can retry */ }
       } else {
         try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
