@@ -17,7 +17,6 @@ on:
       - 'eslint.config.js'
       - 'assets/**'
       - 'build/**'
-      - '.github/workflows/desktop-build.yml'
 
 concurrency:
   group: windows-desktop-${{ github.ref }}
@@ -565,7 +564,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
           $keys = @(
             $rows |
-              ForEach-Object { [string]$_ -split '\\s+' } |
+              ForEach-Object { [string]$_ -split '\s+' } |
               Where-Object { $_ -and $_ -ne 'None' }
           )
 
@@ -573,7 +572,7 @@ jobs:
           # whose version cannot be interpreted and ordered.
           $versionedInstallers = @(
             $keys | ForEach-Object {
-              if ($_ -match '^win32/latest/Nexfix-POS-(?<version>\\d+\\.\\d+\\.\\d+)-x64-installer\\.exe$') {
+              if ($_ -match '^win32/latest/Nexfix-POS-(?<version>\d+\.\d+\.\d+)-x64-installer\.exe$') {
                 [pscustomobject]@{ Key = [string]$_; Version = [version]$Matches['version'] }
               } else {
                 throw "Unexpected object key under the private installer prefix: $_"
@@ -602,7 +601,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 retention cleanup.' }
           $remainingKeys = @(
             $remainingRows |
-              ForEach-Object { [string]$_ -split '\\s+' } |
+              ForEach-Object { [string]$_ -split '\s+' } |
               Where-Object { $_ -and $_ -ne 'None' } |
               Sort-Object
           )
