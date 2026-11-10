@@ -37,7 +37,11 @@ for (const file of ['.env', '.env.local', '.env.production', 'service-account.js
 for (const workflowRoot of ['.github/workflows']) {
   for (const file of filesUnder(workflowRoot).filter(file => file.endsWith('.yml') || file.endsWith('.yaml'))) {
     const text = readFileSync(file, 'utf8');
-    if (/VITE_SEED_DEMO\s*=\s*true|VITE_SEED_DEMO=true/.test(text)) {
+    const enablesDemoSeed = text.split(/\r?\n/).some(line =>
+      /^\s*VITE_SEED_DEMO\s*:\s*["']?true["']?\s*(?:#.*)?$/i.test(line) ||
+      /^\s*(?:export\s+)?VITE_SEED_DEMO=true(?:\s|$)/.test(line)
+    );
+    if (enablesDemoSeed) {
       errors.push(`${relative(root, file)}: production workflow must not enable demo seed data`);
     }
   }
