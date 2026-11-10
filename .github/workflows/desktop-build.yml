@@ -192,16 +192,14 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: nexfix-desktop-updates
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET','SUPABASE_SERVICE_ROLE_KEY')) {
+          foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET')) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) { throw "$name secret is empty." }
           }
           if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
           aws --version
 
-          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
           $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $version = $env:BUILD_VERSION
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
@@ -240,19 +238,7 @@ jobs:
           if ($sourceHash -ne $servedHash) { throw 'R2 installer SHA-512 verification failed.' }
           Remove-Item $verifyPath -Force -ErrorAction SilentlyContinue
 
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'Content-Type' = 'application/json'; Prefer = 'return=minimal'; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
-          $rpc = @{
-            p_version = $version
-            p_channel = 'latest'
-            p_platform = 'win32'
-            p_installer_path = $objectKey
-            p_installer_name = $installer.Name
-            p_installer_sha512 = $sourceHash
-            p_installer_size = [int64]$installer.Length
-            p_release_notes = "Nexfix POS Windows release $version"
-          } | ConvertTo-Json -Compress
-          Invoke-RestMethod -Uri "$projectUrl/rest/v1/rpc/publish_desktop_release" -Method Post -Headers $headers -Body $rpc | Out-Null
-          Write-Host "R2 release published and byte-verified: $version / $objectKey / $($installer.Length) bytes"
+          Write-Host "R2 installer uploaded and byte-verified for $version; active release metadata will be published after legacy compatibility chunks are verified."
 
       - name: Publish legacy compatibility chunks to private Supabase Storage
         shell: pwsh
