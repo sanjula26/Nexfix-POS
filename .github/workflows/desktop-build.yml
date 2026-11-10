@@ -543,7 +543,7 @@ jobs:
           Write-Host "Storage cleanup verified: $($remaining.Count) current release chunks remain for $version."
           
 
-      - name: Clean superseded R2 installer objects
+      - name: Retain the three newest private R2 installers
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -554,8 +554,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $installer = Get-ChildItem -Path release -Filter '*-installer.exe' -File | Select-Object -First 1
-          if (-not $installer) { throw 'Current installer artifact is missing during R2 cleanup.' }
+          if (-not $installer) { throw 'Current installer artifact is missing during R2 retention cleanup.' }
           $currentKey = "win32/latest/$($installer.Name)"
+          $maxRetainedReleases = 3
           $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
           $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
           $env:AWS_DEFAULT_REGION = 'auto'
@@ -564,22 +565,77 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
           $keys = @(
             $rows |
-              ForEach-Object { [string]$_ -split '\s+' } |
+              ForEach-Object { [string]$_ -split '\\s+' } |
               Where-Object { $_ -and $_ -ne 'None' }
           )
-          foreach ($key in $keys) {
-            if ($key -ne $currentKey) {
-              Write-Host "Removing superseded R2 installer: $key"
-              aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output text | Out-Null
-              if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
-            }
+
+          # Fail safely on unexpected object names rather than deleting objects
+          # whose version cannot be interpreted and ordered.
+          $versionedInstallers = @(
+            $keys | ForEach-Object {
+              if ($_ -match '^win32/latest/Nexfix-POS-(?<version>\\d+\\.\\d+\\.\\d+)-x64-installer\\.exe
+      - name: Verify private Windows release
+        shell: pwsh
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
+          if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
+          if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
+          if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
+          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
+          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
+) {
+                [pscustomobject]@{ Key = [string]$_; Version = [version]$Matches['version'] }
+              } else {
+                throw "Unexpected object key under the private installer prefix: $_"
+              }
+            } | Sort-Object Version -Descending
+          )
+          if ($versionedInstallers.Count -lt 1) { throw 'No versioned private R2 installers were found.' }
+          if (-not ($versionedInstallers | Where-Object { $_.Key -eq $currentKey })) {
+            throw "The active installer is missing from R2: $currentKey"
+          }
+
+          $retained = @($versionedInstallers | Select-Object -First $maxRetainedReleases)
+          $retainedKeys = @($retained | ForEach-Object { [string]$_.Key } | Sort-Object)
+          $removeKeys = @($versionedInstallers | Where-Object { $retainedKeys -notcontains $_.Key } | ForEach-Object { [string]$_.Key })
+
+          Write-Host "Current release: $currentKey"
+          Write-Host "Keeping the $($retainedKeys.Count) newest private installer(s) (maximum $maxRetainedReleases)."
+          Write-Host "Superseded R2 installers to remove: $($removeKeys.Count)"
+          foreach ($key in $removeKeys) {
+            Write-Host "Removing superseded R2 installer: $key"
+            aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output text | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
           }
 
           $remaining = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 cleanup.' }
-          $remainingKeys = @($remaining | ForEach-Object { [string]$_ } | Where-Object { $_ -and $_ -ne 'None' })
-          if ($remainingKeys.Count -ne 1 -or $remainingKeys[0] -ne $currentKey) { throw "R2 cleanup verification failed. Expected exactly one current installer, found: $($remainingKeys -join ', ')" }
-          Write-Host "R2 cleanup verified: exactly one current installer remains: $currentKey"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 retention cleanup.' }
+          $remainingKeys = @(
+            $remaining |
+              ForEach-Object { [string]$_ -split '\\s+' } |
+              Where-Object { $_ -and $_ -ne 'None' } |
+              Sort-Object
+          )
+          if (($remainingKeys -join "`n") -ne ($retainedKeys -join "`n")) {
+            throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
+          }
+          Write-Host "R2 retention verified: $($remainingKeys.Count) newest private installer(s) remain, including the active version."
 
       - name: Verify private Windows release
         shell: pwsh
