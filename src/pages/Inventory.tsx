@@ -45,6 +45,8 @@ export default function Inventory() {
   const [branchStockDraftDirty, setBranchStockDraftDirty] = useState(false);
   const [branchStockEditReady, setBranchStockEditReady] = useState(true);
   const [branchStockExpectedQty, setBranchStockExpectedQty] = useState<number | null>(null);
+  const [branchStockExpectedBranchId, setBranchStockExpectedBranchId] = useState<string | null>(null);
+  const [branchStockExpectedShopId, setBranchStockExpectedShopId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
   const [restocking, setRestocking] = useState<Product | null>(null);
@@ -116,10 +118,12 @@ export default function Inventory() {
 
   const openEditProduct = async (product: Product) => {
     const tracked = !!(product.trackImei || product.trackSerial);
+    const branchIdAtOpen = selectedBranchId;
+    const shopIdAtOpen = shopId;
     let initialStock = product.stock;
     let stockReady = true;
-    if (!tracked && selectedBranchId !== 'local-main') {
-      const result = await getCloudBranchStockQuantity(shopId, selectedBranchId, product.id);
+    if (!tracked && branchIdAtOpen !== 'local-main') {
+      const result = await getCloudBranchStockQuantity(shopIdAtOpen, branchIdAtOpen, product.id);
       if (!result.ok) {
         stockReady = false;
         alert('The selected branch quantity could not be verified. Product details can still be edited, but stock editing is disabled. ' + result.error);
@@ -129,7 +133,9 @@ export default function Inventory() {
     }
     setBranchStockDraftDirty(false);
     setBranchStockEditReady(stockReady);
-    setBranchStockExpectedQty(stockReady && !tracked && selectedBranchId !== 'local-main' ? initialStock : null);
+    setBranchStockExpectedQty(stockReady && !tracked && branchIdAtOpen !== 'local-main' ? initialStock : null);
+    setBranchStockExpectedBranchId(stockReady && !tracked && branchIdAtOpen !== 'local-main' ? branchIdAtOpen : null);
+    setBranchStockExpectedShopId(stockReady && !tracked && branchIdAtOpen !== 'local-main' ? shopIdAtOpen : null);
     setEditing({ ...product, stock: initialStock });
     setIsNew(false);
   };
@@ -225,6 +231,10 @@ export default function Inventory() {
       const branchStockEdit = branchScopedExisting && !currentTracked && !nextTracked;
       const shouldApplyBranchStockEdit = branchStockEdit && branchStockDraftDirty;
       const currentBranchStock = shouldApplyBranchStockEdit ? branchStockExpectedQty : null;
+      if (shouldApplyBranchStockEdit && (branchStockExpectedBranchId !== selectedBranchId || branchStockExpectedShopId !== shopId)) {
+        alert('The selected shop or branch changed while this editor was open. Close and reopen the product editor to verify the correct branch quantity.');
+        return;
+      }
       if (shouldApplyBranchStockEdit && (currentBranchStock === null || !Number.isSafeInteger(currentBranchStock) || currentBranchStock < 0)) {
         alert('The original branch quantity is unavailable. Close and reopen the product editor to reload it.');
         return;
@@ -234,6 +244,10 @@ export default function Inventory() {
         return;
       }
       const branchStockDelta = shouldApplyBranchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
+      if (shouldApplyBranchStockEdit && Math.abs(branchStockDelta) > 1_000_000) {
+        alert('A single stock adjustment cannot exceed 1,000,000 units. Enter a smaller change.');
+        return;
+      }
       const productForSave = branchScopedExisting ? { ...editing, stock: current!.stock } : editing;
       const forceZeroStock = isNew && !branchStockReady && !nextTracked && editing.stock > 0;
       const saved = await saveProduct(forceZeroStock ? { ...productForSave, stock: 0 } : productForSave);
@@ -253,7 +267,9 @@ export default function Inventory() {
     setEditing(null);
     setBranchStockDraftDirty(false);
     setBranchStockEditReady(true);
-    setBranchStockExpectedQty(null);
+    setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null);
+    setBranchStockExpectedBranchId(null);
+    setBranchStockExpectedShopId(null);
     setNewUnitText('');
   };
 
@@ -383,7 +399,7 @@ export default function Inventory() {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => { setBranchStockDraftDirty(false); setBranchStockEditReady(branchStockReady); setBranchStockExpectedQty(null); setEditing(blankProduct(state.settings.lowStockDefault, state.products)); setNewUnitText(''); setIsNew(true); }}
+                onClick={() => { setBranchStockDraftDirty(false); setBranchStockEditReady(branchStockReady); setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null); setEditing(blankProduct(state.settings.lowStockDefault, state.products)); setNewUnitText(''); setIsNew(true); }}
               >
                 <Plus size={15} /> Add Product
               </button>
