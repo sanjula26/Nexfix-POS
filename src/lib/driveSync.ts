@@ -122,11 +122,29 @@ export function setExistingDriveShopId(input: string, recoveryOverride = true): 
     return { ok: false, error: 'Shop Backup ID must be 1–100 characters: letters, numbers, dot, underscore, colon, or hyphen.' };
   }
   try {
-    localStorage.setItem(DRIVE_SHOP_KEY, value);
-    if (recoveryOverride) localStorage.setItem(DRIVE_SHOP_OVERRIDE_KEY, value);
-    return { ok: true };
+    const previousDriveId = localStorage.getItem(DRIVE_SHOP_KEY);
+    const previousOverrideId = localStorage.getItem(DRIVE_SHOP_OVERRIDE_KEY);
+    try {
+      localStorage.setItem(DRIVE_SHOP_KEY, value);
+      if (recoveryOverride) localStorage.setItem(DRIVE_SHOP_OVERRIDE_KEY, value);
+      return { ok: true };
+    } catch {
+      // localStorage writes are not transactional. If the second key fails,
+      // restore the first key so a reconnect cannot leave a half-updated shop ID.
+      try {
+        if (previousDriveId === null) localStorage.removeItem(DRIVE_SHOP_KEY);
+        else localStorage.setItem(DRIVE_SHOP_KEY, previousDriveId);
+        if (recoveryOverride) {
+          if (previousOverrideId === null) localStorage.removeItem(DRIVE_SHOP_OVERRIDE_KEY);
+          else localStorage.setItem(DRIVE_SHOP_OVERRIDE_KEY, previousOverrideId);
+        }
+      } catch {
+        return { ok: false, error: 'Could not save Shop Backup ID, and the previous ID could not be fully restored. Do not start a backup until the shop identity is checked.' };
+      }
+      return { ok: false, error: 'Could not save Shop Backup ID on this browser. The previous ID was restored.' };
+    }
   } catch {
-    return { ok: false, error: 'Could not save Shop Backup ID on this browser.' };
+    return { ok: false, error: 'Could not access Shop Backup ID storage on this browser.' };
   }
 }
 

@@ -692,89 +692,97 @@ export default function Settings() {
       for (const file of files) texts.set(file.name, await readFile(file));
 
       // A downloaded RECOVERY_KEY.txt can be selected together with the backup.
-      // Do not replace the currently working local key until the backup has been
-      // fully validated, decrypted, persisted, and the restore has succeeded.
-      // Otherwise a failed/mismatched key file could strand this browser from
-      // its existing automatic backups.
-      const previousRecoveryKey = getRecoveryKey(recoveryScope);
+      // The imported key is temporary until validation, decryption and restore
+      // succeed; every failure in that flow restores the previous scoped key.
       let importedRecoveryKey: string | undefined;
+      let importedRecoveryKeyScope = recoveryScope;
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
         const match = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
         if (match) {
           importedRecoveryKey = match[1];
+          const shopMatch = text.match(/^Shop Backup ID(?: Copy)?:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
+          if (shopMatch) importedRecoveryKeyScope = shopMatch[1].trim();
           break;
         }
       }
-      if (importedRecoveryKey) {
-        const result = setRecoveryKey(importedRecoveryKey, recoveryScope);
-        if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
-      }
-
+      const previousRecoveryKey = getRecoveryKey(importedRecoveryKeyScope);
+      let importedRecoveryKeyApplied = false;
       let parsed: unknown;
-      const jsonCandidates = files
-        .filter(file => file.name.toLowerCase().endsWith('.json'))
-        .map(file => texts.get(file.name) || '')
-        .filter(value => value.trim());
-      const firstJson = jsonCandidates[0] || Array.from(texts.values()).find(value => value.trim());
-      if (!firstJson) throw new Error('Backup file is empty.');
-      try { parsed = JSON.parse(firstJson); } catch { throw new Error('Backup file is not valid JSON. Select the .json backup or multipart manifest together with its .part files.'); }
-
-      let restoreInput: unknown = parsed;
-      const candidate = parsed as Record<string, unknown> | null;
+      let candidate: Record<string, unknown> | null = null;
       const adoptImportedShop = (shopId: unknown) => {
         if (typeof shopId !== 'string' || !shopId.trim()) throw new Error('Backup does not contain a valid Shop Backup ID.');
         const result = adoptBackupShopId(shopId);
         if (!result.ok) throw new Error(result.error || 'Could not connect this PC to the backup shop.');
       };
-
-      // Google Drive encrypted single-file backup: {_meta, payload: AES envelope}.
-      if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload) {
-        const meta = candidate._meta as Record<string, unknown>;        if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
-          const decrypted = await decryptBackupEnvelope(candidate.payload);          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
-        }
-      // Google Drive multipart backup: select the manifest plus all .partNNN files.
-      } else if (candidate && typeof candidate === 'object' && candidate.encrypted === true && Array.isArray(candidate.partNames)) {
-        const manifest = candidate as {
-          encrypted: boolean; shopId?: string; shopPartition?: string; backupId?: string;
-          totalBytes?: number; parts?: number; totalParts?: number; partNames: string[]; sha256?: string;
-        };
-        const expectedParts = Number(manifest.parts ?? manifest.totalParts);
-        if (!manifest.backupId || !Number.isInteger(expectedParts) || expectedParts < 1
-          || manifest.partNames.length !== expectedParts || !manifest.sha256) {
-          throw new Error('Invalid multipart backup manifest.');
-        }
-        const chunks = manifest.partNames.map(name => texts.get(name));
-        if (chunks.some(chunk => typeof chunk !== 'string')) throw new Error('Multipart restore requires the manifest and every listed .part file.');
-        const rawPayload = chunks.join('');
-        if (new TextEncoder().encode(rawPayload).byteLength !== Number(manifest.totalBytes)) throw new Error('Multipart backup size verification failed.');
-        if (await sha256Hex(rawPayload) !== manifest.sha256) throw new Error('Multipart backup integrity check failed. Restore was cancelled.');
-        let envelope: unknown;
-        try { envelope = JSON.parse(rawPayload); } catch { throw new Error('Multipart encrypted payload is not valid JSON.'); }
-        if (!isEncryptedBackupEnvelope(envelope)) throw new Error('Multipart encrypted backup envelope is invalid.');
-        const decrypted = await decryptBackupEnvelope(envelope);
-        restoreInput = { __nexfixCloudSafe: true, state: decrypted };
-      } else if (isEncryptedBackupEnvelope(parsed)) {
-        const decrypted = await decryptBackupEnvelope(parsed);
-        restoreInput = { __nexfixCloudSafe: true, state: decrypted };
-      }
-
-      try {
-        await applyBackupRestore(state, restoreInput);
-      } catch (error) {
-        // A failed restore must not leave a newly imported Recovery Key active.
-        // Restore the key that was already working on this browser.
-        if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
+      const rollbackImportedRecoveryKey = (error: unknown): never => {
+        if (importedRecoveryKey && importedRecoveryKeyApplied && importedRecoveryKey !== previousRecoveryKey) {
           const rollback = previousRecoveryKey
-            ? setRecoveryKey(previousRecoveryKey, recoveryScope)
-            : clearRecoveryKey(recoveryScope);
+            ? setRecoveryKey(previousRecoveryKey, importedRecoveryKeyScope)
+            : clearRecoveryKey(importedRecoveryKeyScope);
           setRecoveryKeyReady(Boolean(previousRecoveryKey && rollback.ok));
           if (!rollback.ok) {
             const originalMessage = error instanceof Error ? error.message : 'Restore failed';
-            throw new Error(`${originalMessage}. The previous Recovery Key could not be restored: ${rollback.error || 'Recovery Key storage failed.'}`);
+            throw new Error(originalMessage + '. The previous Recovery Key could not be restored: ' + (rollback.error || 'Recovery Key storage failed.'));
           }
         }
         throw error;
+      };
+
+      try {
+        if (importedRecoveryKey) {
+          const result = setRecoveryKey(importedRecoveryKey, importedRecoveryKeyScope);
+          if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
+          importedRecoveryKeyApplied = true;
+        }
+
+        const jsonCandidates = files
+          .filter(file => file.name.toLowerCase().endsWith('.json'))
+          .map(file => texts.get(file.name) || '')
+          .filter(value => value.trim());
+        const firstJson = jsonCandidates[0] || Array.from(texts.values()).find(value => value.trim());
+        if (!firstJson) throw new Error('Backup file is empty.');
+        try { parsed = JSON.parse(firstJson); } catch { throw new Error('Backup file is not valid JSON. Select the .json backup or multipart manifest together with its .part files.'); }
+
+        let restoreInput: unknown = parsed;
+        candidate = parsed as Record<string, unknown> | null;
+
+        // Google Drive encrypted single-file backup: {_meta, payload: AES envelope}.
+        if (candidate && typeof candidate === 'object' && candidate._meta && candidate.payload) {
+          const meta = candidate._meta as Record<string, unknown>;
+          if (meta.encrypted === true && isEncryptedBackupEnvelope(candidate.payload)) {
+            const decrypted = await decryptBackupEnvelope(candidate.payload);
+            restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+          }
+        // Google Drive multipart backup: select the manifest plus all .partNNN files.
+        } else if (candidate && typeof candidate === 'object' && candidate.encrypted === true && Array.isArray(candidate.partNames)) {
+          const manifest = candidate as {
+            encrypted: boolean; shopId?: string; shopPartition?: string; backupId?: string;
+            totalBytes?: number; parts?: number; totalParts?: number; partNames: string[]; sha256?: string;
+          };
+          const expectedParts = Number(manifest.parts ?? manifest.totalParts);
+          if (!manifest.backupId || !Number.isInteger(expectedParts) || expectedParts < 1
+            || manifest.partNames.length !== expectedParts || !manifest.sha256) {
+            throw new Error('Invalid multipart backup manifest.');
+          }
+          const chunks = manifest.partNames.map(name => texts.get(name));
+          if (chunks.some(chunk => typeof chunk !== 'string')) throw new Error('Multipart restore requires the manifest and every listed .part file.');
+          const rawPayload = chunks.join('');
+          if (new TextEncoder().encode(rawPayload).byteLength !== Number(manifest.totalBytes)) throw new Error('Multipart backup size verification failed.');
+          if (await sha256Hex(rawPayload) !== manifest.sha256) throw new Error('Multipart backup integrity check failed. Restore was cancelled.');
+          let envelope: unknown;
+          try { envelope = JSON.parse(rawPayload); } catch { throw new Error('Multipart encrypted payload is not valid JSON.'); }
+          if (!isEncryptedBackupEnvelope(envelope)) throw new Error('Multipart encrypted backup envelope is invalid.');
+          const decrypted = await decryptBackupEnvelope(envelope);
+          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+        } else if (isEncryptedBackupEnvelope(parsed)) {
+          const decrypted = await decryptBackupEnvelope(parsed);
+          restoreInput = { __nexfixCloudSafe: true, state: decrypted };
+        }
+
+        await applyBackupRestore(state, restoreInput);
+      } catch (error) {
+        rollbackImportedRecoveryKey(error);
       }
 
       if (importedRecoveryKey) setRecoveryKeyReady(true);
@@ -816,23 +824,35 @@ export default function Settings() {
     if (!(await confirmSensitiveAdmin('Recovery Key import / shop reconnect'))) return;
     try {
       const text = await file.text();
-      const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+      const keyMatch = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
       if (!keyMatch) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
 
       // RECOVERY_KEY.txt is the one-time disaster/new-PC reconnect artifact.
       // If it contains the Shop Backup ID, adopt both values together so the
       // key is stored under the correct scoped Drive identity automatically.
-      const idMatch = text.match(/^Shop Backup ID Copy:\\s*([A-Za-z0-9._:-]{1,100})\\s*$/m);
-      let scope = recoveryScope;
-      if (idMatch?.[1]) {
-        const idResult = saveExistingDriveShopId(idMatch[1]);
-        if (!idResult.ok) throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
-        scope = idMatch[1].trim();
-        setDriveShopId(scope);
-      }
-
+      const idMatch = text.match(/^Shop Backup ID(?: Copy)?:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
+      const scope = idMatch?.[1] ? idMatch[1].trim() : recoveryScope;
+      const previousRecoveryKey = getRecoveryKey(scope);
       const result = setRecoveryKey(keyMatch[1], scope);
       if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key.');
+
+      if (idMatch?.[1]) {
+        // Persist the key first. If adopting the shop ID fails, restore the
+        // previous scoped key so this PC is not left half-reconnected.
+        const idResult = saveExistingDriveShopId(scope);
+        if (!idResult.ok) {
+          const rollback = previousRecoveryKey
+            ? setRecoveryKey(previousRecoveryKey, scope)
+            : clearRecoveryKey(scope);
+          if (!rollback.ok) {
+            throw new Error((idResult.error || 'Could not save Shop Backup ID.') +
+              ' The previous Recovery Key could not be restored: ' +
+              (rollback.error || 'Recovery Key storage failed.'));
+          }
+          throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
+        }
+        setDriveShopId(scope);
+      }
       setRecoveryKeyReady(true);
       setRecoveryKeyMsg(
         idMatch?.[1]
