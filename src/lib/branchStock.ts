@@ -1,4 +1,4 @@
-import { getMachineIdentity } from './machine';
+import { getMachineIdentity } from './machine.ts';
 
 export interface BranchStockRow { productId: string; qty: number }
 
