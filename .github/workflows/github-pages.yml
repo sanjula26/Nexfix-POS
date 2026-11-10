@@ -3,6 +3,11 @@ name: Deploy Nexfix POS Phone Sales
 on:
   push:
     branches: ['main']
+    paths:
+      - 'apps/phone-sales/**'
+      - 'apps/owner-web/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 concurrency:
