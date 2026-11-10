@@ -1,3 +1,15 @@
+function isValidIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
 /** Validate financial fields in settlement history before accepting a restore. */
 export function hasValidCustomerCreditPayment(value: unknown): boolean {
   if (!hasPlainObjectShape(value)) return false;
