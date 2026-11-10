@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -146,4 +147,39 @@ test('branch stock cache applies valid deltas and rejects negative stock', () =>
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 7);
   assert.equal(applyBranchStockDeltas('branch-1', { 'product-1': -8 }), false);
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 7);
+});
+
+
+test('credit settlement sync fingerprint changes when balance or payment history changes', () => {
+  const customers = [{
+    id: 'customer-1',
+    name: 'Customer 1',
+    phone: '0771234567',
+    creditLimit: 5000,
+    creditBalance: 1000,
+  }];
+  const before = buildCreditSettlementSyncFingerprint(customers, []);
+  const balanceChanged = buildCreditSettlementSyncFingerprint(
+    [{ ...customers[0], creditBalance: 900 }],
+    [],
+  );
+  const paymentAdded = buildCreditSettlementSyncFingerprint(
+    [{ ...customers[0], creditBalance: 900 }],
+    [{
+      id: 'credit-payment-1',
+      customerId: 'customer-1',
+      cashierId: 'cashier-1',
+      amount: 100,
+      method: 'cash',
+      date: '2026-11-10T10:00:00.000Z',
+      balanceBefore: 1000,
+      balanceAfter: 900,
+      branchId: 'branch-1',
+      by: 'Cashier',
+      allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 100 }],
+    }],
+  );
+
+  assert.notEqual(balanceChanged, before);
+  assert.notEqual(paymentAdded, balanceChanged);
 });
