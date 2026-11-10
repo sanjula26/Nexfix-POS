@@ -229,8 +229,7 @@ export default function Inventory() {
       const shouldApplyBranchStockEdit = branchStockEdit && branchStockDraftDirty;
       // Never derive a branch-stock delta from the offline cache: another POS
       // may have changed the server quantity since this cache was populated.
-      // Refresh the selected branch from Supabase immediately before calculating
-      // the target delta; if the authoritative refresh fails, leave stock alone.
+      // Read the single product row directly and fail closed if it is unavailable.
       if (shouldApplyBranchStockEdit) {
         if (!shopId || selectedBranchId === 'local-main') {
           alert('The selected branch could not be verified. Stock was not changed.');
