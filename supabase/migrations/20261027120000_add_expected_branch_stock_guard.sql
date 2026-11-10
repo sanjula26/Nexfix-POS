@@ -78,14 +78,16 @@ BEGIN
     RAISE EXCEPTION 'Product is not synced to this cloud shop yet';
   END IF;
 
-  INSERT INTO public.branch_stock(shop_id, branch_id, product_id, qty, updated_at)
-  VALUES (p_shop_id, p_branch_id, p_product_id, 0, now())
-  ON CONFLICT (branch_id, product_id) DO NOTHING;
-
+  -- An expected quantity is meaningful only when the branch row already
+  -- exists. Never turn a missing row into an assumed zero during an edit.
   SELECT bs.qty INTO v_actual_qty
   FROM public.branch_stock bs
   WHERE bs.shop_id = p_shop_id AND bs.branch_id = p_branch_id AND bs.product_id = p_product_id
   FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Branch stock is not initialized for this product in the selected branch. Refresh branch stock before editing.';
+  END IF;
 
   IF v_actual_qty IS DISTINCT FROM p_expected_branch_qty THEN
     RAISE EXCEPTION 'Stock changed on another POS (expected %, current %). Refresh branch stock and retry.', p_expected_branch_qty, v_actual_qty
