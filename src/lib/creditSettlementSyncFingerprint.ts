@@ -17,8 +17,8 @@ type CreditSyncPayment = {
   method: string;
   methods?: readonly { method: string; amount: number }[];
   date: string;
-  balanceBefore: number;
-  balanceAfter: number;
+  balanceBefore?: number;
+  balanceAfter?: number;
   branchId?: string;
   by: string;
   note?: string;
