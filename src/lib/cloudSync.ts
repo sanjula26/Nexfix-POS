@@ -224,7 +224,13 @@ export async function getCloudBranchStockQuantity(
   const { data, error } = await supabase.from('branch_stock').select('qty')
     .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
   if (error) return { ok: false, error: error.message };
-  const qty = data ? Number(data.qty) : 0;
+  // A missing row is not proof of zero stock. In particular, legacy single-
+  // branch products can still have a shop-level quantity before their branch
+  // stock row is initialized. Never let an absolute stock edit treat that as 0.
+  if (!data) {
+    return { ok: false, error: 'Branch stock is not initialized for this product. Refresh or reconcile branch stock before editing its quantity.' };
+  }
+  const qty = Number(data.qty);
   if (!Number.isSafeInteger(qty) || qty < 0) {
     return { ok: false, error: 'The server returned an invalid branch stock quantity' };
   }
