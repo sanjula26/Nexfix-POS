@@ -692,10 +692,8 @@ export default function Settings() {
       for (const file of files) texts.set(file.name, await readFile(file));
 
       // A downloaded RECOVERY_KEY.txt can be selected together with the backup.
-      // Do not replace the currently working local key until the backup has been
-      // fully validated, decrypted, persisted, and the restore has succeeded.
-      // Otherwise a failed/mismatched key file could strand this browser from
-      // its existing automatic backups.
+      // The imported key is temporary until validation, decryption and restore
+      // succeed; every failure in that flow restores the previous scoped key.
       let importedRecoveryKey: string | undefined;
       let importedRecoveryKeyScope = recoveryScope;
       for (const [name, text] of texts) {
