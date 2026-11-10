@@ -21,6 +21,22 @@ export function cacheBranchStock(branchId: string, rows: Array<{ product_id: str
   try { storage()?.setItem(key(branchId), JSON.stringify({ updatedAt: new Date().toISOString(), values })); } catch { /* offline cache is best-effort */ }
 }
 
+/** Merge one server-verified product quantity without replacing other cached products. */
+export function cacheBranchStockProduct(branchId: string, productId: string, qty: number): boolean {
+  if (!branchId || branchId === 'local-main' || !productId || !Number.isSafeInteger(qty) || qty < 0) return false;
+  try {
+    const s = storage();
+    if (!s) return false;
+    const parsed = JSON.parse(s.getItem(key(branchId)) || 'null') as { values?: Record<string, number> } | null;
+    const values = parsed?.values && typeof parsed.values === 'object' && !Array.isArray(parsed.values)
+      ? { ...parsed.values }
+      : {};
+    values[productId] = qty;
+    s.setItem(key(branchId), JSON.stringify({ updatedAt: new Date().toISOString(), values }));
+    return true;
+  } catch { return false; }
+}
+
 export function getCachedBranchStock(branchId: string, productId: string): number | null {
   if (!branchId || branchId === 'local-main') return null;
   try {
