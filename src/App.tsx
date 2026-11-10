@@ -108,11 +108,18 @@ function CloudSyncStateBridge() {
     // these fields so admin/manager edits are reconciled before another POS
     // machine tries to transact against the normalized catalog.
     products: state.products.map(p => [p.id, p.name, p.sku, p.barcode, p.cost, p.price, p.reorderLevel, p.trackImei, p.trackSerial, p.trackExpiry, p.warrantyMonths, p.isKit, p.isService, p.active, p.supplierId]),
-    customers: state.customers.map(c => [c.id, c.name, c.phone, c.email, c.nic, c.address, c.creditLimit]),
+    customers: state.customers.map(c => [c.id, c.name, c.phone, c.email, c.nic, c.address, c.creditLimit, c.creditBalance]),
+    // A credit settlement changes both the customer balance and payment history.
+    // Include all persisted settlement fields so this device wakes cloud snapshot sync.
+    customerCreditPayments: (state.customerCreditPayments || []).map(p => [
+      p.id, p.customerId, p.cashierId, p.amount, p.method, p.methods, p.date,
+      p.balanceBefore, p.balanceAfter, p.branchId, p.by, p.note,
+      (p.allocations || []).map(item => [item.saleId, item.billNo, item.amount]),
+    ]),
     suppliers: state.suppliers.map(s => [s.id, s.name, s.contactPerson, s.phone, s.email, s.address]),
     kits: (state.kitItems || []).map(k => [k.id, k.kitProductId, k.componentProductId, k.qty]),
     units: (state.units || []).map(u => [u.id, u.productId, u.imei, u.serial, u.expiryDate, u.status, u.cost]),
-  }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.suppliers, state.kitItems, state.units]);
+  }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.customerCreditPayments, state.suppliers, state.kitItems, state.units]);
 
   useEffect(() => {
     if (!user || connectivity !== 'online') return;
