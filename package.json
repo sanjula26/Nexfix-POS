@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "verify:boundaries": "node scripts/production-boundary-check.mjs",
+    "test": "node --experimental-strip-types --test tests/domain-invariants.test.ts",
     "test:domain": "node --experimental-strip-types --test tests/domain-invariants.test.ts",
     "preview": "vite preview",
     "desktop:build": "npm run build && electron-builder --win --publish never",
