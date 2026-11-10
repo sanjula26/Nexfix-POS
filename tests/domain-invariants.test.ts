@@ -18,6 +18,7 @@ import {
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
+  cacheBranchStockProduct,
   getCachedBranchStock,
 } from '../src/lib/branchStock.ts';
 
@@ -209,4 +210,20 @@ test('backup validation rejects malformed or financially inconsistent credit pay
   assert.equal(hasValidCustomerCreditPayment({ ...base, methods: [{ method: 'cash', amount: 40 }] }), false);
   assert.equal(hasValidCustomerCreditPayment({ ...base, allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 110 }] }), false);
   assert.equal(hasValidCustomerCreditPayment({ ...base, method: 'credit' }), false);
+});
+
+test('branch stock single-row cache refresh preserves other cached products', () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+  (globalThis as { localStorage?: typeof storage }).localStorage = storage;
+
+  cacheBranchStock('branch-1', [{ product_id: 'product-1', qty: 5 }]);
+  assert.equal(cacheBranchStockProduct('branch-1', 'product-2', 9), true);
+  assert.equal(getCachedBranchStock('branch-1', 'product-1'), 5);
+  assert.equal(getCachedBranchStock('branch-1', 'product-2'), 9);
+  assert.equal(cacheBranchStockProduct('branch-1', 'product-3', -1), false);
 });
