@@ -17,6 +17,7 @@ import {
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
+  cacheBranchStockProduct,
   getCachedBranchStock,
 } from '../src/lib/branchStock.ts';
 
@@ -182,4 +183,20 @@ test('credit settlement sync fingerprint changes when balance or payment history
 
   assert.notEqual(balanceChanged, before);
   assert.notEqual(paymentAdded, balanceChanged);
+});
+
+test('branch stock single-row cache refresh preserves other cached products', () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+  (globalThis as { localStorage?: typeof storage }).localStorage = storage;
+
+  cacheBranchStock('branch-1', [{ product_id: 'product-1', qty: 5 }]);
+  assert.equal(cacheBranchStockProduct('branch-1', 'product-2', 9), true);
+  assert.equal(getCachedBranchStock('branch-1', 'product-1'), 5);
+  assert.equal(getCachedBranchStock('branch-1', 'product-2'), 9);
+  assert.equal(cacheBranchStockProduct('branch-1', 'product-3', -1), false);
 });
