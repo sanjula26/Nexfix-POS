@@ -30,6 +30,26 @@ test('credit balance excludes allocations for other invoices', () => {
   assert.equal(getOpenCreditInvoiceBalance(sale, payments), 800);
 });
 
+test('credit invoice balance subtracts only allocations assigned to that invoice', () => {
+  const sale = {
+    id: 'sale-1',
+    total: 1000,
+    amountPaid: 200,
+    status: 'completed',
+  };
+  const payments = [{
+    id: 'payment-1',
+    customerId: 'customer-1',
+    amount: 150,
+    method: 'cash',
+    date: '2026-01-01T10:00:00.000Z',
+    by: 'cashier-1',
+    allocations: [{ saleId: 'sale-1', billNo: 'B-001', amount: 125 }],
+  }];
+
+  assert.equal(getOpenCreditInvoiceBalance(sale, payments), 675);
+});
+
 test('credit payment allocation is FIFO and never exceeds invoice balance', () => {
   const sales = [
     { id: 'sale-2', billNo: 'B-002', customerId: 'customer-1', total: 500, amountPaid: 0, date: '2026-01-02T10:00:00.000Z', status: 'completed' },
@@ -39,6 +59,10 @@ test('credit payment allocation is FIFO and never exceeds invoice balance', () =
   assert.deepEqual(allocateCreditPaymentFIFO('customer-1', 600, sales, []), [
     { saleId: 'sale-1', billNo: 'B-001', amount: 300 },
     { saleId: 'sale-2', billNo: 'B-002', amount: 300 },
+  ]);
+  assert.deepEqual(allocateCreditPaymentFIFO('customer-1', 1200, sales, []), [
+    { saleId: 'sale-1', billNo: 'B-001', amount: 300 },
+    { saleId: 'sale-2', billNo: 'B-002', amount: 500 },
   ]);
 });
 
@@ -68,4 +92,5 @@ test('inventory ledger append is idempotent by transaction id', () => {
   const twice = appendInventoryTransaction(once, transaction);
   assert.equal(once.length, 1);
   assert.equal(twice.length, 1);
+  assert.deepEqual(twice, once, 'a duplicate id must not replace the original ledger record');
 });
