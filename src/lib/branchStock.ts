@@ -47,6 +47,7 @@ export function getCachedBranchStock(branchId: string, productId: string): numbe
   } catch { return null; }
 }
 
+/** True when some cache exists; callers must still check the requested product row. */
 export function hasCachedBranchStock(branchId: string): boolean {
   if (!branchId || branchId === 'local-main') return false;
   try {
