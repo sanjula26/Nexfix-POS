@@ -44,6 +44,8 @@ export default function Inventory() {
   const [isNew, setIsNew] = useState(false);
   const [branchStockDraftDirty, setBranchStockDraftDirty] = useState(false);
   const [branchStockEditReady, setBranchStockEditReady] = useState(true);
+  // Quantity observed when the editor opened; the server compare-and-set must reject intervening edits from another POS.
+  const [branchStockExpectedQty, setBranchStockExpectedQty] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
   const [restocking, setRestocking] = useState<Product | null>(null);
@@ -131,6 +133,7 @@ export default function Inventory() {
     }
     setBranchStockDraftDirty(false);
     setBranchStockEditReady(stockReady);
+    setBranchStockExpectedQty(stockReady && !tracked && selectedBranchId !== 'local-main' ? initialStock : null);
     setEditing({ ...product, stock: initialStock });
     setIsNew(false);
   };
@@ -236,18 +239,14 @@ export default function Inventory() {
           return;
         }
       }
-      // Query only this product's authoritative quantity. The full branch cache
-      // may be truncated by API row limits, so refreshing it before this
-      // single-row lookup would add egress without improving correctness.
-      const authoritativeStock = shouldApplyBranchStockEdit
-        ? await getCloudBranchStockQuantity(shopId, selectedBranchId, current!.id)
-        : null;
-      if (shouldApplyBranchStockEdit && (!authoritativeStock || !authoritativeStock.ok)) {
-        alert('Could not verify this product stock directly from the server. Stock was not changed. ' +
-          (authoritativeStock && !authoritativeStock.ok ? authoritativeStock.error : 'Refresh branch stock and retry.'));
+      // Use the quantity captured when the editor opened. If another POS changes
+      // stock while this modal is open, the compare-and-set RPC must reject this
+      // stale edit instead of silently overwriting the newer quantity.
+      const currentBranchStock = shouldApplyBranchStockEdit ? branchStockExpectedQty : null;
+      if (shouldApplyBranchStockEdit && (currentBranchStock === null || !Number.isSafeInteger(currentBranchStock) || currentBranchStock < 0)) {
+        alert('The original branch quantity is unavailable. Reopen the product editor and verify stock before retrying.');
         return;
       }
-      const currentBranchStock = shouldApplyBranchStockEdit && authoritativeStock?.ok ? authoritativeStock.qty : null;
       const branchStockDelta = shouldApplyBranchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
       if (shouldApplyBranchStockEdit && (!Number.isInteger(editing.stock) || editing.stock < 0)) {
         alert('Stock must be a whole number equal to or greater than zero.');
@@ -275,6 +274,7 @@ export default function Inventory() {
     setEditing(null);
     setBranchStockDraftDirty(false);
     setBranchStockEditReady(true);
+    setBranchStockExpectedQty(null);
     setNewUnitText('');
   };
 
@@ -404,7 +404,7 @@ export default function Inventory() {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => { setBranchStockDraftDirty(false); setBranchStockEditReady(branchStockReady); setEditing(blankProduct(state.settings.lowStockDefault, state.products)); setNewUnitText(''); setIsNew(true); }}
+                onClick={() => { setBranchStockDraftDirty(false); setBranchStockEditReady(branchStockReady); setBranchStockExpectedQty(null); setEditing(blankProduct(state.settings.lowStockDefault, state.products)); setNewUnitText(''); setIsNew(true); }}
               >
                 <Plus size={15} /> Add Product
               </button>
@@ -498,10 +498,10 @@ export default function Inventory() {
 
       {can('act:viewCost') && <div className="mt-4 text-xs text-faint">Retail value of all stock: <b className="text-sub num">{fmtRs(retail)}</b> · Potential margin <b className="text-emerald-500 num">{fmtRs(retail - value)}</b></div>}
 
-      <Modal open={!!editing} onClose={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); }} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide
+      <Modal open={!!editing} onClose={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); }} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide
         footer={
           <div className="flex gap-2 justify-end">
-            <button type="button" className="btn btn-soft" onClick={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); }}>Cancel</button>
+            <button type="button" className="btn btn-soft" onClick={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); }}>Cancel</button>
             <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && (editing.trackImei || editing.trackSerial) && editing.stock !== (isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length)) || (editing && !isNew && (state.products.find(p => p.id === editing.id)?.trackImei || state.products.find(p => p.id === editing.id)?.trackSerial) && !(editing.trackImei || editing.trackSerial) && state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length > 0)}>
               {isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}
             </button>
