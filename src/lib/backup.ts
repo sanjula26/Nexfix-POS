@@ -8,6 +8,7 @@ import { idbGetMeta, idbSetMeta } from './db';
 import { downloadFile, dkey } from './utils';
 import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
 import { isValidInventoryTransaction } from './inventoryLedger';
+import { hasValidCustomerCreditPayment } from './creditPaymentBackupValidation';
 
 export interface BackupEnvelope {
   _meta: { app: 'Nexfix POS'; version: 2; exportedAt: string; kind: 'manual' | 'auto' };
@@ -62,10 +63,11 @@ function hasValidStateShape(value: unknown): value is POSState {
   if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
   if ('purchaseReturns' in state && !hasArray(state.purchaseReturns)) return false;
   if ('supplierPayments' in state && !hasArray(state.supplierPayments)) return false;
+  if ('customerCreditPayments' in state && (!hasArray(state.customerCreditPayments) || !state.customerCreditPayments.every(hasValidCustomerCreditPayment))) return false;
   if ('inventoryTransactions' in state && !hasArray(state.inventoryTransactions)) return false;
   if ('grns' in state && !hasArray(state.grns)) return false;
   if ('reverseRequests' in state && !hasArray(state.reverseRequests)) return false;
-  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'grns', 'reverseRequests'];
+  const idCollections = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs', 'kitItems', 'quotations', 'warrantyClaims', 'purchaseReturns', 'supplierPayments', 'customerCreditPayments', 'grns', 'reverseRequests'];
   for (const key of idCollections) {
     const collection = state[key];
     if (collection !== undefined && (!hasArray(collection) || !hasUniqueStringIds(collection))) return false;
@@ -97,6 +99,7 @@ function normalizeRestoredState(state: POSState): POSState {
     warrantyClaims: state.warrantyClaims ?? [],
     purchaseReturns: state.purchaseReturns ?? [],
     supplierPayments: state.supplierPayments ?? [],
+    customerCreditPayments: state.customerCreditPayments ?? [],
     inventoryTransactions: state.inventoryTransactions ?? [],
     grns: state.grns ?? [],
     reverseRequests: state.reverseRequests ?? [],
