@@ -267,7 +267,7 @@ export default function Inventory() {
     setEditing(null);
     setBranchStockDraftDirty(false);
     setBranchStockEditReady(true);
-    setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null);
+    setBranchStockExpectedQty(null);
     setBranchStockExpectedBranchId(null);
     setBranchStockExpectedShopId(null);
     setNewUnitText('');
@@ -493,10 +493,10 @@ export default function Inventory() {
 
       {can('act:viewCost') && <div className="mt-4 text-xs text-faint">Retail value of all stock: <b className="text-sub num">{fmtRs(retail)}</b> · Potential margin <b className="text-emerald-500 num">{fmtRs(retail - value)}</b></div>}
 
-      <Modal open={!!editing} onClose={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); }} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide
+      <Modal open={!!editing} onClose={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null); }} title={isNew ? 'Add product' : 'Edit product'} sub={isNew ? 'New item in your catalog' : editing?.name} wide
         footer={
           <div className="flex gap-2 justify-end">
-            <button type="button" className="btn btn-soft" onClick={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); }}>Cancel</button>
+            <button type="button" className="btn btn-soft" onClick={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null); }}>Cancel</button>
             <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && (editing.trackImei || editing.trackSerial) && editing.stock !== (isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length)) || (editing && !isNew && (state.products.find(p => p.id === editing.id)?.trackImei || state.products.find(p => p.id === editing.id)?.trackSerial) && !(editing.trackImei || editing.trackSerial) && state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length > 0)}>
               {isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}
             </button>
