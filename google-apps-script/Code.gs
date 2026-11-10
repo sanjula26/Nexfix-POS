@@ -552,18 +552,14 @@ function writeShopInfoText(folder, shopId, metadata) {
 function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
   var key = validateRecoveryKey(recoveryKey);
   var files = folder.getFilesByName('RECOVERY_KEY.txt');
-  var foundFile = false;
-  var foundMatchingKey = false;
   while (files.hasNext()) {
-    foundFile = true;
     var file = files.next();
     var existing = String(file.getBlob().getDataAsString() || '');
     var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
     if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid. Refusing to replace shop recovery authorization.');
-    if (match[1] === key) foundMatchingKey = true;
-  }
-  if (foundFile && !foundMatchingKey) {
-    throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+    if (match[1] !== key) {
+      throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+    }
   }
 }
 
