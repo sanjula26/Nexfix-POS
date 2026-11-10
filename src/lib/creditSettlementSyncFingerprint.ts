@@ -12,7 +12,7 @@ type CreditSyncCustomer = {
 type CreditSyncPayment = {
   id: string;
   customerId: string;
-  cashierId: string;
+  cashierId?: string;
   amount: number;
   method: string;
   methods?: readonly { method: string; amount: number }[];
