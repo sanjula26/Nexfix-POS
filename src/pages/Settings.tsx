@@ -16,6 +16,17 @@ import { queueWrite } from '../lib/offline';
 import { ensureCloudShop, getCloudShopId } from '../lib/cloudSync';
 import { cacheBranchStock, cacheDefaultBranchId } from '../lib/branchStock';
 import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInToCloud, signOutFromCloud } from '../lib/cloudAuth';
+
+type ParsedRecoveryKeyFile = { key: string; shopId?: string };
+
+function parseRecoveryKeyFile(text: string): ParsedRecoveryKeyFile | null {
+  const keyMatch = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+  if (!keyMatch) return null;
+  const shopIdMatch = text.match(/^Shop Backup ID:\s*([A-Za-z0-9._:-]{1,100})\s*$/m)
+    || text.match(/^Shop Backup ID Copy:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
+  return { key: keyMatch[1], shopId: shopIdMatch?.[1]?.trim() || undefined };
+}
+
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { restoreCloudSession, supabase, supabaseConfigured, verifyCloudSessionPersistence } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
@@ -691,24 +702,14 @@ export default function Settings() {
       const texts = new Map<string, string>();
       for (const file of files) texts.set(file.name, await readFile(file));
 
-      // A downloaded RECOVERY_KEY.txt can be selected together with the backup.
-      // Do not replace the currently working local key until the backup has been
-      // fully validated, decrypted, persisted, and the restore has succeeded.
-      // Otherwise a failed/mismatched key file could strand this browser from
-      // its existing automatic backups.
-      const previousRecoveryKey = getRecoveryKey(recoveryScope);
-      let importedRecoveryKey: string | undefined;
+      // Parse the optional Recovery Key file first, but do not change local keys
+      // or shop identity until the backup and its shop scope have been identified.
+      let recoveryFileData: ParsedRecoveryKeyFile | null = null;
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
-        const match = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
-        if (match) {
-          importedRecoveryKey = match[1];
-          break;
-        }
-      }
-      if (importedRecoveryKey) {
-        const result = setRecoveryKey(importedRecoveryKey, recoveryScope);
-        if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
+        recoveryFileData = parseRecoveryKeyFile(text);
+        if (!recoveryFileData) throw new Error('RECOVERY_KEY.txt does not contain a valid Recovery Key.');
+        break;
       }
 
       let parsed: unknown;
@@ -722,6 +723,26 @@ export default function Settings() {
 
       let restoreInput: unknown = parsed;
       const candidate = parsed as Record<string, unknown> | null;
+      const payloadEnvelope = candidate?.payload;
+      const metadata = candidate?._meta;
+      const metadataShopId = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? (metadata as Record<string, unknown>).shopId
+        : undefined;
+      const backupShopId = isEncryptedBackupEnvelope(parsed) ? parsed.shopId
+        : isEncryptedBackupEnvelope(payloadEnvelope) ? payloadEnvelope.shopId
+          : typeof candidate?.shopId === 'string' ? candidate.shopId
+            : typeof metadataShopId === 'string' ? metadataShopId
+              : undefined;
+      if (recoveryFileData?.shopId && backupShopId && recoveryFileData.shopId !== backupShopId) {
+        throw new Error('The Recovery Key file and backup belong to different shops. Restore was not performed.');
+      }
+      const recoveryKeyScope = recoveryFileData?.shopId || backupShopId || recoveryScope;
+      const previousRecoveryKey = getRecoveryKey(recoveryKeyScope);
+      const importedRecoveryKey = recoveryFileData?.key;
+      if (importedRecoveryKey) {
+        const result = setRecoveryKey(importedRecoveryKey, recoveryKeyScope);
+        if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
+      }
       const adoptImportedShop = (shopId: unknown) => {
         if (typeof shopId !== 'string' || !shopId.trim()) throw new Error('Backup does not contain a valid Shop Backup ID.');
         const result = adoptBackupShopId(shopId);
@@ -766,8 +787,8 @@ export default function Settings() {
         // Restore the key that was already working on this browser.
         if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
           const rollback = previousRecoveryKey
-            ? setRecoveryKey(previousRecoveryKey, recoveryScope)
-            : clearRecoveryKey(recoveryScope);
+            ? setRecoveryKey(previousRecoveryKey, recoveryKeyScope)
+            : clearRecoveryKey(recoveryKeyScope);
           setRecoveryKeyReady(Boolean(previousRecoveryKey && rollback.ok));
           if (!rollback.ok) {
             const originalMessage = error instanceof Error ? error.message : 'Restore failed';
@@ -816,23 +837,27 @@ export default function Settings() {
     if (!(await confirmSensitiveAdmin('Recovery Key import / shop reconnect'))) return;
     try {
       const text = await file.text();
-      const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
-      if (!keyMatch) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
-
-      // RECOVERY_KEY.txt is the one-time disaster/new-PC reconnect artifact.
-      // If it contains the Shop Backup ID, adopt both values together so the
-      // key is stored under the correct scoped Drive identity automatically.
-      const idMatch = text.match(/^Shop Backup ID Copy:\\s*([A-Za-z0-9._:-]{1,100})\\s*$/m);
-      let scope = recoveryScope;
-      if (idMatch?.[1]) {
-        const idResult = saveExistingDriveShopId(idMatch[1]);
-        if (!idResult.ok) throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
-        scope = idMatch[1].trim();
-        setDriveShopId(scope);
-      }
-
-      const result = setRecoveryKey(keyMatch[1], scope);
+      const recoveryFile = parseRecoveryKeyFile(text);
+      if (!recoveryFile) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
+      const scope = recoveryFile.shopId || recoveryScope;
+      const previousRecoveryKey = getRecoveryKey(scope);
+      const result = setRecoveryKey(recoveryFile.key, scope);
       if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key.');
+
+      // Store the key under the file's own shop identity before switching this
+      // browser's Drive identity. If identity persistence fails, restore the
+      // previously working key for that same scope.
+      if (recoveryFile.shopId) {
+        const idResult = saveExistingDriveShopId(recoveryFile.shopId);
+        if (!idResult.ok) {
+          const rollback = previousRecoveryKey
+            ? setRecoveryKey(previousRecoveryKey, scope)
+            : clearRecoveryKey(scope);
+          if (!rollback.ok) throw new Error((idResult.error || 'Could not save Shop Backup ID.') + ' The previous Recovery Key could not be restored.');
+          throw new Error(idResult.error || 'Could not save Shop Backup ID from RECOVERY_KEY.txt.');
+        }
+        setDriveShopId(recoveryFile.shopId);
+      }
       setRecoveryKeyReady(true);
       setRecoveryKeyMsg(
         idMatch?.[1]
