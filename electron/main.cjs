@@ -415,7 +415,7 @@ function setupAutoUpdater(){
       updateAuthMode=mode;
       pendingUpdateInfo=null;
       const ok=configureUpdaterCredentials();
-      if(ok) setTimeout(()=>{ void autoUpdater.checkForUpdates().catch(()=>{}); },250);
+      if(ok) setTimeout(checkNow,250);
       return {ok};
     });
     ipcMain.handle('update:clear-credentials',(event)=>{ if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'}; updateAuthToken=''; updateDeviceId=''; updateAuthMode='bearer'; pendingUpdateInfo=null; updateDownloadActive=false; updateInstallScheduled=false; configureUpdaterCredentials(); return {ok:true}; });
@@ -488,12 +488,19 @@ function setupAutoUpdater(){
       }
     });
 
+    const AUTO_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+    let lastAutomaticUpdateCheckAt = 0;
     const checkNow=()=>{
       if(!configureUpdaterCredentials()) return;
+      const now = Date.now();
+      if (now - lastAutomaticUpdateCheckAt < AUTO_UPDATE_CHECK_INTERVAL_MS) return;
+      lastAutomaticUpdateCheckAt = now;
       void checkForUpdatesWithTimeout().catch(()=>{});
     };
+    // Share one hourly throttle across startup, credential refresh, timer and focus events.
+    // The explicit Settings "Check for updates" action remains available on demand.
     setTimeout(checkNow,5000);
-    setInterval(checkNow,10*60*1000);
+    setInterval(checkNow,AUTO_UPDATE_CHECK_INTERVAL_MS);
     app.on('browser-window-focus',checkNow);
   }catch(error){console.warn('[Nexfix updater] unavailable:',error?.message||error);}
 }
