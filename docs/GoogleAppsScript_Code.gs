@@ -111,9 +111,37 @@ function findShopBackupFolder(shopId) {
   return null;
 }
 
+function assertExistingShopFolderCanInitialize(folder, shopId, proof) {
+  var hasExistingData = false;
+  var hasVerifiedRecoveryKey = false;
+  var files = folder.getFiles();
+  while (files.hasNext()) {
+    var file = files.next();
+    var name = file.getName();
+    if (name === SHOP_AUTH_FILENAME) continue;
+    if (name === 'RECOVERY_KEY.txt') {
+      var raw = String(file.getBlob().getDataAsString() || '');
+      var match = raw.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
+      if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid. Refusing to reinitialize shop authorization.');
+      var expectedProof = sha256HexText(match[1] + ':' + shopId);
+      if (!constantTimeApiKeyEqual(expectedProof, proof)) {
+        throw new Error('Recovery Key mismatch for this shop. Existing shop authorization was not changed.');
+      }
+      hasVerifiedRecoveryKey = true;
+      continue;
+    }
+    hasExistingData = true;
+  }
+  if (folder.getFolders().hasNext()) hasExistingData = true;
+  if (hasExistingData && !hasVerifiedRecoveryKey) {
+    throw new Error('Existing shop backup data is present but SHOP_AUTH.json is missing. Refusing to reset authorization without the original RECOVERY_KEY.txt.');
+  }
+}
+
 function authorizeShopAccess(shopId, shopProof, allowInitialize) {
   var proof = validateShopProof(shopProof);
   var folder = findShopBackupFolder(shopId);
+  var existingFolder = !!folder;
   if (!folder) {
     if (!allowInitialize) throw new Error('Shop backup authorization not initialized');
     folder = getShopBackupFolder(shopId, 'Shop', false);
@@ -123,6 +151,7 @@ function authorizeShopAccess(shopId, shopProof, allowInitialize) {
   var expectedDigest = shopAuthDigest(proof);
   if (!files.hasNext()) {
     if (!allowInitialize) throw new Error('Shop backup authorization not initialized');
+    if (existingFolder) assertExistingShopFolderCanInitialize(folder, shopId, proof);
     var record = {
       app: 'Nexfix POS',
       version: VERSION,
@@ -523,18 +552,19 @@ function writeShopInfoText(folder, shopId, metadata) {
 function assertRecoveryKeyMatchesExisting(folder, recoveryKey) {
   var key = validateRecoveryKey(recoveryKey);
   var files = folder.getFilesByName('RECOVERY_KEY.txt');
-  var found = false;
-  var validCount = 0;
+  var foundFile = false;
+  var foundMatchingKey = false;
   while (files.hasNext()) {
+    foundFile = true;
     var file = files.next();
     var existing = String(file.getBlob().getDataAsString() || '');
     var match = existing.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
-    if (!match) continue;
-    validCount++;
-    if (match[1] === key) found = true;
+    if (!match) throw new Error('Existing RECOVERY_KEY.txt is invalid. Refusing to replace shop recovery authorization.');
+    if (match[1] === key) foundMatchingKey = true;
   }
-  if (!validCount) return;
-  if (!found) throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+  if (foundFile && !foundMatchingKey) {
+    throw new Error('Recovery Key mismatch for this shop. Use the existing Recovery Key before backing up.');
+  }
 }
 
 function writeRecoveryKeyFile(folder, recoveryKey, metadata) {
@@ -745,6 +775,12 @@ function backupStateToDrive(contents, shopId) {
   // The stable partition identifies the shop; display details are committed only
   // after the backup itself passes freshness/integrity checks.
   var shopProof = validateShopProof(contents.shopProof);
+  var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
+  // Validate an existing Recovery Key before authorizeShopAccess can initialize
+  // a missing SHOP_AUTH.json. A failed/mismatched request must not change the
+  // shop's authorization record.
+  var existingShopFolder = findShopBackupFolder(shopId);
+  if (recoveryKey && existingShopFolder) assertRecoveryKeyMatchesExisting(existingShopFolder, recoveryKey);
   var shopFolder = authorizeShopAccess(shopId, shopProof, true);
   if (!shopFolder) throw new Error('Shop backup authorization failed');
   var backupFolder = getOrCreateFolder(shopFolder, DRIVE_BACKUP_SUBFOLDER_NAME);
@@ -754,12 +790,6 @@ function backupStateToDrive(contents, shopId) {
   var timeZone = Session.getScriptTimeZone() || 'Etc/UTC';
   var dayKey = contents.dayKey ? validateDayKey(contents.dayKey) : Utilities.formatDate(now, timeZone, 'yyyy-MM-dd');
   var partition = shopPartitionKey(shopId);
-  var recoveryKey = format.indexOf('encrypted-') === 0 ? validateRecoveryKey(contents.recoveryKey) : '';
-  // Preflight the recovery-key invariant before touching any backup payload.
-  // Otherwise an old implementation could write the new daily backup first,
-  // then fail while updating RECOVERY_KEY.txt, leaving the client reporting
-  // "Backup request failed" while SHOP_INFO.txt stayed stale.
-  if (recoveryKey) assertRecoveryKeyMatchesExisting(shopFolder, recoveryKey);
 
   if (format === 'encrypted-single') {
     var fileName = 'NEXFIX_' + partition + '_' + dayKey + '.json';
@@ -1400,8 +1430,9 @@ function doGet(e) {
       try { metadata = JSON.parse(String(p.metadata || '{}')); } catch (parseError) {
         throw new Error('Shop metadata is invalid JSON');
       }
+      var existingMetadataFolder = findShopBackupFolder(metadataShopId);
+      if (existingMetadataFolder) assertRecoveryKeyMatchesExisting(existingMetadataFolder, metadataRecoveryKey);
       var metadataFolder = authorizeShopAccess(metadataShopId, metadataProof, true);
-      assertRecoveryKeyMatchesExisting(metadataFolder, metadataRecoveryKey);
       var metadataName = sanitizeDriveName(metadata.shopName || 'Shop');
       metadataFolder = getShopBackupFolder(metadataShopId, metadataName, true);
       var metadataWarnings = commitShopMetadata(
