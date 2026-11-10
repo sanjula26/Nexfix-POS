@@ -816,13 +816,13 @@ export default function Settings() {
     if (!(await confirmSensitiveAdmin('Recovery Key import / shop reconnect'))) return;
     try {
       const text = await file.text();
-      const keyMatch = text.match(/^Recovery Key:\\s*([A-Za-z0-9_-]{43})\\s*$/m);
+      const keyMatch = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
       if (!keyMatch) throw new Error('This file does not contain a valid Nexfix Recovery Key.');
 
       // RECOVERY_KEY.txt is the one-time disaster/new-PC reconnect artifact.
       // If it contains the Shop Backup ID, adopt both values together so the
       // key is stored under the correct scoped Drive identity automatically.
-      const idMatch = text.match(/^Shop Backup ID Copy:\\s*([A-Za-z0-9._:-]{1,100})\\s*$/m);
+      const idMatch = text.match(/^Shop Backup ID(?: Copy)?:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
       let scope = recoveryScope;
       if (idMatch?.[1]) {
         const idResult = saveExistingDriveShopId(idMatch[1]);
