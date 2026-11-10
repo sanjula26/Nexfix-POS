@@ -7,8 +7,6 @@ const DB_VERSION = 1;
 const STORE_STATE = 'app_state';
 const STORE_QUEUE = 'sync_queue';
 const STORE_META = 'meta';
-const LOCAL_STORE_KEY = 'nexfix_pos_v2';
-const LEGACY_LOCAL_STORE_KEY = 'nexfix_pos_v1';
 
 export type QueueOp =
   | { id: string; ts: string; type: 'state_write'; note?: string }
@@ -58,27 +56,19 @@ function getDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-function loadLocalFallback(): POSState {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORE_KEY) || localStorage.getItem(LEGACY_LOCAL_STORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as POSState;
-      if (parsed && Array.isArray(parsed.products) && Array.isArray(parsed.users)) return parsed;
-    }
-  } catch { /* restricted or malformed localStorage */ }
-  return buildSeed();
-}
-
 export async function idbLoadState():Promise<POSState|null>{
   try {
     const db=await getDB();
     const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
-    const source=row?.value ?? buildSeed();
-    const sourceState = source;
-    if (!row?.value) await idbSaveState(sourceState);
-    return sourceState;
+    if (row?.value) return row.value;
+
+    const seed = buildSeed();
+    const saved = await idbSaveState(seed);
+    return saved ? seed : null;
   } catch {
-    return loadLocalFallback();
+    // Let callers choose an explicit localStorage fallback. Returning a seed
+    // here could make a storage failure look like an empty, safe shop dataset.
+    return null;
   }
 }
 export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()});await idbTransactionComplete(tx,'State save failed');return true;}catch{return false;}}
