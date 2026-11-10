@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { validateBackup } from '../src/lib/backup.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -146,4 +147,44 @@ test('branch stock cache applies valid deltas and rejects negative stock', () =>
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 7);
   assert.equal(applyBranchStockDeltas('branch-1', { 'product-1': -8 }), false);
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 7);
+});
+
+
+function makeCreditBackup(payment?: Record<string, unknown>) {
+  return {
+    _meta: { app: 'Nexfix POS', version: 2, exportedAt: '2026-11-10T10:00:00.000Z', kind: 'manual' },
+    state: {
+      products: [], customers: [], suppliers: [], sales: [], purchases: [],
+      expenses: [], exchanges: [], users: [], audit: [], held: [], sessions: [],
+      settings: {}, permissions: {},
+      counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
+      units: [], repairs: [],
+      ...(payment ? { customerCreditPayments: [payment] } : {}),
+    },
+  };
+}
+
+test('backup restore accepts valid and legacy customer credit payments', () => {
+  const valid = {
+    id: 'credit-payment-1', customerId: 'customer-1', by: 'Cashier',
+    date: '2026-11-10T10:00:00.000Z', amount: 100, method: 'cash',
+    balanceBefore: 500, balanceAfter: 400,
+    allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 100 }],
+  };
+  assert.equal(validateBackup(makeCreditBackup(valid)), true);
+  const legacy = { id: 'legacy-payment', customerId: 'customer-1', by: 'Cashier', date: '2026-11-10', amount: 50, method: 'bank' };
+  assert.equal(validateBackup(makeCreditBackup(legacy)), true);
+});
+
+test('backup restore rejects malformed or financially inconsistent credit payments', () => {
+  const base = {
+    id: 'credit-payment-1', customerId: 'customer-1', by: 'Cashier',
+    date: '2026-11-10T10:00:00.000Z', amount: 100, method: 'cash',
+    balanceBefore: 500, balanceAfter: 400,
+  };
+  assert.equal(validateBackup(makeCreditBackup({ ...base, amount: -1 })), false);
+  assert.equal(validateBackup(makeCreditBackup({ ...base, balanceAfter: 450 })), false);
+  assert.equal(validateBackup(makeCreditBackup({ ...base, methods: [{ method: 'cash', amount: 40 }] })), false);
+  assert.equal(validateBackup(makeCreditBackup({ ...base, allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 110 }] })), false);
+  assert.equal(validateBackup(makeCreditBackup({ ...base, method: 'credit' })), false);
 });
