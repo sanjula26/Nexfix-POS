@@ -20,6 +20,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Production boundary check
         run: npm run verify:boundaries
+      - name: Domain invariant tests
+        run: npm test
       - name: Typecheck
         run: npm run typecheck
       - name: Lint (desktop POS source; Owner Web has its own CI)
