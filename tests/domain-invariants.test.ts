@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import {
   allocateCreditPaymentFIFO,
@@ -182,4 +183,30 @@ test('credit settlement sync fingerprint changes when balance or payment history
 
   assert.notEqual(balanceChanged, before);
   assert.notEqual(paymentAdded, balanceChanged);
+});
+
+
+test('backup validation accepts valid and legacy customer credit payments', () => {
+  const valid = {
+    id: 'credit-payment-1', customerId: 'customer-1', by: 'Cashier',
+    date: '2026-11-10T10:00:00.000Z', amount: 100, method: 'cash',
+    balanceBefore: 500, balanceAfter: 400,
+    allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 100 }],
+  };
+  assert.equal(hasValidCustomerCreditPayment(valid), true);
+  const legacy = { id: 'legacy-payment', customerId: 'customer-1', by: 'Cashier', date: '2026-11-10', amount: 50, method: 'bank' };
+  assert.equal(hasValidCustomerCreditPayment(legacy), true);
+});
+
+test('backup validation rejects malformed or financially inconsistent credit payments', () => {
+  const base = {
+    id: 'credit-payment-1', customerId: 'customer-1', by: 'Cashier',
+    date: '2026-11-10T10:00:00.000Z', amount: 100, method: 'cash',
+    balanceBefore: 500, balanceAfter: 400,
+  };
+  assert.equal(hasValidCustomerCreditPayment({ ...base, amount: -1 }), false);
+  assert.equal(hasValidCustomerCreditPayment({ ...base, balanceAfter: 450 }), false);
+  assert.equal(hasValidCustomerCreditPayment({ ...base, methods: [{ method: 'cash', amount: 40 }] }), false);
+  assert.equal(hasValidCustomerCreditPayment({ ...base, allocations: [{ saleId: 'sale-1', billNo: 'NFX-001', amount: 110 }] }), false);
+  assert.equal(hasValidCustomerCreditPayment({ ...base, method: 'credit' }), false);
 });
