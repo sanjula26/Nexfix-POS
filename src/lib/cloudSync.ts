@@ -3,7 +3,7 @@ import { idbLoadState } from './db';
 import { hasLocalBusinessData, hasStoredLocalBusinessData } from './shopBindingSafety';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
-import { cacheBranchStock, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
+import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 
 const DEVICE_KEY = 'nexfix_device_id';
@@ -218,6 +218,9 @@ export async function getCloudBranchStockQuantity(
   if (!data) return { ok: false, error: 'Branch stock is not initialized for this product. Refresh or reconcile branch stock before editing its quantity.' };
   const qty = Number(data.qty);
   if (!Number.isSafeInteger(qty) || qty < 0) return { ok: false, error: 'The server returned an invalid branch stock quantity' };
+  // Merge this authoritative row into a possibly truncated cache without
+  // discarding other products; the cache remains best-effort.
+  cacheBranchStockProduct(branchId, productId, qty);
   return { ok: true, qty };
 }
 
