@@ -34,8 +34,8 @@ export async function rollbackRestore(): Promise<boolean> {
   const checkpoint = await idbLoadRestoreCheckpoint();
   if (!checkpoint) return false;
   const restored = await idbSaveState(checkpoint);
-  if (restored) await idbClearRestoreCheckpoint();
-  return restored;
+  if (!restored) return false;
+  return idbClearRestoreCheckpoint();
 }
 
 export async function restoreBackup(input: unknown): Promise<BackupEnvelope> {
@@ -103,7 +103,8 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
   try {
     const saved = await idbSaveState(nextState);
     if (!saved) throw new Error('Could not persist restored POS state.');
-    await idbClearRestoreCheckpoint();
+    const checkpointCleared = await idbClearRestoreCheckpoint();
+    if (!checkpointCleared) throw new Error('Could not clear the restore safety checkpoint.');
     return nextState;
   } catch (error) {
     const rolledBack = await rollbackRestore();
@@ -115,5 +116,6 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
 }
 
 export async function completeRestore(): Promise<void> {
-  await idbClearRestoreCheckpoint();
+  const cleared = await idbClearRestoreCheckpoint();
+  if (!cleared) throw new Error('Could not clear the restore safety checkpoint.');
 }
