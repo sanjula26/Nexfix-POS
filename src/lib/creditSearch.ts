@@ -7,6 +7,7 @@ export function normalizeCreditSearchDigits(value: string): string {
   return String(value ?? '').replace(/\D/g, '');
 }
 
+/** Match phone numbers whether the saved value uses local 0-prefix or international +94 format. */
 function normalizeSriLankanPhoneDigits(value: string): string {
   const digits = normalizeCreditSearchDigits(value);
   if (digits.startsWith('94') && digits.length > 2) return digits.slice(2);
