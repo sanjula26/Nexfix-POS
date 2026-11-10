@@ -18,6 +18,7 @@ import {
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
+  cacheBranchStockProduct,
   getCachedBranchStock,
 } from '../src/lib/branchStock.ts';
 
