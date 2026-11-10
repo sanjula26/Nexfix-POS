@@ -696,18 +696,21 @@ export default function Settings() {
       // fully validated, decrypted, persisted, and the restore has succeeded.
       // Otherwise a failed/mismatched key file could strand this browser from
       // its existing automatic backups.
-      const previousRecoveryKey = getRecoveryKey(recoveryScope);
       let importedRecoveryKey: string | undefined;
+      let importedRecoveryKeyScope = recoveryScope;
       for (const [name, text] of texts) {
         if (!name.toLowerCase().includes('recovery_key') && !text.includes('NEXFIX POS - RECOVERY KEY')) continue;
         const match = text.match(/^Recovery Key:\s*([A-Za-z0-9_-]{43})\s*$/m);
         if (match) {
           importedRecoveryKey = match[1];
+          const shopMatch = text.match(/^Shop Backup ID(?: Copy)?:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
+          if (shopMatch) importedRecoveryKeyScope = shopMatch[1].trim();
           break;
         }
       }
+      const previousRecoveryKey = getRecoveryKey(importedRecoveryKeyScope);
       if (importedRecoveryKey) {
-        const result = setRecoveryKey(importedRecoveryKey, recoveryScope);
+        const result = setRecoveryKey(importedRecoveryKey, importedRecoveryKeyScope);
         if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key file.');
       }
 
@@ -766,8 +769,8 @@ export default function Settings() {
         // Restore the key that was already working on this browser.
         if (importedRecoveryKey && importedRecoveryKey !== previousRecoveryKey) {
           const rollback = previousRecoveryKey
-            ? setRecoveryKey(previousRecoveryKey, recoveryScope)
-            : clearRecoveryKey(recoveryScope);
+            ? setRecoveryKey(previousRecoveryKey, importedRecoveryKeyScope)
+            : clearRecoveryKey(importedRecoveryKeyScope);
           setRecoveryKeyReady(Boolean(previousRecoveryKey && rollback.ok));
           if (!rollback.ok) {
             const originalMessage = error instanceof Error ? error.message : 'Restore failed';
