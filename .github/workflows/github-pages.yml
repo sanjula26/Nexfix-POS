@@ -66,6 +66,26 @@ jobs:
           grep -q '/Nexfix-POS-Public/' dist/index.html
           echo "Public Phone Sales build verified."
 
+      - name: Verify public repository deployment token
+        env:
+          PUBLIC_REPO_DEPLOY_TOKEN: ${{ secrets.PUBLIC_REPO_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUBLIC_REPO_DEPLOY_TOKEN}" ]; then
+            echo "::error::Missing PUBLIC_REPO_DEPLOY_TOKEN. Add a fine-grained token with Contents: Read and write access to sanjula26/Nexfix-POS-Public."
+            exit 1
+          fi
+          repo_json="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer ${PUBLIC_REPO_DEPLOY_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/sanjula26/Nexfix-POS-Public)"
+          can_push="$(printf '%s' "$repo_json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const j=JSON.parse(s);process.stdout.write(String(j.permissions?.push===true));});")"
+          if [ "$can_push" != "true" ]; then
+            echo "::error::PUBLIC_REPO_DEPLOY_TOKEN is valid but cannot push to sanjula26/Nexfix-POS-Public. Grant Contents: Read and write on that repository."
+            exit 1
+          fi
+          echo "Public repository deployment token is valid and has push permission."
+
       - name: Publish Phone Sales build to public repository
         uses: peaceiris/actions-gh-pages@v4
         with:
