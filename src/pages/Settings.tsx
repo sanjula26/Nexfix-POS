@@ -831,16 +831,28 @@ export default function Settings() {
       // If it contains the Shop Backup ID, adopt both values together so the
       // key is stored under the correct scoped Drive identity automatically.
       const idMatch = text.match(/^Shop Backup ID(?: Copy)?:\s*([A-Za-z0-9._:-]{1,100})\s*$/m);
-      let scope = recoveryScope;
-      if (idMatch?.[1]) {
-        const idResult = saveExistingDriveShopId(idMatch[1]);
-        if (!idResult.ok) throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
-        scope = idMatch[1].trim();
-        setDriveShopId(scope);
-      }
-
+      const scope = idMatch?.[1] ? idMatch[1].trim() : recoveryScope;
+      const previousRecoveryKey = getRecoveryKey(scope);
       const result = setRecoveryKey(keyMatch[1], scope);
       if (!result.ok) throw new Error(result.error || 'Invalid Recovery Key.');
+
+      if (idMatch?.[1]) {
+        // Persist the key first. If adopting the shop ID fails, restore the
+        // previous scoped key so this PC is not left half-reconnected.
+        const idResult = saveExistingDriveShopId(scope);
+        if (!idResult.ok) {
+          const rollback = previousRecoveryKey
+            ? setRecoveryKey(previousRecoveryKey, scope)
+            : clearRecoveryKey(scope);
+          if (!rollback.ok) {
+            throw new Error((idResult.error || 'Could not save Shop Backup ID.') +
+              ' The previous Recovery Key could not be restored: ' +
+              (rollback.error || 'Recovery Key storage failed.'));
+          }
+          throw new Error(idResult.error || 'Invalid Shop Backup ID in RECOVERY_KEY.txt.');
+        }
+        setDriveShopId(scope);
+      }
       setRecoveryKeyReady(true);
       setRecoveryKeyMsg(
         idMatch?.[1]
