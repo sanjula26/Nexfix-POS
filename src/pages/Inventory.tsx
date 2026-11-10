@@ -10,7 +10,7 @@ import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
-import { getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock } from '../lib/cloudSync';
+import { getCloudShopId, getCloudBranchStockQuantity } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -236,15 +236,10 @@ export default function Inventory() {
           alert('The selected branch could not be verified. Stock was not changed.');
           return;
         }
-        const refreshed = await refreshCloudBranchStock(shopId, selectedBranchId);
-        if (!refreshed.ok) {
-          alert('Could not refresh the selected branch stock from the server. Stock was not changed. Connect to the cloud and retry.');
-          return;
-        }
       }
-      // Query this product directly after the refresh. The full branch cache may
-      // be truncated by API row limits on large inventories, so a missing cache
-      // entry must not be mistaken for zero stock.
+      // Query only this product's authoritative quantity. The full branch cache
+      // may be truncated by API row limits, so refreshing it before this
+      // single-row lookup would add egress without improving correctness.
       const authoritativeStock = shouldApplyBranchStockEdit
         ? await getCloudBranchStockQuantity(shopId, selectedBranchId, current!.id)
         : null;
