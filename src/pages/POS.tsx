@@ -1038,19 +1038,10 @@ export default function POS() {
               </div>
               {customer ? (
                 <div className="rounded-xl bg-violet-500/[0.07] border border-violet-500/20 p-3">
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center font-bold shrink-0">
-                      {customer.name.charAt(0).toUpperCase()}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] font-bold text-ink truncate">{customer.name}</div>
-                      <div className="text-[11px] text-sub num">{customer.phone}</div>
-                    </div>
-                    <Badge tone="amber" className="num shrink-0"><Coins size={11} /> {customer.loyaltyPoints} pts</Badge>
-                    <button className="icon-btn !w-7 !h-7" onClick={() => { setCustomerId(''); setRedeemOn(false); setPoints(''); setCustQuery(''); }} title="Change customer">
-                      <X size={13} />
-                    </button>
-                  </div>
+                  <POSSelectedCustomerHeader
+                    customer={customer}
+                    onChangeCustomer={() => { setCustomerId(''); setRedeemOn(false); setPoints(''); setCustQuery(''); }}
+                  />
                   {customer.creditBalance > 0 && (
                     <div className="flex items-center justify-between mt-2.5 rounded-lg bg-rose-500/10 border border-rose-500/25 px-3 py-2">
                       <span className="text-[10.5px] font-extrabold tracking-wide text-rose-500 flex items-center gap-1.5">
