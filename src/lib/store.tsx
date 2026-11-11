@@ -19,7 +19,7 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
 import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
-import { applyCategoryPromotions } from './salePricing';
+import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -1632,33 +1632,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (kitQty + kitDirectOverlap > availableForBranch(component)) return null;
     }
 
-    const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
-    const lineDiscount = items.reduce((sum, it) => sum + (it.discount || 0), 0);
-    const subtotal = grossTotal - lineDiscount;
-    const discount = Math.min(input.discount || 0, subtotal);
-    const shipping = Math.max(0, input.shipping || 0);
-    // Trade-in is sent to cloud as an additional discount, so calculate tax on the
-    // same post-trade-in taxable base locally to prevent local/cloud total drift.
-    const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
-    const taxableSubtotal = Math.max(0, subtotal - discount - tradeInValue);
-    const tax = Math.round((taxableSubtotal * (input.taxPct || 0)) / 100 * 100) / 100;
     const cust = input.customerId ? s.customers.find(c => c.id === input.customerId) : undefined;
-    const pointsRedeemed = Math.min(
-      Math.max(0, Math.floor(input.pointsRedeemed || 0)),
-      cust?.loyaltyPoints || 0,
-    );
-    const loyaltyPointValue = Math.max(0, Number(s.settings.loyaltyPointValue ?? POINT_VALUE));
-    const pointsValue = pointsRedeemed * loyaltyPointValue;
-    const preTotal = taxableSubtotal + tax + shipping;
-    const appliedPointsValue = Math.min(pointsValue, Math.max(0, preTotal));
-    const total = Math.max(0, Math.round((preTotal - appliedPointsValue) * 100) / 100);
-    // Gross margin − discounts − loyalty value actually applied (+ shipping is revenue).
-    const profit = Math.round((
-      items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
-      - lineDiscount - discount - appliedPointsValue - tradeInValue + shipping
-    ) * 100) / 100;
-    const loyaltyPointsPerRs = Math.max(0, Number(s.settings.loyaltyPointsPerRs ?? 0.001));
-    const pointsEarned = cust ? Math.floor(Math.max(0, total) * loyaltyPointsPerRs) : 0;
+    const financials = calculateSaleFinancials({
+      items,
+      discount: input.discount,
+      taxPct: input.taxPct,
+      shipping: input.shipping,
+      rawTradeInValue,
+      requestedPointsRedeemed: input.pointsRedeemed,
+      customerLoyaltyPoints: cust?.loyaltyPoints,
+      loyaltyPointValue: s.settings.loyaltyPointValue,
+      loyaltyPointsPerRs: s.settings.loyaltyPointsPerRs,
+      hasCustomer: Boolean(cust),
+      defaultLoyaltyPointValue: POINT_VALUE,
+    });
+    const {
+      subtotal, discount, shipping, tradeInValue, tax,
+      pointsRedeemed, total, profit, pointsEarned,
+    } = financials;
     const maxSaleSeq = s.sales.reduce((m, x) => {
       const n = parseInt(x.billNo.split('-').pop() || '0', 10);
       return Number.isFinite(n) ? Math.max(m, n) : m;
