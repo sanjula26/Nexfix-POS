@@ -40,6 +40,7 @@ import POSToastStack from '../components/POSToastStack';
 import POSBillReversalDialog from '../components/POSBillReversalDialog';
 import POSTradeInEditor, { type TradeInDraft } from '../components/POSTradeInEditor';
 import POSItemSearchSuggestions from '../components/POSItemSearchSuggestions';
+import POSKeyboardShortcutHints from '../components/POSKeyboardShortcutHints';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1295,16 +1296,7 @@ export default function POS() {
 
             <POSAccessorySuggestions items={bundleSuggestions} onAdd={add} />
 
-            {/* keyboard hints */}
-            <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
-              <Keyboard size={11} className="text-faint" />
-              <span><Kbd>F2</Kbd> Customer</span>
-              <span><Kbd>F3</Kbd> Search</span>
-              <span><Kbd>F4</Kbd> Discount</span>
-              <span><Kbd>F5</Kbd> Hold</span>
-              <span><Kbd>F6</Kbd> Complete</span>
-              <span><Kbd>F8</Kbd> Clear</span>
-            </div>
+            <POSKeyboardShortcutHints />
           </div>
 
           {/* ---- RIGHT: calculation & payment ---- */}
@@ -1871,11 +1863,3 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ---------- kbd hint ---------- */
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-1.5 py-[2px] rounded-[5px] bg-raised border border-line border-b-2 text-[9px] font-extrabold text-sub font-mono">
-      {children}
-    </span>
-  );
-}
