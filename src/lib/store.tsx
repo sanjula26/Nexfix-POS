@@ -16,6 +16,7 @@ import {
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
+import { resolveUserPasswordForSave } from './userManagement';
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
 import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
@@ -2975,13 +2976,18 @@ const deletePurchase = useCallback((id: string) => {
     // unchanged when the password field is intentionally left blank by the UI.
     const existing = state.users.find(x => x.id === u.id);
     const suppliedPassword = String(u.password || '');
-    const passwordChanged = !existing || suppliedPassword !== existing.password;    if (passwordChanged && suppliedPassword.length < 12) {
+    const passwordResult = resolveUserPasswordForSave({
+      existingPassword: existing?.password,
+      suppliedPassword,
+      suppliedIsHashed: isHashed(suppliedPassword),
+    });
+    if (!passwordResult.ok) {
       pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
       return;
     }
-    const password = isHashed(suppliedPassword)
-      ? suppliedPassword
-      : (existing && suppliedPassword === existing.password ? existing.password : hashPassword(suppliedPassword));
+    const password = passwordResult.hashRequired
+      ? hashPassword(passwordResult.password)
+      : passwordResult.password;
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
