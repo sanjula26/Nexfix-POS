@@ -6,6 +6,7 @@ import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlemen
 import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
 import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from '../src/lib/saleRefund.ts';
+import { resolveExchangeReturnLines } from '../src/lib/exchangeReturns.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -688,5 +689,101 @@ test('sale refund loyalty adjustment reverses earned and restores redeemed point
   }), {
     pointsEarnedToReverse: 3,
     pointsToRestore: 5,
+  });
+});
+
+
+test('exchange return resolution prorates line discount and records restock and refund totals', () => {
+  const result = resolveExchangeReturnLines({
+    saleId: 'sale-1',
+    saleItems: [{ productId: 'p1', name: 'Phone', qty: 2, price: 100, cost: 60, discount: 10 }],
+    priorExchanges: [],
+    units: [],
+    requested: new Map([[0, 1]]),
+    returns: [{ itemIdx: 0, qty: 1 }],
+    mode: 'refund',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.items, [{
+    itemIdx: 0, productId: 'p1', name: 'Phone', qty: 1, amount: 95,
+  }]);
+  assert.equal(result.refundAmount, 95);
+  assert.equal(result.allReturned, false);
+  assert.deepEqual(result.restockQtyByProduct, new Map([['p1', 1]]));
+  assert.deepEqual(result.returnedUnitIds, []);
+});
+
+test('exchange return resolution preserves legacy product-level history fallback', () => {
+  const saleItems = [
+    { productId: 'p1', name: 'Phone A', qty: 2, price: 100, cost: 60 },
+    { productId: 'p1', name: 'Phone B', qty: 1, price: 120, cost: 70 },
+  ];
+  const priorExchanges = [{
+    id: 'ex-old', exNo: 'EX-0001', date: '2026-01-01', billNo: 'B-1',
+    customerName: 'Customer', reason: 'Older exchange',
+    items: [{ productId: 'p1', name: 'Phone A', qty: 1, amount: 90 }],
+    refund: 0, additional: 0, by: 'Admin',
+  }];
+
+  const tooMany = resolveExchangeReturnLines({
+    saleId: 'sale-1', saleItems, priorExchanges, units: [],
+    requested: new Map([[0, 2]]), returns: [{ itemIdx: 0, qty: 2 }], mode: 'refund',
+  });
+  assert.deepEqual(tooMany, { ok: false, reason: 'quantity_exceeds_available' });
+
+  const remaining = resolveExchangeReturnLines({
+    saleId: 'sale-1', saleItems, priorExchanges, units: [],
+    requested: new Map([[0, 1]]), returns: [{ itemIdx: 0, qty: 1 }], mode: 'refund',
+  });
+  assert.equal(remaining.ok, true);
+  if (!remaining.ok) return;
+  assert.equal(remaining.allReturned, true);
+});
+
+test('exchange return resolution requires unique sold unit ids for tracked products', () => {
+  const saleItems = [{
+    productId: 'p1', name: 'Tracked phone', qty: 2, price: 200, cost: 120,
+    unitIds: ['u1', 'u2'],
+  }];
+  const units = [
+    { id: 'u1', productId: 'p1', status: 'sold' as const, saleId: 'sale-1', createdAt: '2026-01-01' },
+    { id: 'u2', productId: 'p1', status: 'in_stock' as const, createdAt: '2026-01-01' },
+  ];
+  const valid = resolveExchangeReturnLines({
+    saleId: 'sale-1', saleItems, priorExchanges: [], units,
+    requested: new Map([[0, 1]]), returns: [{ itemIdx: 0, qty: 1, unitIds: ['u1'] }], mode: 'replace',
+  });
+  assert.equal(valid.ok, true);
+  if (valid.ok) {
+    assert.equal(valid.refundAmount, 0);
+    assert.deepEqual(valid.returnedUnitIds, ['u1']);
+  }
+
+  assert.deepEqual(resolveExchangeReturnLines({
+    saleId: 'sale-1', saleItems, priorExchanges: [], units,
+    requested: new Map([[0, 1]]), returns: [{ itemIdx: 0, qty: 1, unitIds: ['u1', 'u1'] }], mode: 'refund',
+  }), { ok: false, reason: 'tracked_unit_count_mismatch' });
+
+  assert.deepEqual(resolveExchangeReturnLines({
+    saleId: 'sale-1', saleItems, priorExchanges: [], units,
+    requested: new Map([[0, 1]]), returns: [{ itemIdx: 0, qty: 1, unitIds: ['u2'] }], mode: 'refund',
+  }), { ok: false, reason: 'tracked_unit_not_sold' });
+});
+
+test('exchange return resolution rejects unit ids for untracked products and empty requests', () => {
+  const input = {
+    saleId: 'sale-1',
+    saleItems: [{ productId: 'p1', name: 'Cable', qty: 1, price: 20, cost: 5 }],
+    priorExchanges: [],
+    units: [],
+    requested: new Map([[0, 1]]),
+    returns: [{ itemIdx: 0, qty: 1, unitIds: ['unexpected-unit'] }],
+    mode: 'refund' as const,
+  };
+  assert.deepEqual(resolveExchangeReturnLines(input), { ok: false, reason: 'untracked_unit_ids' });
+  assert.deepEqual(resolveExchangeReturnLines({ ...input, requested: new Map(), returns: [] }), {
+    ok: false, reason: 'no_returnable_items',
   });
 });
