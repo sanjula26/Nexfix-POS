@@ -22,6 +22,7 @@ import POSCustomerAccountSummary from '../components/POSCustomerAccountSummary';
 import POSBillMetaRow from '../components/POSBillMetaRow';
 import POSFavoritesQuickAdd from '../components/POSFavoritesQuickAdd';
 import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
+import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser } from '../lib/types';
@@ -1148,23 +1149,7 @@ export default function POS() {
                     )}
                   </AnimatePresence>
 
-                  {recentCustomers.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                      <span className="text-[9.5px] font-bold tracking-wider uppercase text-faint">Recent</span>
-                      {recentCustomers.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => setCustomerId(c.id)}
-                          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sub bg-raised border border-line rounded-full pl-0.5 pr-2.5 py-0.5 hover:border-violet-400 hover:text-violet-500 transition-colors"
-                        >
-                          <span className="w-[18px] h-[18px] rounded-full bg-violet-500/15 text-violet-500 flex items-center justify-center text-[9px] font-bold">
-                            {c.name.charAt(0).toUpperCase()}
-                          </span>
-                          {c.name.split(' ')[0]}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <POSRecentCustomers customers={recentCustomers} onSelect={setCustomerId} />
                 </div>
               )}
 
