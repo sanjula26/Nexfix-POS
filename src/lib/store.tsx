@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
-  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
+  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
@@ -16,9 +16,14 @@ import {
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
-import { appendInventoryTransaction, type InventoryTransaction } from './inventoryLedger';
-import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
+import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
+import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
+import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing';
+import { resolveSalePayment } from './salePaymentRules';
+import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from './saleRefund';
+import { resolveExchangeReturnLines } from './exchangeReturns';
+import { resolvePurchaseReturnLines } from './purchaseReturns';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -40,30 +45,6 @@ interface NewSaleLine {
   unitIds?: string[];
 }
 
-function applyCategoryPromotions(lines: NewSaleLine[], products: readonly Product[], settings: Settings, now = new Date()): NewSaleLine[] {
-  const promotions = Array.isArray(settings.promotions) ? settings.promotions : [];
-  if (!promotions.length) return lines;
-  const day = dkey(now);
-  return lines.map(line => {
-    const product = products.find(p => p.id === line.productId);
-    if (!product) return line;
-    const eligible = promotions.filter(p => {
-      if (p.active === false) return false;
-      if (p.category.trim().toLowerCase() !== product.category.trim().toLowerCase()) return false;
-      if (p.startDate && day < p.startDate) return false;
-      if (p.endDate && day > p.endDate) return false;
-      return Number.isFinite(p.discountPct) && p.discountPct > 0 && p.discountPct <= 100;
-    });
-    if (!eligible.length) return line;
-    const pct = Math.max(...eligible.map(p => p.discountPct));
-    const unitPrice = line.price !== undefined && line.price >= 0 ? line.price : product.price;
-    const gross = Math.max(0, unitPrice * line.qty);
-    const manualDiscount = Math.min(Math.max(line.discount || 0, 0), gross);
-    const promoDiscount = Math.round((gross - manualDiscount) * pct / 100 * 100) / 100;
-    const discount = Math.min(gross, manualDiscount + promoDiscount);
-    return { ...line, discount };
-  });
-}
 
 interface NewSaleInput {
   lines: NewSaleLine[];
@@ -195,139 +176,6 @@ interface StoreCtx {
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
-
-function applyInventoryLedger(
-  prev: POSState,
-  next: POSState,
-  operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS' | 'UNIT_DELETE',
-  by?: string,
-): POSState {
-  const ledger = next.inventoryTransactions || prev.inventoryTransactions || [];
-  const transactions: InventoryTransaction[] = [];
-  const prevProducts = new Map(prev.products.map(p => [p.id, p]));
-  const nextProducts = new Map(next.products.map(p => [p.id, p]));
-  const now = new Date().toISOString();
-  const add = (tx: Omit<InventoryTransaction, 'id' | 'occurredAt'> & { id: string }) => transactions.push({ ...tx, occurredAt: now, by });
-
-  if (operation === 'SALE') {
-    const ids = new Set(prev.sales.map(x => x.id));
-    for (const sale of next.sales) if (!ids.has(sale.id)) {
-      const componentQty = new Map<string, number>();
-      for (const item of sale.items) if (item.qty > 0) {
-        const product = nextProducts.get(item.productId);
-        const kitLines = product?.isKit
-          ? (next.kitItems || []).filter(k => k.kitProductId === item.productId && Number.isFinite(k.qty) && k.qty > 0)
-          : [];
-        if (kitLines.length) {
-          for (const line of kitLines) componentQty.set(line.componentProductId, (componentQty.get(line.componentProductId) || 0) + line.qty * item.qty);
-        } else {
-          add({ id: 'inv:sale:' + sale.id + ':' + item.productId, type: 'SALE', productId: item.productId, quantity: -item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
-        }
-      }
-      for (const [productId, quantity] of componentQty) {
-        add({ id: 'inv:kit-sale:' + sale.id + ':' + productId, type: 'SALE', productId, quantity: -quantity, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Kit BOM component consumed' });
-      }
-    }
-    for (const sale of next.sales) if (!ids.has(sale.id) && sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.value > 0) {
-      add({ id: 'inv:trade-in:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: 1, referenceId: sale.id, referenceNo: sale.billNo, unitIds: undefined, reason: `Trade-in value Rs. ${sale.tradeIn.value}` });
-    }
-  }
-
-  if (operation === 'SALE_REVERSAL') {
-    for (const sale of next.sales) {
-      const old = prev.sales.find(x => x.id === sale.id);
-      if (!old || old.status === 'reversed' || sale.status !== 'reversed') continue;
-      for (const item of sale.items) if (item.qty > 0) {
-        add({ id: 'inv:sale-reversal:' + sale.id + ':' + item.productId, type: 'SALE_REVERSAL', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds, reason: 'Admin-approved bill reversal' });
-      }
-      if (sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.unitId) add({ id: 'inv:trade-in-reversal:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: -1, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Trade-in removed by bill reversal' });
-    }
-  }
-
-  if (operation === 'REFUND') {
-    for (const sale of next.sales) {
-      const old = prev.sales.find(x => x.id === sale.id);
-      if (!old || old.status === 'refunded' || sale.status !== 'refunded') continue;
-      for (const item of sale.items) if (item.qty > 0) {
-        add({ id: 'inv:refund:' + sale.id + ':' + item.productId, type: 'REFUND', productId: item.productId, quantity: item.qty, referenceId: sale.id, referenceNo: sale.billNo, unitIds: item.unitIds });
-      }
-      if (sale.tradeIn?.addToInventory && sale.tradeIn.productId && sale.tradeIn.unitId) add({ id: 'inv:trade-in-refund:' + sale.id, type: 'TRADE_IN', productId: sale.tradeIn.productId, quantity: -1, referenceId: sale.id, referenceNo: sale.billNo, reason: 'Trade-in removed by full refund' });
-    }
-  }
-
-  if (operation === 'PURCHASE_RECEIVE') {
-    for (const purchase of next.purchases) {
-      const old = prev.purchases.find(x => x.id === purchase.id);
-      if (!old || old.status === 'received' || purchase.status !== 'received') continue;
-      for (const item of purchase.items) if (item.qty > 0) {
-        add({ id: 'inv:purchase:' + purchase.id + ':' + item.productId, type: 'PURCHASE_RECEIVE', productId: item.productId, quantity: item.qty, referenceId: purchase.id, referenceNo: purchase.poNo });
-      }
-    }
-  }
-
-  if (operation === 'EXCHANGE') {
-    const ids = new Set(prev.exchanges.map(x => x.id));
-    for (const ex of next.exchanges) if (!ids.has(ex.id)) {
-      const returned = new Map<string, number>();
-      for (const item of ex.items) if (item.qty > 0) {
-        returned.set(item.productId, (returned.get(item.productId) || 0) + item.qty);
-        add({ id: 'inv:exchange:' + ex.id + ':' + item.productId + ':return', type: 'EXCHANGE_RETURN', productId: item.productId, quantity: item.qty, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
-      }
-      for (const [productId, qtyReturned] of returned) {
-        const netDelta = (nextProducts.get(productId)?.stock || 0) - (prevProducts.get(productId)?.stock || 0);
-        const outgoing = qtyReturned - netDelta;
-        if (outgoing > 0) add({ id: 'inv:exchange:' + ex.id + ':' + productId + ':out', type: 'SALE', productId, quantity: -outgoing, referenceId: ex.id, referenceNo: ex.exNo, reason: ex.reason });
-      }
-    }
-  }
-
-  if (operation === 'PURCHASE_REVERSAL') {
-    const ids = new Set((prev.purchaseReturns || []).map(x => x.id));
-    for (const ret of next.purchaseReturns || []) if (!ids.has(ret.id)) for (const item of ret.items) if (item.qty > 0) {
-      add({ id: 'inv:purchase-return:' + ret.id + ':' + item.itemIdx, type: 'PURCHASE_REVERSAL', productId: item.productId, quantity: -item.qty, referenceId: ret.id, referenceNo: ret.dnNo, unitIds: item.unitIds, reason: ret.reason });
-    }
-  }
-
-  if (operation === 'REPAIR_PARTS') {
-    for (const repair of next.repairs || []) {
-      const old = (prev.repairs || []).find(x => x.id === repair.id);
-      if (!old || old.partsDeductedAt || !repair.partsDeductedAt || repair.status !== 'delivered') continue;
-      for (const part of repair.parts || []) if (part.productId && part.qty > 0) {
-        add({ id: 'inv:repair-parts:' + repair.id + ':' + part.productId, type: 'REPAIR_PARTS', productId: part.productId, quantity: -part.qty, referenceId: repair.id, referenceNo: repair.jobNo, reason: 'Repair parts consumed on delivery' });
-      }
-    }
-  }  if (operation === 'UNIT_DELETE') {
-    const currentIds = new Set((next.units || []).map(u => u.id));
-    for (const unit of prev.units || []) {
-      if (currentIds.has(unit.id) || unit.status !== 'in_stock') continue;
-      add({
-        id: 'inv:unit-delete:' + unit.id,
-        type: 'UNIT_DELETE',
-        productId: unit.productId,
-        quantity: -1,
-        referenceId: unit.id,
-        unitIds: [unit.id],
-        reason: 'Inventory unit deleted',
-      });
-    }
-  }
-
-
-
-  if (operation === 'STOCK_ADJUSTMENT') {
-    for (const [productId, product] of nextProducts) {
-      const before = prevProducts.get(productId)?.stock;
-      if (before === undefined) continue;
-      const delta = product.stock - before;
-      if (delta) add({ id: 'inv:adjust:' + productId + ':' + product.stock + ':' + delta, type: 'STOCK_ADJUSTMENT', productId, quantity: delta, reason: 'Stock adjustment' });
-    }
-  }
-
-  let updated = ledger;
-  for (const tx of transactions) updated = appendInventoryTransaction(updated, tx);
-  return updated === next.inventoryTransactions ? next : { ...next, inventoryTransactions: updated };
-}
-
 
 const RETIRED_DEMO_PASSWORDS = ['admin', 'cashier'].map(prefix => prefix + '123'); // Retired defaults are never provisioned in production.
 const RETIRED_DEMO_EMAILS = ['admin', 'cashier'].map(prefix => prefix + '@nexfixsolution.com');
@@ -701,7 +549,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light'); } catch { /* ignore */ }
   }, [dark]);
 
-  const setStateWithInventoryLedger = useCallback((operation: 'SALE' | 'SALE_REVERSAL' | 'REFUND' | 'PURCHASE_RECEIVE' | 'EXCHANGE' | 'STOCK_ADJUSTMENT' | 'PURCHASE_REVERSAL' | 'REPAIR_PARTS' | 'UNIT_DELETE', updater: (prev: POSState) => POSState) => {
+  const setStateWithInventoryLedger = useCallback((operation: InventoryLedgerOperation, updater: (prev: POSState) => POSState) => {
     setState(prev => applyInventoryLedger(prev, updater(prev), operation, user?.email));
   }, [user?.email]);
 
@@ -1606,27 +1454,33 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const methods = rawMethods as Array<{ method: Exclude<PaymentMethod, 'credit'>; amount: number }>;
     const previousPayments = snapshot.customerCreditPayments || [];
-    let allocations: Array<{ saleId: string; billNo: string; amount: number }> = [];
-    if (p.saleId) {
-      const sale = snapshot.sales.find(x => x.id === p.saleId && x.customerId === customer.id && x.status === 'completed');
-      if (!sale) return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
-      const invoiceDue = Math.min(getOpenCreditInvoiceBalance(sale, previousPayments), outstanding);
-      if (invoiceDue <= 0.009) return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${sale.billNo}`);
-      if (amount > invoiceDue + 0.009) {
-        return deny(`Amount exceeds selected invoice due (Rs. ${invoiceDue.toLocaleString()}). Reduce the amount or choose “Pay FIFO instead”.`, `Blocked settlement above selected invoice due for ${sale.billNo}`);
+    const allocationResult = resolveCreditPaymentAllocations({
+      customerId: customer.id,
+      amount,
+      customerOutstanding: outstanding,
+      saleId: p.saleId,
+      sales: snapshot.sales,
+      payments: previousPayments,
+    });
+    if (!allocationResult.ok) {
+      if (allocationResult.reason === 'invoice_not_found') {
+        return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
       }
-      allocations = [{ saleId: sale.id, billNo: sale.billNo, amount }];
-    } else {
-      allocations = allocateCreditPaymentFIFO(customer.id, amount, snapshot.sales, previousPayments);
-      const allocated = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
-      if (Math.abs(allocated - amount) > 0.009) {
+      if (allocationResult.reason === 'invoice_paid') {
+        return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${allocationResult.billNo || p.saleId}`);
+      }
+      if (allocationResult.reason === 'invoice_exceeded') {
+        const invoiceDue = allocationResult.invoiceDue || 0;
+        const billNo = allocationResult.billNo || p.saleId || 'unknown';
+        return deny(`Amount exceeds selected invoice due (Rs. ${invoiceDue.toLocaleString()}). Reduce the amount or choose “Pay FIFO instead”.`, `Blocked settlement above selected invoice due for ${billNo}`);
+      }
+      if (allocationResult.reason === 'fifo_incomplete') {
+        const allocated = allocationResult.allocatedTotal || 0;
         return deny('Could not allocate the full payment to open invoices. Refresh and check the customer’s invoice balances before retrying; no payment was saved.', `Blocked FIFO allocation mismatch for ${customer.name}: requested Rs. ${amount}, allocated Rs. ${allocated}`);
       }
-    }
-    const allocatedTotal = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
-    if (Math.abs(allocatedTotal - amount) > 0.009) {
       return deny('Could not allocate the full payment to open invoices. Refresh and retry; no payment was saved.', `Blocked incomplete invoice allocation for ${customer.name}`);
     }
+    const allocations = allocationResult.allocations;
 
     customerCreditPaymentLockRef.current = true;
     let committed = false;
@@ -1782,33 +1636,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (kitQty + kitDirectOverlap > availableForBranch(component)) return null;
     }
 
-    const grossTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
-    const lineDiscount = items.reduce((sum, it) => sum + (it.discount || 0), 0);
-    const subtotal = grossTotal - lineDiscount;
-    const discount = Math.min(input.discount || 0, subtotal);
-    const shipping = Math.max(0, input.shipping || 0);
-    // Trade-in is sent to cloud as an additional discount, so calculate tax on the
-    // same post-trade-in taxable base locally to prevent local/cloud total drift.
-    const tradeInValue = Math.min(rawTradeInValue, Math.max(0, subtotal - discount));
-    const taxableSubtotal = Math.max(0, subtotal - discount - tradeInValue);
-    const tax = Math.round((taxableSubtotal * (input.taxPct || 0)) / 100 * 100) / 100;
     const cust = input.customerId ? s.customers.find(c => c.id === input.customerId) : undefined;
-    const pointsRedeemed = Math.min(
-      Math.max(0, Math.floor(input.pointsRedeemed || 0)),
-      cust?.loyaltyPoints || 0,
-    );
-    const loyaltyPointValue = Math.max(0, Number(s.settings.loyaltyPointValue ?? POINT_VALUE));
-    const pointsValue = pointsRedeemed * loyaltyPointValue;
-    const preTotal = taxableSubtotal + tax + shipping;
-    const appliedPointsValue = Math.min(pointsValue, Math.max(0, preTotal));
-    const total = Math.max(0, Math.round((preTotal - appliedPointsValue) * 100) / 100);
-    // Gross margin − discounts − loyalty value actually applied (+ shipping is revenue).
-    const profit = Math.round((
-      items.reduce((sum, it) => sum + (it.price - it.cost) * it.qty, 0)
-      - lineDiscount - discount - appliedPointsValue - tradeInValue + shipping
-    ) * 100) / 100;
-    const loyaltyPointsPerRs = Math.max(0, Number(s.settings.loyaltyPointsPerRs ?? 0.001));
-    const pointsEarned = cust ? Math.floor(Math.max(0, total) * loyaltyPointsPerRs) : 0;
+    const financials = calculateSaleFinancials({
+      items,
+      discount: input.discount,
+      taxPct: input.taxPct,
+      shipping: input.shipping,
+      rawTradeInValue,
+      requestedPointsRedeemed: input.pointsRedeemed,
+      customerLoyaltyPoints: cust?.loyaltyPoints,
+      loyaltyPointValue: s.settings.loyaltyPointValue,
+      loyaltyPointsPerRs: s.settings.loyaltyPointsPerRs,
+      hasCustomer: Boolean(cust),
+      defaultLoyaltyPointValue: POINT_VALUE,
+    });
+    const {
+      subtotal, discount, shipping, tradeInValue, tax,
+      pointsRedeemed, total, profit, pointsEarned,
+    } = financials;
     const maxSaleSeq = s.sales.reduce((m, x) => {
       const n = parseInt(x.billNo.split('-').pop() || '0', 10);
       return Number.isFinite(n) ? Math.max(m, n) : m;
@@ -1819,26 +1664,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? s.users.find(u => u.id === input.salesmanId && u.active)
       : undefined;
     const byUser = salesman || user;
-    const validPaymentMethods = new Set<PaymentMethod>(['cash', 'card', 'bank', 'mobile', 'credit']);
-    if (!validPaymentMethods.has(input.payment)) return null;
-    const rawLegs = Array.isArray(input.payments) ? input.payments : [];
-    if (rawLegs.some(l => !l || !validPaymentMethods.has(l.method) || !Number.isFinite(l.amount) || l.amount < 0)) return null;
-    const legs = rawLegs.filter(l => l.amount > 0).map(l => ({ method: l.method, amount: Math.round(l.amount * 100) / 100 }));
-    const isSplit = legs.length > 1;
-    if (isSplit && legs.some(l => l.method === 'credit')) return null;
-    if (isSplit && Math.abs(legs.reduce((a, l) => a + l.amount, 0) - Math.max(0, Number(input.amountPaid) || 0)) > 0.01) return null;
-    const isCredit = legs.some(l => l.method === 'credit') || input.payment === 'credit';
-    if (isCredit) {
-      if (!cust) return null;
-      const creditLimit = cust.creditLimit ?? 0;
-      const projectedBalance = cust.creditBalance + Math.max(0, total - (isSplit ? legs.filter(l => l.method !== 'credit').reduce((a, l) => a + l.amount, 0) : input.amountPaid));
-      if (creditLimit > 0 && projectedBalance > creditLimit) return null;
-    }
-    const amountPaid = isSplit
-      ? legs.reduce((a, l) => a + l.amount, 0)
-      : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
-    if (isCredit && amountPaid > total) return null;
-    const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
+    const paymentResolution = resolveSalePayment({
+      payment: input.payment,
+      payments: input.payments,
+      amountPaid: input.amountPaid,
+      total,
+      customer: cust,
+    });
+    if (!paymentResolution.ok) return null;
+    const { legs, isSplit, isCredit, amountPaid, balanceDue, change } = paymentResolution;
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
     const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
@@ -1854,7 +1688,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments: legs.length > 0 ? legs.filter(l => l.method !== 'credit') : undefined,
       pointsRedeemed: pointsRedeemed || undefined,
       pointsEarned: pointsEarned || undefined,
-      amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
+      amountPaid, change,
       profit,
       tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, unitId: tradeInUnitId } : undefined,
       status: 'completed',
@@ -2372,30 +2206,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         priorReturnedByLine.set(item.itemIdx, (priorReturnedByLine.get(item.itemIdx) || 0) + item.qty);
       }
     }
-    const remainingItems = sale.items.map((it, idx) => ({ it, idx, qty: Math.max(0, it.qty - (priorReturnedByLine.get(idx) || 0)) })).filter(x => x.qty > 0);
+    const refundCalculation = calculateSaleRefund({
+      items: sale.items,
+      priorReturnedByLine,
+      subtotal: sale.subtotal,
+      discount: sale.discount,
+      tax: sale.tax,
+      shipping: sale.shipping,
+      tradeInValue: sale.tradeIn?.value,
+    });
+    const { remainingItems, refundValue } = refundCalculation;
     if (remainingItems.length === 0) return false;
-
-    const refundQtyByProduct = new Map<string, number>();
-    for (const { it, qty } of remainingItems) refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + qty);
-    const merchandiseGross = remainingItems.reduce((sum, { it, qty }) => sum + it.price * qty, 0);
-    const merchandiseDiscount = remainingItems.reduce((sum, { it, qty }) => sum + (it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0), 0);
-    const returnedMerchandise = Math.max(0, merchandiseGross - merchandiseDiscount);
-    const saleSubtotal = Math.max(0, sale.subtotal);
-    const saleDiscount = Math.min(Math.max(0, sale.discount || 0), saleSubtotal);
-    const postDiscountSubtotal = Math.max(0, saleSubtotal - saleDiscount);
-    const allocatedDiscount = Math.min(saleDiscount, returnedMerchandise * (saleSubtotal > 0 ? saleDiscount / saleSubtotal : 0));
-    const taxableReturned = Math.max(0, returnedMerchandise - allocatedDiscount);
-    const taxRefund = postDiscountSubtotal > 0 ? Math.round((sale.tax || 0) * (taxableReturned / postDiscountSubtotal) * 100) / 100 : 0;
-    // Trade-in is stored separately from the local sale discount, but it reduces the
-    // amount the customer actually paid. Allocate that reduction proportionally to
-    // the returned merchandise so local refunds match the cloud return calculation.
-    const tradeInValue = Math.max(0, Number(sale.tradeIn?.value || 0));
-    const allocatedTradeIn = saleSubtotal > 0
-      ? Math.min(tradeInValue, tradeInValue * (returnedMerchandise / saleSubtotal))
-      : 0;
-    const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);
-    const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
-    const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund - allocatedTradeIn) * 100) / 100);
 
     const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
     let returnId = '';
@@ -2473,9 +2294,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const priorCreditReduction = (sale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
     const alreadySettledOnSale = (state.customerCreditPayments || []).reduce((sum, payment) => sum + (payment.allocations || []).filter(allocation => allocation.saleId === sale.id).reduce((part, allocation) => part + Math.max(0, Number(allocation.amount) || 0), 0), 0);
-    const refundCreditDue = Math.max(0, sale.total - sale.amountPaid - alreadySettledOnSale - priorCreditReduction);
-    const refundCreditAmount = Math.min(refundCreditDue, refundValue);
-    const refundCashAmount = Math.max(0, Math.round((refundValue - refundCreditAmount) * 100) / 100);
+    const { creditAmount: refundCreditAmount, cashAmount: refundCashAmount } = calculateSaleRefundCreditSplit({
+      total: sale.total, amountPaid: sale.amountPaid, alreadySettled: alreadySettledOnSale,
+      previouslyRefundedCredit: priorCreditReduction, refundValue,
+    });
     const refundEvent = {
       id: uid(),
       date: new Date().toISOString(),
@@ -2509,11 +2331,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const tradeInReturn = allReturned && currentSale.tradeIn?.addToInventory && currentSale.tradeIn.productId && currentSale.tradeIn.unitId;
       const previouslyCredited = (currentSale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
       const alreadySettledOnSale = (s.customerCreditPayments || []).reduce((sum, payment) => sum + (payment.allocations || []).filter(allocation => allocation.saleId === currentSale.id).reduce((part, allocation) => part + Math.max(0, Number(allocation.amount) || 0), 0), 0);
-      const creditDue = Math.max(0, currentSale.total - currentSale.amountPaid - alreadySettledOnSale - previouslyCredited);
-      const creditReduction = Math.min(creditDue, refundValue);
-      const returnedRatio = currentSale.total > 0 ? Math.min(1, refundValue / currentSale.total) : 1;
-      const pointsEarnedToReverse = Math.min(currentSale.pointsEarned || 0, Math.round((currentSale.pointsEarned || 0) * returnedRatio));
-      const pointsToRestore = Math.min(currentSale.pointsRedeemed || 0, Math.round((currentSale.pointsRedeemed || 0) * returnedRatio));
+      const { creditAmount: creditReduction } = calculateSaleRefundCreditSplit({
+        total: currentSale.total, amountPaid: currentSale.amountPaid, alreadySettled: alreadySettledOnSale,
+        previouslyRefundedCredit: previouslyCredited, refundValue,
+      });
+      const { pointsEarnedToReverse, pointsToRestore } = calculateSaleRefundLoyaltyAdjustment({
+        total: currentSale.total, refundValue, pointsEarned: currentSale.pointsEarned, pointsRedeemed: currentSale.pointsRedeemed,
+      });
       return {
         ...s,
         sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed', refunds: [...(x.refunds || []), refundEvent] } : x),
@@ -2874,76 +2698,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const purchase = state.purchases.find(x => x.id === input.purchaseId);
     if (!purchase || purchase.status !== 'received' || !input.reason.trim()) return null;
 
-    const existing = state.purchaseReturns || [];
-    const returnedByItem = new Map<number, number>();
-    for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) {
-      returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
-    }
-
-    const requested = new Map<number, { qty: number; unitIds: string[] }>();
-    for (const line of input.lines) {
-      if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
-      if (!Number.isInteger(line.qty) || line.qty <= 0) continue;
-      const previous = requested.get(line.itemIdx);
-      const unitIds = Array.isArray(line.unitIds) ? line.unitIds.filter(Boolean) : [];
-      requested.set(line.itemIdx, {
-        qty: (previous?.qty || 0) + line.qty,
-        unitIds: [...(previous?.unitIds || []), ...unitIds],
-      });
-    }
-    if (requested.size === 0) return null;
-
-    const items: PurchaseReturnItem[] = [];
-    const returnedUnitIds = new Set<string>();
-    for (const [itemIdx, request] of requested) {
-      const source = purchase.items[itemIdx];
-      if (!Number.isInteger(source.qty) || source.qty <= 0 || !Number.isFinite(source.cost) || source.cost < 0) return null;
-      const already = returnedByItem.get(itemIdx) || 0;
-      const remaining = Math.max(0, source.qty - already);
-      const product = state.products.find(p => p.id === source.productId);
-      const stock = product?.stock ?? NaN;
-      if (!product || !Number.isFinite(stock) || stock < 0) return null;
-
-      const tracked = Array.isArray(source.unitIdentifiers) && source.unitIdentifiers.length > 0;
-      const availableUnits = tracked
-        ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock')
-        : [];
-      const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
-      if (request.qty > maxReturnable) return null;
-
-      let selectedUnitIds: string[] | undefined;
-      if (tracked) {
-        const selected = [...new Set(request.unitIds)];
-        if (selected.length !== request.qty) return null;
-        const availableIds = new Set(availableUnits.map(u => u.id));
-        const expectedIdentifiers = (source.unitIdentifiers || []).map(x => ({
-          imei: x.imei?.trim().toLowerCase() || '',
-          serial: x.serial?.trim().toLowerCase() || '',
-        }));
-        for (const unitId of selected) {
-          const unit = availableUnits.find(u => u.id === unitId);
-          if (!unit || !availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
-          const imei = unit.imei?.trim().toLowerCase() || '';
-          const serial = unit.serial?.trim().toLowerCase() || '';
-          if (!expectedIdentifiers.some(x => x.imei === imei && x.serial === serial)) return null;
-          returnedUnitIds.add(unitId);
-        }
-        selectedUnitIds = selected;
-      } else if (request.unitIds.length) {
-        return null;
-      }
-
-      items.push({
-        itemIdx,
-        productId: source.productId,
-        name: source.name,
-        qty: request.qty,
-        cost: source.cost,
-        total: request.qty * source.cost,
-        ...(selectedUnitIds ? { unitIds: selectedUnitIds } : {}),
-      });
-    }
-    if (!items.length) return null;
+    const returnResolution = resolvePurchaseReturnLines({
+      purchase,
+      existingReturns: state.purchaseReturns || [],
+      products: state.products,
+      units: state.units || [],
+      lines: input.lines,
+    });
+    if (!returnResolution.ok) return null;
+    const { items, returnedUnitIds, total: localTotal } = returnResolution;
 
     purchaseReturnLockRef.current = true;
     try {
@@ -3013,7 +2776,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         supplierName: purchase.supplierName,
         date: new Date().toISOString(),
         items,
-        total: cloudTotal ?? items.reduce((a, x) => a + x.total, 0),
+        total: cloudTotal ?? localTotal,
         reason: input.reason.trim(),
         by: user.email,
       };
@@ -3169,71 +2932,25 @@ const deletePurchase = useCallback((id: string) => {
     if (requested.size === 0) return;
 
     setStateWithInventoryLedger('EXCHANGE', s => {
-      const priorReturnedByLine = new Map<string, number>();
-      const priorReturnedByProduct = new Map<string, number>();
-      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {
-        const lineKey = item.itemIdx !== undefined ? 'i:' + item.itemIdx : 'p:' + item.productId;
-        priorReturnedByLine.set(lineKey, (priorReturnedByLine.get(lineKey) || 0) + item.qty);
-        priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);
+      const resolution = resolveExchangeReturnLines({
+        saleId: sale.id,
+        saleItems: sale.items,
+        priorExchanges: s.exchanges.filter(x => x.billNo === sale.billNo),
+        units: s.units || [],
+        requested,
+        returns,
+        mode,
       });
-
-      const exItems: Exchange['items'] = [];
-      const returnedUnitIds: string[] = [];
-      const restockQtyByProduct = new Map<string, number>();
-      let refund = 0;
-
-      for (const [itemIdx, requestedQty] of requested) {
-        const it = sale.items[itemIdx];
-        const lineKey = 'i:' + itemIdx;
-        const alreadyReturned = priorReturnedByLine.has(lineKey)
-          ? (priorReturnedByLine.get(lineKey) || 0)
-          : (priorReturnedByProduct.get(it.productId) || 0);
-        const availableQty = Math.max(0, it.qty - alreadyReturned);
-        const tracked = (it.unitIds || []).length > 0;
-        const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id)).length;
-        const maxReturnable = Math.min(availableQty, tracked ? trackedAvailable : availableQty);
-        if (requestedQty > maxReturnable) return s;
-        const qty = requestedQty;
-        if (qty <= 0) continue;
-
-        const requestedUnitIds = Array.isArray((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds)
-          ? ((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds || []).filter(Boolean)
-          : [];
-        if (tracked) {
-          if (requestedUnitIds.length !== qty || new Set(requestedUnitIds).size !== qty) return s;
-          const soldUnitIds = new Set((it.unitIds || []).filter(Boolean));
-          if (requestedUnitIds.some(id => !soldUnitIds.has(id) || !s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id))) return s;
-        } else if (requestedUnitIds.length) {
-          return s;
-        }
-
-        const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
-        const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
-        const unitIds = tracked ? requestedUnitIds : [];
-
-        exItems.push({ itemIdx, productId: it.productId, name: it.name, qty, amount });
-        if (mode === 'refund') refund += amount;
-        restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
-        returnedUnitIds.push(...unitIds);
-        priorReturnedByLine.set(lineKey, alreadyReturned + qty);
-        priorReturnedByProduct.set(it.productId, (priorReturnedByProduct.get(it.productId) || 0) + qty);
-      }
-
-      if (exItems.length === 0) return s;
+      if (!resolution.ok) return s;
+      const { items: exItems, returnedUnitIds, restockQtyByProduct, refundAmount: refund, allReturned } = resolution;
 
       const seq = s.counters.ex + 1;
       const ex: Exchange = {
         id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
         billNo: sale.billNo, customerName: sale.customerName, reason,
-        items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
+        items: exItems, refund, additional: 0, by: user.name,
         branchId: sale.branchId || getDefaultBranchId(getCloudShopId()) || 'local-main', cashierId: user.id,
       };
-      const allReturned = sale.items.every((it, idx) => {
-        const returned = priorReturnedByLine.has('i:' + idx)
-          ? (priorReturnedByLine.get('i:' + idx) || 0)
-          : (priorReturnedByProduct.get(it.productId) || 0);
-        return returned >= it.qty;
-      });
 
       return {
         ...s,
