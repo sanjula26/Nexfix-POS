@@ -25,6 +25,7 @@ import POSProductCatalogBrowser from '../components/POSProductCatalogBrowser';
 import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import POSReprintBillRow from '../components/POSReprintBillRow';
 import POSReprintSearchHeader from '../components/POSReprintSearchHeader';
+import POSReprintBillsDialog from '../components/POSReprintBillsDialog';
 import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
@@ -1910,27 +1911,21 @@ export default function POS() {
         })()}
       </Modal>
 
-      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
-        <div className="space-y-3">
-          <POSReprintSearchHeader value={reprintSearch} resultCount={reprintBills.length} onChange={setReprintSearch} />
-          <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
-          {reprintBills.map((sale, index) => {
-            const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
-            return (
-              <POSReprintBillRow
-                key={sale.id}
-                sale={sale}
-                index={index}
-                customerPhone={customerPhone}
-                onPrint={() => openReprintSale(sale)}
-                onWhatsApp={() => sendReprintWhatsApp(sale)}
-              />
-            );
-          })}
-          {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
-          </div>
-        </div>
-      </Modal>
+      <POSReprintBillsDialog
+        open={reprintOpen}
+        todayBillCount={todayBills.length}
+        search={reprintSearch}
+        resultCount={reprintBills.length}
+        bills={reprintBills.map((sale, index) => ({
+          sale,
+          index,
+          customerPhone: sale.customerId ? state.customers.find(customer => customer.id === sale.customerId)?.phone || '' : '',
+        }))}
+        onSearchChange={setReprintSearch}
+        onPrint={openReprintSale}
+        onWhatsApp={sendReprintWhatsApp}
+        onClose={() => setReprintOpen(false)}
+      />
 
       <POSReprintWhatsAppDialog
         open={!!reprintWhatsAppSale}
