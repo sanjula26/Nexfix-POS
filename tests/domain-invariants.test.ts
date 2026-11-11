@@ -8,6 +8,7 @@ import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from '../src/lib/saleRefund.ts';
 import { resolveExchangeReturnLines } from '../src/lib/exchangeReturns.ts';
 import { resolvePurchaseReturnLines } from '../src/lib/purchaseReturns.ts';
+import { buildPurchaseReceiveChanges } from '../src/lib/purchaseReceive.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -892,4 +893,70 @@ test('purchase return resolution rejects unit ids for untracked products and emp
   assert.deepEqual(resolvePurchaseReturnLines({
     ...base, lines: [{ itemIdx: 99, qty: 1 }, { itemIdx: 0, qty: 0 }],
   }), { ok: false, reason: 'no_returnable_lines' });
+});
+
+
+test('purchase receive changes add stock, update cost and rounded selling price, and build tracked unit drafts', () => {
+  const products = [
+    { id: 'p1', stock: 3, cost: 10, price: 50, trackImei: true, trackSerial: false } as import('../src/lib/types.ts').Product,
+    { id: 'p2', stock: 4, cost: 5, price: 20 } as import('../src/lib/types.ts').Product,
+  ];
+  const purchase = {
+    id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+    supplierName: 'Supplier', status: 'pending' as const, total: 38,
+    items: [
+      {
+        productId: 'p1', name: 'Tracked phone', qty: 2, cost: 15,
+        expiryDate: '2027-01-01', sellingPrice: 99.999, updateSellingPrice: true,
+        unitIdentifiers: [{ imei: ' 111 ' }, { imei: '222' }],
+      },
+      { productId: 'p2', name: 'Mouse', qty: 1, cost: 8 },
+    ],
+  };
+  const result = buildPurchaseReceiveChanges({
+    purchase,
+    products,
+    branchId: 'branch-1',
+    plan: {
+      productStockDelta: new Map([['p1', 2], ['p2', 1]]),
+      productCost: new Map([['p1', 15], ['p2', 8]]),
+      trackedUnitCount: new Map([['p1', 2]]),
+    },
+  });
+
+  assert.deepEqual(result.products.map(p => ({ id: p.id, stock: p.stock, cost: p.cost, price: p.price })), [
+    { id: 'p1', stock: 5, cost: 15, price: 100 },
+    { id: 'p2', stock: 5, cost: 8, price: 20 },
+  ]);
+  assert.deepEqual(result.unitDrafts, [
+    {
+      productId: 'p1', branchId: 'branch-1', imei: '111', serial: undefined,
+      status: 'in_stock', purchaseId: 'po-1', cost: 15,
+      expiryDate: '2027-01-01', note: 'From GRN-0001',
+    },
+    {
+      productId: 'p1', branchId: 'branch-1', imei: '222', serial: undefined,
+      status: 'in_stock', purchaseId: 'po-1', cost: 15,
+      expiryDate: '2027-01-01', note: 'From GRN-0001',
+    },
+  ]);
+});
+
+test('purchase receive changes leave products without a receive delta untouched', () => {
+  const product = { id: 'p1', stock: 7, cost: 3, price: 10 } as import('../src/lib/types.ts').Product;
+  const result = buildPurchaseReceiveChanges({
+    purchase: {
+      id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+      supplierName: 'Supplier', status: 'pending', total: 0, items: [],
+    },
+    products: [product],
+    branchId: 'branch-1',
+    plan: {
+      productStockDelta: new Map(),
+      productCost: new Map(),
+      trackedUnitCount: new Map(),
+    },
+  });
+  assert.equal(result.products[0], product);
+  assert.deepEqual(result.unitDrafts, []);
 });
