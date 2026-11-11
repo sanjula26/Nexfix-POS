@@ -9,6 +9,7 @@ import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefun
 import { resolveExchangeReturnLines } from '../src/lib/exchangeReturns.ts';
 import { resolvePurchaseReturnLines } from '../src/lib/purchaseReturns.ts';
 import { buildPurchaseReceiveChanges } from '../src/lib/purchaseReceive.ts';
+import { applyRolePermissionValue, prepareUserPasswordForSave } from '../src/lib/userManagement.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -959,4 +960,45 @@ test('purchase receive changes leave products without a receive delta untouched'
   });
   assert.equal(result.products[0], product);
   assert.deepEqual(result.unitDrafts, []);
+});
+
+
+test('user password preparation rejects weak changes and delegates strong plaintext hashing', () => {
+  assert.deepEqual(prepareUserPasswordForSave('short'), {
+    ok: false, reason: 'password_too_short',
+  });
+  assert.deepEqual(prepareUserPasswordForSave('strong-new-password'), {
+    ok: true, mode: 'hash', plain: 'strong-new-password',
+  });
+});
+
+test('user password preparation preserves unchanged legacy and modern hashes', () => {
+  const unchangedPlain = prepareUserPasswordForSave('legacy', 'legacy');
+  assert.deepEqual(unchangedPlain, { ok: true, mode: 'preserve', password: 'legacy' });
+
+  const legacyHash = 'a'.repeat(64);
+  assert.deepEqual(prepareUserPasswordForSave(legacyHash), {
+    ok: true, mode: 'preserve', password: legacyHash,
+  });
+
+  const modernHash = 'c2FsdC1ieXRlcy1mb3ItdGVzdA==:aGFzaC1ieXRlcy1mb3ItdGVzdA==';
+  assert.deepEqual(prepareUserPasswordForSave(modernHash), {
+    ok: true, mode: 'hash', plain: modernHash,
+  });
+});
+
+test('role permission update changes only the selected role/key and keeps the input immutable', () => {
+  const current = {
+    admin: { 'page:pos': true },
+    cashier: { 'page:pos': true, 'page:reports': false },
+    manager: { 'page:pos': true },
+    technician: { 'page:repairs': true },
+  } as import('../src/lib/types.ts').Permissions;
+  const updated = applyRolePermissionValue(current, 'cashier', 'page:pos', false);
+
+  assert.equal(current.cashier['page:pos'], true);
+  assert.equal(updated.cashier['page:pos'], false);
+  assert.equal(updated.cashier['page:reports'], false);
+  assert.equal(updated.admin, current.admin);
+  assert.equal(updated.manager, current.manager);
 });
