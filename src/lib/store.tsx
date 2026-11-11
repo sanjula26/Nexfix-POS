@@ -24,6 +24,7 @@ import { resolveSalePayment } from './salePaymentRules';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from './saleRefund';
 import { resolveExchangeReturnLines } from './exchangeReturns';
 import { resolvePurchaseReturnLines } from './purchaseReturns';
+import { buildPurchaseReceiveChanges } from './purchaseReceive';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -2608,28 +2609,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return s;
         }
         const now = new Date().toISOString();
-        const newUnits: InventoryUnit[] = [];
-        const products = s.products.map(p => {
-          const delta = currentPlanResult.plan!.productStockDelta.get(p.id);
-          if (delta === undefined) return p;
-          const cost = currentPlanResult.plan!.productCost.get(p.id);
-          const trackedQty = currentPlanResult.plan!.trackedUnitCount.get(p.id) || 0;
-          const purchaseItem = currentPo.items.find(item => item.productId === p.id);
-          if (trackedQty > 0 && (p.trackImei || p.trackSerial)) {
-            for (const identifier of purchaseItem?.unitIdentifiers || []) {
-              newUnits.push({
-                id: uid(), productId: p.id, branchId: receiveBranchId, imei: p.trackImei ? identifier.imei?.trim() : undefined,
-                serial: p.trackSerial ? identifier.serial?.trim() : undefined, status: 'in_stock',
-                purchaseId: currentPo.id, cost, expiryDate: purchaseItem?.expiryDate, note: 'From ' + currentPo.poNo, createdAt: now,
-              } as InventoryUnit);
-            }
-          }
-          const sellingPrice = purchaseItem?.updateSellingPrice ? purchaseItem.sellingPrice : undefined;
-          return { ...p, stock: p.stock + delta, ...(cost !== undefined ? { cost } : {}), ...(sellingPrice !== undefined ? { price: Math.round(sellingPrice * 100) / 100 } : {}) };
+        const receiveChanges = buildPurchaseReceiveChanges({
+          purchase: currentPo,
+          products: s.products,
+          plan: currentPlanResult.plan!,
+          branchId: receiveBranchId,
         });
+        const newUnits: InventoryUnit[] = receiveChanges.unitDrafts.map(unit => ({
+          ...unit,
+          id: uid(),
+          createdAt: now,
+        }));
         const next = {
           ...s, purchases: s.purchases.map(x => x.id === id ? { ...x, branchId: receiveBranchId, status: 'received' as const, ...(processorName ? { processedAt: now, processedBy: processorName } : {}) } : x),
-          products, units: [...newUnits, ...(s.units || [])],
+          products: receiveChanges.products, units: [...newUnits, ...(s.units || [])],
         };
         applied = true;
         return next;
