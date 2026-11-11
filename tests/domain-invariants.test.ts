@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
+import { applyCategoryPromotions } from '../src/lib/salePricing.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -388,4 +389,45 @@ test('credit settlement FIFO allocation accounts for earlier payments before app
     ],
     allocatedTotal: 120,
   });
+});
+
+
+test('category promotions apply the highest active matching percentage after manual discount', () => {
+  const lines = [{ productId: 'product-1', qty: 2, price: 100, discount: 20 }];
+  const products = [{ id: 'product-1', category: 'Accessories', price: 120 }];
+  const settings = {
+    promotions: [
+      { id: 'inactive', name: 'Inactive', category: 'Accessories', discountPct: 50, active: false },
+      { id: 'wrong-category', name: 'Wrong', category: 'Phones', discountPct: 60, active: true },
+      { id: 'future', name: 'Future', category: 'Accessories', discountPct: 70, startDate: '2026-11-12', active: true },
+      { id: 'expired', name: 'Expired', category: 'Accessories', discountPct: 80, endDate: '2026-11-10', active: true },
+      { id: 'valid-10', name: 'Ten', category: 'accessories', discountPct: 10, startDate: '2026-11-11', endDate: '2026-11-11', active: true },
+      { id: 'valid-15', name: 'Fifteen', category: 'ACCESSORIES', discountPct: 15, active: true },
+      { id: 'invalid-100-plus', name: 'Invalid', category: 'Accessories', discountPct: 120, active: true },
+    ],
+  };
+
+  assert.deepEqual(applyCategoryPromotions(
+    lines, products, settings, new Date('2026-11-11T12:00:00'),
+  ), [{ ...lines[0], discount: 47 }]);
+});
+
+test('category promotions cap manual discounts at gross and respect an overridden unit price', () => {
+  const lines = [{ productId: 'product-1', qty: 2, price: 50, discount: 200 }];
+  const products = [{ id: 'product-1', category: 'Accessories', price: 100 }];
+  const settings = {
+    promotions: [{ id: 'promo-1', name: 'Promo', category: 'Accessories', discountPct: 20, active: true }],
+  };
+
+  assert.deepEqual(applyCategoryPromotions(
+    lines, products, settings, new Date('2026-11-11T12:00:00'),
+  ), [{ ...lines[0], discount: 100 }]);
+});
+
+test('category promotions preserve lines when no promotion applies', () => {
+  const lines = [{ productId: 'missing-product', qty: 1 }];
+  const products = [{ id: 'product-1', category: 'Accessories', price: 100 }];
+  const settings = { promotions: [] };
+
+  assert.equal(applyCategoryPromotions(lines, products, settings), lines);
 });
