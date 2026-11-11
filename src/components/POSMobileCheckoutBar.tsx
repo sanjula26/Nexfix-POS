@@ -20,7 +20,7 @@ export default function POSMobileCheckoutBar({
         <div className="text-[10px] font-bold tracking-wider uppercase text-faint num">{itemCount} items</div>
         <div className="num text-lg font-extrabold text-violet-600 dark:text-violet-400 leading-none">{fmtRs(total)}</div>
       </div>
-      <button className="btn btn-primary !py-3" onClick={onReviewPay}>
+      <button type="button" className="btn btn-primary !py-3" onClick={onReviewPay}>
         <Zap size={15} /> Review &amp; Pay
       </button>
     </div>
