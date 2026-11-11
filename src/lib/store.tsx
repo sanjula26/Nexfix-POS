@@ -17,7 +17,7 @@ import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
 import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
-import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
+import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
@@ -1473,27 +1473,33 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const methods = rawMethods as Array<{ method: Exclude<PaymentMethod, 'credit'>; amount: number }>;
     const previousPayments = snapshot.customerCreditPayments || [];
-    let allocations: Array<{ saleId: string; billNo: string; amount: number }> = [];
-    if (p.saleId) {
-      const sale = snapshot.sales.find(x => x.id === p.saleId && x.customerId === customer.id && x.status === 'completed');
-      if (!sale) return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
-      const invoiceDue = Math.min(getOpenCreditInvoiceBalance(sale, previousPayments), outstanding);
-      if (invoiceDue <= 0.009) return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${sale.billNo}`);
-      if (amount > invoiceDue + 0.009) {
-        return deny(`Amount exceeds selected invoice due (Rs. ${invoiceDue.toLocaleString()}). Reduce the amount or choose “Pay FIFO instead”.`, `Blocked settlement above selected invoice due for ${sale.billNo}`);
+    const allocationResult = resolveCreditPaymentAllocations({
+      customerId: customer.id,
+      amount,
+      customerOutstanding: outstanding,
+      saleId: p.saleId,
+      sales: snapshot.sales,
+      payments: previousPayments,
+    });
+    if (!allocationResult.ok) {
+      if (allocationResult.reason === 'invoice_not_found') {
+        return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
       }
-      allocations = [{ saleId: sale.id, billNo: sale.billNo, amount }];
-    } else {
-      allocations = allocateCreditPaymentFIFO(customer.id, amount, snapshot.sales, previousPayments);
-      const allocated = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
-      if (Math.abs(allocated - amount) > 0.009) {
+      if (allocationResult.reason === 'invoice_paid') {
+        return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${p.saleId}`);
+      }
+      if (allocationResult.reason === 'invoice_exceeded') {
+        const invoiceDue = allocationResult.invoiceDue || 0;
+        const billNo = allocationResult.billNo || p.saleId || 'unknown';
+        return deny(`Amount exceeds selected invoice due (Rs. ${invoiceDue.toLocaleString()}). Reduce the amount or choose “Pay FIFO instead”.`, `Blocked settlement above selected invoice due for ${billNo}`);
+      }
+      if (allocationResult.reason === 'fifo_incomplete') {
+        const allocated = allocationResult.allocatedTotal || 0;
         return deny('Could not allocate the full payment to open invoices. Refresh and check the customer’s invoice balances before retrying; no payment was saved.', `Blocked FIFO allocation mismatch for ${customer.name}: requested Rs. ${amount}, allocated Rs. ${allocated}`);
       }
-    }
-    const allocatedTotal = Math.round(allocations.reduce((sum, item) => sum + item.amount, 0) * 100) / 100;
-    if (Math.abs(allocatedTotal - amount) > 0.009) {
       return deny('Could not allocate the full payment to open invoices. Refresh and retry; no payment was saved.', `Blocked incomplete invoice allocation for ${customer.name}`);
     }
+    const allocations = allocationResult.allocations;
 
     customerCreditPaymentLockRef.current = true;
     let committed = false;
