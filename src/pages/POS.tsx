@@ -36,6 +36,7 @@ import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
 import POSQuickAddCustomerDialog from '../components/POSQuickAddCustomerDialog';
 import POSHeldSalesDialog from '../components/POSHeldSalesDialog';
 import POSImeiUnitPickerDialog from '../components/POSImeiUnitPickerDialog';
+import POSToastStack from '../components/POSToastStack';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1759,24 +1760,7 @@ export default function POS() {
         onReviewPay={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}
       />
 
-      {/* toasts */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] space-y-2 no-print">
-        <AnimatePresence>
-          {toasts.map(t => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, y: 16, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 shadow-xl text-[12.5px] font-bold text-white ${
-                t.tone === 'rose' ? 'bg-rose-500' : 'bg-amber-500'
-              }`}
-            >
-              <AlertTriangle size={14} /> {t.msg}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      <POSToastStack toasts={toasts} />
 
       {/* admin-approved bill reverse request */}
       <Modal open={reverseOpen} onClose={() => setReverseOpen(false)} title="Request bill reversal" sub="A cashier can request; only an admin can approve. The original sale stays in history.">
