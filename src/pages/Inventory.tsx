@@ -9,7 +9,7 @@ import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
-import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
+import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isLocalMainStockReady } from '../lib/branchStock';
 import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
@@ -73,7 +73,7 @@ export default function Inventory() {
   const shopId = getCloudShopId();
   const selectedBranchId = getPOSBranchId(shopId, state.settings.branchId);
   const multipleBranches = hasMultipleCachedBranches(shopId);
-  const branchStockReady = selectedBranchId === 'local-main' ? !multipleBranches : hasCachedBranchStock(selectedBranchId);
+  const branchStockReady = selectedBranchId === 'local-main' ? isLocalMainStockReady(shopId, multipleBranches) : hasCachedBranchStock(selectedBranchId);
 
   // Inventory must hydrate the assigned branch cache itself. The old cache was
   // populated only by Settings or after a stock transaction, so a fresh POS
