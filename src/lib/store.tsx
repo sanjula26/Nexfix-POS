@@ -25,6 +25,7 @@ import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefun
 import { resolveExchangeReturnLines } from './exchangeReturns';
 import { resolvePurchaseReturnLines } from './purchaseReturns';
 import { buildPurchaseReceiveChanges } from './purchaseReceive';
+import { applyRolePermissionValue, prepareUserPasswordForSave } from './userManagement';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -2969,19 +2970,16 @@ const deletePurchase = useCallback((id: string) => {
       return;
     }
     if (!(await confirmSensitiveAdmin('user account create/change'))) return;
-    const exists = state.users.some(x => x.id === u.id);
-    // Password changes and newly created accounts must use the same 12+ character
-    // policy as first-login and managed-password flows. Existing hashes are kept
-    // unchanged when the password field is intentionally left blank by the UI.
     const existing = state.users.find(x => x.id === u.id);
-    const suppliedPassword = String(u.password || '');
-    const passwordChanged = !existing || suppliedPassword !== existing.password;    if (passwordChanged && suppliedPassword.length < 12) {
+    const passwordDecision = prepareUserPasswordForSave(String(u.password || ''), existing?.password);
+    if (!passwordDecision.ok) {
       pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
       return;
     }
-    const password = isHashed(suppliedPassword)
-      ? suppliedPassword
-      : (existing && suppliedPassword === existing.password ? existing.password : hashPassword(suppliedPassword));
+    const exists = !!existing;
+    const password = passwordDecision.mode === 'preserve'
+      ? passwordDecision.password
+      : hashPassword(passwordDecision.plain);
     const toSave = { ...u, password };
     setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
@@ -3024,7 +3022,7 @@ const deletePurchase = useCallback((id: string) => {
     }
     setState(s => ({
       ...s,
-      permissions: { ...s.permissions, [role]: { ...s.permissions[role], [key]: value } },
+      permissions: applyRolePermissionValue(s.permissions, role, key, value),
     }));
     pushAudit('PERMISSION', 'Permissions', `Set ${key} = ${value ? 'ON' : 'OFF'} for ${role}`);
   }, [pushAudit, user, confirmSensitiveAdmin]);
