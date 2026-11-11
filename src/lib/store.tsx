@@ -2292,15 +2292,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const priorCreditReduction = (sale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
     const alreadySettledOnSale = (state.customerCreditPayments || []).reduce((sum, payment) => sum + (payment.allocations || []).filter(allocation => allocation.saleId === sale.id).reduce((part, allocation) => part + Math.max(0, Number(allocation.amount) || 0), 0), 0);
-    const refundCreditSplit = calculateSaleRefundCreditSplit({
-      total: sale.total,
-      amountPaid: sale.amountPaid,
-      alreadySettled: alreadySettledOnSale,
-      previouslyRefundedCredit: priorCreditReduction,
-      refundValue,
+    const { creditAmount: refundCreditAmount, cashAmount: refundCashAmount } = calculateSaleRefundCreditSplit({
+      total: sale.total, amountPaid: sale.amountPaid, alreadySettled: alreadySettledOnSale,
+      previouslyRefundedCredit: priorCreditReduction, refundValue,
     });
-    const refundCreditAmount = refundCreditSplit.creditAmount;
-    const refundCashAmount = refundCreditSplit.cashAmount;
     const refundEvent = {
       id: uid(),
       date: new Date().toISOString(),
@@ -2334,21 +2329,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const tradeInReturn = allReturned && currentSale.tradeIn?.addToInventory && currentSale.tradeIn.productId && currentSale.tradeIn.unitId;
       const previouslyCredited = (currentSale.refunds || []).reduce((sum, refund) => sum + Math.max(0, Number(refund.creditAmount) || 0), 0);
       const alreadySettledOnSale = (s.customerCreditPayments || []).reduce((sum, payment) => sum + (payment.allocations || []).filter(allocation => allocation.saleId === currentSale.id).reduce((part, allocation) => part + Math.max(0, Number(allocation.amount) || 0), 0), 0);
-      const currentRefundCreditSplit = calculateSaleRefundCreditSplit({
-        total: currentSale.total,
-        amountPaid: currentSale.amountPaid,
-        alreadySettled: alreadySettledOnSale,
-        previouslyRefundedCredit: previouslyCredited,
-        refundValue,
+      const { creditAmount: creditReduction } = calculateSaleRefundCreditSplit({
+        total: currentSale.total, amountPaid: currentSale.amountPaid, alreadySettled: alreadySettledOnSale,
+        previouslyRefundedCredit: previouslyCredited, refundValue,
       });
-      const creditReduction = currentRefundCreditSplit.creditAmount;
-      const loyaltyAdjustment = calculateSaleRefundLoyaltyAdjustment({
-        total: currentSale.total,
-        refundValue,
-        pointsEarned: currentSale.pointsEarned,
-        pointsRedeemed: currentSale.pointsRedeemed,
+      const { pointsEarnedToReverse, pointsToRestore } = calculateSaleRefundLoyaltyAdjustment({
+        total: currentSale.total, refundValue, pointsEarned: currentSale.pointsEarned, pointsRedeemed: currentSale.pointsRedeemed,
       });
-      const { pointsEarnedToReverse, pointsToRestore } = loyaltyAdjustment;
       return {
         ...s,
         sales: s.sales.map(x => x.id === saleId ? { ...x, status: allReturned ? 'refunded' : 'completed', refunds: [...(x.refunds || []), refundEvent] } : x),
