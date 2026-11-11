@@ -19,6 +19,7 @@ import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdenti
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
 import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
+import { applyCategoryPromotions } from './salePricing';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -40,30 +41,6 @@ interface NewSaleLine {
   unitIds?: string[];
 }
 
-function applyCategoryPromotions(lines: NewSaleLine[], products: readonly Product[], settings: Settings, now = new Date()): NewSaleLine[] {
-  const promotions = Array.isArray(settings.promotions) ? settings.promotions : [];
-  if (!promotions.length) return lines;
-  const day = dkey(now);
-  return lines.map(line => {
-    const product = products.find(p => p.id === line.productId);
-    if (!product) return line;
-    const eligible = promotions.filter(p => {
-      if (p.active === false) return false;
-      if (p.category.trim().toLowerCase() !== product.category.trim().toLowerCase()) return false;
-      if (p.startDate && day < p.startDate) return false;
-      if (p.endDate && day > p.endDate) return false;
-      return Number.isFinite(p.discountPct) && p.discountPct > 0 && p.discountPct <= 100;
-    });
-    if (!eligible.length) return line;
-    const pct = Math.max(...eligible.map(p => p.discountPct));
-    const unitPrice = line.price !== undefined && line.price >= 0 ? line.price : product.price;
-    const gross = Math.max(0, unitPrice * line.qty);
-    const manualDiscount = Math.min(Math.max(line.discount || 0, 0), gross);
-    const promoDiscount = Math.round((gross - manualDiscount) * pct / 100 * 100) / 100;
-    const discount = Math.min(gross, manualDiscount + promoDiscount);
-    return { ...line, discount };
-  });
-}
 
 interface NewSaleInput {
   lines: NewSaleLine[];
