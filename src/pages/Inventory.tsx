@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Package, Plus, Pencil, Trash2, Boxes, Banknote, AlertTriangle, Layers,
@@ -10,7 +10,7 @@ import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches } from '../lib/branchStock';
-import { getCloudShopId, getCloudBranchStockQuantity } from '../lib/cloudSync';
+import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -67,14 +67,63 @@ export default function Inventory() {
   const [stockCounts, setStockCounts] = useState<Record<string, string>>({});
   const [stockTakeReason, setStockTakeReason] = useState('Stock take adjustment');
   const [newUnitText, setNewUnitText] = useState('');
+  const [branchStockCacheVersion, setBranchStockCacheVersion] = useState(0);
+  const [branchStockLoadedBranchId, setBranchStockLoadedBranchId] = useState('');
+  const [branchStockLoadMessage, setBranchStockLoadMessage] = useState('');
   const shopId = getCloudShopId();
   const selectedBranchId = getPOSBranchId(shopId, state.settings.branchId);
   const multipleBranches = hasMultipleCachedBranches(shopId);
   const branchStockReady = selectedBranchId === 'local-main' ? !multipleBranches : hasCachedBranchStock(selectedBranchId);
+
+  // Inventory must hydrate the assigned branch cache itself. The old cache was
+  // populated only by Settings or after a stock transaction, so a fresh POS
+  // could keep every Adjust Stock action disabled indefinitely.
+  useEffect(() => {
+    let cancelled = false;
+    if (!shopId) return () => { cancelled = true; };
+    if (branchStockLoadedBranchId === selectedBranchId && selectedBranchId !== 'local-main' && hasCachedBranchStock(selectedBranchId)) {
+      return () => { cancelled = true; };
+    }
+    void (async () => {
+      const shop = await ensureCloudShop();
+      if (!shop.ok || !shop.shopId || shop.shopId !== shopId) {
+        if (!cancelled) {
+          setBranchStockLoadMessage(shop.error || 'Cloud shop could not be verified. Sign in to the correct shop and reopen Inventory.');
+          setBranchStockCacheVersion(version => version + 1);
+        }
+        return;
+      }
+      const branch = await resolveCloudBranchId(shop.shopId, selectedBranchId);
+      if (!branch.ok || !branch.branchId) {
+        if (!cancelled) {
+          setBranchStockLoadMessage(branch.error || 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC.');
+          setBranchStockCacheVersion(version => version + 1);
+        }
+        return;
+      }
+      const refreshed = await refreshCloudBranchStock(shop.shopId, branch.branchId);
+      if (!cancelled) {
+        if (refreshed.ok) {
+          setBranchStockLoadedBranchId(branch.branchId);
+          setBranchStockLoadMessage('');
+        } else {
+          setBranchStockLoadMessage(refreshed.error || 'Selected branch stock could not be loaded. Connect online and retry.');
+        }
+        setBranchStockCacheVersion(version => version + 1);
+      }
+    })().catch(error => {
+      if (!cancelled) {
+        setBranchStockLoadMessage(error instanceof Error ? error.message : 'Selected branch stock could not be loaded.');
+        setBranchStockCacheVersion(version => version + 1);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [shopId, selectedBranchId, branchStockLoadedBranchId]);
+
   const stockFor = useCallback((product: Product): number | null => {
     if (selectedBranchId === 'local-main') return multipleBranches ? null : product.stock;
     return getCachedBranchStock(selectedBranchId, product.id);
-  }, [selectedBranchId, multipleBranches]);
+  }, [selectedBranchId, multipleBranches, branchStockCacheVersion]);
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -387,7 +436,7 @@ export default function Inventory() {
             {fmtNum(state.products.length)} products · {branchStockReady ? fmtNum(units) : '—'} {selectedBranchId === 'local-main' ? 'units' : 'branch units'} · {branchStockReady ? low.length : '—'} low-stock alerts
           </p>
         </div>
-        {!branchStockReady && <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm">Default branch stock is not loaded for this POS. Connect online and refresh branch data before viewing stock totals, taking stock, or adjusting quantities.</div>}
+        {!branchStockReady && <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm">{branchStockLoadMessage || (multipleBranches && selectedBranchId === 'local-main' ? 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC before editing stock.' : 'Selected branch stock is not loaded. Connect online and reopen Inventory to refresh stock totals and adjustment actions.')}</div>}
         <div className="flex items-center gap-2.5">
           {can('act:manageStock') && (
             <>
@@ -478,7 +527,7 @@ export default function Inventory() {
                     </td><td className="td num font-semibold text-sub">{currentStock === null ? '—' : Math.max(0, p.reorderLevel * 2 - currentStock)}</td>
                     {can('act:viewCost') && <td className="td num text-sub">{currentStock === null ? '—' : fmtRs(currentStock * p.cost)}</td>}
                     {can('act:manageStock') && <td className="td"><div className="flex items-center justify-end gap-1">
-                      <button className={`icon-btn !w-8 !h-8 ${tracked || !branchStockReady || currentStock === null ? 'opacity-40 cursor-not-allowed' : ''}`} title={!branchStockReady ? 'Load default branch stock first' : currentStock === null ? 'This product branch quantity is not loaded; refresh branch stock first' : tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked || !branchStockReady || currentStock === null} onClick={() => { setStockAdj({ ...p, stock: currentStock ?? p.stock }); setAdjDelta(''); }}><Boxes size={14} /></button>
+                      <button className={`icon-btn !w-8 !h-8 ${tracked || !branchStockReady || currentStock === null ? 'opacity-40 cursor-not-allowed' : ''}`} title={!branchStockReady ? (multipleBranches && selectedBranchId === 'local-main' ? 'This POS is not assigned to an active branch' : 'Load selected branch stock first') : currentStock === null ? 'This product branch quantity is not loaded; refresh branch stock first' : tracked ? 'Use GRN or Units for tracked stock' : 'Adjust stock'} disabled={tracked || !branchStockReady || currentStock === null} onClick={() => { setStockAdj({ ...p, stock: currentStock ?? p.stock }); setAdjDelta(''); }}><Boxes size={14} /></button>
                       <button className="icon-btn !w-8 !h-8" title="Edit product details" onClick={() => { void openEditProduct(p); }}><Pencil size={14} /></button>
                       {can('page:purchases') && <button className="icon-btn !w-8 !h-8" title="Receive more stock for this existing product" disabled={!branchStockReady} onClick={() => openRestock(p)}><PackageCheck size={14} /></button>}
                       {can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" title="Delete" onClick={() => setDeleting(p)}><Trash2 size={14} /></button>}
