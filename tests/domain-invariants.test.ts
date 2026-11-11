@@ -983,7 +983,7 @@ test('user password preparation preserves unchanged legacy and modern hashes', (
 
   const modernHash = 'AAAAAAAAAAAAAAAAAAAAAA==:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
   assert.deepEqual(prepareUserPasswordForSave(modernHash), {
-    ok: true, mode: 'hash', plain: modernHash,
+    ok: true, mode: 'preserve', password: modernHash,
   });
 });
 
