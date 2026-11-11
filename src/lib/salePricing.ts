@@ -1,5 +1,5 @@
 import type { Product, Settings } from './types';
-import { dkey } from './utils';
+import { dkey } from './utils.ts';
 
 export interface SalePromotionLine {
   productId: string;
