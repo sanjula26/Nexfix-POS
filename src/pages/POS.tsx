@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
+  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
