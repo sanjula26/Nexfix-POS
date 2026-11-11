@@ -5,7 +5,7 @@ import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupVal
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
 import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
-import { calculateSaleRefund } from '../src/lib/saleRefund.ts';
+import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from '../src/lib/saleRefund.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -617,4 +617,76 @@ test('sale refund calculation returns zero for fully exchanged lines and clamps 
   assert.equal(result.remainingItems.length, 0);
   assert.equal(result.fullReturn, false);
   assert.equal(result.refundValue, 0);
+});
+
+
+test('sale refund credit split prioritizes outstanding invoice credit before cash', () => {
+  assert.deepEqual(calculateSaleRefundCreditSplit({
+    total: 100,
+    amountPaid: 40,
+    alreadySettled: 20,
+    previouslyRefundedCredit: 10,
+    refundValue: 50,
+  }), {
+    creditDue: 30,
+    creditAmount: 30,
+    cashAmount: 20,
+  });
+  assert.deepEqual(calculateSaleRefundCreditSplit({
+    total: 100,
+    amountPaid: 100,
+    alreadySettled: 0,
+    previouslyRefundedCredit: 0,
+    refundValue: 25.555,
+  }), {
+    creditDue: 0,
+    creditAmount: 0,
+    cashAmount: 25.56,
+  });
+});
+
+test('sale refund credit split caps credit at the refund amount and never returns negative cash', () => {
+  assert.deepEqual(calculateSaleRefundCreditSplit({
+    total: 100,
+    amountPaid: 0,
+    alreadySettled: 0,
+    previouslyRefundedCredit: 0,
+    refundValue: 25,
+  }), {
+    creditDue: 100,
+    creditAmount: 25,
+    cashAmount: 0,
+  });
+  assert.deepEqual(calculateSaleRefundCreditSplit({
+    total: 100,
+    amountPaid: 120,
+    alreadySettled: 0,
+    previouslyRefundedCredit: 0,
+    refundValue: 25,
+  }), {
+    creditDue: 0,
+    creditAmount: 0,
+    cashAmount: 25,
+  });
+});
+
+test('sale refund loyalty adjustment reverses earned and restores redeemed points proportionally', () => {
+  assert.deepEqual(calculateSaleRefundLoyaltyAdjustment({
+    total: 100,
+    refundValue: 50,
+    pointsEarned: 3,
+    pointsRedeemed: 5,
+  }), {
+    pointsEarnedToReverse: 2,
+    pointsToRestore: 3,
+  });
+  assert.deepEqual(calculateSaleRefundLoyaltyAdjustment({
+    total: 100,
+    refundValue: 150,
+    pointsEarned: 3,
+    pointsRedeemed: 5,
+  }), {
+    pointsEarnedToReverse: 3,
+    pointsToRestore: 5,
+  });
 });
