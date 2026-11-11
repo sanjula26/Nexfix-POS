@@ -5,7 +5,7 @@ import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
   UserRound, Coins, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, Tag,
+  ReceiptText, Tag,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Printer,
 } from 'lucide-react';
@@ -47,6 +47,7 @@ import POSItemSearchHeading from '../components/POSItemSearchHeading';
 import POSCustomerSearchPanel from '../components/POSCustomerSearchPanel';
 import POSItemSearchField from '../components/POSItemSearchField';
 import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
+import POSPaymentMethodHeader from '../components/POSPaymentMethodHeader';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1343,17 +1344,13 @@ export default function POS() {
 
             {/* payment methods */}
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-faint">Payment method</span>
-                <button
-                  onClick={() => { setSplitOn(s => !s); if (!splitOn) setLegs([{ method: 'cash', amount: total }]); }}
-                  className={`inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-1 rounded-lg border transition-all ${
-                    splitOn ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-raised text-sub border-line hover:text-ink'
-                  }`}
-                >
-                  <Split size={11} /> Split
-                </button>
-              </div>
+              <POSPaymentMethodHeader
+                splitOn={splitOn}
+                onToggleSplit={() => {
+                  setSplitOn(value => !value);
+                  if (!splitOn) setLegs([{ method: 'cash', amount: total }]);
+                }}
+              />
               {!splitOn ? (
                 <div className="grid grid-cols-5 gap-1.5">
                   {PAYMENTS.map(m => {
