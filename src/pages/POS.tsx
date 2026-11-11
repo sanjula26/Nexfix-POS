@@ -1049,8 +1049,6 @@ export default function POS() {
                     lastPurchases={customerLastPurchases}
                   />
                 </div>
-                  )}
-                </div>
               ) : (
                 <div ref={custBoxRef} className="relative">
                   <div className="flex gap-2">
