@@ -39,6 +39,7 @@ import POSImeiUnitPickerDialog from '../components/POSImeiUnitPickerDialog';
 import POSToastStack from '../components/POSToastStack';
 import POSBillReversalDialog from '../components/POSBillReversalDialog';
 import POSTradeInEditor, { type TradeInDraft } from '../components/POSTradeInEditor';
+import POSItemSearchSuggestions from '../components/POSItemSearchSuggestions';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1224,51 +1225,28 @@ export default function POS() {
                     className="w-full !pl-11 !pr-4 !py-3.5 !text-[15px] !rounded-xl !border-violet-300/70 dark:!border-violet-500/30 !bg-surface shadow-[0_8px_28px_-16px_rgba(124,58,237,.5)]"
                   />
                 </div>
-                <AnimatePresence>
-                  {itemSuggestions.length > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                      className="absolute left-0 right-0 top-full mt-1.5 z-40 card !rounded-xl overflow-hidden shadow-2xl"
-                    >
-                      {itemUnitSuggestion && (() => {
-                        const p = products.find(x => x.id === itemUnitSuggestion.productId);
-                        if (!p) return null;
-                        return (
-                          <button className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left bg-amber-500/[0.06] hover:bg-amber-500/[0.1] border-b border-line"
-                            onMouseDown={e => e.preventDefault()}
-                            onClick={() => { addUnitToCart(itemUnitSuggestion.productId, itemUnitSuggestion.id); setSearch(''); setTimeout(focusSearch, 0); }}>
-                            <span className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0"><Smartphone size={14} /></span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-[12px] font-bold text-ink truncate">{p.name} · IMEI / Serial</span>
-                              <span className="block text-[10px] text-faint num">{itemUnitSuggestion.imei || itemUnitSuggestion.serial} · Unit available</span>
-                            </span>
-                            <span className="text-[10px] font-extrabold text-amber-600">ADD UNIT</span>
-                          </button>
-                        );
-                      })()}
-                      {itemSuggestions.map(p => {
-                        const Icon = CAT_ICON[p.category] || Package;
-                        const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
-                        return (
-                          <button
-                            key={p.id}
-                            className="w-full flex items-center gap-3 px-3.5 py-2.5 text-left hover:bg-raised/70 border-b border-line last:border-b-0"
-                            onMouseDown={e => e.preventDefault()}
-                            onClick={() => { add(p.id); setSearch(''); setTimeout(focusSearch, 0); }}
-                          >
-                            <span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center shrink-0"><Icon size={14} /></span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block text-[12px] font-bold text-ink truncate">{p.name}</span>
-                              <span className="block text-[10px] text-faint num">{p.sku} · {p.barcode || 'No barcode'} · {p.stock} in stock</span>
-                            </span>
-                            {inCart > 0 && <span className="num text-[10px] font-bold text-violet-500">×{inCart}</span>}
-                            <span className="num text-[12px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
-                          </button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+<POSItemSearchSuggestions
+                  visible={itemSuggestions.length > 0}
+                  unitSuggestion={itemUnitSuggestion ? {
+                    unit: itemUnitSuggestion,
+                    productName: products.find(product => product.id === itemUnitSuggestion.productId)?.name || '',
+                  } : undefined}
+                  items={itemSuggestions.map(product => ({
+                    product,
+                    Icon: CAT_ICON[product.category] || Package,
+                    inCart: lines.find(line => line.productId === product.id)?.qty || 0,
+                  }))}
+                  onAddUnit={unit => {
+                    addUnitToCart(unit.productId, unit.id);
+                    setSearch('');
+                    setTimeout(focusSearch, 0);
+                  }}
+                  onAddProduct={productId => {
+                    add(productId);
+                    setSearch('');
+                    setTimeout(focusSearch, 0);
+                  }}
+                />
               </div>
             </div>
 
