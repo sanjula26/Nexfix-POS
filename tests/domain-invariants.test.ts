@@ -7,6 +7,7 @@ import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/sal
 import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from '../src/lib/saleRefund.ts';
 import { resolveExchangeReturnLines } from '../src/lib/exchangeReturns.ts';
+import { resolvePurchaseReturnLines } from '../src/lib/purchaseReturns.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -786,4 +787,109 @@ test('exchange return resolution rejects unit ids for untracked products and emp
   assert.deepEqual(resolveExchangeReturnLines({ ...input, requested: new Map(), returns: [] }), {
     ok: false, reason: 'no_returnable_items',
   });
+});
+
+
+test('purchase return resolution aggregates line requests and subtracts prior returns', () => {
+  const purchase = {
+    id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+    supplierName: 'Supplier', status: 'received' as const, total: 500,
+    items: [{ productId: 'p1', name: 'Cable', qty: 5, cost: 100 }],
+  };
+  const result = resolvePurchaseReturnLines({
+    purchase,
+    existingReturns: [{
+      id: 'dn-old', dnNo: 'DN-0001', purchaseId: 'po-1', poNo: 'GRN-0001',
+      supplierId: 's1', supplierName: 'Supplier', date: '2026-01-02',
+      items: [{ itemIdx: 0, productId: 'p1', name: 'Cable', qty: 1, cost: 100, total: 100 }],
+      total: 100, reason: 'Earlier return', by: 'Admin',
+    }],
+    products: [{ id: 'p1', stock: 5 } as import('../src/lib/types.ts').Product],
+    units: [],
+    lines: [
+      { itemIdx: 0, qty: 1 },
+      { itemIdx: 0, qty: 1 },
+      { itemIdx: 9, qty: 1 },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].qty, 2);
+  assert.equal(result.items[0].total, 200);
+  assert.equal(result.total, 200);
+  assert.deepEqual(result.returnedUnitIds, new Set());
+});
+
+test('purchase return resolution requires selected tracked units from the same GRN with matching identifiers', () => {
+  const purchase = {
+    id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+    supplierName: 'Supplier', status: 'received' as const, total: 200,
+    items: [{
+      productId: 'p1', name: 'Tracked phone', qty: 2, cost: 100,
+      unitIdentifiers: [{ imei: '111', serial: 'A' }, { imei: '222', serial: 'B' }],
+    }],
+  };
+  const units = [
+    { id: 'u1', productId: 'p1', purchaseId: 'po-1', status: 'in_stock' as const, imei: '111', serial: 'A', createdAt: '2026-01-01' },
+    { id: 'u2', productId: 'p1', purchaseId: 'po-1', status: 'in_stock' as const, imei: '999', serial: 'Z', createdAt: '2026-01-01' },
+  ];
+  const base = {
+    purchase, existingReturns: [], products: [{ id: 'p1', stock: 2 } as import('../src/lib/types.ts').Product],
+    units,
+  };
+  const valid = resolvePurchaseReturnLines({
+    ...base, lines: [{ itemIdx: 0, qty: 1, unitIds: ['u1'] }],
+  });
+  assert.equal(valid.ok, true);
+  if (valid.ok) {
+    assert.deepEqual(valid.returnedUnitIds, new Set(['u1']));
+    assert.equal(valid.total, 100);
+  }
+  assert.deepEqual(resolvePurchaseReturnLines({
+    ...base, lines: [{ itemIdx: 0, qty: 1, unitIds: ['u2'] }],
+  }), { ok: false, reason: 'tracked_unit_identifier_mismatch' });
+});
+
+test('purchase return resolution caps return quantity by remaining GRN quantity and current stock', () => {
+  const purchase = {
+    id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+    supplierName: 'Supplier', status: 'received' as const, total: 300,
+    items: [{ productId: 'p1', name: 'Cable', qty: 3, cost: 100 }],
+  };
+  const base = {
+    purchase,
+    existingReturns: [{
+      id: 'dn-old', dnNo: 'DN-0001', purchaseId: 'po-1', poNo: 'GRN-0001',
+      supplierId: 's1', supplierName: 'Supplier', date: '2026-01-02',
+      items: [{ itemIdx: 0, productId: 'p1', name: 'Cable', qty: 2, cost: 100, total: 200 }],
+      total: 200, reason: 'Earlier return', by: 'Admin',
+    }],
+    units: [],
+    lines: [{ itemIdx: 0, qty: 2 }],
+  };
+  assert.deepEqual(resolvePurchaseReturnLines({
+    ...base, products: [{ id: 'p1', stock: 3 } as import('../src/lib/types.ts').Product],
+  }), { ok: false, reason: 'quantity_exceeds_available' });
+  assert.deepEqual(resolvePurchaseReturnLines({
+    ...base, products: [{ id: 'p1', stock: 1 } as import('../src/lib/types.ts').Product],
+  }), { ok: false, reason: 'quantity_exceeds_available' });
+});
+
+test('purchase return resolution rejects unit ids for untracked products and empty valid lines', () => {
+  const purchase = {
+    id: 'po-1', poNo: 'GRN-0001', date: '2026-01-01', supplierId: 's1',
+    supplierName: 'Supplier', status: 'received' as const, total: 50,
+    items: [{ productId: 'p1', name: 'Mouse', qty: 1, cost: 50 }],
+  };
+  const base = {
+    purchase, existingReturns: [], products: [{ id: 'p1', stock: 1 } as import('../src/lib/types.ts').Product], units: [],
+  };
+  assert.deepEqual(resolvePurchaseReturnLines({
+    ...base, lines: [{ itemIdx: 0, qty: 1, unitIds: ['unexpected'] }],
+  }), { ok: false, reason: 'untracked_unit_ids' });
+  assert.deepEqual(resolvePurchaseReturnLines({
+    ...base, lines: [{ itemIdx: 99, qty: 1 }, { itemIdx: 0, qty: 0 }],
+  }), { ok: false, reason: 'no_returnable_lines' });
 });
