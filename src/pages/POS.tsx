@@ -32,6 +32,7 @@ import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser, HeldSale } from '../lib/types';
 import POSHeldSaleRow from '../components/POSHeldSaleRow';
 import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
+import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1794,23 +1795,14 @@ export default function POS() {
           </div>
         </div>
       </Modal>
-      {/* drawer modal */}
-      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
-        <div className="space-y-3">
-          {[
-            ['Opening float', state.settings.openingFloat, 'text-ink'],
-            ['My cash sales today', myCash, 'text-emerald-500'],
-            ['Expected in drawer', expected, 'text-violet-500'],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="flex justify-between items-center rounded-xl bg-raised border border-line px-4 py-3">
-              <span className="text-sm text-sub">{l}</span>
-              <span className={`num font-bold ${c}`}>{fmtRs(v as number)}</span>
-            </div>
-          ))}
-          <p className="text-[11px] text-faint">Drawer is settled at day end under Cashier Balances (admin only).</p>
-          <button className="btn btn-soft w-full" onClick={() => setDrawerOpen(false)}><X size={15} /> Close</button>
-        </div>
-      </Modal>
+      <POSCashDrawerDialog
+        open={drawerOpen}
+        userName={user?.name || ''}
+        openingFloat={state.settings.openingFloat}
+        myCash={myCash}
+        expected={expected}
+        onClose={() => setDrawerOpen(false)}
+      />
 
       {/* held sales */}
       <Modal open={heldOpen} onClose={() => setHeldOpen(false)} title="Held sales" sub="Resume or discard parked carts">
