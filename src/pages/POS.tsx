@@ -15,6 +15,7 @@ import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import CartLine from '../components/POSCartLine';
 import POSToastStack from '../components/POSToastStack';
+import POSKeyboardHint from '../components/POSKeyboardHint';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1351,12 +1352,12 @@ export default function POS() {
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
               <Keyboard size={11} className="text-faint" />
-              <span><Kbd>F2</Kbd> Customer</span>
-              <span><Kbd>F3</Kbd> Search</span>
-              <span><Kbd>F4</Kbd> Discount</span>
-              <span><Kbd>F5</Kbd> Hold</span>
-              <span><Kbd>F6</Kbd> Complete</span>
-              <span><Kbd>F8</Kbd> Clear</span>
+              <span><POSKeyboardHint>F2</POSKeyboardHint> Customer</span>
+              <span><POSKeyboardHint>F3</POSKeyboardHint> Search</span>
+              <span><POSKeyboardHint>F4</POSKeyboardHint> Discount</span>
+              <span><POSKeyboardHint>F5</POSKeyboardHint> Hold</span>
+              <span><POSKeyboardHint>F6</POSKeyboardHint> Complete</span>
+              <span><POSKeyboardHint>F8</POSKeyboardHint> Clear</span>
             </div>
           </div>
 
@@ -2149,12 +2150,4 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ---------- kbd hint ---------- */
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-1.5 py-[2px] rounded-[5px] bg-raised border border-line border-b-2 text-[9px] font-extrabold text-sub font-mono">
-      {children}
-    </span>
-  );
-}
 
