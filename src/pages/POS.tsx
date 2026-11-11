@@ -49,6 +49,7 @@ import POSItemSearchField from '../components/POSItemSearchField';
 import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
 import POSPaymentMethodHeader from '../components/POSPaymentMethodHeader';
 import POSSplitCreditSummary from '../components/POSSplitCreditSummary';
+import POSAmountPaidField from '../components/POSAmountPaidField';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1428,15 +1429,11 @@ export default function POS() {
             {/* amount paid */}
             {!splitOn && (
               <div>
-                <span className="block text-[10px] font-bold tracking-wider uppercase text-faint mb-1.5">
-                  {hasCredit ? 'Amount received now (partial credit)' : 'Amount paid'}
-                </span>
-                <input
-                  className="input num !text-xl !font-extrabold !py-2.5 text-right"
+                <POSAmountPaidField
+                  label={hasCredit ? 'Amount received now (partial credit)' : 'Amount paid'}
                   value={fmtMoneyInput(paid)}
-                  onChange={e => { setPaid(e.target.value.replace(/[^\d.]/g, '')); setPaidAuto(false); }}
-                  placeholder="0.00" inputMode="decimal"
-                  onKeyDown={e => { if (e.key === 'Enter') finish(); }}
+                  onChange={value => { setPaid(value.replace(/[^\d.]/g, '')); setPaidAuto(false); }}
+                  onEnter={finish}
                 />
                 {hasCredit && (
                   <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 space-y-2">
