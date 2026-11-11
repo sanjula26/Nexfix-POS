@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
+  Loader2, Eye, EyeOff, Lock, Star, MessageCircle, Printer, Sparkles,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
@@ -18,6 +18,7 @@ import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
 import POSCatalogProductCard from '../components/POSCatalogProductCard';
 import POSBillSummaryStrip from '../components/POSBillSummaryStrip';
 import POSSelectedCustomerHeader from '../components/POSSelectedCustomerHeader';
+import POSCustomerAccountSummary from '../components/POSCustomerAccountSummary';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
