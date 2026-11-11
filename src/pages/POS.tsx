@@ -5,7 +5,7 @@ import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, ChevronDown, Tag, Keyboard,
+  Split, ReceiptText, ChevronDown, Tag,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
@@ -43,6 +43,7 @@ import POSItemSearchSuggestions from '../components/POSItemSearchSuggestions';
 import POSKeyboardShortcutHints from '../components/POSKeyboardShortcutHints';
 import POSCartEmptyState from '../components/POSCartEmptyState';
 import POSCartColumnHeaders from '../components/POSCartColumnHeaders';
+import POSItemSearchHeading from '../components/POSItemSearchHeading';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1212,15 +1213,7 @@ export default function POS() {
 
             {/* B. HERO ITEM SEARCH — primary cashier entry point */}
             <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-line bg-gradient-to-b from-violet-500/[0.035] to-transparent">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <div className="text-[10px] font-extrabold tracking-[0.14em] uppercase text-violet-500">Add item</div>
-                  <div className="text-[12px] font-semibold text-sub">Fast barcode / SKU / product / IMEI search</div>
-                </div>
-                <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-raised border border-line px-2 py-1 text-[9.5px] font-bold text-faint">
-                  <Keyboard size={10} /> F3
-                </span>
-              </div>
+              <POSItemSearchHeading />
               <div ref={searchBoxRef} className="relative">
                 <div className="relative">
                   <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-violet-500 pointer-events-none" />
