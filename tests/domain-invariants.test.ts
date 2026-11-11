@@ -6,6 +6,7 @@ import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlemen
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
+  resolveCreditPaymentAllocations,
 } from '../src/lib/customerCredit.ts';
 import {
   applyInventoryLedger,
@@ -300,4 +301,66 @@ test('inventory ledger state builder records only a pending-to-received purchase
 
   const unchanged = applyInventoryLedger(previous, updated, 'PURCHASE_RECEIVE', 'Admin');
   assert.equal(unchanged.inventoryTransactions?.length, 1);
+});
+
+
+test('credit settlement allocation respects selected invoice balance and customer ownership', () => {
+  const sales = [
+    { id: 'sale-1', billNo: 'B-001', customerId: 'customer-1', total: 500, amountPaid: 100, date: '2026-01-01T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-2', billNo: 'B-002', customerId: 'customer-2', total: 900, amountPaid: 0, date: '2026-01-02T10:00:00.000Z', status: 'completed' },
+  ];
+  const payments = [{
+    id: 'payment-1', customerId: 'customer-1', amount: 100, method: 'cash',
+    date: '2026-01-03T10:00:00.000Z', by: 'cashier-1',
+    allocations: [{ saleId: 'sale-1', billNo: 'B-001', amount: 100 }],
+  }];
+
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 250, customerOutstanding: 300,
+    saleId: 'sale-1', sales, payments,
+  }), {
+    ok: true,
+    allocations: [{ saleId: 'sale-1', billNo: 'B-001', amount: 250 }],
+    allocatedTotal: 250,
+  });
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 50, customerOutstanding: 300,
+    saleId: 'sale-2', sales, payments,
+  }), { ok: false, reason: 'invoice_not_found' });
+});
+
+test('credit settlement allocation rejects paid and overpaid selected invoices', () => {
+  const sales = [{
+    id: 'sale-1', billNo: 'B-001', customerId: 'customer-1',
+    total: 500, amountPaid: 0, date: '2026-01-01T10:00:00.000Z', status: 'completed',
+  }];
+  const payments = [{
+    id: 'payment-1', customerId: 'customer-1', amount: 500, method: 'cash',
+    date: '2026-01-02T10:00:00.000Z', by: 'cashier-1',
+    allocations: [{ saleId: 'sale-1', billNo: 'B-001', amount: 500 }],
+  }];
+
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 10, customerOutstanding: 500,
+    saleId: 'sale-1', sales, payments,
+  }), { ok: false, reason: 'invoice_paid', invoiceDue: 0, billNo: 'B-001' });
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 101, customerOutstanding: 100,
+    saleId: 'sale-1', sales, payments: [],
+  }), {
+    ok: false, reason: 'invoice_exceeded', invoiceDue: 100, billNo: 'B-001',
+  });
+});
+
+test('credit settlement FIFO allocation fails closed when open invoices cannot cover payment', () => {
+  const sales = [
+    { id: 'sale-1', billNo: 'B-001', customerId: 'customer-1', total: 100, amountPaid: 0, date: '2026-01-01T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-2', billNo: 'B-002', customerId: 'customer-1', total: 200, amountPaid: 0, date: '2026-01-02T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-other', billNo: 'B-OTHER', customerId: 'customer-2', total: 1000, amountPaid: 0, date: '2026-01-03T10:00:00.000Z', status: 'completed' },
+  ];
+
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 400, customerOutstanding: 400,
+    sales, payments: [],
+  }), { ok: false, reason: 'fifo_incomplete', allocatedTotal: 300 });
 });
