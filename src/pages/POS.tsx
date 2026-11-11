@@ -42,6 +42,7 @@ import POSTradeInEditor, { type TradeInDraft } from '../components/POSTradeInEdi
 import POSItemSearchSuggestions from '../components/POSItemSearchSuggestions';
 import POSKeyboardShortcutHints from '../components/POSKeyboardShortcutHints';
 import POSCartEmptyState from '../components/POSCartEmptyState';
+import POSCartColumnHeaders from '../components/POSCartColumnHeaders';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1255,14 +1256,7 @@ export default function POS() {
               </div>
             </div>
 
-            {/* C. cart items */}
-            <div className="hidden md:grid grid-cols-[minmax(0,1fr)_92px_104px_86px_38px] gap-3 items-center px-5 sm:px-6 py-2 bg-violet-500/[0.055] border-b border-line text-[9.5px] font-extrabold uppercase tracking-wider text-faint">
-              <span>Item / code · price</span>
-              <span className="text-center">Qty</span>
-              <span className="text-right">Discount</span>
-              <span className="text-right">Amount</span>
-              <span className="text-center">Action</span>
-            </div>
+            <POSCartColumnHeaders />
             <div className="min-h-[190px] max-h-[400px] overflow-y-auto">
               {detailed.length === 0 ? (
 <POSCartEmptyState />
