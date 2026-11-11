@@ -33,6 +33,7 @@ import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser, HeldSale } fro
 import POSHeldSaleRow from '../components/POSHeldSaleRow';
 import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
 import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
+import POSPriceApprovalDialog from '../components/POSPriceApprovalDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1857,36 +1858,17 @@ export default function POS() {
       </Modal>
 
       {/* admin gate: price override */}
-      <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
-        <div className="space-y-3.5">
-          <div className="flex items-center gap-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-3.5 py-3">
-            <LockKeyhole size={16} className="text-amber-500 shrink-0" />
-            <p className="text-[12px] text-sub">Enter the <b className="text-ink">admin password</b> to unlock price editing for this bill. Attempts are audit-logged.</p>
-          </div>
-          <div className="relative">
-            <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-            <input
-              type={gateShow ? 'text' : 'password'}
-              className={`input pl-9 pr-10 !py-2.5 font-mono tracking-widest ${gateErr ? '!border-rose-400' : ''}`}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-              value={gatePin}
-              autoFocus
-              onChange={e => { setGatePin(e.target.value); setGateErr(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryGate(); }}
-            />
-            <button type="button" onClick={() => setGateShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">
-              {gateShow ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-          {gateErr && <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-rose-500"><AlertTriangle size={13} /> {gateErr}</p>}
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={tryGate} disabled={!gatePin || gateBusy}>
-              {gateBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />} Unlock price editing
-            </button>
-            <button className="btn btn-soft" onClick={() => setGateOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSPriceApprovalDialog
+        open={gateOpen}
+        pin={gatePin}
+        showPin={gateShow}
+        error={gateErr}
+        busy={gateBusy}
+        onPinChange={value => { setGatePin(value); setGateErr(''); }}
+        onToggleVisibility={() => setGateShow(show => !show)}
+        onSubmit={tryGate}
+        onClose={() => setGateOpen(false)}
+      />
 
       {/* IMEI / Serial unit picker for tracked products */}
       <Modal
