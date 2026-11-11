@@ -2,20 +2,38 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Package, Plus, Minus, Trash2, PauseCircle, Landmark,
-  CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
+  Package, Plus, Trash2, PauseCircle, Landmark,
+  CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
-  AlertTriangle, Pencil, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
+  Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard,
+  AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
+  Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
+import POSCartLine from '../components/POSCartLine';
+import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
+import POSCatalogProductCard from '../components/POSCatalogProductCard';
+import POSBillSummaryStrip from '../components/POSBillSummaryStrip';
+import POSSelectedCustomerHeader from '../components/POSSelectedCustomerHeader';
+import POSCustomerAccountSummary from '../components/POSCustomerAccountSummary';
+import POSBillMetaRow from '../components/POSBillMetaRow';
+import POSFavoritesQuickAdd from '../components/POSFavoritesQuickAdd';
+import POSProductCatalogBrowser from '../components/POSProductCatalogBrowser';
+import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
+import POSReprintBillRow from '../components/POSReprintBillRow';
+import POSReprintSearchHeader from '../components/POSReprintSearchHeader';
+import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
+import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
-import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
+import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser } from '../lib/types';
+import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
+import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
+import POSQuickAddCustomerDialog from '../components/POSQuickAddCustomerDialog';
+import POSHeldSalesDialog from '../components/POSHeldSalesDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1016,27 +1034,12 @@ export default function POS() {
           </div>
         </div>
 
-        {/* terminal-style bill summary: the important identifiers stay visible while billing */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-line border-b border-line">
-          <div className="bg-surface px-4 sm:px-5 py-2.5">
-            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Invoice No · next</div>
-            <div className="num text-[14px] font-extrabold text-violet-600 dark:text-violet-400 mt-0.5">{nextBillPreview}</div>
-          </div>
-          <div className="bg-surface px-4 sm:px-5 py-2.5">
-            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Customer</div>
-            <div className="text-[12.5px] font-bold text-ink truncate mt-0.5">{customer?.name || 'Walk-in Customer'}</div>
-          </div>
-          <div className="bg-surface px-4 sm:px-5 py-2.5">
-            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Mobile / WhatsApp</div>
-            <div className="num text-[12.5px] font-bold text-ink truncate mt-0.5">{customer?.phone || billingWhatsApp || '—'}</div>
-          </div>
-          <div className="bg-surface px-4 sm:px-5 py-2.5">
-            <div className="text-[9px] font-extrabold uppercase tracking-[0.14em] text-faint">Customer Balance</div>
-            <div className={`num text-[14px] font-extrabold mt-0.5 ${customer?.creditBalance ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-              {fmtRs(customer?.creditBalance || 0)}
-            </div>
-          </div>
-        </div>
+        <POSBillSummaryStrip
+          nextBillPreview={nextBillPreview}
+          customerName={customer?.name || 'Walk-in Customer'}
+          customerPhone={customer?.phone || billingWhatsApp || '—'}
+          customerBalance={customer?.creditBalance || 0}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] items-start">
           {/* ---- LEFT: customer + cart ---- */}
@@ -1049,36 +1052,14 @@ export default function POS() {
               </div>
               {customer ? (
                 <div className="rounded-xl bg-violet-500/[0.07] border border-violet-500/20 p-3">
-                  <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center font-bold shrink-0">
-                      {customer.name.charAt(0).toUpperCase()}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] font-bold text-ink truncate">{customer.name}</div>
-                      <div className="text-[11px] text-sub num">{customer.phone}</div>
-                    </div>
-                    <Badge tone="amber" className="num shrink-0"><Coins size={11} /> {customer.loyaltyPoints} pts</Badge>
-                    <button className="icon-btn !w-7 !h-7" onClick={() => { setCustomerId(''); setRedeemOn(false); setPoints(''); setCustQuery(''); }} title="Change customer">
-                      <X size={13} />
-                    </button>
-                  </div>
-                  {customer.creditBalance > 0 && (
-                    <div className="flex items-center justify-between mt-2.5 rounded-lg bg-rose-500/10 border border-rose-500/25 px-3 py-2">
-                      <span className="text-[10.5px] font-extrabold tracking-wide text-rose-500 flex items-center gap-1.5">
-                        <BadgeDollarSign size={12} /> OUTSTANDING BALANCE
-                      </span>
-                      <span className="num text-[13px] font-extrabold text-rose-500">{fmtRs(customer.creditBalance)}</span>
-    
-                  {customerLastPurchases.length > 0 && (
-                    <div className="mt-3 rounded-lg border border-line bg-raised/50 px-3 py-2.5">
-                      <div className="text-[10px] font-extrabold uppercase tracking-wider text-sub mb-1.5">Last purchases</div>
-                      <div className="space-y-1">
-                        {customerLastPurchases.map(s => <div key={s.id} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-sub truncate">{s.billNo} · {s.items.slice(0, 2).map(x => x.name).join(', ')}{s.items.length > 2 ? '…' : ''}</span><span className="num font-semibold text-ink shrink-0">{fmtRs(s.total, false)}</span></div>)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                  )}
+                  <POSSelectedCustomerHeader
+                    customer={customer}
+                    onChangeCustomer={() => { setCustomerId(''); setRedeemOn(false); setPoints(''); setCustQuery(''); }}
+                  />
+                  <POSCustomerAccountSummary
+                    creditBalance={customer.creditBalance}
+                    lastPurchases={customerLastPurchases}
+                  />
                 </div>
               ) : (
                 <div ref={custBoxRef} className="relative">
@@ -1176,60 +1157,19 @@ export default function POS() {
                     )}
                   </AnimatePresence>
 
-                  {recentCustomers.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                      <span className="text-[9.5px] font-bold tracking-wider uppercase text-faint">Recent</span>
-                      {recentCustomers.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => setCustomerId(c.id)}
-                          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-sub bg-raised border border-line rounded-full pl-0.5 pr-2.5 py-0.5 hover:border-violet-400 hover:text-violet-500 transition-colors"
-                        >
-                          <span className="w-[18px] h-[18px] rounded-full bg-violet-500/15 text-violet-500 flex items-center justify-center text-[9px] font-bold">
-                            {c.name.charAt(0).toUpperCase()}
-                          </span>
-                          {c.name.split(' ')[0]}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <POSRecentCustomers customers={recentCustomers} onSelect={setCustomerId} />
                 </div>
               )}
 
-              {/* salesman + note row */}
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider uppercase text-faint">
-                  Salesman
-                </span>
-                <select
-                  className="input !w-auto !py-1.5 !px-2.5 !text-[12px] font-semibold"
-                  value={salesmanId}
-                  onChange={e => setSalesmanId(e.target.value)}
-                >
-                  {activeStaff.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-                <button
-                  className={`ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
-                    noteOpen || note ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' : 'bg-raised text-sub border-line hover:text-ink'
-                  }`}
-                  onClick={() => setNoteOpen(o => !o)}
-                >
-                  <StickyNote size={12} /> {note ? 'Note added' : 'Bill note'}
-                </button>
-              </div>
-              <AnimatePresence>
-                {noteOpen && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <textarea
-                      className="input mt-2.5 !text-[12.5px] min-h-[56px] resize-none"
-                      placeholder="e.g. Gift packing · Deliver tomorrow after 4 PM"
-                      value={note}
-                      onChange={e => setNote(e.target.value)}
-                      maxLength={160}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <POSBillMetaRow
+                staff={activeStaff}
+                salesmanId={salesmanId}
+                noteOpen={noteOpen}
+                note={note}
+                onSalesmanChange={setSalesmanId}
+                onToggleNote={() => setNoteOpen(open => !open)}
+                onNoteChange={setNote}
+              />
             </div>
 
             {/* B. HERO ITEM SEARCH — primary cashier entry point */}
@@ -1324,7 +1264,7 @@ export default function POS() {
               ) : (
                 <AnimatePresence initial={false}>
                   {detailed.map(l => (
-                    <CartLine
+                    <POSCartLine
                       key={l.productId}
                       line={l}
                       unitPrice={linePrice(l)}
@@ -1341,10 +1281,7 @@ export default function POS() {
               )}
             </div>
 
-            {bundleSuggestions.length > 0 && <div className="px-5 sm:px-6 py-3 border-t border-line bg-emerald-500/[0.035]">
-              <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sub mb-2"><Sparkles size={12} className="text-emerald-600"/> Helpful accessories in stock</div>
-              <div className="flex flex-wrap gap-2">{bundleSuggestions.map(product=><button key={product.id} type="button" onClick={()=>add(product.id)} className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"><span className="block text-xs font-semibold truncate">{product.name}</span><span className="block text-[10px] text-sub mt-0.5">{fmtRs(product.price,false)} · stock {product.stock}</span></button>)}</div>
-            </div>}
+            <POSAccessorySuggestions items={bundleSuggestions} onAdd={add} />
 
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
@@ -1500,29 +1437,7 @@ export default function POS() {
               </div>
             )}
 
-            {/* full amount before payment */}
-            <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[11.5px] font-bold text-sub">Full Amount</span>
-                <span className="num text-[15px] font-extrabold text-ink">{fmtRs(preTotal)}</span>
-              </div>
-              {pointsVal > 0 && (
-                <div className="flex items-center justify-between mt-1 text-[10.5px]">
-                  <span className="text-amber-600 dark:text-amber-400">Loyalty points applied</span>
-                  <span className="num font-bold text-amber-600 dark:text-amber-400">− {fmtRs(pointsVal, false)}</span>
-                </div>
-              )}
-            </div>
-
-            {/* grand total */}
-            <div className="!mt-3.5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-4 flex items-end justify-between shadow-lg shadow-violet-600/30">
-              <div className="text-white">
-                <div className="text-[10px] font-extrabold tracking-[0.16em] text-violet-200 uppercase">Grand Total</div>
-                {pointsVal > 0 && <div className="text-[10px] text-amber-300 num font-semibold mt-0.5">points applied: −{fmtRs(pointsVal)}</div>}
-                <div className="text-[10px] text-violet-200 mt-0.5">incl. tax &amp; charges</div>
-              </div>
-              <div className="num text-[32px] leading-none font-extrabold text-white drop-shadow-sm">{fmtRs(total)}</div>
-            </div>
+            <POSOrderTotalSummary fullAmount={preTotal} pointsValue={pointsVal} total={total} />
 
             {/* payment methods */}
             <div>
@@ -1794,104 +1709,41 @@ export default function POS() {
 
       {/* ============ BELOW: quick add + secondary catalog ============ */}
       <section className="card mx-auto w-full max-w-[1060px] mt-5 p-4 sm:p-5">
-        {favorites.length > 0 && (
-          <div className="mb-4">
-            <span className="flex items-center gap-1.5 text-[10px] font-extrabold tracking-[0.14em] text-faint uppercase mb-2">
-              <Star size={11} className="text-amber-500" /> Quick add · frequently sold
-            </span>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {favorites.map(({ p }) => {
-                const Icon = CAT_ICON[p.category] || Package;
-                const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
-                const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
-                return (
-                  <button key={p.id} onClick={() => add(p.id)} disabled={inCart >= p.stock}
-                    className="flex items-center gap-2 rounded-xl border border-line bg-surface pl-1.5 pr-3 py-1.5 hover:border-violet-400 hover:shadow-md transition-all shrink-0 disabled:opacity-50">
-                    <span className={`w-7 h-7 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center`}><Icon size={13} /></span>
-                    <span className="text-left">
-                      <span className="block text-[11px] font-bold text-ink leading-tight max-w-[130px] truncate">{p.name}</span>
-                      <span className="block text-[10px] text-violet-500 font-bold num">{fmtRs(p.price, false)}</span>
-                    </span>
-                    {inCart > 0 && <span className="min-w-4.5 w-[18px] h-[18px] rounded-full bg-violet-600 text-white text-[9px] font-bold flex items-center justify-center num">{inCart}</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        <POSFavoritesQuickAdd
+          items={favorites.map(({ p }) => ({
+            id: p.id,
+            name: p.name,
+            price: p.price,
+            stock: p.stock,
+            quantityInCart: lines.find(line => line.productId === p.id)?.qty || 0,
+            Icon: CAT_ICON[p.category] || Package,
+            tint: CAT_TINT[p.category] || 'from-violet-500 to-indigo-600',
+          }))}
+          onAdd={add}
+        />
 
-        <details className="group">
-          <summary className="list-none cursor-pointer flex items-center justify-between gap-3 rounded-xl border border-line bg-raised/45 px-3.5 py-3 hover:border-violet-300 transition-colors">
-            <span className="flex items-center gap-2.5">
-              <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-violet-600/25">
-                <Grid3X3 size={16} />
-              </span>
-              <span>
-                <span className="block font-display font-extrabold text-ink text-[14px]">Product Catalog</span>
-                <span className="block text-[10.5px] text-faint num">{filtered.length} of {products.length} items · optional browse mode</span>
-              </span>
-            </span>
-            <ChevronDown size={17} className="text-faint transition-transform group-open:rotate-180" />
-          </summary>
-
-          <div className="pt-3">
-            <div className="flex gap-1.5 overflow-x-auto pb-1">
-              {categories.map(c => (
-                <button key={c} onClick={() => setCat(c)}
-                  className={`px-3 py-1.5 rounded-full text-[11.5px] font-semibold whitespace-nowrap transition-all border ${cat === c ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-600/30' : 'bg-raised text-sub border-line hover:text-ink'}`}>
-                  {c === 'all' ? 'All' : c}
-                </button>
-              ))}
-            </div>
-
-            {filtered.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <span className="w-14 h-14 rounded-2xl bg-raised flex items-center justify-center text-faint mb-3"><Boxes size={24} /></span>
-                <p className="font-semibold text-ink text-sm">No products found</p>
-                <p className="text-xs text-faint mt-1">Use the main item search above or choose another category</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-2.5 mt-3">
-                {filtered.map(p => {
-                  const Icon = CAT_ICON[p.category] || Package;
-                  const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
-                  const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
-                  const out = p.stock === 0;
-                  const low = !out && p.stock <= p.reorderLevel;
-                  return (
-                    <motion.button key={p.id} layout whileTap={{ scale: 0.97 }} disabled={out || inCart >= p.stock} onClick={() => add(p.id)}
-                      className={`relative text-left rounded-xl border p-3 transition-all group ${out ? 'bg-rose-500/[0.04] border-rose-300/60 opacity-70 cursor-not-allowed' : low ? 'bg-surface border-rose-300/80 dark:border-rose-500/40 hover:border-rose-400 hover:shadow-md cursor-pointer' : 'bg-surface border-line hover:border-violet-400 hover:shadow-lg hover:shadow-violet-500/10 cursor-pointer'}`}>
-                      <div className="flex items-start justify-between gap-1.5">
-                        <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center shadow-sm shrink-0`}><Icon size={14} strokeWidth={2.1} /></span>
-                        <Badge tone={out || low ? 'rose' : 'emerald'} className={`num !text-[9.5px] !px-1.5 !py-0.5 ${low ? 'blink' : ''}`}>{out ? 'OUT' : low ? `${p.stock} LOW` : p.stock}</Badge>
-                      </div>
-                      <div className={`mt-2.5 text-[12px] font-bold leading-snug line-clamp-2 min-h-[30px] ${out ? 'text-sub line-through' : 'text-ink'}`}>{p.name}</div>
-                      <div className="text-[10px] text-faint mt-0.5 num">{p.sku}</div>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="num text-[13.5px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
-                        {inCart > 0 && <span className="min-w-5 px-1 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center num">{inCart}</span>}
-                      </div>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </details>
+        <POSProductCatalogBrowser
+          categories={categories}
+          selectedCategory={cat}
+          items={filtered.map(product => ({
+            product,
+            icon: CAT_ICON[product.category] || Package,
+            tint: CAT_TINT[product.category] || 'from-violet-500 to-indigo-600',
+            inCart: lines.find(line => line.productId === product.id)?.qty || 0,
+          }))}
+          totalProducts={products.length}
+          onCategoryChange={setCat}
+          onAdd={add}
+        />
       </section>
 
       {/* mobile sticky checkout bar */}
-      {lines.length > 0 && (
-        <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 backdrop-blur border-t border-line px-4 py-3 flex items-center gap-3 no-print">
-          <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-bold tracking-wider uppercase text-faint num">{itemCount} items</div>
-            <div className="num text-lg font-extrabold text-violet-600 dark:text-violet-400 leading-none">{fmtRs(total)}</div>
-          </div>
-          <button className="btn btn-primary !py-3" onClick={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}>
-            <Zap size={15} /> Review &amp; Pay
-          </button>
-        </div>
-      )}
+      <POSMobileCheckoutBar
+        visible={lines.length > 0}
+        itemCount={itemCount}
+        total={total}
+        onReviewPay={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}
+      />
 
       {/* toasts */}
       <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] space-y-2 no-print">
@@ -1944,80 +1796,34 @@ export default function POS() {
           </div>
         </div>
       </Modal>
-      {/* drawer modal */}
-      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
-        <div className="space-y-3">
-          {[
-            ['Opening float', state.settings.openingFloat, 'text-ink'],
-            ['My cash sales today', myCash, 'text-emerald-500'],
-            ['Expected in drawer', expected, 'text-violet-500'],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="flex justify-between items-center rounded-xl bg-raised border border-line px-4 py-3">
-              <span className="text-sm text-sub">{l}</span>
-              <span className={`num font-bold ${c}`}>{fmtRs(v as number)}</span>
-            </div>
-          ))}
-          <p className="text-[11px] text-faint">Drawer is settled at day end under Cashier Balances (admin only).</p>
-          <button className="btn btn-soft w-full" onClick={() => setDrawerOpen(false)}><X size={15} /> Close</button>
-        </div>
-      </Modal>
+      <POSCashDrawerDialog
+        open={drawerOpen}
+        userName={user?.name || ''}
+        openingFloat={state.settings.openingFloat}
+        myCash={myCash}
+        expected={expected}
+        onClose={() => setDrawerOpen(false)}
+      />
 
-      {/* held sales */}
-      <Modal open={heldOpen} onClose={() => setHeldOpen(false)} title="Held sales" sub="Resume or discard parked carts">
-        <div className="space-y-2.5">
-          <AnimatePresence initial={false}>
-            {state.held.map(h => (
-              <motion.div
-                key={h.id}
-                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -18 }}
-                className="flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3"
-              >
-                <span className="w-9 h-9 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0"><PauseCircle size={16} /></span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-ink truncate">{h.label}</div>
-                  <div className="text-[11px] text-faint">{timeAgo(h.heldAt)} · {h.lines.length} lines{h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}</div>
-                </div>
-                <button className="btn btn-soft !py-1.5 !px-3 !text-xs text-emerald-500" onClick={() => resume(h.id)}><Zap size={13} /> Resume</button>
-                <button className="btn btn-danger-soft !py-1.5 !px-3 !text-xs" onClick={() => deleteHold(h.id)}><Trash2 size={13} /></button>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales — press F5 to park the current bill</p>}
-        </div>
-      </Modal>
+      <POSHeldSalesDialog
+        open={heldOpen}
+        heldSales={state.held.map(heldSale => ({
+          heldSale,
+          heldAtLabel: timeAgo(heldSale.heldAt),
+          customerName: heldSale.customerId ? state.customers.find(customer => customer.id === heldSale.customerId)?.name || '' : '',
+        }))}
+        onResume={resume}
+        onDelete={deleteHold}
+        onClose={() => setHeldOpen(false)}
+      />
 
-      {/* quick add customer */}
-      <Modal open={addCustOpen} onClose={() => setAddCustOpen(false)} title="Add New Customer" sub="Saved to your customer book — selected instantly">
-        <div className="space-y-4">
-          <Field label="Full name">
-            <input className="input" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} placeholder="Customer name" autoFocus />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Phone / WhatsApp number">
-              <input className="input num" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="+94 77 000 0000" inputMode="tel" autoComplete="tel" />
-            </Field>
-            <Field label="NIC (optional)">
-              <input className="input num" value={newCust.nic} onChange={e => setNewCust(c => ({ ...c, nic: e.target.value }))} placeholder="ID / NIC" />
-            </Field>
-          </div>
-          <Field label="Address (optional)">
-            <textarea
-              className="input min-h-[72px] resize-none"
-              value={newCust.address}
-              onChange={e => setNewCust(c => ({ ...c, address: e.target.value }))}
-              placeholder="Customer address"
-              maxLength={240}
-            />
-          </Field>
-          <p className="text-[11px] text-faint">New members start with 0 loyalty points and earn 1 pt per Rs. 1,000 spent.</p>
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={quickAddCustomer} disabled={!newCust.name.trim() || !newCust.phone.trim()}>
-              <UserPlus size={15} /> Add &amp; select
-            </button>
-            <button className="btn btn-soft" onClick={() => setAddCustOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSQuickAddCustomerDialog
+        open={addCustOpen}
+        customer={newCust}
+        onChange={(field, value) => setNewCust(current => ({ ...current, [field]: value }))}
+        onSubmit={quickAddCustomer}
+        onClose={() => setAddCustOpen(false)}
+      />
 
       {/* admin gate: price override */}
       <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
@@ -2106,29 +1912,19 @@ export default function POS() {
 
       <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={reprintSearch} onChange={setReprintSearch} placeholder="Find bill #, customer, cashier or WhatsApp number…" className="flex-1 min-w-[240px]" />
-            <span className="text-[11px] text-faint num">{reprintBills.length} shown</span>
-          </div>
+          <POSReprintSearchHeader value={reprintSearch} resultCount={reprintBills.length} onChange={setReprintSearch} />
           <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
           {reprintBills.map((sale, index) => {
             const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
             return (
-              <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center text-[11px] font-extrabold num">{index + 1}</div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><span className="font-extrabold text-violet-600">{sale.billNo}</span><span className="text-[11px] text-faint">{timeAgo(sale.date)}</span></div>
-                    <div className="text-[11px] text-sub truncate">{sale.customerName || 'Walk-in customer'} · {sale.items.reduce((n, it) => n + it.qty, 0)} item{sale.items.reduce((n, it) => n + it.qty, 0) === 1 ? '' : 's'}</div>
-                    <div className="text-sm font-extrabold text-ink num mt-0.5">{fmtRs(sale.total)}</div>
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button type="button" className="btn btn-primary !py-2 !px-3 !text-xs" onClick={() => openReprintSale(sale)}><Printer size={13} /> Print</button>
-                  <button type="button" className="btn !py-2 !px-3 !text-xs !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => sendReprintWhatsApp(sale)}><MessageCircle size={13} /> WhatsApp</button>
-                  {!customerPhone && <span className="self-center text-[10px] text-faint">number will be requested</span>}
-                </div>
-              </div>
+              <POSReprintBillRow
+                key={sale.id}
+                sale={sale}
+                index={index}
+                customerPhone={customerPhone}
+                onPrint={() => openReprintSale(sale)}
+                onWhatsApp={() => sendReprintWhatsApp(sale)}
+              />
             );
           })}
           {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
@@ -2136,32 +1932,15 @@ export default function POS() {
         </div>
       </Modal>
 
-      <Modal open={!!reprintWhatsAppSale} onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }} title="Send reprint via WhatsApp" sub={reprintWhatsAppSale?.billNo || ''}>
-        <div className="space-y-4">
-          <div className="text-sm text-sub">
-            Enter the customer's WhatsApp number. The bill message will be prepared for this number in WhatsApp.
-          </div>
-          <input
-            className="input w-full"
-            type="tel"
-            inputMode="tel"
-            autoFocus
-            value={reprintWhatsAppPhone}
-            onChange={e => setReprintWhatsAppPhone(e.target.value)}
-            placeholder="e.g. 0771234567 or +94771234567"
-            onKeyDown={e => { if (e.key === 'Enter') confirmReprintWhatsApp(); }}
-          />
-          <div className="rounded-xl bg-raised border border-line p-3 text-[11px] text-faint">
-            WhatsApp will open with the selected bill and number. Press <b className="text-ink">Send</b> in WhatsApp to deliver it.
-          </div>
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-soft flex-1" onClick={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}>Cancel</button>
-            <button type="button" className="btn !text-white flex-1" disabled={normalizeWhatsAppPhone(reprintWhatsAppPhone).length < 9 || normalizeWhatsAppPhone(reprintWhatsAppPhone).length > 15} onClick={confirmReprintWhatsApp} style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}>
-              <MessageCircle size={15} /> Open WhatsApp
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <POSReprintWhatsAppDialog
+        open={!!reprintWhatsAppSale}
+        billNo={reprintWhatsAppSale?.billNo || ''}
+        phone={reprintWhatsAppPhone}
+        canSubmit={normalizeWhatsAppPhone(reprintWhatsAppPhone).length >= 9 && normalizeWhatsAppPhone(reprintWhatsAppPhone).length <= 15}
+        onPhoneChange={setReprintWhatsAppPhone}
+        onConfirm={confirmReprintWhatsApp}
+        onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}
+      />
 
       <ReceiptModal sale={doneSale} preferredWhatsAppPhone={doneSaleWhatsApp} onClose={() => { setDoneSale(null); setDoneSaleWhatsApp(''); setTimeout(focusSearch, 120); }} />
     </div>
@@ -2186,174 +1965,3 @@ function Kbd({ children }: { children: React.ReactNode }) {
     </span>
   );
 }
-
-/* ---------- cart line ---------- */
-function CartLine({
-  line, unitPrice, canDiscount, canEditPrice, onAskUnlock, onQty, onDisc, onPrice, onRemove,
-}: {
-  line: { productId: string; qty: number; discount: number; price?: number; product: { name: string; price: number; stock: number; sku: string } };
-  unitPrice: number;
-  canDiscount: boolean;
-  canEditPrice: boolean;
-  onAskUnlock: () => void;
-  onQty: (q: number) => void;
-  onDisc: (d: number) => void;
-  onPrice: (p: number | undefined) => void;
-  onRemove: () => void;
-}) {
-  const [editingQty, setEditingQty] = useState(false);
-  const [qtyVal, setQtyVal] = useState(String(line.qty));
-  const [discOpen, setDiscOpen] = useState(false);
-  const [editingPrice, setEditingPrice] = useState(false);
-  const [priceVal, setPriceVal] = useState('');
-
-  const overridden = line.price !== undefined && line.price !== line.product.price;
-  const gross = unitPrice * line.qty;
-  const net = gross - (line.discount || 0);
-  const atMax = line.qty >= line.product.stock;
-
-  const commitQty = () => {
-    const q = Math.round(parseFloat(qtyVal) || 0);
-    onQty(q);
-    setEditingQty(false);
-  };
-  const startPriceEdit = () => {
-    if (!canEditPrice) { onAskUnlock(); return; }
-    setPriceVal(String(unitPrice));
-    setEditingPrice(true);
-  };
-  const commitPrice = () => {
-    const v = parseFloat(priceVal);
-    if (!isNaN(v) && v >= 0) onPrice(v === line.product.price ? undefined : v);
-    setEditingPrice(false);
-  };
-
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }}
-      className="px-5 sm:px-6 py-3 border-b border-line/70"
-    >
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-bold text-ink truncate flex items-center gap-1.5">
-            {line.product.name}
-            {overridden && <Badge tone="violet" className="!text-[8.5px] !px-1.5 !py-0">PRICE EDIT</Badge>}
-          </div>
-          <div className="text-[10.5px] num flex items-center gap-1.5 mt-0.5 flex-wrap">
-            {editingPrice ? (
-              <span className="flex items-center gap-1">
-                Rs.
-                <input
-                  className="w-20 text-[11px] num bg-surface border border-violet-400 rounded-md px-1.5 py-0.5 outline-none"
-                  value={priceVal}
-                  autoFocus
-                  inputMode="decimal"
-                  onChange={e => setPriceVal(e.target.value.replace(/[^\d.]/g, ''))}
-                  onBlur={commitPrice}
-                  onKeyDown={e => { if (e.key === 'Enter') commitPrice(); if (e.key === 'Escape') setEditingPrice(false); }}
-                />
-                <span className="text-faint">each</span>
-              </span>
-            ) : (
-              <button
-                className="text-faint hover:text-violet-500 inline-flex items-center gap-1 transition-colors"
-                title={canEditPrice ? 'Click to edit unit price' : 'Price edit needs admin password'}
-                onClick={startPriceEdit}
-              >
-                {fmtRs(unitPrice, false)} each
-                {overridden && <span className="text-faint/70 line-through">{fmtRs(line.product.price, false)}</span>}
-                {canEditPrice ? <Pencil size={9} /> : <Lock size={9} className="text-amber-500" />}
-              </button>
-            )}
-            {atMax && <span className="text-rose-500 font-extrabold">· Only {line.product.stock} in stock!</span>}
-          </div>
-        </div>
-
-        {/* qty stepper with click-to-edit */}
-        <div className="flex items-center gap-1 bg-raised rounded-lg p-0.5 border border-line shrink-0">
-          <button className="w-6 h-6 rounded-md flex items-center justify-center text-sub hover:bg-surface hover:text-ink" onClick={() => onQty(line.qty - 1)}>
-            <Minus size={12} />
-          </button>
-          {editingQty ? (
-            <input
-              className="w-10 text-center text-[13px] font-bold num bg-surface border border-violet-400 rounded-md outline-none py-0.5"
-              value={qtyVal}
-              autoFocus
-              inputMode="numeric"
-              onChange={e => setQtyVal(e.target.value.replace(/\D/g, ''))}
-              onBlur={commitQty}
-              onKeyDown={e => { if (e.key === 'Enter') commitQty(); if (e.key === 'Escape') setEditingQty(false); }}
-            />
-          ) : (
-            <button
-              className="w-7 text-center text-[13px] font-bold num hover:bg-surface rounded-md py-0.5"
-              title="Click to type quantity"
-              onClick={() => { setQtyVal(String(line.qty)); setEditingQty(true); }}
-            >
-              {line.qty}
-            </button>
-          )}
-          <button className="w-6 h-6 rounded-md flex items-center justify-center text-sub hover:bg-surface hover:text-ink" onClick={() => onQty(line.qty + 1)} disabled={atMax}>
-            <Plus size={12} />
-          </button>
-        </div>
-
-        <div className="w-[104px] shrink-0">
-          {canDiscount ? (
-            <div className="relative">
-              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-extrabold text-faint">Rs.</span>
-              <input
-                aria-label={`Discount in rupees for ${line.product.name}`}
-                className={`input !w-full !h-9 !py-1 !pl-7 !pr-2 num !text-[12px] text-right !rounded-lg focus:!border-violet-500 focus:!ring-2 focus:!ring-violet-500/15 ${line.discount > 0 ? "!border-violet-400 !text-violet-600 font-extrabold !bg-violet-500/[0.04]" : ""}`}
-                value={line.discount > 0 ? String(line.discount) : ""}
-                placeholder="0"
-                inputMode="decimal"
-                type="text"
-                autoComplete="off"
-                onFocus={e => e.currentTarget.select()}
-                onChange={e => {
-                  const raw = e.target.value.replace(/[^\d.]/g, "");
-                  const parts = raw.split(".");
-                  const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join("")}` : raw;
-                  if (normalized === "" || normalized === ".") onDisc(0);
-                  else {
-                    const value = Number(normalized);
-                    if (Number.isFinite(value)) onDisc(value);
-                  }
-                }}
-                onKeyDown={e => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                  if (e.key === "Escape") { onDisc(0); e.currentTarget.blur(); }
-                }}
-                title="Item discount (Rs.) — click and type"
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="w-full h-9 flex justify-end items-center gap-1 text-[10px] text-faint"
-              title="Item discount needs permission"
-              onClick={onAskUnlock}
-            >
-              <Lock size={10} className="text-amber-500" /> Locked
-            </button>
-          )}
-        </div>
-        <div className="w-[86px] text-right shrink-0">
-          {(line.discount > 0 || overridden) && <div className="text-[10px] text-faint line-through num">{fmtRs(line.product.price * line.qty, false)}</div>}
-          <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
-        </div>
-
-        {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
-        <button className="icon-btn !w-7 !h-7 shrink-0 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={onRemove} title="Remove">
-          <X size={13} />
-        </button>
-      </div>
-
-      {line.discount > 0 && (
-        <div className="mt-1 ml-auto w-fit text-[10px] font-semibold text-violet-500 num">Item discount − {fmtRs(line.discount, false)}</div>
-      )}
-    </motion.div>
-  );
-    }
