@@ -1325,7 +1325,7 @@ export default function POS() {
               ) : (
                 <AnimatePresence initial={false}>
                   {detailed.map(l => (
-                    <CartLine
+                    <POSCartLine
                       key={l.productId}
                       line={l}
                       unitPrice={linePrice(l)}
