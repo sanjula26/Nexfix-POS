@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
-  UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, ChevronDown, Tag,
+  UserRound, Coins, Search, CheckCircle2, Percent, Truck,
+  Split, ReceiptText, Tag,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
-import { SearchInput, Badge, Modal, Field } from '../components/ui';
+import { SearchInput, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import POSCartLine from '../components/POSCartLine';
 import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
@@ -44,6 +44,7 @@ import POSKeyboardShortcutHints from '../components/POSKeyboardShortcutHints';
 import POSCartEmptyState from '../components/POSCartEmptyState';
 import POSCartColumnHeaders from '../components/POSCartColumnHeaders';
 import POSItemSearchHeading from '../components/POSItemSearchHeading';
+import POSCustomerSearchPanel from '../components/POSCustomerSearchPanel';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1101,103 +1102,38 @@ export default function POS() {
                   />
                 </div>
               ) : (
-                <div ref={custBoxRef} className="relative">
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
-                      <input
-                        ref={custInputRef}
-                        className="input pl-9 pr-8 !py-2.5"
-                        inputMode="tel"
-                        autoComplete="off"
-                        placeholder="Search customer by name or phone... (F2)"
-                        value={custQuery}
-                        onFocus={() => setCustOpen(true)}
-                        onChange={e => { setCustQuery(e.target.value); setCustOpen(true); }}
-                      />
-                      <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
-                    </div>
-                    <button
-                      className="btn btn-soft !border-emerald-300/60 !text-emerald-600 dark:!text-emerald-400 hover:!bg-emerald-500/10 shrink-0"
-                      onClick={() => {
-                        const digits = normalizeWhatsAppPhone(custQuery);
-                        setNewCust(nc => ({
-                          ...nc,
-                          phone: digits.length >= 9 ? custQuery.trim() : nc.phone,
-                          name: nc.name || '',
-                        }));
-                        setAddCustOpen(true);
-                      }}
-                    >
-                      <UserPlus size={15} /> <span className="hidden sm:inline">Add New Customer</span>
-                    </button>
-                  </div>
-
-                  <AnimatePresence>
-                    {custOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-                        transition={{ duration: 0.14 }}
-                        className="absolute left-0 right-0 top-full mt-1.5 z-30 card !rounded-xl overflow-hidden shadow-xl"
-                      >
-                        <button
-                          className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-raised/60 transition-colors border-b border-line"
-                          onClick={() => { setCustomerId(''); setCustOpen(false); setCustQuery(''); }}
-                        >
-                          <span className="w-8 h-8 rounded-full bg-raised flex items-center justify-center text-sub"><UserRound size={15} /></span>
-                          <span>
-                            <span className="block text-[13px] font-bold text-ink">Walk-in customer</span>
-                            <span className="block text-[10.5px] text-faint">No profile · quick sale</span>
-                          </span>
-                          <span className="ml-auto"><CheckCircle2 size={15} className="text-emerald-500" /></span>
-                        </button>
-                        <div className="max-h-56 overflow-y-auto">
-                          {custResults.map(c => (
-                            <button
-                              key={c.id}
-                              className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-raised/60 transition-colors"
-                              onClick={() => { setCustomerId(c.id); setCustOpen(false); setCustQuery(''); }}
-                            >
-                              <span className="w-8 h-8 rounded-full bg-violet-500/12 text-violet-500 flex items-center justify-center text-xs font-bold border border-violet-500/20">
-                                {c.name.charAt(0).toUpperCase()}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block text-[13px] font-semibold text-ink truncate">{c.name}{c.nic ? <span className="text-faint font-normal"> · {c.nic}</span> : ''}</span>
-                                <span className="block text-[10.5px] text-faint num">{c.phone}</span>
-                              </span>
-                              {c.creditBalance > 0 && (
-                                <Badge tone="rose" className="num !text-[9px] shrink-0">owes {fmtRs(c.creditBalance, false)}</Badge>
-                              )}
-                              {c.loyaltyPoints > 0 && <Badge tone="amber" className="num !text-[9px] shrink-0">{c.loyaltyPoints} pts</Badge>}
-                            </button>
-                          ))}
-                          {custResults.length === 0 && (
-                            <div className="px-4 py-4 text-center">
-                              <p className="text-xs text-faint">No customer found for “{custQuery}”</p>
-                              <button
-                                className="btn btn-soft !text-xs mt-2.5"
-                                onClick={() => {
-                                  const digits = normalizeWhatsAppPhone(custQuery);
-                                  setNewCust(nc => ({
-                                    ...nc,
-                                    name: digits ? 'Walk-in Customer' : custQuery.trim(),
-                                    phone: digits ? custQuery.trim() : nc.phone,
-                                  }));
-                                  setAddCustOpen(true);
-                                  setCustOpen(false);
-                                }}
-                              >
-                                <UserPlus size={13} /> Add this number as customer
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-
-                  <POSRecentCustomers customers={recentCustomers} onSelect={setCustomerId} />
-                </div>
+                <POSCustomerSearchPanel
+                  containerRef={custBoxRef}
+                  inputRef={custInputRef}
+                  query={custQuery}
+                  open={custOpen}
+                  results={custResults}
+                  recentCustomers={recentCustomers}
+                  onFocus={() => setCustOpen(true)}
+                  onQueryChange={value => { setCustQuery(value); setCustOpen(true); }}
+                  onAddNewCustomer={() => {
+                    const digits = normalizeWhatsAppPhone(custQuery);
+                    setNewCust(nc => ({
+                      ...nc,
+                      phone: digits.length >= 9 ? custQuery.trim() : nc.phone,
+                      name: nc.name || '',
+                    }));
+                    setAddCustOpen(true);
+                  }}
+                  onChooseWalkIn={() => { setCustomerId(''); setCustOpen(false); setCustQuery(''); }}
+                  onChooseCustomer={customerId => { setCustomerId(customerId); setCustOpen(false); setCustQuery(''); }}
+                  onAddQueryAsCustomer={() => {
+                    const digits = normalizeWhatsAppPhone(custQuery);
+                    setNewCust(nc => ({
+                      ...nc,
+                      name: digits ? 'Walk-in Customer' : custQuery.trim(),
+                      phone: digits ? custQuery.trim() : nc.phone,
+                    }));
+                    setAddCustOpen(true);
+                    setCustOpen(false);
+                  }}
+                  onSelectRecentCustomer={setCustomerId}
+                />
               )}
 
               <POSBillMetaRow
