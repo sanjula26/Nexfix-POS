@@ -562,7 +562,7 @@ test('sale refund value prorates item discounts, cart discount, tax and trade-in
     discount: 30,
     tax: 20,
     shipping: 10,
-    tradeIn: { value: 20 },
+    tradeIn: { productId: 'trade-in-product', value: 20 },
   };
   const result = calculateSaleRefundValue({
     sale,
