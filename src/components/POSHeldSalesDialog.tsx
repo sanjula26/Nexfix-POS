@@ -1,6 +1,6 @@
 import { AnimatePresence } from 'framer-motion';
 import type { HeldSale } from '../lib/types';
-import Modal from './ui/Modal';
+import { Modal } from './ui';
 import POSHeldSaleRow from './POSHeldSaleRow';
 
 interface POSHeldSalesDialogItem {
@@ -12,7 +12,7 @@ interface POSHeldSalesDialogItem {
 interface POSHeldSalesDialogProps {
   open: boolean;
   heldSales: POSHeldSalesDialogItem[];
-  onResume: (heldSale: HeldSale) => void;
+  onResume: (heldSaleId: string) => void;
   onDelete: (heldSaleId: string) => void;
   onClose: () => void;
 }
