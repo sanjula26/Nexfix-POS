@@ -5,7 +5,7 @@ import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard,
+  Split, ReceiptText, ChevronDown, Tag, Keyboard,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
@@ -41,6 +41,7 @@ import POSBillReversalDialog from '../components/POSBillReversalDialog';
 import POSTradeInEditor, { type TradeInDraft } from '../components/POSTradeInEditor';
 import POSItemSearchSuggestions from '../components/POSItemSearchSuggestions';
 import POSKeyboardShortcutHints from '../components/POSKeyboardShortcutHints';
+import POSCartEmptyState from '../components/POSCartEmptyState';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1264,16 +1265,7 @@ export default function POS() {
             </div>
             <div className="min-h-[190px] max-h-[400px] overflow-y-auto">
               {detailed.length === 0 ? (
-                <div className="flex flex-col items-center py-12 text-center px-6">
-                  <div className="relative w-24 h-24 mb-4">
-                    <span className="absolute inset-0 rounded-[1.6rem] bg-gradient-to-br from-violet-500/12 to-indigo-500/12 border border-violet-500/15" />
-                    <span className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-amber-400/20 border border-amber-400/30" />
-                    <span className="absolute -bottom-1.5 -left-2.5 w-5 h-5 rounded-full bg-sky-400/20 border border-sky-400/30" />
-                    <span className="absolute inset-0 flex items-center justify-center text-violet-400"><ShoppingBag size={36} strokeWidth={1.5} /></span>
-                  </div>
-                  <p className="font-bold text-ink">Ready to bill</p>
-                  <p className="text-xs text-faint mt-1">Scan a barcode, press <b className="text-sub">F3</b> to search, or tap products below</p>
-                </div>
+<POSCartEmptyState />
               ) : (
                 <AnimatePresence initial={false}>
                   {detailed.map(l => (
