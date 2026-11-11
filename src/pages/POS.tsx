@@ -30,11 +30,12 @@ import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
-import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser } from '../lib/types';
+import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser, InventoryUnit } from '../lib/types';
 import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
 import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
 import POSQuickAddCustomerDialog from '../components/POSQuickAddCustomerDialog';
 import POSHeldSalesDialog from '../components/POSHeldSalesDialog';
+import POSImeiUnitPickerDialog from '../components/POSImeiUnitPickerDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -966,6 +967,18 @@ export default function POS() {
   const nextBillSeq = Math.max(state.counters.bill || 1, maxBillSeq + 1);
   const nextBillPreview = `NFX-${dkey(new Date()).replaceAll('-', '')}-${String(nextBillSeq).slice(-4).padStart(4, '0')}`;
 
+  const unitPickerProduct = products.find(product => product.id === unitPickProductId);
+  const usedUnitsInCart = usedUnitIds();
+  const availableUnits: InventoryUnit[] = unitPickProductId
+    ? (state.units || []).filter(unit =>
+        unit.productId === unitPickProductId &&
+        unit.status === 'in_stock' &&
+        !usedUnitsInCart.has(unit.id) &&
+        (!unitPickSearch.trim() ||
+          (unit.imei || '').includes(unitPickSearch.trim()) ||
+          (unit.serial || '').toLowerCase().includes(unitPickSearch.trim().toLowerCase())),
+      )
+    : [];
   return (
     <div className="pb-24">
 
@@ -1858,59 +1871,17 @@ export default function POS() {
         </div>
       </Modal>
 
-      {/* IMEI / Serial unit picker for tracked products */}
-      <Modal
+      <POSImeiUnitPickerDialog
         open={!!unitPickProductId}
+        productName={unitPickerProduct?.name}
+        search={unitPickSearch}
+        units={availableUnits}
+        onSearchChange={setUnitPickSearch}
+        onSelect={unitId => {
+          if (unitPickProductId) addUnitToCart(unitPickProductId, unitId);
+        }}
         onClose={() => { setUnitPickProductId(null); setUnitPickSearch(''); }}
-        title="Select unit (IMEI / Serial)"
-        sub={products.find(p => p.id === unitPickProductId)?.name}
-      >
-        {unitPickProductId && (() => {
-          const used = usedUnitIds();
-          const available = (state.units || []).filter(u =>
-            u.productId === unitPickProductId &&
-            u.status === 'in_stock' &&
-            !used.has(u.id) &&
-            (!unitPickSearch.trim() ||
-              (u.imei || '').includes(unitPickSearch.trim()) ||
-              (u.serial || '').toLowerCase().includes(unitPickSearch.trim().toLowerCase())),
-          );
-          return (
-            <div className="space-y-3">
-              <input
-                className="input"
-                autoFocus
-                placeholder="Scan or type IMEI / serialâ€¦"
-                value={unitPickSearch}
-                onChange={e => setUnitPickSearch(e.target.value)}
-              />
-              {available.length === 0 ? (
-                <p className="text-sm text-faint py-4 text-center">
-                  No available units. Add them under <b>IMEI / Serial</b> first.
-                </p>
-              ) : (
-                <div className="max-h-64 overflow-y-auto space-y-1.5">
-                  {available.map(u => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      className="w-full text-left rounded-xl border border-line px-3 py-2.5 hover:bg-raised transition-colors"
-                      onClick={() => addUnitToCart(unitPickProductId, u.id)}
-                    >
-                      <div className="font-semibold text-ink text-[13px] num">{u.imei || u.serial || u.id}</div>
-                      <div className="text-[11px] text-faint">
-                        {u.imei && u.serial ? `Serial: ${u.serial}` : ''}
-                        {u.expiryDate ? ` · Exp ${u.expiryDate.slice(0, 10)}` : ''}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </Modal>
-
+      />
       <POSReprintBillsDialog
         open={reprintOpen}
         todayBillCount={todayBills.length}
