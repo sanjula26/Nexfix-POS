@@ -9,7 +9,7 @@ import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
-import { getCachedBranchStock, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isBranchStockCacheReady, isLocalMainStockReady } from '../lib/branchStock';
+import { getCachedBranchStock, getCachedPOSDeviceBranchId, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isBranchStockCacheReady, isLocalMainStockReady } from '../lib/branchStock';
 import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
@@ -73,9 +73,11 @@ export default function Inventory() {
   const shopId = getCloudShopId();
   const selectedBranchId = getPOSBranchId(shopId, state.settings.branchId);
   const multipleBranches = hasMultipleCachedBranches(shopId);
+  const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+  const cachedDeviceBranchId = getCachedPOSDeviceBranchId(shopId) || '';
   const branchStockReady = selectedBranchId === 'local-main'
     ? isLocalMainStockReady(shopId, multipleBranches)
-    : isBranchStockCacheReady(selectedBranchId, branchStockLoadedBranchId, hasCachedBranchStock(selectedBranchId));
+    : isBranchStockCacheReady(selectedBranchId, branchStockLoadedBranchId, hasCachedBranchStock(selectedBranchId), cachedDeviceBranchId, offline);
 
   // Inventory must hydrate the assigned branch cache itself. The old cache was
   // populated only by Settings or after a stock transaction, so a fresh POS
@@ -124,9 +126,9 @@ export default function Inventory() {
 
   const stockFor = useCallback((product: Product): number | null => {
     if (selectedBranchId === 'local-main') return isLocalMainStockReady(shopId, multipleBranches) ? product.stock : null;
-    if (!isBranchStockCacheReady(selectedBranchId, branchStockLoadedBranchId, hasCachedBranchStock(selectedBranchId))) return null;
+    if (!isBranchStockCacheReady(selectedBranchId, branchStockLoadedBranchId, hasCachedBranchStock(selectedBranchId), cachedDeviceBranchId, offline)) return null;
     return getCachedBranchStock(selectedBranchId, product.id);
-  }, [shopId, selectedBranchId, multipleBranches, branchStockLoadedBranchId, branchStockCacheVersion]);
+  }, [shopId, selectedBranchId, multipleBranches, branchStockLoadedBranchId, branchStockCacheVersion, cachedDeviceBranchId, offline]);
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
