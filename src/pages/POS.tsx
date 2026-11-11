@@ -33,6 +33,7 @@ import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser, HeldSale } fro
 import POSHeldSaleRow from '../components/POSHeldSaleRow';
 import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
 import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
+import POSQuickAddCustomerDialog from '../components/POSQuickAddCustomerDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1823,38 +1824,13 @@ export default function POS() {
         </div>
       </Modal>
 
-      {/* quick add customer */}
-      <Modal open={addCustOpen} onClose={() => setAddCustOpen(false)} title="Add New Customer" sub="Saved to your customer book — selected instantly">
-        <div className="space-y-4">
-          <Field label="Full name">
-            <input className="input" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} placeholder="Customer name" autoFocus />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Phone / WhatsApp number">
-              <input className="input num" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="+94 77 000 0000" inputMode="tel" autoComplete="tel" />
-            </Field>
-            <Field label="NIC (optional)">
-              <input className="input num" value={newCust.nic} onChange={e => setNewCust(c => ({ ...c, nic: e.target.value }))} placeholder="ID / NIC" />
-            </Field>
-          </div>
-          <Field label="Address (optional)">
-            <textarea
-              className="input min-h-[72px] resize-none"
-              value={newCust.address}
-              onChange={e => setNewCust(c => ({ ...c, address: e.target.value }))}
-              placeholder="Customer address"
-              maxLength={240}
-            />
-          </Field>
-          <p className="text-[11px] text-faint">New members start with 0 loyalty points and earn 1 pt per Rs. 1,000 spent.</p>
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={quickAddCustomer} disabled={!newCust.name.trim() || !newCust.phone.trim()}>
-              <UserPlus size={15} /> Add &amp; select
-            </button>
-            <button className="btn btn-soft" onClick={() => setAddCustOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSQuickAddCustomerDialog
+        open={addCustOpen}
+        customer={newCust}
+        onChange={(field, value) => setNewCust(current => ({ ...current, [field]: value }))}
+        onSubmit={quickAddCustomer}
+        onClose={() => setAddCustOpen(false)}
+      />
 
       {/* admin gate: price override */}
       <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
