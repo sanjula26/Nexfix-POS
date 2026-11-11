@@ -15,7 +15,7 @@ export default function POSImeiUnitPickerDialog({
   return (
     <Modal open={open} onClose={onClose} title="Select unit (IMEI / Serial)" sub={productName}>
       <div className="space-y-3">
-        <input className="input" autoFocus placeholder="Scan or type IMEI / serial…" value={search} onChange={e => onSearchChange(e.target.value)} />
+        <input className="input" autoFocus placeholder="Scan or type IMEI / serialâ€¦" value={search} onChange={e => onSearchChange(e.target.value)} />
         {units.length === 0 ? (
           <p className="text-sm text-faint py-4 text-center">
             No available units. Add them under <b>IMEI / Serial</b> first.
