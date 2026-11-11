@@ -2,14 +2,15 @@ import { fmtRs } from '../lib/utils';
 
 export default function POSOrderTotalSummary({
   fullAmount,
-  pointsValueue,
+  pointsValue,
   total,
 }: {
   fullAmount: number;
-  pointsValueue: number;
+  pointsValue: number;
   total: number;
 }) {
   return (
+    <>
         {/* full amount before payment */}
         <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5">
           <div className="flex items-center justify-between gap-3">
@@ -33,5 +34,6 @@ export default function POSOrderTotalSummary({
           </div>
           <div className="num text-[32px] leading-none font-extrabold text-white drop-shadow-sm">{fmtRs(total)}</div>
         </div>
+    </>
   );
 }
