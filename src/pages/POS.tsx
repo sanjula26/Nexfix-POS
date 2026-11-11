@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, MessageCircle, Printer, Sparkles,
+  Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
@@ -22,6 +22,7 @@ import POSCustomerAccountSummary from '../components/POSCustomerAccountSummary';
 import POSBillMetaRow from '../components/POSBillMetaRow';
 import POSFavoritesQuickAdd from '../components/POSFavoritesQuickAdd';
 import POSProductCatalogBrowser from '../components/POSProductCatalogBrowser';
+import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
@@ -1274,10 +1275,7 @@ export default function POS() {
               )}
             </div>
 
-            {bundleSuggestions.length > 0 && <div className="px-5 sm:px-6 py-3 border-t border-line bg-emerald-500/[0.035]">
-              <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sub mb-2"><Sparkles size={12} className="text-emerald-600"/> Helpful accessories in stock</div>
-              <div className="flex flex-wrap gap-2">{bundleSuggestions.map(product=><button key={product.id} type="button" onClick={()=>add(product.id)} className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"><span className="block text-xs font-semibold truncate">{product.name}</span><span className="block text-[10px] text-sub mt-0.5">{fmtRs(product.price,false)} · stock {product.stock}</span></button>)}</div>
-            </div>}
+            <POSAccessorySuggestions items={bundleSuggestions} onAdd={add} />
 
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
