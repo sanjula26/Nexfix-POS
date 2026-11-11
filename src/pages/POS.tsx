@@ -1644,20 +1644,6 @@ export default function POS() {
                     {intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit && <div role="alert" className="text-[11px] font-bold text-rose-500">This bill would exceed the customer's credit limit.</div>}
                   </div>
                 )}
-                {payment === 'cash' && total > 0 && (
-                  <div className="flex gap-1.5 mt-2">
-                    {[500, 1000, 2000, 5000].map(v => (
-                      <button
-                        key={v}
-                        className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 num"
-                        onClick={() => { setPaid(String(total <= v ? v : Math.ceil(total / v) * v)); setPaidAuto(false); }}
-                      >
-                        {fmtRs(v, false)}
-                      </button>
-                    ))}
-                    <button className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 text-violet-500 font-bold" onClick={() => { setPaid(String(total)); setPaidAuto(false); }}>Exact</button>
-                  </div>
-                )}
               </div>
             )}
 
