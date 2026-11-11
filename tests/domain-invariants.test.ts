@@ -20,6 +20,7 @@ import {
   cacheBranchStock,
   cacheBranchStockProduct,
   getCachedBranchStock,
+  isBranchStockCacheReady,
   isLocalMainStockReady,
 } from '../src/lib/branchStock.ts';
 
@@ -133,6 +134,13 @@ test('supplier ledger is chronological and calculates running balance', () => {
     { date: '2026-01-02T10:00:00.000Z', type: 'purchase', reference: 'PO-001', amount: 1000, balance: 1000 },
     { date: '2026-01-03T10:00:00.000Z', type: 'payment', reference: 'payment-1', amount: -250, balance: 750, paymentMethod: 'cash' },
   ]);
+});
+
+test('Inventory does not expose stale stock from a previously cached branch', () => {
+  assert.equal(isBranchStockCacheReady('branch-a', '', true), false, 'a cache alone is not proof the current Inventory view loaded this branch');
+  assert.equal(isBranchStockCacheReady('branch-b', 'branch-a', true), false, 'a different branch cache must not be shown or edited');
+  assert.equal(isBranchStockCacheReady('branch-a', 'branch-a', false), false, 'the loaded branch must contain a valid cache');
+  assert.equal(isBranchStockCacheReady('branch-a', 'branch-a', true), true, 'the exact branch loaded by this view is ready');
 });
 
 test('cloud-bound POS cannot use legacy local-main stock before branch resolution', () => {
