@@ -4,6 +4,7 @@ import type { POSState } from '../src/lib/types.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
+import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -489,4 +490,62 @@ test('sale financial calculation caps trade-in at the post-discount subtotal and
   assert.equal(result.pointsRedeemed, 0);
   assert.equal(result.total, 0);
   assert.equal(result.pointsEarned, 0);
+});
+
+
+test('sale payment rules resolve cash, split tender and change without credit', () => {
+  assert.deepEqual(resolveSalePayment({
+    payment: 'cash', amountPaid: 80, total: 100,
+  }), {
+    ok: true, legs: [], isSplit: false, isCredit: false,
+    amountPaid: 100, balanceDue: 0, change: 0,
+  });
+  assert.deepEqual(resolveSalePayment({
+    payment: 'cash', payments: [
+      { method: 'cash', amount: 40.004 },
+      { method: 'card', amount: 60 },
+    ],
+    amountPaid: 100, total: 90,
+  }), {
+    ok: true,
+    legs: [{ method: 'cash', amount: 40 }, { method: 'card', amount: 60 }],
+    isSplit: true, isCredit: false, amountPaid: 100, balanceDue: 0, change: 10,
+  });
+});
+
+test('sale payment rules preserve credit balance, limit and overpayment guards', () => {
+  assert.deepEqual(resolveSalePayment({
+    payment: 'credit', amountPaid: 40, total: 100,
+    customer: { creditBalance: 50, creditLimit: 200 },
+  }), {
+    ok: true, legs: [], isSplit: false, isCredit: true,
+    amountPaid: 40, balanceDue: 60, change: 0,
+  });
+  assert.deepEqual(resolveSalePayment({
+    payment: 'credit', amountPaid: 40, total: 100,
+    customer: { creditBalance: 151, creditLimit: 200 },
+  }), { ok: false, reason: 'credit_limit_exceeded' });
+  assert.deepEqual(resolveSalePayment({
+    payment: 'credit', amountPaid: 101, total: 100,
+    customer: { creditBalance: 0, creditLimit: 0 },
+  }), { ok: false, reason: 'credit_overpayment' });
+  assert.deepEqual(resolveSalePayment({
+    payment: 'credit', amountPaid: 10, total: 100,
+  }), { ok: false, reason: 'credit_requires_customer' });
+});
+
+test('sale payment rules reject invalid split totals and split credit tenders', () => {
+  assert.deepEqual(resolveSalePayment({
+    payment: 'cash', payments: [
+      { method: 'cash', amount: 30 }, { method: 'card', amount: 30 },
+    ],
+    amountPaid: 70, total: 60,
+  }), { ok: false, reason: 'split_amount_mismatch' });
+  assert.deepEqual(resolveSalePayment({
+    payment: 'cash', payments: [
+      { method: 'cash', amount: 30 }, { method: 'credit', amount: 30 },
+    ],
+    amountPaid: 60, total: 60,
+    customer: { creditBalance: 0, creditLimit: 100 },
+  }), { ok: false, reason: 'split_credit_not_supported' });
 });
