@@ -5,6 +5,7 @@ import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupVal
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
 import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
+import { calculateSaleRefundValue } from '../src/lib/saleRefunds.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -548,4 +549,55 @@ test('sale payment rules reject invalid split totals and split credit tenders', 
     amountPaid: 60, total: 60,
     customer: { creditBalance: 0, creditLimit: 100 },
   }), { ok: false, reason: 'split_credit_not_supported' });
+});
+
+
+test('sale refund value prorates item discounts, cart discount, tax and trade-in on partial returns', () => {
+  const sale = {
+    items: [
+      { productId: 'product-1', name: 'Phone', qty: 2, price: 100, cost: 60, discount: 20 },
+      { productId: 'product-2', name: 'Case', qty: 1, price: 50, cost: 10 },
+    ],
+    subtotal: 230,
+    discount: 30,
+    tax: 20,
+    shipping: 10,
+    tradeIn: { value: 20 },
+  };
+  const result = calculateSaleRefundValue({
+    sale,
+    remainingItems: [
+      { item: sale.items[0], qty: 1 },
+      { item: sale.items[1], qty: 1 },
+    ],
+  });
+
+  assert.equal(result.merchandiseGross, 150);
+  assert.equal(result.merchandiseDiscount, 10);
+  assert.equal(result.returnedMerchandise, 140);
+  assert.equal(result.taxRefund, 12.17);
+  assert.equal(result.shippingRefund, 0);
+  assert.equal(result.refundValue, 121.74);
+});
+
+test('sale refund value includes shipping only for a full return and caps the trade-in allocation', () => {
+  const sale = {
+    items: [
+      { productId: 'product-1', name: 'Phone', qty: 2, price: 100, cost: 60, discount: 20 },
+      { productId: 'product-2', name: 'Case', qty: 1, price: 50, cost: 10 },
+    ],
+    subtotal: 230,
+    discount: 30,
+    tax: 20,
+    shipping: 10,
+    tradeIn: { value: 20 },
+  };
+  const result = calculateSaleRefundValue({
+    sale,
+    remainingItems: sale.items.map(item => ({ item, qty: item.qty })),
+  });
+
+  assert.equal(result.allocatedTradeIn, 20);
+  assert.equal(result.shippingRefund, 10);
+  assert.equal(result.refundValue, 210);
 });
