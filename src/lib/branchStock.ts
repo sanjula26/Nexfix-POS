@@ -117,6 +117,11 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
   } catch { return false; }
 }
 
+/** Do not display or edit a cached quantity until this Inventory view loaded that exact branch. */
+export function isBranchStockCacheReady(selectedBranchId: string, loadedBranchId: string, hasCachedStock: boolean): boolean {
+  return !!selectedBranchId && selectedBranchId !== 'local-main' && selectedBranchId === loadedBranchId && hasCachedStock;
+}
+
 /** A cloud-bound POS must resolve its server branch before treating legacy local-main stock as safe. */
 export function isLocalMainStockReady(shopId: string, multipleBranches: boolean): boolean {
   return !shopId && !multipleBranches;
