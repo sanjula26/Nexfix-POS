@@ -240,6 +240,9 @@ export default function POS() {
     const unit = findUnitByCode?.(code);
     return unit && unit.status === 'in_stock' ? unit : undefined;
   }, [findUnitByCode, search]);
+  const itemUnitSuggestionProduct = itemUnitSuggestion
+    ? products.find(product => product.id === itemUnitSuggestion.productId)
+    : undefined;
 
   /* frequently sold -> quick add */
   const favorites = useMemo(() => {
@@ -1227,9 +1230,9 @@ export default function POS() {
                 </div>
 <POSItemSearchSuggestions
                   visible={itemSuggestions.length > 0}
-                  unitSuggestion={itemUnitSuggestion ? {
+                  unitSuggestion={itemUnitSuggestion && itemUnitSuggestionProduct ? {
                     unit: itemUnitSuggestion,
-                    productName: products.find(product => product.id === itemUnitSuggestion.productId)?.name || '',
+                    productName: itemUnitSuggestionProduct.name,
                   } : undefined}
                   items={itemSuggestions.map(product => ({
                     product,
