@@ -6,7 +6,7 @@ import {
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
-  AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
+  AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Star, MessageCircle, Printer, Sparkles,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -19,9 +19,10 @@ import POSCatalogProductCard from '../components/POSCatalogProductCard';
 import POSBillSummaryStrip from '../components/POSBillSummaryStrip';
 import POSSelectedCustomerHeader from '../components/POSSelectedCustomerHeader';
 import POSCustomerAccountSummary from '../components/POSCustomerAccountSummary';
+import POSBillMetaRow from '../components/POSBillMetaRow';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
-import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
+import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser } from '../lib/types';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1165,40 +1166,15 @@ export default function POS() {
                 </div>
               )}
 
-              {/* salesman + note row */}
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider uppercase text-faint">
-                  Salesman
-                </span>
-                <select
-                  className="input !w-auto !py-1.5 !px-2.5 !text-[12px] font-semibold"
-                  value={salesmanId}
-                  onChange={e => setSalesmanId(e.target.value)}
-                >
-                  {activeStaff.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-                <button
-                  className={`ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
-                    noteOpen || note ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' : 'bg-raised text-sub border-line hover:text-ink'
-                  }`}
-                  onClick={() => setNoteOpen(o => !o)}
-                >
-                  <StickyNote size={12} /> {note ? 'Note added' : 'Bill note'}
-                </button>
-              </div>
-              <AnimatePresence>
-                {noteOpen && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <textarea
-                      className="input mt-2.5 !text-[12.5px] min-h-[56px] resize-none"
-                      placeholder="e.g. Gift packing · Deliver tomorrow after 4 PM"
-                      value={note}
-                      onChange={e => setNote(e.target.value)}
-                      maxLength={160}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <POSBillMetaRow
+                staff={activeStaff}
+                salesmanId={salesmanId}
+                noteOpen={noteOpen}
+                note={note}
+                onSalesmanChange={setSalesmanId}
+                onToggleNote={() => setNoteOpen(open => !open)}
+                onNoteChange={setNote}
+              />
             </div>
 
             {/* B. HERO ITEM SEARCH — primary cashier entry point */}
