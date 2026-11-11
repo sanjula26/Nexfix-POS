@@ -16,6 +16,7 @@ import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import CartLine from '../components/POSCartLine';
 import POSToastStack from '../components/POSToastStack';
 import POSKeyboardHint from '../components/POSKeyboardHint';
+import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1869,17 +1870,12 @@ export default function POS() {
         </details>
       </section>
 
-      {/* mobile sticky checkout bar */}
       {lines.length > 0 && (
-        <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 backdrop-blur border-t border-line px-4 py-3 flex items-center gap-3 no-print">
-          <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-bold tracking-wider uppercase text-faint num">{itemCount} items</div>
-            <div className="num text-lg font-extrabold text-violet-600 dark:text-violet-400 leading-none">{fmtRs(total)}</div>
-          </div>
-          <button className="btn btn-primary !py-3" onClick={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}>
-            <Zap size={15} /> Review &amp; Pay
-          </button>
-        </div>
+        <POSMobileCheckoutBar
+          itemCount={itemCount}
+          total={total}
+          onReviewPay={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}
+        />
       )}
 
       <POSToastStack toasts={toasts} />
