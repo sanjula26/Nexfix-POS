@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
-  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
+  InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
@@ -23,6 +23,7 @@ import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing'
 import { resolveSalePayment } from './salePaymentRules';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from './saleRefund';
 import { resolveExchangeReturnLines } from './exchangeReturns';
+import { resolvePurchaseReturnLines } from './purchaseReturns';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -2697,76 +2698,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const purchase = state.purchases.find(x => x.id === input.purchaseId);
     if (!purchase || purchase.status !== 'received' || !input.reason.trim()) return null;
 
-    const existing = state.purchaseReturns || [];
-    const returnedByItem = new Map<number, number>();
-    for (const ret of existing.filter(x => x.purchaseId === purchase.id)) for (const item of ret.items) {
-      returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
-    }
-
-    const requested = new Map<number, { qty: number; unitIds: string[] }>();
-    for (const line of input.lines) {
-      if (!Number.isInteger(line.itemIdx) || line.itemIdx < 0 || line.itemIdx >= purchase.items.length) continue;
-      if (!Number.isInteger(line.qty) || line.qty <= 0) continue;
-      const previous = requested.get(line.itemIdx);
-      const unitIds = Array.isArray(line.unitIds) ? line.unitIds.filter(Boolean) : [];
-      requested.set(line.itemIdx, {
-        qty: (previous?.qty || 0) + line.qty,
-        unitIds: [...(previous?.unitIds || []), ...unitIds],
-      });
-    }
-    if (requested.size === 0) return null;
-
-    const items: PurchaseReturnItem[] = [];
-    const returnedUnitIds = new Set<string>();
-    for (const [itemIdx, request] of requested) {
-      const source = purchase.items[itemIdx];
-      if (!Number.isInteger(source.qty) || source.qty <= 0 || !Number.isFinite(source.cost) || source.cost < 0) return null;
-      const already = returnedByItem.get(itemIdx) || 0;
-      const remaining = Math.max(0, source.qty - already);
-      const product = state.products.find(p => p.id === source.productId);
-      const stock = product?.stock ?? NaN;
-      if (!product || !Number.isFinite(stock) || stock < 0) return null;
-
-      const tracked = Array.isArray(source.unitIdentifiers) && source.unitIdentifiers.length > 0;
-      const availableUnits = tracked
-        ? (state.units || []).filter(u => u.productId === source.productId && u.purchaseId === purchase.id && u.status === 'in_stock')
-        : [];
-      const maxReturnable = Math.min(remaining, stock, tracked ? availableUnits.length : Number.MAX_SAFE_INTEGER);
-      if (request.qty > maxReturnable) return null;
-
-      let selectedUnitIds: string[] | undefined;
-      if (tracked) {
-        const selected = [...new Set(request.unitIds)];
-        if (selected.length !== request.qty) return null;
-        const availableIds = new Set(availableUnits.map(u => u.id));
-        const expectedIdentifiers = (source.unitIdentifiers || []).map(x => ({
-          imei: x.imei?.trim().toLowerCase() || '',
-          serial: x.serial?.trim().toLowerCase() || '',
-        }));
-        for (const unitId of selected) {
-          const unit = availableUnits.find(u => u.id === unitId);
-          if (!unit || !availableIds.has(unitId) || returnedUnitIds.has(unitId)) return null;
-          const imei = unit.imei?.trim().toLowerCase() || '';
-          const serial = unit.serial?.trim().toLowerCase() || '';
-          if (!expectedIdentifiers.some(x => x.imei === imei && x.serial === serial)) return null;
-          returnedUnitIds.add(unitId);
-        }
-        selectedUnitIds = selected;
-      } else if (request.unitIds.length) {
-        return null;
-      }
-
-      items.push({
-        itemIdx,
-        productId: source.productId,
-        name: source.name,
-        qty: request.qty,
-        cost: source.cost,
-        total: request.qty * source.cost,
-        ...(selectedUnitIds ? { unitIds: selectedUnitIds } : {}),
-      });
-    }
-    if (!items.length) return null;
+    const returnResolution = resolvePurchaseReturnLines({
+      purchase,
+      existingReturns: state.purchaseReturns || [],
+      products: state.products,
+      units: state.units || [],
+      lines: input.lines,
+    });
+    if (!returnResolution.ok) return null;
+    const { items, returnedUnitIds, total: localTotal } = returnResolution;
 
     purchaseReturnLockRef.current = true;
     try {
@@ -2836,7 +2776,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         supplierName: purchase.supplierName,
         date: new Date().toISOString(),
         items,
-        total: cloudTotal ?? items.reduce((a, x) => a + x.total, 0),
+        total: cloudTotal ?? localTotal,
         reason: input.reason.trim(),
         by: user.email,
       };
