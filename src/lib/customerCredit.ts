@@ -59,3 +59,85 @@ export function allocateCreditPaymentFIFO(
   }
   return allocations;
 }
+
+
+export type CreditPaymentAllocationResult =
+  | {
+      ok: true;
+      allocations: CustomerCreditAllocation[];
+      allocatedTotal: number;
+    }
+  | {
+      ok: false;
+      reason: 'invoice_not_found' | 'invoice_paid' | 'invoice_exceeded' | 'fifo_incomplete' | 'allocation_incomplete';
+      invoiceDue?: number;
+      billNo?: string;
+      allocatedTotal?: number;
+    };
+
+/**
+ * Resolve invoice-specific or customer-level FIFO allocations before a credit
+ * settlement is committed. This is pure financial logic; session, permission,
+ * branch and state-commit checks remain in the POS provider.
+ */
+export function resolveCreditPaymentAllocations(input: {
+  customerId: string;
+  amount: number;
+  customerOutstanding: number;
+  saleId?: string;
+  sales: ReadonlyArray<{
+    id: string;
+    billNo: string;
+    customerId?: string;
+    total: number;
+    amountPaid: number;
+    date: string;
+    status: string;
+  }>;
+  payments: readonly CustomerCreditPayment[];
+}): CreditPaymentAllocationResult {
+  let allocations: CustomerCreditAllocation[] = [];
+
+  if (input.saleId) {
+    const sale = input.sales.find(item =>
+      item.id === input.saleId &&
+      item.customerId === input.customerId &&
+      item.status === 'completed',
+    );
+    if (!sale) return { ok: false, reason: 'invoice_not_found' };
+
+    const invoiceDue = Math.min(
+      getOpenCreditInvoiceBalance(sale, input.payments),
+      input.customerOutstanding,
+    );
+    if (invoiceDue <= 0.009) {
+      return { ok: false, reason: 'invoice_paid', invoiceDue };
+    }
+    if (input.amount > invoiceDue + 0.009) {
+      return { ok: false, reason: 'invoice_exceeded', invoiceDue, billNo: sale.billNo };
+    }
+    allocations = [{ saleId: sale.id, billNo: sale.billNo, amount: input.amount }];
+  } else {
+    allocations = allocateCreditPaymentFIFO(
+      input.customerId,
+      input.amount,
+      input.sales,
+      input.payments,
+    );
+    const allocatedTotal = Math.round(
+      allocations.reduce((sum, item) => sum + item.amount, 0) * 100,
+    ) / 100;
+    if (Math.abs(allocatedTotal - input.amount) > 0.009) {
+      return { ok: false, reason: 'fifo_incomplete', allocatedTotal };
+    }
+  }
+
+  const allocatedTotal = Math.round(
+    allocations.reduce((sum, item) => sum + item.amount, 0) * 100,
+  ) / 100;
+  if (Math.abs(allocatedTotal - input.amount) > 0.009) {
+    return { ok: false, reason: 'allocation_incomplete', allocatedTotal };
+  }
+
+  return { ok: true, allocations, allocatedTotal };
+}
