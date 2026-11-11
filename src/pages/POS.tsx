@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, History, Zap,
-  UserRound, Coins, Search, CheckCircle2, Percent, Truck,
+  UserRound, Coins, CheckCircle2, Percent, Truck,
   Split, ReceiptText, Tag,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
-import { SearchInput, Modal, Field } from '../components/ui';
+import { Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import POSCartLine from '../components/POSCartLine';
 import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
@@ -45,6 +45,7 @@ import POSCartEmptyState from '../components/POSCartEmptyState';
 import POSCartColumnHeaders from '../components/POSCartColumnHeaders';
 import POSItemSearchHeading from '../components/POSItemSearchHeading';
 import POSCustomerSearchPanel from '../components/POSCustomerSearchPanel';
+import POSItemSearchField from '../components/POSItemSearchField';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1151,15 +1152,7 @@ export default function POS() {
             <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-line bg-gradient-to-b from-violet-500/[0.035] to-transparent">
               <POSItemSearchHeading />
               <div ref={searchBoxRef} className="relative">
-                <div className="relative">
-                  <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-violet-500 pointer-events-none" />
-                  <SearchInput
-                    value={search}
-                    onChange={setSearch}
-                    placeholder="Scan barcode, SKU, name or IMEI…"
-                    className="w-full !pl-11 !pr-4 !py-3.5 !text-[15px] !rounded-xl !border-violet-300/70 dark:!border-violet-500/30 !bg-surface shadow-[0_8px_28px_-16px_rgba(124,58,237,.5)]"
-                  />
-                </div>
+                <POSItemSearchField value={search} onChange={setSearch} />
 <POSItemSearchSuggestions
                   visible={itemSuggestions.length > 0}
                   unitSuggestion={itemUnitSuggestion && itemUnitSuggestionProduct ? {
