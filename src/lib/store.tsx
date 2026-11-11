@@ -22,6 +22,7 @@ import { calculateDayEndTotals } from './dayEnd';
 import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing';
 import { resolveSalePayment } from './salePaymentRules';
 import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefundLoyaltyAdjustment } from './saleRefund';
+import { resolveExchangeReturnLines } from './exchangeReturns';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -2991,71 +2992,25 @@ const deletePurchase = useCallback((id: string) => {
     if (requested.size === 0) return;
 
     setStateWithInventoryLedger('EXCHANGE', s => {
-      const priorReturnedByLine = new Map<string, number>();
-      const priorReturnedByProduct = new Map<string, number>();
-      s.exchanges.filter(x => x.billNo === sale.billNo).flatMap(x => x.items).forEach(item => {
-        const lineKey = item.itemIdx !== undefined ? 'i:' + item.itemIdx : 'p:' + item.productId;
-        priorReturnedByLine.set(lineKey, (priorReturnedByLine.get(lineKey) || 0) + item.qty);
-        priorReturnedByProduct.set(item.productId, (priorReturnedByProduct.get(item.productId) || 0) + item.qty);
+      const resolution = resolveExchangeReturnLines({
+        saleId: sale.id,
+        saleItems: sale.items,
+        priorExchanges: s.exchanges.filter(x => x.billNo === sale.billNo),
+        units: s.units || [],
+        requested,
+        returns,
+        mode,
       });
-
-      const exItems: Exchange['items'] = [];
-      const returnedUnitIds: string[] = [];
-      const restockQtyByProduct = new Map<string, number>();
-      let refund = 0;
-
-      for (const [itemIdx, requestedQty] of requested) {
-        const it = sale.items[itemIdx];
-        const lineKey = 'i:' + itemIdx;
-        const alreadyReturned = priorReturnedByLine.has(lineKey)
-          ? (priorReturnedByLine.get(lineKey) || 0)
-          : (priorReturnedByProduct.get(it.productId) || 0);
-        const availableQty = Math.max(0, it.qty - alreadyReturned);
-        const tracked = (it.unitIds || []).length > 0;
-        const trackedAvailable = (it.unitIds || []).filter(id => s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id)).length;
-        const maxReturnable = Math.min(availableQty, tracked ? trackedAvailable : availableQty);
-        if (requestedQty > maxReturnable) return s;
-        const qty = requestedQty;
-        if (qty <= 0) continue;
-
-        const requestedUnitIds = Array.isArray((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds)
-          ? ((returns.find(r => r.itemIdx === itemIdx) || {}).unitIds || []).filter(Boolean)
-          : [];
-        if (tracked) {
-          if (requestedUnitIds.length !== qty || new Set(requestedUnitIds).size !== qty) return s;
-          const soldUnitIds = new Set((it.unitIds || []).filter(Boolean));
-          if (requestedUnitIds.some(id => !soldUnitIds.has(id) || !s.units.some(u => u.id === id && u.status === 'sold' && u.saleId === sale.id))) return s;
-        } else if (requestedUnitIds.length) {
-          return s;
-        }
-
-        const proportionalDiscount = it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0;
-        const amount = Math.max(0, Math.round((it.price * qty - proportionalDiscount) * 100) / 100);
-        const unitIds = tracked ? requestedUnitIds : [];
-
-        exItems.push({ itemIdx, productId: it.productId, name: it.name, qty, amount });
-        if (mode === 'refund') refund += amount;
-        restockQtyByProduct.set(it.productId, (restockQtyByProduct.get(it.productId) || 0) + qty);
-        returnedUnitIds.push(...unitIds);
-        priorReturnedByLine.set(lineKey, alreadyReturned + qty);
-        priorReturnedByProduct.set(it.productId, (priorReturnedByProduct.get(it.productId) || 0) + qty);
-      }
-
-      if (exItems.length === 0) return s;
+      if (!resolution.ok) return s;
+      const { items: exItems, returnedUnitIds, restockQtyByProduct, refundAmount: refund, allReturned } = resolution;
 
       const seq = s.counters.ex + 1;
       const ex: Exchange = {
         id: uid(), exNo: `EX-${String(seq).padStart(4, '0')}`, date: new Date().toISOString(),
         billNo: sale.billNo, customerName: sale.customerName, reason,
-        items: exItems, refund: Math.round(refund * 100) / 100, additional: 0, by: user.name,
+        items: exItems, refund, additional: 0, by: user.name,
         branchId: sale.branchId || getDefaultBranchId(getCloudShopId()) || 'local-main', cashierId: user.id,
       };
-      const allReturned = sale.items.every((it, idx) => {
-        const returned = priorReturnedByLine.has('i:' + idx)
-          ? (priorReturnedByLine.get('i:' + idx) || 0)
-          : (priorReturnedByProduct.get(it.productId) || 0);
-        return returned >= it.qty;
-      });
 
       return {
         ...s,
