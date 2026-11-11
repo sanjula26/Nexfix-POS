@@ -38,6 +38,7 @@ import POSHeldSalesDialog from '../components/POSHeldSalesDialog';
 import POSImeiUnitPickerDialog from '../components/POSImeiUnitPickerDialog';
 import POSToastStack from '../components/POSToastStack';
 import POSBillReversalDialog from '../components/POSBillReversalDialog';
+import POSTradeInEditor, { type TradeInDraft } from '../components/POSTradeInEditor';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1444,28 +1445,17 @@ export default function POS() {
               </div>
             )}
 
-            {!tradeInOpen ? (
-              <button className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 hover:opacity-80 flex items-center gap-1" onClick={() => setTradeInOpen(true)}>
-                <ArrowLeftRight size={11} /> Add trade-in
-              </button>
-            ) : (
-              <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5 space-y-2">
-                <div className="flex items-center justify-between"><span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">Trade-in device</span><button className="text-faint hover:text-rose-500" onClick={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}><X size={11} /></button></div>
-                <select className="input !py-1.5 !text-[12px]" value={tradeIn.productId} onChange={e => setTradeIn(v => ({ ...v, productId: e.target.value }))}>
-                  <option value="">Select device/product</option>
-                  {products.filter(p => p.trackImei || p.trackSerial).map(p => <option key={p.id} value={p.id}>{p.name} · {p.trackImei && p.trackSerial ? 'IMEI + Serial' : p.trackImei ? 'IMEI' : 'Serial'}</option>)}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input className="input !py-1.5 !text-[12px]" placeholder="IMEI" value={tradeIn.imei} onChange={e => setTradeIn(v => ({ ...v, imei: e.target.value }))} />
-                  <input className="input !py-1.5 !text-[12px]" placeholder="Serial" value={tradeIn.serial} onChange={e => setTradeIn(v => ({ ...v, serial: e.target.value }))} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input className="input !py-1.5 !text-[12px] num flex-1" placeholder="Trade-in value (Rs.)" value={tradeIn.value} onChange={e => setTradeIn(v => ({ ...v, value: e.target.value.replace(/[^\d.]/g, '') }))} inputMode="decimal" />
-                  <label className="flex items-center gap-1.5 text-[10.5px] text-sub whitespace-nowrap"><input type="checkbox" checked={tradeIn.addToInventory} onChange={e => setTradeIn(v => ({ ...v, addToInventory: e.target.checked }))} /> Add to inventory</label>
-                </div>
-                <div className="text-[10px] text-faint">Trade-in value is deducted from this bill. When added to inventory, the device is recorded at the trade-in value.</div>
-              </div>
-            )}
+            <POSTradeInEditor
+              open={tradeInOpen}
+              value={tradeIn}
+              trackedProducts={products.filter(product => product.trackImei || product.trackSerial)}
+              onOpen={() => setTradeInOpen(true)}
+              onClose={() => {
+                setTradeInOpen(false);
+                setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true });
+              }}
+              onChange={setTradeIn}
+            />
 
             <POSOrderTotalSummary fullAmount={preTotal} pointsValue={pointsVal} total={total} />
 
