@@ -73,3 +73,48 @@ export function calculateSaleRefund(input: {
     refundValue,
   };
 }
+
+
+export interface SaleRefundCreditSplit {
+  creditDue: number;
+  creditAmount: number;
+  cashAmount: number;
+}
+
+/** Split a refund between unpaid invoice credit and money to return as cash. */
+export function calculateSaleRefundCreditSplit(input: {
+  total: number;
+  amountPaid: number;
+  alreadySettled: number;
+  previouslyRefundedCredit: number;
+  refundValue: number;
+}): SaleRefundCreditSplit {
+  const creditDue = Math.max(
+    0,
+    input.total - input.amountPaid - input.alreadySettled - input.previouslyRefundedCredit,
+  );
+  const creditAmount = Math.min(creditDue, input.refundValue);
+  const cashAmount = Math.max(0, Math.round((input.refundValue - creditAmount) * 100) / 100);
+  return { creditDue, creditAmount, cashAmount };
+}
+
+export interface SaleRefundLoyaltyAdjustment {
+  pointsEarnedToReverse: number;
+  pointsToRestore: number;
+}
+
+/** Calculate proportional loyalty reversal/restoration for a refund. */
+export function calculateSaleRefundLoyaltyAdjustment(input: {
+  total: number;
+  refundValue: number;
+  pointsEarned?: number;
+  pointsRedeemed?: number;
+}): SaleRefundLoyaltyAdjustment {
+  const returnedRatio = input.total > 0 ? Math.min(1, input.refundValue / input.total) : 1;
+  const pointsEarned = input.pointsEarned || 0;
+  const pointsRedeemed = input.pointsRedeemed || 0;
+  return {
+    pointsEarnedToReverse: Math.min(pointsEarned, Math.round(pointsEarned * returnedRatio)),
+    pointsToRestore: Math.min(pointsRedeemed, Math.round(pointsRedeemed * returnedRatio)),
+  };
+}
