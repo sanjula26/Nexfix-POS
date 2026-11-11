@@ -118,8 +118,17 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
 }
 
 /** Do not display or edit a cached quantity until this Inventory view loaded that exact branch. */
-export function isBranchStockCacheReady(selectedBranchId: string, loadedBranchId: string, hasCachedStock: boolean): boolean {
-  return !!selectedBranchId && selectedBranchId !== 'local-main' && selectedBranchId === loadedBranchId && hasCachedStock;
+export function isBranchStockCacheReady(
+  selectedBranchId: string,
+  loadedBranchId: string,
+  hasCachedStock: boolean,
+  cachedDeviceBranchId = '',
+  offline = false,
+): boolean {
+  if (!selectedBranchId || selectedBranchId === 'local-main' || !hasCachedStock) return false;
+  const loadedThisView = selectedBranchId === loadedBranchId;
+  const previouslyVerifiedOfflineBranch = offline && selectedBranchId === cachedDeviceBranchId;
+  return loadedThisView || previouslyVerifiedOfflineBranch;
 }
 
 /** A cloud-bound POS must resolve its server branch before treating legacy local-main stock as safe. */
