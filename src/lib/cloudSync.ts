@@ -222,6 +222,13 @@ export async function getCloudBranchStockQuantity(
   if (shop.shopId !== shopId) {
     return { ok: false, error: 'The selected cloud shop changed. Refresh Inventory and reopen the product editor.' };
   }
+  const branch = await resolveCloudBranchId(shopId, branchId);
+  if (!branch.ok || !branch.branchId) {
+    return { ok: false, error: branch.error || 'This POS is not assigned to an active branch.' };
+  }
+  if (branch.branchId !== branchId) {
+    return { ok: false, error: 'This POS is assigned to a different branch. Refresh Inventory and reopen the product editor.' };
+  }
   const { data, error } = await supabase.from('branch_stock').select('qty')
     .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
   if (error) return { ok: false, error: error.message };
