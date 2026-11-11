@@ -21,6 +21,7 @@ import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './c
 import { calculateDayEndTotals } from './dayEnd';
 import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing';
 import { resolveSalePayment } from './salePaymentRules';
+import { calculateSaleRefund } from './saleRefund';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -2203,30 +2204,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         priorReturnedByLine.set(item.itemIdx, (priorReturnedByLine.get(item.itemIdx) || 0) + item.qty);
       }
     }
-    const remainingItems = sale.items.map((it, idx) => ({ it, idx, qty: Math.max(0, it.qty - (priorReturnedByLine.get(idx) || 0)) })).filter(x => x.qty > 0);
+    const refundCalculation = calculateSaleRefund({
+      items: sale.items,
+      priorReturnedByLine,
+      subtotal: sale.subtotal,
+      discount: sale.discount,
+      tax: sale.tax,
+      shipping: sale.shipping,
+      tradeInValue: sale.tradeIn?.value,
+    });
+    const { remainingItems, refundValue } = refundCalculation;
     if (remainingItems.length === 0) return false;
-
-    const refundQtyByProduct = new Map<string, number>();
-    for (const { it, qty } of remainingItems) refundQtyByProduct.set(it.productId, (refundQtyByProduct.get(it.productId) || 0) + qty);
-    const merchandiseGross = remainingItems.reduce((sum, { it, qty }) => sum + it.price * qty, 0);
-    const merchandiseDiscount = remainingItems.reduce((sum, { it, qty }) => sum + (it.qty > 0 ? (it.discount || 0) * (qty / it.qty) : 0), 0);
-    const returnedMerchandise = Math.max(0, merchandiseGross - merchandiseDiscount);
-    const saleSubtotal = Math.max(0, sale.subtotal);
-    const saleDiscount = Math.min(Math.max(0, sale.discount || 0), saleSubtotal);
-    const postDiscountSubtotal = Math.max(0, saleSubtotal - saleDiscount);
-    const allocatedDiscount = Math.min(saleDiscount, returnedMerchandise * (saleSubtotal > 0 ? saleDiscount / saleSubtotal : 0));
-    const taxableReturned = Math.max(0, returnedMerchandise - allocatedDiscount);
-    const taxRefund = postDiscountSubtotal > 0 ? Math.round((sale.tax || 0) * (taxableReturned / postDiscountSubtotal) * 100) / 100 : 0;
-    // Trade-in is stored separately from the local sale discount, but it reduces the
-    // amount the customer actually paid. Allocate that reduction proportionally to
-    // the returned merchandise so local refunds match the cloud return calculation.
-    const tradeInValue = Math.max(0, Number(sale.tradeIn?.value || 0));
-    const allocatedTradeIn = saleSubtotal > 0
-      ? Math.min(tradeInValue, tradeInValue * (returnedMerchandise / saleSubtotal))
-      : 0;
-    const fullReturn = remainingItems.length === sale.items.length && remainingItems.every(({ it, qty }) => qty === it.qty);
-    const shippingRefund = fullReturn ? Math.max(0, sale.shipping || 0) : 0;
-    const refundValue = Math.max(0, Math.round((taxableReturned + taxRefund + shippingRefund - allocatedTradeIn) * 100) / 100);
 
     const pendingRefundKey = 'nexfix_pending_refund_v1:' + sale.id;
     let returnId = '';
