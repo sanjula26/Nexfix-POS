@@ -34,6 +34,7 @@ import POSHeldSaleRow from '../components/POSHeldSaleRow';
 import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
 import POSCashDrawerDialog from '../components/POSCashDrawerDialog';
 import POSQuickAddCustomerDialog from '../components/POSQuickAddCustomerDialog';
+import POSHeldSalesDialog from '../components/POSHeldSalesDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1805,24 +1806,17 @@ export default function POS() {
         onClose={() => setDrawerOpen(false)}
       />
 
-      {/* held sales */}
-      <Modal open={heldOpen} onClose={() => setHeldOpen(false)} title="Held sales" sub="Resume or discard parked carts">
-        <div className="space-y-2.5">
-          <AnimatePresence initial={false}>
-            {state.held.map(h => (
-              <POSHeldSaleRow
-                key={h.id}
-                heldSale={h}
-                heldAtLabel={timeAgo(h.heldAt)}
-                customerName={h.customerId ? state.customers.find(c => c.id === h.customerId)?.name || '' : ''}
-                onResume={resume}
-                onDelete={deleteHold}
-              />
-            ))}
-          </AnimatePresence>
-          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales — press F5 to park the current bill</p>}
-        </div>
-      </Modal>
+      <POSHeldSalesDialog
+        open={heldOpen}
+        heldSales={state.held.map(heldSale => ({
+          heldSale,
+          heldAtLabel: timeAgo(heldSale.heldAt),
+          customerName: heldSale.customerId ? state.customers.find(customer => customer.id === heldSale.customerId)?.name || '' : '',
+        }))}
+        onResume={resume}
+        onDelete={deleteHold}
+        onClose={() => setHeldOpen(false)}
+      />
 
       <POSQuickAddCustomerDialog
         open={addCustOpen}
