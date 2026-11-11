@@ -9,6 +9,7 @@ import { calculateSaleRefund, calculateSaleRefundCreditSplit, calculateSaleRefun
 import { resolveExchangeReturnLines } from '../src/lib/exchangeReturns.ts';
 import { resolvePurchaseReturnLines } from '../src/lib/purchaseReturns.ts';
 import { buildPurchaseReceiveChanges } from '../src/lib/purchaseReceive.ts';
+import { resolveUserPasswordForSave } from '../src/lib/userManagement.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -959,4 +960,48 @@ test('purchase receive changes leave products without a receive delta untouched'
   });
   assert.equal(result.products[0], product);
   assert.deepEqual(result.unitDrafts, []);
+});
+
+
+test('managed user password policy preserves an unchanged existing hash', () => {
+  assert.deepEqual(resolveUserPasswordForSave({
+    existingPassword: 'pbkdf2$existing-hash',
+    suppliedPassword: 'pbkdf2$existing-hash',
+    suppliedIsHashed: true,
+  }), {
+    ok: true,
+    password: 'pbkdf2$existing-hash',
+    hashRequired: false,
+  });
+});
+
+test('managed user password policy rejects short changed passwords', () => {
+  assert.deepEqual(resolveUserPasswordForSave({
+    existingPassword: 'pbkdf2$existing-hash',
+    suppliedPassword: 'short',
+    suppliedIsHashed: false,
+  }), { ok: false, reason: 'password_too_short' });
+});
+
+test('managed user password policy delegates hashing for new plaintext passwords', () => {
+  assert.deepEqual(resolveUserPasswordForSave({
+    suppliedPassword: 'long-enough-new-password',
+    suppliedIsHashed: false,
+  }), {
+    ok: true,
+    password: 'long-enough-new-password',
+    hashRequired: true,
+  });
+});
+
+test('managed user password policy preserves an already-hashed replacement', () => {
+  assert.deepEqual(resolveUserPasswordForSave({
+    existingPassword: 'pbkdf2$old-hash',
+    suppliedPassword: 'pbkdf2$new-hash',
+    suppliedIsHashed: true,
+  }), {
+    ok: true,
+    password: 'pbkdf2$new-hash',
+    hashRequired: false,
+  });
 });
