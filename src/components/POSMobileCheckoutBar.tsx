@@ -1,3 +1,4 @@
+import { Zap } from 'lucide-react';
 import { fmtRs } from '../lib/utils';
 
 interface POSMobileCheckoutBarProps {
