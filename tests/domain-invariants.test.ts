@@ -3,7 +3,7 @@ import test from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
-import { applyCategoryPromotions } from '../src/lib/salePricing.ts';
+import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -430,4 +430,63 @@ test('category promotions preserve lines when no promotion applies', () => {
   const settings = { promotions: [] };
 
   assert.equal(applyCategoryPromotions(lines, products, settings), lines);
+});
+
+
+test('sale financial calculation preserves discounts, trade-in tax base, loyalty and profit', () => {
+  assert.deepEqual(calculateSaleFinancials({
+    items: [
+      { price: 100, qty: 2, cost: 60, discount: 10 },
+      { price: 50, qty: 1, cost: 20 },
+    ],
+    discount: 20,
+    taxPct: 10,
+    shipping: 15,
+    rawTradeInValue: 50,
+    requestedPointsRedeemed: 3,
+    customerLoyaltyPoints: 10,
+    loyaltyPointValue: 20,
+    loyaltyPointsPerRs: 0.01,
+    hasCustomer: true,
+    defaultLoyaltyPointValue: 20,
+  }), {
+    grossTotal: 250,
+    lineDiscount: 10,
+    subtotal: 240,
+    discount: 20,
+    shipping: 15,
+    tradeInValue: 50,
+    taxableSubtotal: 170,
+    tax: 17,
+    pointsRedeemed: 3,
+    loyaltyPointValue: 20,
+    pointsValue: 60,
+    preTotal: 202,
+    appliedPointsValue: 60,
+    total: 142,
+    profit: -15,
+    pointsEarned: 1,
+  });
+});
+
+test('sale financial calculation caps trade-in at the post-discount subtotal and requires a customer for loyalty', () => {
+  const result = calculateSaleFinancials({
+    items: [{ price: 100, qty: 2, cost: 50 }],
+    discount: 20,
+    taxPct: 10,
+    rawTradeInValue: 500,
+    requestedPointsRedeemed: 5,
+    customerLoyaltyPoints: undefined,
+    loyaltyPointValue: 20,
+    loyaltyPointsPerRs: 1,
+    hasCustomer: false,
+    defaultLoyaltyPointValue: 20,
+  });
+
+  assert.equal(result.tradeInValue, 180);
+  assert.equal(result.taxableSubtotal, 0);
+  assert.equal(result.tax, 0);
+  assert.equal(result.pointsRedeemed, 0);
+  assert.equal(result.total, 0);
+  assert.equal(result.pointsEarned, 0);
 });
