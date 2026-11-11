@@ -1486,7 +1486,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return deny('Selected invoice was not found for this customer. Refresh and select the invoice again.', 'Blocked settlement for a missing or ineligible selected invoice');
       }
       if (allocationResult.reason === 'invoice_paid') {
-        return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${p.saleId}`);
+        return deny('This invoice has no remaining credit due. Refresh the invoice list.', `Blocked settlement for paid invoice ${allocationResult.billNo || p.saleId}`);
       }
       if (allocationResult.reason === 'invoice_exceeded') {
         const invoiceDue = allocationResult.invoiceDue || 0;
