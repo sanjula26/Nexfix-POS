@@ -20,6 +20,7 @@ import { applyInventoryLedger, type InventoryLedgerOperation } from './inventory
 import { resolveCreditPaymentAllocations, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { applyCategoryPromotions, calculateSaleFinancials } from './salePricing';
+import { resolveSalePayment } from './salePaymentRules';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
@@ -1660,26 +1661,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? s.users.find(u => u.id === input.salesmanId && u.active)
       : undefined;
     const byUser = salesman || user;
-    const validPaymentMethods = new Set<PaymentMethod>(['cash', 'card', 'bank', 'mobile', 'credit']);
-    if (!validPaymentMethods.has(input.payment)) return null;
-    const rawLegs = Array.isArray(input.payments) ? input.payments : [];
-    if (rawLegs.some(l => !l || !validPaymentMethods.has(l.method) || !Number.isFinite(l.amount) || l.amount < 0)) return null;
-    const legs = rawLegs.filter(l => l.amount > 0).map(l => ({ method: l.method, amount: Math.round(l.amount * 100) / 100 }));
-    const isSplit = legs.length > 1;
-    if (isSplit && legs.some(l => l.method === 'credit')) return null;
-    if (isSplit && Math.abs(legs.reduce((a, l) => a + l.amount, 0) - Math.max(0, Number(input.amountPaid) || 0)) > 0.01) return null;
-    const isCredit = legs.some(l => l.method === 'credit') || input.payment === 'credit';
-    if (isCredit) {
-      if (!cust) return null;
-      const creditLimit = cust.creditLimit ?? 0;
-      const projectedBalance = cust.creditBalance + Math.max(0, total - (isSplit ? legs.filter(l => l.method !== 'credit').reduce((a, l) => a + l.amount, 0) : input.amountPaid));
-      if (creditLimit > 0 && projectedBalance > creditLimit) return null;
-    }
-    const amountPaid = isSplit
-      ? legs.reduce((a, l) => a + l.amount, 0)
-      : (isCredit ? input.amountPaid : Math.max(input.amountPaid, total));
-    if (isCredit && amountPaid > total) return null;
-    const balanceDue = isCredit ? Math.max(0, total - amountPaid) : 0;
+    const paymentResolution = resolveSalePayment({
+      payment: input.payment,
+      payments: input.payments,
+      amountPaid: input.amountPaid,
+      total,
+      customer: cust,
+    });
+    if (!paymentResolution.ok) return null;
+    const { legs, isSplit, isCredit, amountPaid, balanceDue, change } = paymentResolution;
     // PHASE1_MACHINE_TRACKING_V1
     const machine = getMachineIdentity();
     const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
@@ -1695,7 +1685,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       payments: legs.length > 0 ? legs.filter(l => l.method !== 'credit') : undefined,
       pointsRedeemed: pointsRedeemed || undefined,
       pointsEarned: pointsEarned || undefined,
-      amountPaid, change: isCredit ? 0 : Math.max(0, amountPaid - total),
+      amountPaid, change,
       profit,
       tradeIn: tradeIn ? { ...tradeIn, value: tradeInValue, imei: tradeIn.imei?.trim() || undefined, serial: tradeIn.serial?.trim() || undefined, unitId: tradeInUnitId } : undefined,
       status: 'completed',
