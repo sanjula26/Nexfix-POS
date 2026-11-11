@@ -50,6 +50,7 @@ import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
 import POSPaymentMethodHeader from '../components/POSPaymentMethodHeader';
 import POSSplitCreditSummary from '../components/POSSplitCreditSummary';
 import POSAmountPaidField from '../components/POSAmountPaidField';
+import POSCashAmountPresets from '../components/POSCashAmountPresets';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1457,18 +1458,17 @@ export default function POS() {
                   </div>
                 )}
                 {payment === 'cash' && total > 0 && (
-                  <div className="flex gap-1.5 mt-2">
-                    {[500, 1000, 2000, 5000].map(v => (
-                      <button
-                        key={v}
-                        className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 num"
-                        onClick={() => { setPaid(String(total <= v ? v : Math.ceil(total / v) * v)); setPaidAuto(false); }}
-                      >
-                        {fmtRs(v, false)}
-                      </button>
-                    ))}
-                    <button className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 text-violet-500 font-bold" onClick={() => { setPaid(String(total)); setPaidAuto(false); }}>Exact</button>
-                  </div>
+                  <POSCashAmountPresets
+                    amounts={[500, 1000, 2000, 5000].map(value => ({
+                      value,
+                      label: fmtRs(value, false),
+                      onSelect: () => {
+                        setPaid(String(total <= value ? value : Math.ceil(total / value) * value));
+                        setPaidAuto(false);
+                      },
+                    }))}
+                    onExact={() => { setPaid(String(total)); setPaidAuto(false); }}
+                  />
                 )}
               </div>
             )}
