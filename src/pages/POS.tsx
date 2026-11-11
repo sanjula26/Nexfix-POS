@@ -24,6 +24,7 @@ import POSFavoritesQuickAdd from '../components/POSFavoritesQuickAdd';
 import POSProductCatalogBrowser from '../components/POSProductCatalogBrowser';
 import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import POSReprintBillRow from '../components/POSReprintBillRow';
+import POSReprintSearchHeader from '../components/POSReprintSearchHeader';
 import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
@@ -1953,10 +1954,7 @@ export default function POS() {
 
       <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={reprintSearch} onChange={setReprintSearch} placeholder="Find bill #, customer, cashier or WhatsApp number…" className="flex-1 min-w-[240px]" />
-            <span className="text-[11px] text-faint num">{reprintBills.length} shown</span>
-          </div>
+          <POSReprintSearchHeader value={reprintSearch} resultCount={reprintBills.length} onChange={setReprintSearch} />
           <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
           {reprintBills.map((sale, index) => {
             const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
