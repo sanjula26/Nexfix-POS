@@ -31,6 +31,7 @@ import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, norm
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer, AppUser, HeldSale } from '../lib/types';
 import POSHeldSaleRow from '../components/POSHeldSaleRow';
+import POSReprintWhatsAppDialog from '../components/POSReprintWhatsAppDialog';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1970,32 +1971,15 @@ export default function POS() {
         </div>
       </Modal>
 
-      <Modal open={!!reprintWhatsAppSale} onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }} title="Send reprint via WhatsApp" sub={reprintWhatsAppSale?.billNo || ''}>
-        <div className="space-y-4">
-          <div className="text-sm text-sub">
-            Enter the customer's WhatsApp number. The bill message will be prepared for this number in WhatsApp.
-          </div>
-          <input
-            className="input w-full"
-            type="tel"
-            inputMode="tel"
-            autoFocus
-            value={reprintWhatsAppPhone}
-            onChange={e => setReprintWhatsAppPhone(e.target.value)}
-            placeholder="e.g. 0771234567 or +94771234567"
-            onKeyDown={e => { if (e.key === 'Enter') confirmReprintWhatsApp(); }}
-          />
-          <div className="rounded-xl bg-raised border border-line p-3 text-[11px] text-faint">
-            WhatsApp will open with the selected bill and number. Press <b className="text-ink">Send</b> in WhatsApp to deliver it.
-          </div>
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-soft flex-1" onClick={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}>Cancel</button>
-            <button type="button" className="btn !text-white flex-1" disabled={normalizeWhatsAppPhone(reprintWhatsAppPhone).length < 9 || normalizeWhatsAppPhone(reprintWhatsAppPhone).length > 15} onClick={confirmReprintWhatsApp} style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}>
-              <MessageCircle size={15} /> Open WhatsApp
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <POSReprintWhatsAppDialog
+        open={!!reprintWhatsAppSale}
+        billNo={reprintWhatsAppSale?.billNo || ''}
+        phone={reprintWhatsAppPhone}
+        canSubmit={normalizeWhatsAppPhone(reprintWhatsAppPhone).length >= 9 && normalizeWhatsAppPhone(reprintWhatsAppPhone).length <= 15}
+        onPhoneChange={setReprintWhatsAppPhone}
+        onConfirm={confirmReprintWhatsApp}
+        onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}
+      />
 
       <ReceiptModal sale={doneSale} preferredWhatsAppPhone={doneSaleWhatsApp} onClose={() => { setDoneSale(null); setDoneSaleWhatsApp(''); setTimeout(focusSearch, 120); }} />
     </div>
