@@ -5,6 +5,7 @@ import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupVal
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { applyCategoryPromotions, calculateSaleFinancials } from '../src/lib/salePricing.ts';
 import { resolveSalePayment } from '../src/lib/salePaymentRules.ts';
+import { calculateSaleRefund } from '../src/lib/saleRefund.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -548,4 +549,72 @@ test('sale payment rules reject invalid split totals and split credit tenders', 
     amountPaid: 60, total: 60,
     customer: { creditBalance: 0, creditLimit: 100 },
   }), { ok: false, reason: 'split_credit_not_supported' });
+});
+
+
+test('sale refund calculation allocates partial merchandise discount, tax and trade-in proportionally', () => {
+  const result = calculateSaleRefund({
+    items: [
+      { productId: 'p1', name: 'Phone', qty: 2, price: 100, cost: 60, discount: 20 },
+      { productId: 'p2', name: 'Case', qty: 1, price: 50, cost: 20, discount: 5 },
+    ],
+    priorReturnedByLine: new Map(),
+    subtotal: 225,
+    discount: 20,
+    tax: 20,
+    shipping: 10,
+    tradeInValue: 25,
+  });
+
+  assert.equal(result.fullReturn, true);
+  assert.equal(result.returnedMerchandise, 225);
+  assert.equal(result.taxableReturned, 205);
+  assert.equal(result.taxRefund, 20);
+  assert.equal(result.allocatedTradeIn, 25);
+  assert.equal(result.shippingRefund, 10);
+  assert.equal(result.refundValue, 210);
+  assert.equal(result.remainingItems.length, 2);
+});
+
+test('sale refund calculation excludes exchanged quantities and does not refund shipping on partial returns', () => {
+  const result = calculateSaleRefund({
+    items: [
+      { productId: 'p1', name: 'Phone', qty: 2, price: 100, cost: 60, discount: 20 },
+      { productId: 'p2', name: 'Case', qty: 1, price: 50, cost: 20, discount: 5 },
+    ],
+    priorReturnedByLine: new Map([[0, 1]]),
+    subtotal: 225,
+    discount: 20,
+    tax: 20,
+    shipping: 10,
+    tradeInValue: 25,
+  });
+
+  assert.equal(result.fullReturn, false);
+  assert.deepEqual(result.remainingItems.map(x => ({ idx: x.idx, qty: x.qty })), [
+    { idx: 0, qty: 1 },
+    { idx: 1, qty: 1 },
+  ]);
+  assert.equal(result.returnedMerchandise, 135);
+  assert.equal(result.taxableReturned, 123);
+  assert.equal(result.taxRefund, 12);
+  assert.equal(result.allocatedTradeIn, 15);
+  assert.equal(result.shippingRefund, 0);
+  assert.equal(result.refundValue, 120);
+});
+
+test('sale refund calculation returns zero for fully exchanged lines and clamps negative inputs', () => {
+  const result = calculateSaleRefund({
+    items: [{ productId: 'p1', name: 'Phone', qty: 1, price: 100, cost: 60 }],
+    priorReturnedByLine: new Map([[0, 1]]),
+    subtotal: -1,
+    discount: -5,
+    tax: -10,
+    shipping: -20,
+    tradeInValue: -30,
+  });
+
+  assert.equal(result.remainingItems.length, 0);
+  assert.equal(result.fullReturn, false);
+  assert.equal(result.refundValue, 0);
 });
