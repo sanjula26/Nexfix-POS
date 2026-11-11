@@ -15,6 +15,7 @@ import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
 import POSCartLine from '../components/POSCartLine';
 import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
+import POSCatalogProductCard from '../components/POSCatalogProductCard';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1836,22 +1837,15 @@ export default function POS() {
                   const Icon = CAT_ICON[p.category] || Package;
                   const tint = CAT_TINT[p.category] || 'from-violet-500 to-indigo-600';
                   const inCart = lines.find(l => l.productId === p.id)?.qty || 0;
-                  const out = p.stock === 0;
-                  const low = !out && p.stock <= p.reorderLevel;
                   return (
-                    <motion.button key={p.id} layout whileTap={{ scale: 0.97 }} disabled={out || inCart >= p.stock} onClick={() => add(p.id)}
-                      className={`relative text-left rounded-xl border p-3 transition-all group ${out ? 'bg-rose-500/[0.04] border-rose-300/60 opacity-70 cursor-not-allowed' : low ? 'bg-surface border-rose-300/80 dark:border-rose-500/40 hover:border-rose-400 hover:shadow-md cursor-pointer' : 'bg-surface border-line hover:border-violet-400 hover:shadow-lg hover:shadow-violet-500/10 cursor-pointer'}`}>
-                      <div className="flex items-start justify-between gap-1.5">
-                        <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${tint} text-white flex items-center justify-center shadow-sm shrink-0`}><Icon size={14} strokeWidth={2.1} /></span>
-                        <Badge tone={out || low ? 'rose' : 'emerald'} className={`num !text-[9.5px] !px-1.5 !py-0.5 ${low ? 'blink' : ''}`}>{out ? 'OUT' : low ? `${p.stock} LOW` : p.stock}</Badge>
-                      </div>
-                      <div className={`mt-2.5 text-[12px] font-bold leading-snug line-clamp-2 min-h-[30px] ${out ? 'text-sub line-through' : 'text-ink'}`}>{p.name}</div>
-                      <div className="text-[10px] text-faint mt-0.5 num">{p.sku}</div>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="num text-[13.5px] font-extrabold text-violet-600 dark:text-violet-400">{fmtRs(p.price, false)}</span>
-                        {inCart > 0 && <span className="min-w-5 px-1 h-5 rounded-full bg-violet-600 text-white text-[10px] font-bold flex items-center justify-center num">{inCart}</span>}
-                      </div>
-                    </motion.button>
+                    <POSCatalogProductCard
+                      key={p.id}
+                      product={p}
+                      icon={Icon}
+                      tint={tint}
+                      inCart={inCart}
+                      onAdd={() => add(p.id)}
+                    />
                   );
                 })}
               </div>
