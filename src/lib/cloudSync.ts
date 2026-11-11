@@ -212,17 +212,15 @@ export async function getCloudBranchStockQuantity(
   if (!shopId || !branchId || !productId || branchId === 'local-main') {
     return { ok: false, error: 'A valid cloud shop, branch, and product are required' };
   }
-  // App startup restores the persisted Cloud session asynchronously. Wait here
-  // as well so an early Inventory edit cannot query branch_stock as an anon user
-  // and misreport an RLS-hidden row as uninitialized stock.
-  const restored = await restoreCloudSession();
-  if (!restored.ok) {
-    return { ok: false, error: restored.error || 'Cloud sign-in is required once in Settings before editing branch stock.' };
+  // App startup restores the persisted Cloud session asynchronously. Resolve
+  // the authenticated shop membership here too, before the RLS-protected read,
+  // so an early Inventory edit cannot mistake an RLS-hidden row for missing stock.
+  const shop = await ensureCloudShop();
+  if (!shop.ok || !shop.shopId) {
+    return { ok: false, error: shop.error || 'Cloud sign-in is required once in Settings before editing branch stock.' };
   }
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) return { ok: false, error: sessionError.message };
-  if (!sessionData.session) {
-    return { ok: false, error: 'Cloud sign-in is required once in Settings before editing branch stock.' };
+  if (shop.shopId !== shopId) {
+    return { ok: false, error: 'The selected cloud shop changed. Refresh Inventory and reopen the product editor.' };
   }
   const { data, error } = await supabase.from('branch_stock').select('qty')
     .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
