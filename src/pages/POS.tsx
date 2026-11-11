@@ -17,6 +17,7 @@ import POSCartLine from '../components/POSCartLine';
 import POSOrderTotalSummary from '../components/POSOrderTotalSummary';
 import POSCatalogProductCard from '../components/POSCatalogProductCard';
 import POSBillSummaryStrip from '../components/POSBillSummaryStrip';
+import POSSelectedCustomerHeader from '../components/POSSelectedCustomerHeader';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
