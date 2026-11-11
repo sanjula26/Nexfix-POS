@@ -364,3 +364,28 @@ test('credit settlement FIFO allocation fails closed when open invoices cannot c
     sales, payments: [],
   }), { ok: false, reason: 'fifo_incomplete', allocatedTotal: 300 });
 });
+
+
+test('credit settlement FIFO allocation accounts for earlier payments before applying oldest-first', () => {
+  const sales = [
+    { id: 'sale-1', billNo: 'B-001', customerId: 'customer-1', total: 100, amountPaid: 0, date: '2026-01-01T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-2', billNo: 'B-002', customerId: 'customer-1', total: 100, amountPaid: 0, date: '2026-01-02T10:00:00.000Z', status: 'completed' },
+  ];
+  const payments = [{
+    id: 'payment-1', customerId: 'customer-1', amount: 30, method: 'cash',
+    date: '2026-01-03T10:00:00.000Z', by: 'cashier-1',
+    allocations: [{ saleId: 'sale-1', billNo: 'B-001', amount: 30 }],
+  }];
+
+  assert.deepEqual(resolveCreditPaymentAllocations({
+    customerId: 'customer-1', amount: 120, customerOutstanding: 170,
+    sales, payments,
+  }), {
+    ok: true,
+    allocations: [
+      { saleId: 'sale-1', billNo: 'B-001', amount: 70 },
+      { saleId: 'sale-2', billNo: 'B-002', amount: 50 },
+    ],
+    allocatedTotal: 120,
+  });
+});
