@@ -7,7 +7,7 @@ import {
   UserRound, Coins, CheckCircle2, Percent, Truck,
   Split, ReceiptText, Tag,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, MessageCircle, Printer,
+  Loader2, Eye, EyeOff, Lock, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
@@ -46,6 +46,7 @@ import POSCartColumnHeaders from '../components/POSCartColumnHeaders';
 import POSItemSearchHeading from '../components/POSItemSearchHeading';
 import POSCustomerSearchPanel from '../components/POSCustomerSearchPanel';
 import POSItemSearchField from '../components/POSItemSearchField';
+import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
 
 const CAT_ICON: Record<string, React.ElementType> = {
   Smartphones: Smartphone, Laptops: Package, Audio: Zap, Power: Zap,
@@ -1558,35 +1559,12 @@ export default function POS() {
               )}
             </AnimatePresence>
 
-            {/* WhatsApp receipt opt-in */}
-            <AnimatePresence>
-              {customer?.phone && !state.settings.whatsappReceipts && (
-                <motion.button
-                  initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  onClick={() => setWaReceipt(w => !w)}
-                  className={`w-full flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition-all text-left ${
-                    waReceipt
-                      ? 'bg-emerald-500/10 border-emerald-500/35'
-                      : 'bg-surface border-line hover:border-emerald-400/50'
-                  }`}
-                >
-                  <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-                    waReceipt ? 'bg-gradient-to-br from-[#25d366] to-[#128c7e] text-white shadow-md' : 'bg-raised text-faint'
-                  }`}>
-                    <MessageCircle size={15} />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className={`block text-[12px] font-bold ${waReceipt ? 'text-emerald-600 dark:text-emerald-400' : 'text-ink'}`}>
-                      Send receipt on WhatsApp
-                    </span>
-                    <span className="block text-[10px] text-faint num">to {customer.phone} — only when the customer asks</span>
-                  </span>
-                  <span className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${waReceipt ? 'bg-emerald-500' : 'bg-line'}`}>
-                    <span className={`absolute top-[2.5px] w-4 h-4 rounded-full bg-white shadow transition-all ${waReceipt ? 'left-[18px]' : 'left-[2px]'}`} />
-                  </span>
-                </motion.button>
-              )}
-            </AnimatePresence>
+            <POSWhatsAppReceiptOptIn
+              visible={Boolean(customer?.phone && !state.settings.whatsappReceipts)}
+              phone={customer?.phone || ''}
+              enabled={waReceipt}
+              onToggle={() => setWaReceipt(value => !value)}
+            />
 
             {error && <p className="text-xs font-semibold text-rose-500">{error}</p>}
 
