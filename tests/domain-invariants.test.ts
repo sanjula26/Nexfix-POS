@@ -298,6 +298,6 @@ test('inventory ledger state builder records only a pending-to-received purchase
   assert.equal(updated.inventoryTransactions?.[0].referenceId, 'purchase-1');
   assert.equal(updated.inventoryTransactions?.[0].by, 'Admin');
 
-  const unchanged = applyInventoryLedger(next, next, 'PURCHASE_RECEIVE', 'Admin');
+  const unchanged = applyInventoryLedger(previous, updated, 'PURCHASE_RECEIVE', 'Admin');
   assert.equal(unchanged.inventoryTransactions?.length, 1);
 });
