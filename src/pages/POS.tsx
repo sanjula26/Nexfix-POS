@@ -23,6 +23,7 @@ import POSBillMetaRow from '../components/POSBillMetaRow';
 import POSFavoritesQuickAdd from '../components/POSFavoritesQuickAdd';
 import POSProductCatalogBrowser from '../components/POSProductCatalogBrowser';
 import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
+import POSReprintBillRow from '../components/POSReprintBillRow';
 import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSRecentCustomers from '../components/POSRecentCustomers';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
@@ -1960,21 +1961,14 @@ export default function POS() {
           {reprintBills.map((sale, index) => {
             const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
             return (
-              <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center text-[11px] font-extrabold num">{index + 1}</div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><span className="font-extrabold text-violet-600">{sale.billNo}</span><span className="text-[11px] text-faint">{timeAgo(sale.date)}</span></div>
-                    <div className="text-[11px] text-sub truncate">{sale.customerName || 'Walk-in customer'} · {sale.items.reduce((n, it) => n + it.qty, 0)} item{sale.items.reduce((n, it) => n + it.qty, 0) === 1 ? '' : 's'}</div>
-                    <div className="text-sm font-extrabold text-ink num mt-0.5">{fmtRs(sale.total)}</div>
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button type="button" className="btn btn-primary !py-2 !px-3 !text-xs" onClick={() => openReprintSale(sale)}><Printer size={13} /> Print</button>
-                  <button type="button" className="btn !py-2 !px-3 !text-xs !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => sendReprintWhatsApp(sale)}><MessageCircle size={13} /> WhatsApp</button>
-                  {!customerPhone && <span className="self-center text-[10px] text-faint">number will be requested</span>}
-                </div>
-              </div>
+              <POSReprintBillRow
+                key={sale.id}
+                sale={sale}
+                index={index}
+                customerPhone={customerPhone}
+                onPrint={() => openReprintSale(sale)}
+                onWhatsApp={() => sendReprintWhatsApp(sale)}
+              />
             );
           })}
           {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
