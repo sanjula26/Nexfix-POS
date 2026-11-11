@@ -111,7 +111,7 @@ export function resolveCreditPaymentAllocations(input: {
       input.customerOutstanding,
     );
     if (invoiceDue <= 0.009) {
-      return { ok: false, reason: 'invoice_paid', invoiceDue };
+      return { ok: false, reason: 'invoice_paid', invoiceDue, billNo: sale.billNo };
     }
     if (input.amount > invoiceDue + 0.009) {
       return { ok: false, reason: 'invoice_exceeded', invoiceDue, billNo: sale.billNo };
