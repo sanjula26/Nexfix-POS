@@ -4,7 +4,7 @@ import { Lock, Minus, Pencil, Plus, X } from 'lucide-react';
 import { Badge } from './ui';
 import { fmtRs } from '../lib/utils';
 
-function CartLine({
+export default function POSCartLine({
   line, unitPrice, canDiscount, canEditPrice, onAskUnlock, onQty, onDisc, onPrice, onRemove,
 }: {
   line: { productId: string; qty: number; discount: number; price?: number; product: { name: string; price: number; stock: number; sku: string } };
