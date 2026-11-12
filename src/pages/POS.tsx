@@ -24,6 +24,7 @@ import POSCashDrawerModal from '../components/POSCashDrawerModal';
 import POSBillReversalModal from '../components/POSBillReversalModal';
 import POSPriceOverrideGate from '../components/POSPriceOverrideGate';
 import POSReprintBillsModal from '../components/POSReprintBillsModal';
+import POSImeiUnitPicker from '../components/POSImeiUnitPicker';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1961,16 +1962,13 @@ export default function POS() {
         onClose={() => setGateOpen(false)}
       />
 
-      {/* IMEI / Serial unit picker for tracked products */}
-      <Modal
+      <POSImeiUnitPicker
         open={!!unitPickProductId}
-        onClose={() => { setUnitPickProductId(null); setUnitPickSearch(''); }}
-        title="Select unit (IMEI / Serial)"
-        sub={products.find(p => p.id === unitPickProductId)?.name}
-      >
-        {unitPickProductId && (() => {
+        productName={products.find(p => p.id === unitPickProductId)?.name}
+        search={unitPickSearch}
+        units={unitPickProductId ? (() => {
           const used = usedUnitIds();
-          const available = (state.units || []).filter(u =>
+          return (state.units || []).filter(u =>
             u.productId === unitPickProductId &&
             u.status === 'in_stock' &&
             !used.has(u.id) &&
@@ -1978,41 +1976,11 @@ export default function POS() {
               (u.imei || '').includes(unitPickSearch.trim()) ||
               (u.serial || '').toLowerCase().includes(unitPickSearch.trim().toLowerCase())),
           );
-          return (
-            <div className="space-y-3">
-              <input
-                className="input"
-                autoFocus
-                placeholder="Scan or type IMEI / serialâ€¦"
-                value={unitPickSearch}
-                onChange={e => setUnitPickSearch(e.target.value)}
-              />
-              {available.length === 0 ? (
-                <p className="text-sm text-faint py-4 text-center">
-                  No available units. Add them under <b>IMEI / Serial</b> first.
-                </p>
-              ) : (
-                <div className="max-h-64 overflow-y-auto space-y-1.5">
-                  {available.map(u => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      className="w-full text-left rounded-xl border border-line px-3 py-2.5 hover:bg-raised transition-colors"
-                      onClick={() => addUnitToCart(unitPickProductId, u.id)}
-                    >
-                      <div className="font-semibold text-ink text-[13px] num">{u.imei || u.serial || u.id}</div>
-                      <div className="text-[11px] text-faint">
-                        {u.imei && u.serial ? `Serial: ${u.serial}` : ''}
-                        {u.expiryDate ? ` · Exp ${u.expiryDate.slice(0, 10)}` : ''}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </Modal>
+        })() : []}
+        onSearchChange={setUnitPickSearch}
+        onSelect={unitId => { if (unitPickProductId) addUnitToCart(unitPickProductId, unitId); }}
+        onClose={() => { setUnitPickProductId(null); setUnitPickSearch(''); }}
+      />
 
       <POSReprintBillsModal
         open={reprintOpen}
