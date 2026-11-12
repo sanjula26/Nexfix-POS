@@ -33,6 +33,7 @@ import POSPaymentMethodSelector from '../components/POSPaymentMethodSelector';
 import POSCheckoutWhatsAppField from '../components/POSCheckoutWhatsAppField';
 import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
 import POSDiscountControl from '../components/POSDiscountControl';
+import POSTaxControl from '../components/POSTaxControl';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1370,20 +1371,12 @@ export default function POS() {
             </div>}
 
             {/* tax */}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[12.5px] text-sub">Tax <span className="text-faint text-[10.5px]">(auto {state.settings.taxDefault}%)</span></span>
-              <div className="flex items-center gap-1.5">
-                <div className="relative">
-                  <input
-                    className="input !w-24 !py-1.5 !px-2.5 pr-6 num !text-[13px] text-right"
-                    value={taxPct} onChange={e => setTaxPct(e.target.value.replace(/[^\d.]/g, ''))}
-                    placeholder="0" inputMode="decimal"
-                  />
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-faint">%</span>
-                </div>
-                <span className="w-24 text-right num text-[12.5px] font-semibold text-sub">{tax > 0 ? fmtRs(tax, false) : '—'}</span>
-              </div>
-            </div>
+            <POSTaxControl
+              defaultRate={state.settings.taxDefault}
+              taxRate={taxPct}
+              calculatedTax={tax}
+              onTaxRateChange={setTaxPct}
+            />
 
             {/* service / delivery charge — always obvious at checkout */}
             {shipOpen ? (
