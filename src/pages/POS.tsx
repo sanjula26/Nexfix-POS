@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
-  UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
+  UserRound, Coins, UserPlus, Search, CheckCircle2, Truck,
   ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, Printer,
@@ -32,6 +32,7 @@ import POSLoyaltyRedeemPanel from '../components/POSLoyaltyRedeemPanel';
 import POSPaymentMethodSelector from '../components/POSPaymentMethodSelector';
 import POSCheckoutWhatsAppField from '../components/POSCheckoutWhatsAppField';
 import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
+import POSDiscountControl from '../components/POSDiscountControl';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1354,32 +1355,15 @@ export default function POS() {
             <Row label={`Subtotal (${itemCount} items)`} value={fmtRs(baseAfterLines)} />
 
             {/* discount with Rs / % toggle */}
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[12.5px] text-sub flex items-center gap-1.5">
-                Discount
-                <span className="flex rounded-lg bg-raised border border-line overflow-hidden">
-                  {(['rs', 'pct'] as const).map(m => (
-                    <button
-                      key={m}
-                      onClick={() => setDiscMode(m)}
-                      className={`px-2 py-[3px] text-[9.5px] font-extrabold transition-all ${discMode === m ? 'bg-violet-600 text-white' : 'text-faint hover:text-ink'}`}
-                    >
-                      {m === 'rs' ? 'Rs.' : <Percent size={9} />}
-                    </button>
-                  ))}
-                </span>
-              </span>
-              <div className="flex items-center gap-1.5">
-                <input
-                  ref={discRef}
-                  className={`input !w-24 !py-1.5 !px-2.5 num !text-[13px] text-right ${!can('act:discount') ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  value={discount}
-                  onChange={e => setDiscount(e.target.value.replace(/[^\d.]/g, ''))}
-                  placeholder="0" inputMode="decimal" disabled={!can('act:discount')}
-                />
-                <span className="w-24 text-right num text-[12.5px] font-semibold text-rose-500">{discCart > 0 ? `- ${fmtRs(discCart, false)}` : '—'}</span>
-              </div>
-            </div>
+            <POSDiscountControl
+              mode={discMode}
+              discount={discount}
+              calculatedDiscount={discCart}
+              canDiscount={can('act:discount')}
+              inputRef={discRef}
+              onModeChange={setDiscMode}
+              onDiscountChange={setDiscount}
+            />
             {promoDiscount > 0 && <div className="flex items-center justify-between gap-3">
               <span className="text-[12.5px] text-sub">Promotion <span className="text-emerald-600 dark:text-emerald-400 text-[10.5px]">(active)</span></span>
               <span className="w-24 text-right num text-[12.5px] font-semibold text-emerald-600 dark:text-emerald-400">- {fmtRs(promoDiscount, false)}</span>
