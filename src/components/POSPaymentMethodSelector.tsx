@@ -15,6 +15,7 @@ interface POSPaymentMethodSelectorProps {
   payment: PaymentMethod;
   splitOn: boolean;
   legs: PaymentLeg[];
+  canCreditSale: boolean;
   total: number;
   legSum: number;
   coverageLabel: string;
@@ -34,6 +35,7 @@ export default function POSPaymentMethodSelector({
   payment,
   splitOn,
   legs,
+  canCreditSale,
   total,
   legSum,
   coverageLabel,
@@ -62,7 +64,7 @@ export default function POSPaymentMethodSelector({
       {!splitOn ? (
         <div className="grid grid-cols-5 gap-1.5">
           {methods.map(method => {
-            const disabled = method.key === 'credit' && method.key !== payment && !splitMethods.some(option => option.key === 'credit');
+            const disabled = method.key === 'credit' && !canCreditSale;
             return (
               <button
                 key={method.key}
