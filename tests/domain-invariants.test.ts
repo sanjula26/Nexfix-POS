@@ -237,4 +237,6 @@ test('unconfirmed optional opening float contributes zero to drawer cash', () =>
 test('confirmed opening float remains included in drawer cash', () => {
   assert.equal(getEffectiveOpeningFloat({ opening: 2500, openingConfirmed: true }), 2500);
   assert.equal(getEffectiveOpeningFloat({ opening: -20, openingConfirmed: true }), 0);
+  assert.equal(getEffectiveOpeningFloat({ opening: Number.POSITIVE_INFINITY, openingConfirmed: true }), 0);
+  assert.equal(getEffectiveOpeningFloat({ opening: Number.NaN, openingConfirmed: true }), 0);
 });
