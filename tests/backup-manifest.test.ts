@@ -12,8 +12,8 @@ function validManifest() {
     totalBytes: 12,
     totalParts: 2,
     partNames: [
-      'NEXFIX_0123456789abcdef01234567_20261112.part001',
-      'NEXFIX_0123456789abcdef01234567_20261112.part002',
+      'NEXFIX_0123456789abcdef01234567_2026-11-12.part001',
+      'NEXFIX_0123456789abcdef01234567_2026-11-12.part002',
     ],
     sha256: 'a'.repeat(64),
     exportedAt: '2026-11-12T10:00:00.000Z',
@@ -41,11 +41,11 @@ test('rejects duplicate, reordered, mixed-prefix and path-like part names', () =
   assert.equal(isValidGoogleBackupManifest(reordered), false);
 
   const mixedPrefix = validManifest();
-  mixedPrefix.partNames[1] = 'NEXFIX_aaaaaaaaaaaaaaaaaaaaaaaa_20261112.part002';
+  mixedPrefix.partNames[1] = 'NEXFIX_aaaaaaaaaaaaaaaaaaaaaaaa_2026-11-12.part002';
   assert.equal(isValidGoogleBackupManifest(mixedPrefix), false);
 
   const pathLike = validManifest();
-  pathLike.partNames[0] = '../private/file.part001';
+  pathLike.partNames[0] = 'NEXFIX_0123456789abcdef01234567_../../private.part001';
   assert.equal(isValidGoogleBackupManifest(pathLike), false);
 });
 
