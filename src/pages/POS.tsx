@@ -1932,29 +1932,17 @@ export default function POS() {
         </div>
       </Modal>
 
-      {/* held sales */}
-      <Modal open={heldOpen} onClose={() => setHeldOpen(false)} title="Held sales" sub="Resume or discard parked carts">
-        <div className="space-y-2.5">
-          <AnimatePresence initial={false}>
-            {state.held.map(h => (
-              <motion.div
-                key={h.id}
-                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -18 }}
-                className="flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3"
-              >
-                <span className="w-9 h-9 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0"><PauseCircle size={16} /></span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-ink truncate">{h.label}</div>
-                  <div className="text-[11px] text-faint">{timeAgo(h.heldAt)} · {h.lines.length} lines{h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}</div>
-                </div>
-                <button className="btn btn-soft !py-1.5 !px-3 !text-xs text-emerald-500" onClick={() => resume(h.id)}><Zap size={13} /> Resume</button>
-                <button className="btn btn-danger-soft !py-1.5 !px-3 !text-xs" onClick={() => deleteHold(h.id)}><Trash2 size={13} /></button>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales — press F5 to park the current bill</p>}
-        </div>
-      </Modal>
+      <POSHeldSalesModal
+        open={heldOpen}
+        items={state.held.map(h => ({
+          id: h.id,
+          label: h.label,
+          detail: `${timeAgo(h.heldAt)} · ${h.lines.length} lines${h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}`,
+        }))}
+        onResume={resume}
+        onDelete={deleteHold}
+        onClose={() => setHeldOpen(false)}
+      />
 
       <POSQuickAddCustomerModal
         open={addCustOpen}
