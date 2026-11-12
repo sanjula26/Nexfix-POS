@@ -1915,23 +1915,16 @@ export default function POS() {
           </div>
         </div>
       </Modal>
-      {/* drawer modal */}
-      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
-        <div className="space-y-3">
-          {[
-            ['Opening float', state.settings.openingFloat, 'text-ink'],
-            ['My cash sales today', myCash, 'text-emerald-500'],
-            ['Expected in drawer', expected, 'text-violet-500'],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="flex justify-between items-center rounded-xl bg-raised border border-line px-4 py-3">
-              <span className="text-sm text-sub">{l}</span>
-              <span className={`num font-bold ${c}`}>{fmtRs(v as number)}</span>
-            </div>
-          ))}
-          <p className="text-[11px] text-faint">Drawer is settled at day end under Cashier Balances (admin only).</p>
-          <button className="btn btn-soft w-full" onClick={() => setDrawerOpen(false)}><X size={15} /> Close</button>
-        </div>
-      </Modal>
+      <POSCashDrawerModal
+        open={drawerOpen}
+        sub={`Today · ${user?.name}`}
+        rows={[
+          { label: 'Opening float', value: fmtRs(state.settings.openingFloat), tone: 'text-ink' },
+          { label: 'My cash sales today', value: fmtRs(myCash), tone: 'text-emerald-500' },
+          { label: 'Expected in drawer', value: fmtRs(expected), tone: 'text-violet-500' },
+        ]}
+        onClose={() => setDrawerOpen(false)}
+      />
 
       <POSHeldSalesModal
         open={heldOpen}
