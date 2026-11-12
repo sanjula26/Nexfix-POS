@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
