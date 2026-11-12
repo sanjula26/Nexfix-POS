@@ -189,7 +189,7 @@ interface StoreCtx {
   saveCategory: (name: string) => void;
   removeCategory: (name: string) => void;
   renameCategory: (oldName: string, newName: string) => void;
-  openSession: (cashierId: string, opening: number) => void;
+  openSession: (cashierId: string, opening: number, openingConfirmed?: boolean) => void;
   saveBrand: (name: string) => void;
   removeBrand: (name: string) => void;
 }
@@ -1580,10 +1580,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (todaySession.closed) {
       return deny("Today's cashier drawer is already closed. Reopen the correct session only through the approved day-opening flow.", 'Blocked credit settlement because today session is closed');
     }
-    if (todaySession.openingConfirmed === false) {
-      return deny("Confirm today's opening float in Cashier Balance Report before collecting credit.", 'Blocked credit settlement because opening float is not confirmed');
-    }
-
     const customer = snapshot.customers.find(x => x.id === p.customerId);
     if (!customer) return deny('Customer not found. Refresh the customer list and try again.', 'Blocked settlement for a missing customer');
     const amount = Math.round(Number(p.amount) * 100) / 100;
@@ -1696,8 +1692,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const defaultBranchId = getDefaultBranchId(shopIdForBranch) || 'local-main';
     const todaySession = state.sessions.find(x => x.cashierId === user.id && x.date === dkey(new Date()) && ((x.branchId || 'local-main') === selectedBranchId || ((x.branchId || 'local-main') === 'local-main' && selectedBranchId === defaultBranchId)));
-    if (!todaySession || todaySession.closed || todaySession.openingConfirmed === false) {
-      pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open or opening float is not confirmed');
+    if (!todaySession || todaySession.closed) {
+      pushAudit('DENIED', 'Sale', 'Blocked sale because today\'s cash session is not open or is already closed');
       return null;
     }
     const s = state;
@@ -1963,9 +1959,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Open today\'s cash drawer for the assigned branch before selling.');
       }
       if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
-      if (todaySession.openingConfirmed === false) {
-        throw new Error('Confirm today\'s opening float in Cashier Balance Report before selling.');
-      }
     };
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -3368,10 +3361,6 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: session is already closed');
       return false;
     }
-    if (current.openingConfirmed === false) {
-      pushAudit('DENIED', 'Session', 'Blocked cash-session close: opening float has not been confirmed');
-      return false;
-    }
     if (snapshot.held.length || (snapshot.reverseRequests || []).some(request => request.status === 'pending')) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session close: held bills or pending reverse approvals must be resolved first');
       return false;
@@ -3417,10 +3406,6 @@ const deletePurchase = useCallback((id: string) => {
     const openSessions = snapshot.sessions.filter(x => x.date === today && !x.closed && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId));
     if (!openSessions.length) {
       pushAudit('DENIED', 'DayClose', 'Blocked day close: no open cashier sessions');
-      return false;
-    }
-    if (openSessions.some(session => session.openingConfirmed === false)) {
-      pushAudit('DENIED', 'DayClose', 'Blocked day close: every open drawer must confirm its opening float first');
       return false;
     }
     if (snapshot.held.length) {
@@ -3487,7 +3472,7 @@ const deletePurchase = useCallback((id: string) => {
     if (state.sessions.some(x => x.cashierId === user.id && x.date === today && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId))) return;
     const ns: DaySession = {
       id: uid(), branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId), cashierId: user.id, cashierName: user.name, date: today,
-      opening: state.settings.openingFloat, openingConfirmed: false, closed: false,
+      opening: 0, openingConfirmed: false, closed: false,
     };
     setState(s =>
       s.sessions.some(x => x.cashierId === user.id && x.date === today && effectiveBranch(x.branchId) === effectiveBranch(selectedBranchId))
@@ -4091,7 +4076,7 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
   }, [pushAudit, user, can]);
 
-  const openSession = useCallback((cashierId: string, opening: number) => {
+  const openSession = useCallback((cashierId: string, opening: number, openingConfirmed = true) => {
     if (!user || (user.role !== 'admin' && (user.id !== cashierId || !can('page:pos')))) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session open: only the cashier or an admin may set this opening float');
       return;
@@ -4106,7 +4091,7 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked day-session open because this POS is not assigned to an active branch.');
       return;
     }
-    const normalizedOpening = Math.round(Math.max(0, Number(opening)) * 100) / 100;
+    const normalizedOpening = openingConfirmed ? Math.round(Math.max(0, Number(opening)) * 100) / 100 : 0;
     if (!Number.isFinite(normalizedOpening)) {
       pushAudit('DENIED', 'Session', 'Blocked invalid cash-session opening float');
       return;
@@ -4119,10 +4104,18 @@ const deletePurchase = useCallback((id: string) => {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
           return s;
         }
+        if (!openingConfirmed) {
+          if (existing.openingConfirmed === true || (existing.opening === 0 && existing.openingConfirmed === false)) return s;
+          opened = true;
+          return {
+            ...s,
+            sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: 0, openingConfirmed: false } : x),
+          };
+        }
         if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         const hasSales = s.sales.some(sale => dkey(sale.date) === today && sale.cashierId === cashierId && effectiveBranch(sale.branchId) === effectiveBranch(selectedBranchId));
         const hasCashExpenses = s.expenses.some(exp => dkey(exp.date) === today && (exp.paymentMethod || 'cash') === 'cash' && exp.by === u.name && effectiveBranch(exp.branchId) === effectiveBranch(selectedBranchId));
-        if ((hasSales || hasCashExpenses) && existing.opening !== normalizedOpening) {
+        if ((hasSales || hasCashExpenses) && existing.openingConfirmed === true && existing.opening !== normalizedOpening) {
           pushAudit('DENIED', 'Session', `Blocked opening-float change after activity for ${u.name}`);
           return s;
         }
@@ -4138,13 +4131,15 @@ const deletePurchase = useCallback((id: string) => {
         cashierName: u.name,
         date: today,
         opening: normalizedOpening,
-        openingConfirmed: true,
+        openingConfirmed,
         closed: false,
       };
       opened = true;
       return { ...s, sessions: [...s.sessions, ns] };
     });
-    if (opened) pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${normalizedOpening.toLocaleString()} · ${u.name}`);
+    if (opened) pushAudit('DAY-OPEN', 'Session', openingConfirmed
+      ? `Opening float Rs. ${normalizedOpening.toLocaleString()} · ${u.name}`
+      : `Cashier session opened without an opening float · ${u.name}`);
   }, [state.users, pushAudit, user, can]);
 
   const saveBrand = useCallback((name: string) => {
