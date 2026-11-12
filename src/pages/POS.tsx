@@ -6,7 +6,7 @@ import {
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
-  AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
+  AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
