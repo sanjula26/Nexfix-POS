@@ -2,17 +2,31 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Package, Plus, Minus, Trash2, PauseCircle, Landmark,
+  Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
-  AlertTriangle, Pencil, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
+  AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
+  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
 import { SearchInput, Badge, Modal, Field } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText } from '../components/ReceiptModal';
+import CartLine from '../components/POSCartLine';
+import POSToastStack from '../components/POSToastStack';
+import POSKeyboardHint from '../components/POSKeyboardHint';
+import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
+import POSReprintWhatsAppModal from '../components/POSReprintWhatsAppModal';
+import POSQuickAddCustomerModal from '../components/POSQuickAddCustomerModal';
+import POSHeldSalesModal from '../components/POSHeldSalesModal';
+import POSCashDrawerModal from '../components/POSCashDrawerModal';
+import POSBillReversalModal from '../components/POSBillReversalModal';
+import POSPriceOverrideGate from '../components/POSPriceOverrideGate';
+import POSReprintBillsModal from '../components/POSReprintBillsModal';
+import POSImeiUnitPicker from '../components/POSImeiUnitPicker';
+import POSTradeInEntry from '../components/POSTradeInEntry';
+import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1341,20 +1355,17 @@ export default function POS() {
               )}
             </div>
 
-            {bundleSuggestions.length > 0 && <div className="px-5 sm:px-6 py-3 border-t border-line bg-emerald-500/[0.035]">
-              <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sub mb-2"><Sparkles size={12} className="text-emerald-600"/> Helpful accessories in stock</div>
-              <div className="flex flex-wrap gap-2">{bundleSuggestions.map(product=><button key={product.id} type="button" onClick={()=>add(product.id)} className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"><span className="block text-xs font-semibold truncate">{product.name}</span><span className="block text-[10px] text-sub mt-0.5">{fmtRs(product.price,false)} · stock {product.stock}</span></button>)}</div>
-            </div>}
+            <POSAccessorySuggestions items={bundleSuggestions} onAdd={id => add(id)} />
 
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
               <Keyboard size={11} className="text-faint" />
-              <span><Kbd>F2</Kbd> Customer</span>
-              <span><Kbd>F3</Kbd> Search</span>
-              <span><Kbd>F4</Kbd> Discount</span>
-              <span><Kbd>F5</Kbd> Hold</span>
-              <span><Kbd>F6</Kbd> Complete</span>
-              <span><Kbd>F8</Kbd> Clear</span>
+              <span><POSKeyboardHint>F2</POSKeyboardHint> Customer</span>
+              <span><POSKeyboardHint>F3</POSKeyboardHint> Search</span>
+              <span><POSKeyboardHint>F4</POSKeyboardHint> Discount</span>
+              <span><POSKeyboardHint>F5</POSKeyboardHint> Hold</span>
+              <span><POSKeyboardHint>F6</POSKeyboardHint> Complete</span>
+              <span><POSKeyboardHint>F8</POSKeyboardHint> Clear</span>
             </div>
           </div>
 
@@ -1477,28 +1488,22 @@ export default function POS() {
               </div>
             )}
 
-            {!tradeInOpen ? (
-              <button className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 hover:opacity-80 flex items-center gap-1" onClick={() => setTradeInOpen(true)}>
-                <ArrowLeftRight size={11} /> Add trade-in
-              </button>
-            ) : (
-              <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5 space-y-2">
-                <div className="flex items-center justify-between"><span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">Trade-in device</span><button className="text-faint hover:text-rose-500" onClick={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}><X size={11} /></button></div>
-                <select className="input !py-1.5 !text-[12px]" value={tradeIn.productId} onChange={e => setTradeIn(v => ({ ...v, productId: e.target.value }))}>
-                  <option value="">Select device/product</option>
-                  {products.filter(p => p.trackImei || p.trackSerial).map(p => <option key={p.id} value={p.id}>{p.name} · {p.trackImei && p.trackSerial ? 'IMEI + Serial' : p.trackImei ? 'IMEI' : 'Serial'}</option>)}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input className="input !py-1.5 !text-[12px]" placeholder="IMEI" value={tradeIn.imei} onChange={e => setTradeIn(v => ({ ...v, imei: e.target.value }))} />
-                  <input className="input !py-1.5 !text-[12px]" placeholder="Serial" value={tradeIn.serial} onChange={e => setTradeIn(v => ({ ...v, serial: e.target.value }))} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input className="input !py-1.5 !text-[12px] num flex-1" placeholder="Trade-in value (Rs.)" value={tradeIn.value} onChange={e => setTradeIn(v => ({ ...v, value: e.target.value.replace(/[^\d.]/g, '') }))} inputMode="decimal" />
-                  <label className="flex items-center gap-1.5 text-[10.5px] text-sub whitespace-nowrap"><input type="checkbox" checked={tradeIn.addToInventory} onChange={e => setTradeIn(v => ({ ...v, addToInventory: e.target.checked }))} /> Add to inventory</label>
-                </div>
-                <div className="text-[10px] text-faint">Trade-in value is deducted from this bill. When added to inventory, the device is recorded at the trade-in value.</div>
-              </div>
-            )}
+            <POSTradeInEntry
+              open={tradeInOpen}
+              productId={tradeIn.productId}
+              imei={tradeIn.imei}
+              serial={tradeIn.serial}
+              value={tradeIn.value}
+              addToInventory={tradeIn.addToInventory}
+              products={products.filter(product => product.trackImei || product.trackSerial)}
+              onOpen={() => setTradeInOpen(true)}
+              onClose={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}
+              onProductChange={productId => setTradeIn(v => ({ ...v, productId }))}
+              onImeiChange={imei => setTradeIn(v => ({ ...v, imei }))}
+              onSerialChange={serial => setTradeIn(v => ({ ...v, serial }))}
+              onValueChange={value => setTradeIn(v => ({ ...v, value: value.replace(/[^\d.]/g, '') }))}
+              onAddToInventoryChange={addToInventory => setTradeIn(v => ({ ...v, addToInventory }))}
+            />
 
             {/* full amount before payment */}
             <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5">
@@ -1642,20 +1647,6 @@ export default function POS() {
                     </div>
                     {customer && <div className="text-[11px] text-sub">Existing customer credit: <b className="num">{fmtRs(customer.creditBalance)}</b>{customer.creditLimit && customer.creditLimit > 0 ? <> · Limit <b className="num">{fmtRs(customer.creditLimit)}</b> · Remaining <b className="num">{fmtRs(Math.max(0, customer.creditLimit - customer.creditBalance))}</b></> : null}</div>}
                     {intentionalCredit && customer?.creditLimit && customer.creditLimit > 0 && customer.creditBalance + creditDue > customer.creditLimit && <div role="alert" className="text-[11px] font-bold text-rose-500">This bill would exceed the customer's credit limit.</div>}
-                  </div>
-                )}
-                {payment === 'cash' && total > 0 && (
-                  <div className="flex gap-1.5 mt-2">
-                    {[500, 1000, 2000, 5000].map(v => (
-                      <button
-                        key={v}
-                        className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 num"
-                        onClick={() => { setPaid(String(total <= v ? v : Math.ceil(total / v) * v)); setPaidAuto(false); }}
-                      >
-                        {fmtRs(v, false)}
-                      </button>
-                    ))}
-                    <button className="btn btn-soft !px-2 !py-1 !text-[11px] flex-1 text-violet-500 font-bold" onClick={() => { setPaid(String(total)); setPaidAuto(false); }}>Exact</button>
                   </div>
                 )}
               </div>
@@ -1880,187 +1871,97 @@ export default function POS() {
         </details>
       </section>
 
-      {/* mobile sticky checkout bar */}
       {lines.length > 0 && (
-        <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/95 backdrop-blur border-t border-line px-4 py-3 flex items-center gap-3 no-print">
-          <div className="flex-1 min-w-0">
-            <div className="text-[10px] font-bold tracking-wider uppercase text-faint num">{itemCount} items</div>
-            <div className="num text-lg font-extrabold text-violet-600 dark:text-violet-400 leading-none">{fmtRs(total)}</div>
-          </div>
-          <button className="btn btn-primary !py-3" onClick={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}>
-            <Zap size={15} /> Review &amp; Pay
-          </button>
-        </div>
+        <POSMobileCheckoutBar
+          itemCount={itemCount}
+          total={total}
+          onReviewPay={() => billingRef.current?.scrollIntoView({ behavior: 'smooth' })}
+        />
       )}
 
-      {/* toasts */}
-      <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-[70] space-y-2 no-print">
-        <AnimatePresence>
-          {toasts.map(t => (
-            <motion.div
-              key={t.id}
-              initial={{ opacity: 0, y: 16, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 shadow-xl text-[12.5px] font-bold text-white ${
-                t.tone === 'rose' ? 'bg-rose-500' : 'bg-amber-500'
-              }`}
-            >
-              <AlertTriangle size={14} /> {t.msg}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+      <POSToastStack toasts={toasts} />
 
       {/* admin-approved bill reverse request */}
-      <Modal open={reverseOpen} onClose={() => setReverseOpen(false)} title="Request bill reversal" sub="A cashier can request; only an admin can approve. The original sale stays in history.">
-        <div className="space-y-4">
-          <Field label="Recent completed bill">
-            <select className="input" value={reverseSale?.id || ''} onChange={e => setReverseSale(state.sales.find(x => x.id === e.target.value) || null)}>
-              <option value="">Select a recent bill...</option>
-              {[...state.sales].filter(x => x.status === 'completed').sort((a,b) => +new Date(b.date) - +new Date(a.date)).slice(0, 20).map(sale => (
-                <option key={sale.id} value={sale.id}>{sale.billNo} · {sale.customerName} · {fmtRs(sale.total)}</option>
-              ))}
-            </select>
-          </Field>
-          {reverseSale && (
-            <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 p-3 text-sm">
-              <div className="font-bold text-ink">{reverseSale.billNo} · {fmtRs(reverseSale.total)}</div>
-              <div className="text-xs text-sub mt-1">{reverseSale.items.map(i => i.name + ' ×' + i.qty).join(' · ')}</div>
-            </div>
-          )}
-          <Field label="Reason">
-            <textarea className="input min-h-[82px] resize-none" value={reverseReason} onChange={e => setReverseReason(e.target.value)} placeholder="Enter the reason for reversing this bill..." maxLength={240} />
-          </Field>
-          <div className="rounded-xl bg-raised border border-line px-3 py-2.5 text-[11px] text-sub">Admin approval will restore stock and mark the bill as <b className="text-ink">REVERSED</b>. No sale history is deleted.</div>
-          <div className="flex gap-2.5">
-            <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={async () => {
-              if (!reverseSale) return;
-              const ok = await requestBillReverse(reverseSale.id, reverseReason);
-              if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
-              else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
-            }}><ShieldCheck size={15} /> Request approval</button>
-            <button className="btn btn-soft flex-1" onClick={() => setReverseOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
-      {/* drawer modal */}
-      <Modal open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Cash drawer" sub={`Today · ${user?.name}`}>
-        <div className="space-y-3">
-          {[
-            ['Opening float', state.settings.openingFloat, 'text-ink'],
-            ['My cash sales today', myCash, 'text-emerald-500'],
-            ['Expected in drawer', expected, 'text-violet-500'],
-          ].map(([l, v, c]) => (
-            <div key={l as string} className="flex justify-between items-center rounded-xl bg-raised border border-line px-4 py-3">
-              <span className="text-sm text-sub">{l}</span>
-              <span className={`num font-bold ${c}`}>{fmtRs(v as number)}</span>
-            </div>
-          ))}
-          <p className="text-[11px] text-faint">Drawer is settled at day end under Cashier Balances (admin only).</p>
-          <button className="btn btn-soft w-full" onClick={() => setDrawerOpen(false)}><X size={15} /> Close</button>
-        </div>
-      </Modal>
+      <POSBillReversalModal
+        open={reverseOpen}
+        options={[...state.sales]
+          .filter(sale => sale.status === 'completed')
+          .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+          .slice(0, 20)
+          .map(sale => ({ id: sale.id, label: `${sale.billNo} · ${sale.customerName} · ${fmtRs(sale.total)}` }))}
+        selectedBill={reverseSale ? {
+          id: reverseSale.id,
+          billNo: reverseSale.billNo,
+          totalLabel: fmtRs(reverseSale.total),
+          itemsSummary: reverseSale.items.map(item => item.name + ' ×' + item.qty).join(' · '),
+        } : null}
+        reason={reverseReason}
+        onSelect={id => setReverseSale(state.sales.find(sale => sale.id === id) || null)}
+        onReasonChange={setReverseReason}
+        onRequest={async () => {
+          if (!reverseSale) return;
+          const ok = await requestBillReverse(reverseSale.id, reverseReason);
+          if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
+          else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
+        }}
+        onClose={() => setReverseOpen(false)}
+      />
+      <POSCashDrawerModal
+        open={drawerOpen}
+        sub={`Today · ${user?.name}`}
+        rows={[
+          { label: 'Opening float', value: fmtRs(state.settings.openingFloat), tone: 'text-ink' },
+          { label: 'My cash sales today', value: fmtRs(myCash), tone: 'text-emerald-500' },
+          { label: 'Expected in drawer', value: fmtRs(expected), tone: 'text-violet-500' },
+        ]}
+        onClose={() => setDrawerOpen(false)}
+      />
 
-      {/* held sales */}
-      <Modal open={heldOpen} onClose={() => setHeldOpen(false)} title="Held sales" sub="Resume or discard parked carts">
-        <div className="space-y-2.5">
-          <AnimatePresence initial={false}>
-            {state.held.map(h => (
-              <motion.div
-                key={h.id}
-                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -18 }}
-                className="flex items-center gap-3 rounded-xl bg-raised border border-line px-4 py-3"
-              >
-                <span className="w-9 h-9 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0"><PauseCircle size={16} /></span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-ink truncate">{h.label}</div>
-                  <div className="text-[11px] text-faint">{timeAgo(h.heldAt)} · {h.lines.length} lines{h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}</div>
-                </div>
-                <button className="btn btn-soft !py-1.5 !px-3 !text-xs text-emerald-500" onClick={() => resume(h.id)}><Zap size={13} /> Resume</button>
-                <button className="btn btn-danger-soft !py-1.5 !px-3 !text-xs" onClick={() => deleteHold(h.id)}><Trash2 size={13} /></button>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-          {state.held.length === 0 && <p className="text-sm text-sub text-center py-6">No held sales — press F5 to park the current bill</p>}
-        </div>
-      </Modal>
+      <POSHeldSalesModal
+        open={heldOpen}
+        items={state.held.map(h => ({
+          id: h.id,
+          label: h.label,
+          detail: `${timeAgo(h.heldAt)} · ${h.lines.length} lines${h.customerId ? ` · ${state.customers.find(c => c.id === h.customerId)?.name || ''}` : ''}`,
+        }))}
+        onResume={resume}
+        onDelete={deleteHold}
+        onClose={() => setHeldOpen(false)}
+      />
 
-      {/* quick add customer */}
-      <Modal open={addCustOpen} onClose={() => setAddCustOpen(false)} title="Add New Customer" sub="Saved to your customer book — selected instantly">
-        <div className="space-y-4">
-          <Field label="Full name">
-            <input className="input" value={newCust.name} onChange={e => setNewCust(c => ({ ...c, name: e.target.value }))} placeholder="Customer name" autoFocus />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Phone / WhatsApp number">
-              <input className="input num" value={newCust.phone} onChange={e => setNewCust(c => ({ ...c, phone: e.target.value }))} placeholder="+94 77 000 0000" inputMode="tel" autoComplete="tel" />
-            </Field>
-            <Field label="NIC (optional)">
-              <input className="input num" value={newCust.nic} onChange={e => setNewCust(c => ({ ...c, nic: e.target.value }))} placeholder="ID / NIC" />
-            </Field>
-          </div>
-          <Field label="Address (optional)">
-            <textarea
-              className="input min-h-[72px] resize-none"
-              value={newCust.address}
-              onChange={e => setNewCust(c => ({ ...c, address: e.target.value }))}
-              placeholder="Customer address"
-              maxLength={240}
-            />
-          </Field>
-          <p className="text-[11px] text-faint">New members start with 0 loyalty points and earn 1 pt per Rs. 1,000 spent.</p>
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={quickAddCustomer} disabled={!newCust.name.trim() || !newCust.phone.trim()}>
-              <UserPlus size={15} /> Add &amp; select
-            </button>
-            <button className="btn btn-soft" onClick={() => setAddCustOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSQuickAddCustomerModal
+        open={addCustOpen}
+        customer={newCust}
+        canAdd={!!newCust.name.trim() && !!newCust.phone.trim()}
+        onNameChange={value => setNewCust(c => ({ ...c, name: value }))}
+        onPhoneChange={value => setNewCust(c => ({ ...c, phone: value }))}
+        onNicChange={value => setNewCust(c => ({ ...c, nic: value }))}
+        onAddressChange={value => setNewCust(c => ({ ...c, address: value }))}
+        onAdd={quickAddCustomer}
+        onClose={() => setAddCustOpen(false)}
+      />
 
       {/* admin gate: price override */}
-      <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
-        <div className="space-y-3.5">
-          <div className="flex items-center gap-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-3.5 py-3">
-            <LockKeyhole size={16} className="text-amber-500 shrink-0" />
-            <p className="text-[12px] text-sub">Enter the <b className="text-ink">admin password</b> to unlock price editing for this bill. Attempts are audit-logged.</p>
-          </div>
-          <div className="relative">
-            <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-            <input
-              type={gateShow ? 'text' : 'password'}
-              className={`input pl-9 pr-10 !py-2.5 font-mono tracking-widest ${gateErr ? '!border-rose-400' : ''}`}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-              value={gatePin}
-              autoFocus
-              onChange={e => { setGatePin(e.target.value); setGateErr(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryGate(); }}
-            />
-            <button type="button" onClick={() => setGateShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">
-              {gateShow ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-          {gateErr && <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-rose-500"><AlertTriangle size={13} /> {gateErr}</p>}
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={tryGate} disabled={!gatePin || gateBusy}>
-              {gateBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />} Unlock price editing
-            </button>
-            <button className="btn btn-soft" onClick={() => setGateOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSPriceOverrideGate
+        open={gateOpen}
+        pin={gatePin}
+        error={gateErr}
+        busy={gateBusy}
+        showPin={gateShow}
+        onPinChange={value => { setGatePin(value); setGateErr(''); }}
+        onEnter={tryGate}
+        onToggleShow={() => setGateShow(show => !show)}
+        onUnlock={tryGate}
+        onClose={() => setGateOpen(false)}
+      />
 
-      {/* IMEI / Serial unit picker for tracked products */}
-      <Modal
+      <POSImeiUnitPicker
         open={!!unitPickProductId}
-        onClose={() => { setUnitPickProductId(null); setUnitPickSearch(''); }}
-        title="Select unit (IMEI / Serial)"
-        sub={products.find(p => p.id === unitPickProductId)?.name}
-      >
-        {unitPickProductId && (() => {
+        productName={products.find(p => p.id === unitPickProductId)?.name}
+        search={unitPickSearch}
+        units={unitPickProductId ? (() => {
           const used = usedUnitIds();
-          const available = (state.units || []).filter(u =>
+          return (state.units || []).filter(u =>
             u.productId === unitPickProductId &&
             u.status === 'in_stock' &&
             !used.has(u.id) &&
@@ -2068,100 +1969,51 @@ export default function POS() {
               (u.imei || '').includes(unitPickSearch.trim()) ||
               (u.serial || '').toLowerCase().includes(unitPickSearch.trim().toLowerCase())),
           );
-          return (
-            <div className="space-y-3">
-              <input
-                className="input"
-                autoFocus
-                placeholder="Scan or type IMEI / serialâ€¦"
-                value={unitPickSearch}
-                onChange={e => setUnitPickSearch(e.target.value)}
-              />
-              {available.length === 0 ? (
-                <p className="text-sm text-faint py-4 text-center">
-                  No available units. Add them under <b>IMEI / Serial</b> first.
-                </p>
-              ) : (
-                <div className="max-h-64 overflow-y-auto space-y-1.5">
-                  {available.map(u => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      className="w-full text-left rounded-xl border border-line px-3 py-2.5 hover:bg-raised transition-colors"
-                      onClick={() => addUnitToCart(unitPickProductId, u.id)}
-                    >
-                      <div className="font-semibold text-ink text-[13px] num">{u.imei || u.serial || u.id}</div>
-                      <div className="text-[11px] text-faint">
-                        {u.imei && u.serial ? `Serial: ${u.serial}` : ''}
-                        {u.expiryDate ? ` · Exp ${u.expiryDate.slice(0, 10)}` : ''}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </Modal>
+        })() : []}
+        onSearchChange={setUnitPickSearch}
+        onSelect={unitId => { if (unitPickProductId) addUnitToCart(unitPickProductId, unitId); }}
+        onClose={() => { setUnitPickProductId(null); setUnitPickSearch(''); }}
+      />
 
-      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={reprintSearch} onChange={setReprintSearch} placeholder="Find bill #, customer, cashier or WhatsApp number…" className="flex-1 min-w-[240px]" />
-            <span className="text-[11px] text-faint num">{reprintBills.length} shown</span>
-          </div>
-          <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
-          {reprintBills.map((sale, index) => {
-            const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
-            return (
-              <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center text-[11px] font-extrabold num">{index + 1}</div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><span className="font-extrabold text-violet-600">{sale.billNo}</span><span className="text-[11px] text-faint">{timeAgo(sale.date)}</span></div>
-                    <div className="text-[11px] text-sub truncate">{sale.customerName || 'Walk-in customer'} · {sale.items.reduce((n, it) => n + it.qty, 0)} item{sale.items.reduce((n, it) => n + it.qty, 0) === 1 ? '' : 's'}</div>
-                    <div className="text-sm font-extrabold text-ink num mt-0.5">{fmtRs(sale.total)}</div>
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button type="button" className="btn btn-primary !py-2 !px-3 !text-xs" onClick={() => openReprintSale(sale)}><Printer size={13} /> Print</button>
-                  <button type="button" className="btn !py-2 !px-3 !text-xs !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => sendReprintWhatsApp(sale)}><MessageCircle size={13} /> WhatsApp</button>
-                  {!customerPhone && <span className="self-center text-[10px] text-faint">number will be requested</span>}
-                </div>
-              </div>
-            );
-          })}
-          {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
-          </div>
-        </div>
-      </Modal>
+      <POSReprintBillsModal
+        open={reprintOpen}
+        todayBillCount={todayBills.length}
+        search={reprintSearch}
+        shownCount={reprintBills.length}
+        items={reprintBills.map(sale => {
+          const customerPhone = sale.customerId ? state.customers.find(customer => customer.id === sale.customerId)?.phone || '' : '';
+          const itemCount = sale.items.reduce((count, item) => count + item.qty, 0);
+          return {
+            id: sale.id,
+            billNo: sale.billNo,
+            ago: timeAgo(sale.date),
+            customerName: sale.customerName,
+            itemCount,
+            totalLabel: fmtRs(sale.total),
+            hasCustomerPhone: !!customerPhone,
+          };
+        })}
+        onSearchChange={setReprintSearch}
+        onPrint={id => {
+          const sale = reprintBills.find(item => item.id === id);
+          if (sale) openReprintSale(sale);
+        }}
+        onWhatsApp={id => {
+          const sale = reprintBills.find(item => item.id === id);
+          if (sale) sendReprintWhatsApp(sale);
+        }}
+        onClose={() => setReprintOpen(false)}
+      />
 
-      <Modal open={!!reprintWhatsAppSale} onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }} title="Send reprint via WhatsApp" sub={reprintWhatsAppSale?.billNo || ''}>
-        <div className="space-y-4">
-          <div className="text-sm text-sub">
-            Enter the customer's WhatsApp number. The bill message will be prepared for this number in WhatsApp.
-          </div>
-          <input
-            className="input w-full"
-            type="tel"
-            inputMode="tel"
-            autoFocus
-            value={reprintWhatsAppPhone}
-            onChange={e => setReprintWhatsAppPhone(e.target.value)}
-            placeholder="e.g. 0771234567 or +94771234567"
-            onKeyDown={e => { if (e.key === 'Enter') confirmReprintWhatsApp(); }}
-          />
-          <div className="rounded-xl bg-raised border border-line p-3 text-[11px] text-faint">
-            WhatsApp will open with the selected bill and number. Press <b className="text-ink">Send</b> in WhatsApp to deliver it.
-          </div>
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-soft flex-1" onClick={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}>Cancel</button>
-            <button type="button" className="btn !text-white flex-1" disabled={normalizeWhatsAppPhone(reprintWhatsAppPhone).length < 9 || normalizeWhatsAppPhone(reprintWhatsAppPhone).length > 15} onClick={confirmReprintWhatsApp} style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }}>
-              <MessageCircle size={15} /> Open WhatsApp
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <POSReprintWhatsAppModal
+        open={!!reprintWhatsAppSale}
+        billNo={reprintWhatsAppSale?.billNo || ''}
+        phone={reprintWhatsAppPhone}
+        canSend={normalizeWhatsAppPhone(reprintWhatsAppPhone).length >= 9 && normalizeWhatsAppPhone(reprintWhatsAppPhone).length <= 15}
+        onPhoneChange={setReprintWhatsAppPhone}
+        onClose={() => { setReprintWhatsAppSale(null); setReprintWhatsAppPhone(''); }}
+        onConfirm={confirmReprintWhatsApp}
+      />
 
       <ReceiptModal sale={doneSale} preferredWhatsAppPhone={doneSaleWhatsApp} onClose={() => { setDoneSale(null); setDoneSaleWhatsApp(''); setTimeout(focusSearch, 120); }} />
     </div>
@@ -2178,182 +2030,4 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ---------- kbd hint ---------- */
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-1.5 py-[2px] rounded-[5px] bg-raised border border-line border-b-2 text-[9px] font-extrabold text-sub font-mono">
-      {children}
-    </span>
-  );
-}
 
-/* ---------- cart line ---------- */
-function CartLine({
-  line, unitPrice, canDiscount, canEditPrice, onAskUnlock, onQty, onDisc, onPrice, onRemove,
-}: {
-  line: { productId: string; qty: number; discount: number; price?: number; product: { name: string; price: number; stock: number; sku: string } };
-  unitPrice: number;
-  canDiscount: boolean;
-  canEditPrice: boolean;
-  onAskUnlock: () => void;
-  onQty: (q: number) => void;
-  onDisc: (d: number) => void;
-  onPrice: (p: number | undefined) => void;
-  onRemove: () => void;
-}) {
-  const [editingQty, setEditingQty] = useState(false);
-  const [qtyVal, setQtyVal] = useState(String(line.qty));
-  const [discOpen, setDiscOpen] = useState(false);
-  const [editingPrice, setEditingPrice] = useState(false);
-  const [priceVal, setPriceVal] = useState('');
-
-  const overridden = line.price !== undefined && line.price !== line.product.price;
-  const gross = unitPrice * line.qty;
-  const net = gross - (line.discount || 0);
-  const atMax = line.qty >= line.product.stock;
-
-  const commitQty = () => {
-    const q = Math.round(parseFloat(qtyVal) || 0);
-    onQty(q);
-    setEditingQty(false);
-  };
-  const startPriceEdit = () => {
-    if (!canEditPrice) { onAskUnlock(); return; }
-    setPriceVal(String(unitPrice));
-    setEditingPrice(true);
-  };
-  const commitPrice = () => {
-    const v = parseFloat(priceVal);
-    if (!isNaN(v) && v >= 0) onPrice(v === line.product.price ? undefined : v);
-    setEditingPrice(false);
-  };
-
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -24 }}
-      className="px-5 sm:px-6 py-3 border-b border-line/70"
-    >
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-bold text-ink truncate flex items-center gap-1.5">
-            {line.product.name}
-            {overridden && <Badge tone="violet" className="!text-[8.5px] !px-1.5 !py-0">PRICE EDIT</Badge>}
-          </div>
-          <div className="text-[10.5px] num flex items-center gap-1.5 mt-0.5 flex-wrap">
-            {editingPrice ? (
-              <span className="flex items-center gap-1">
-                Rs.
-                <input
-                  className="w-20 text-[11px] num bg-surface border border-violet-400 rounded-md px-1.5 py-0.5 outline-none"
-                  value={priceVal}
-                  autoFocus
-                  inputMode="decimal"
-                  onChange={e => setPriceVal(e.target.value.replace(/[^\d.]/g, ''))}
-                  onBlur={commitPrice}
-                  onKeyDown={e => { if (e.key === 'Enter') commitPrice(); if (e.key === 'Escape') setEditingPrice(false); }}
-                />
-                <span className="text-faint">each</span>
-              </span>
-            ) : (
-              <button
-                className="text-faint hover:text-violet-500 inline-flex items-center gap-1 transition-colors"
-                title={canEditPrice ? 'Click to edit unit price' : 'Price edit needs admin password'}
-                onClick={startPriceEdit}
-              >
-                {fmtRs(unitPrice, false)} each
-                {overridden && <span className="text-faint/70 line-through">{fmtRs(line.product.price, false)}</span>}
-                {canEditPrice ? <Pencil size={9} /> : <Lock size={9} className="text-amber-500" />}
-              </button>
-            )}
-            {atMax && <span className="text-rose-500 font-extrabold">· Only {line.product.stock} in stock!</span>}
-          </div>
-        </div>
-
-        {/* qty stepper with click-to-edit */}
-        <div className="flex items-center gap-1 bg-raised rounded-lg p-0.5 border border-line shrink-0">
-          <button className="w-6 h-6 rounded-md flex items-center justify-center text-sub hover:bg-surface hover:text-ink" onClick={() => onQty(line.qty - 1)}>
-            <Minus size={12} />
-          </button>
-          {editingQty ? (
-            <input
-              className="w-10 text-center text-[13px] font-bold num bg-surface border border-violet-400 rounded-md outline-none py-0.5"
-              value={qtyVal}
-              autoFocus
-              inputMode="numeric"
-              onChange={e => setQtyVal(e.target.value.replace(/\D/g, ''))}
-              onBlur={commitQty}
-              onKeyDown={e => { if (e.key === 'Enter') commitQty(); if (e.key === 'Escape') setEditingQty(false); }}
-            />
-          ) : (
-            <button
-              className="w-7 text-center text-[13px] font-bold num hover:bg-surface rounded-md py-0.5"
-              title="Click to type quantity"
-              onClick={() => { setQtyVal(String(line.qty)); setEditingQty(true); }}
-            >
-              {line.qty}
-            </button>
-          )}
-          <button className="w-6 h-6 rounded-md flex items-center justify-center text-sub hover:bg-surface hover:text-ink" onClick={() => onQty(line.qty + 1)} disabled={atMax}>
-            <Plus size={12} />
-          </button>
-        </div>
-
-        <div className="w-[104px] shrink-0">
-          {canDiscount ? (
-            <div className="relative">
-              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-extrabold text-faint">Rs.</span>
-              <input
-                aria-label={`Discount in rupees for ${line.product.name}`}
-                className={`input !w-full !h-9 !py-1 !pl-7 !pr-2 num !text-[12px] text-right !rounded-lg focus:!border-violet-500 focus:!ring-2 focus:!ring-violet-500/15 ${line.discount > 0 ? "!border-violet-400 !text-violet-600 font-extrabold !bg-violet-500/[0.04]" : ""}`}
-                value={line.discount > 0 ? String(line.discount) : ""}
-                placeholder="0"
-                inputMode="decimal"
-                type="text"
-                autoComplete="off"
-                onFocus={e => e.currentTarget.select()}
-                onChange={e => {
-                  const raw = e.target.value.replace(/[^\d.]/g, "");
-                  const parts = raw.split(".");
-                  const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join("")}` : raw;
-                  if (normalized === "" || normalized === ".") onDisc(0);
-                  else {
-                    const value = Number(normalized);
-                    if (Number.isFinite(value)) onDisc(value);
-                  }
-                }}
-                onKeyDown={e => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                  if (e.key === "Escape") { onDisc(0); e.currentTarget.blur(); }
-                }}
-                title="Item discount (Rs.) — click and type"
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="w-full h-9 flex justify-end items-center gap-1 text-[10px] text-faint"
-              title="Item discount needs permission"
-              onClick={onAskUnlock}
-            >
-              <Lock size={10} className="text-amber-500" /> Locked
-            </button>
-          )}
-        </div>
-        <div className="w-[86px] text-right shrink-0">
-          {(line.discount > 0 || overridden) && <div className="text-[10px] text-faint line-through num">{fmtRs(line.product.price * line.qty, false)}</div>}
-          <div className="text-[13px] font-extrabold num text-ink">{fmtRs(net, false)}</div>
-        </div>
-
-        {/* Keep the Discount column directly editable so the value is visible in the cart row. */}
-        <button className="icon-btn !w-7 !h-7 shrink-0 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={onRemove} title="Remove">
-          <X size={13} />
-        </button>
-      </div>
-
-      {line.discount > 0 && (
-        <div className="mt-1 ml-auto w-fit text-[10px] font-semibold text-violet-500 num">Item discount − {fmtRs(line.discount, false)}</div>
-      )}
-    </motion.div>
-  );
-    }

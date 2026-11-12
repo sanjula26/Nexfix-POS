@@ -6,6 +6,7 @@ import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
 } from '../src/lib/customerCredit.ts';
+import { getEffectiveOpeningFloat } from '../src/lib/openingFloat.ts';
 import {
   appendInventoryTransaction,
   buildInventoryTransaction,
@@ -226,4 +227,16 @@ test('branch stock single-row cache refresh preserves other cached products', ()
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 5);
   assert.equal(getCachedBranchStock('branch-1', 'product-2'), 9);
   assert.equal(cacheBranchStockProduct('branch-1', 'product-3', -1), false);
+});
+
+test('unconfirmed optional opening float contributes zero to drawer cash', () => {
+  assert.equal(getEffectiveOpeningFloat({ opening: 2500, openingConfirmed: false }), 0);
+  assert.equal(getEffectiveOpeningFloat({ opening: 0, openingConfirmed: false }), 0);
+});
+
+test('confirmed opening float remains included in drawer cash', () => {
+  assert.equal(getEffectiveOpeningFloat({ opening: 2500, openingConfirmed: true }), 2500);
+  assert.equal(getEffectiveOpeningFloat({ opening: -20, openingConfirmed: true }), 0);
+  assert.equal(getEffectiveOpeningFloat({ opening: Number.POSITIVE_INFINITY, openingConfirmed: true }), 0);
+  assert.equal(getEffectiveOpeningFloat({ opening: Number.NaN, openingConfirmed: true }), 0);
 });
