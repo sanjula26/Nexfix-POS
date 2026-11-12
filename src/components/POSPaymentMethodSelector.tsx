@@ -16,8 +16,6 @@ interface POSPaymentMethodSelectorProps {
   splitOn: boolean;
   legs: PaymentLeg[];
   canCreditSale: boolean;
-  total: number;
-  legSum: number;
   coverageLabel: string;
   coverageClassName: string;
   formatAmount: (amount: number) => string;
@@ -36,8 +34,6 @@ export default function POSPaymentMethodSelector({
   splitOn,
   legs,
   canCreditSale,
-  total,
-  legSum,
   coverageLabel,
   coverageClassName,
   formatAmount,
