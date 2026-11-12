@@ -22,6 +22,8 @@ import POSQuickAddCustomerModal from '../components/POSQuickAddCustomerModal';
 import POSHeldSalesModal from '../components/POSHeldSalesModal';
 import POSCashDrawerModal from '../components/POSCashDrawerModal';
 import POSBillReversalModal from '../components/POSBillReversalModal';
+import POSPriceOverrideGate from '../components/POSPriceOverrideGate';
+import POSReprintBillsModal from '../components/POSReprintBillsModal';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1946,36 +1948,18 @@ export default function POS() {
       />
 
       {/* admin gate: price override */}
-      <Modal open={gateOpen} onClose={() => setGateOpen(false)} title="Admin approval — price override" sub="Selling price changes need the admin password" locked>
-        <div className="space-y-3.5">
-          <div className="flex items-center gap-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/25 px-3.5 py-3">
-            <LockKeyhole size={16} className="text-amber-500 shrink-0" />
-            <p className="text-[12px] text-sub">Enter the <b className="text-ink">admin password</b> to unlock price editing for this bill. Attempts are audit-logged.</p>
-          </div>
-          <div className="relative">
-            <Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-            <input
-              type={gateShow ? 'text' : 'password'}
-              className={`input pl-9 pr-10 !py-2.5 font-mono tracking-widest ${gateErr ? '!border-rose-400' : ''}`}
-              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
-              value={gatePin}
-              autoFocus
-              onChange={e => { setGatePin(e.target.value); setGateErr(''); }}
-              onKeyDown={e => { if (e.key === 'Enter') tryGate(); }}
-            />
-            <button type="button" onClick={() => setGateShow(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">
-              {gateShow ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-          {gateErr && <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-rose-500"><AlertTriangle size={13} /> {gateErr}</p>}
-          <div className="flex gap-2.5">
-            <button className="btn btn-primary flex-1" onClick={tryGate} disabled={!gatePin || gateBusy}>
-              {gateBusy ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />} Unlock price editing
-            </button>
-            <button className="btn btn-soft" onClick={() => setGateOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSPriceOverrideGate
+        open={gateOpen}
+        pin={gatePin}
+        error={gateErr}
+        busy={gateBusy}
+        showPin={gateShow}
+        onPinChange={value => { setGatePin(value); setGateErr(''); }}
+        onEnter={tryGate}
+        onToggleShow={() => setGateShow(show => !show)}
+        onUnlock={tryGate}
+        onClose={() => setGateOpen(false)}
+      />
 
       {/* IMEI / Serial unit picker for tracked products */}
       <Modal
@@ -2030,37 +2014,35 @@ export default function POS() {
         })()}
       </Modal>
 
-      <Modal open={reprintOpen} onClose={() => setReprintOpen(false)} title="Reprint today's bills" sub={`${todayBills.length} bill${todayBills.length === 1 ? '' : 's'} · newest first`} wide>
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <SearchInput value={reprintSearch} onChange={setReprintSearch} placeholder="Find bill #, customer, cashier or WhatsApp number…" className="flex-1 min-w-[240px]" />
-            <span className="text-[11px] text-faint num">{reprintBills.length} shown</span>
-          </div>
-          <div className="space-y-2 max-h-[58vh] overflow-y-auto pr-1">
-          {reprintBills.map((sale, index) => {
-            const customerPhone = sale.customerId ? state.customers.find(c => c.id === sale.customerId)?.phone || '' : '';
-            return (
-              <div key={sale.id} className="rounded-xl border border-line bg-raised/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-600 flex items-center justify-center text-[11px] font-extrabold num">{index + 1}</div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><span className="font-extrabold text-violet-600">{sale.billNo}</span><span className="text-[11px] text-faint">{timeAgo(sale.date)}</span></div>
-                    <div className="text-[11px] text-sub truncate">{sale.customerName || 'Walk-in customer'} · {sale.items.reduce((n, it) => n + it.qty, 0)} item{sale.items.reduce((n, it) => n + it.qty, 0) === 1 ? '' : 's'}</div>
-                    <div className="text-sm font-extrabold text-ink num mt-0.5">{fmtRs(sale.total)}</div>
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  <button type="button" className="btn btn-primary !py-2 !px-3 !text-xs" onClick={() => openReprintSale(sale)}><Printer size={13} /> Print</button>
-                  <button type="button" className="btn !py-2 !px-3 !text-xs !text-white" style={{ background: 'linear-gradient(135deg,#25d366,#128c7e)' }} onClick={() => sendReprintWhatsApp(sale)}><MessageCircle size={13} /> WhatsApp</button>
-                  {!customerPhone && <span className="self-center text-[10px] text-faint">number will be requested</span>}
-                </div>
-              </div>
-            );
-          })}
-          {reprintBills.length === 0 && <div className="py-8 text-center text-sm text-faint">No bill matched “{reprintSearch}”.</div>}
-          </div>
-        </div>
-      </Modal>
+      <POSReprintBillsModal
+        open={reprintOpen}
+        todayBillCount={todayBills.length}
+        search={reprintSearch}
+        shownCount={reprintBills.length}
+        items={reprintBills.map(sale => {
+          const customerPhone = sale.customerId ? state.customers.find(customer => customer.id === sale.customerId)?.phone || '' : '';
+          const itemCount = sale.items.reduce((count, item) => count + item.qty, 0);
+          return {
+            id: sale.id,
+            billNo: sale.billNo,
+            ago: timeAgo(sale.date),
+            customerName: sale.customerName,
+            itemCount,
+            totalLabel: fmtRs(sale.total),
+            hasCustomerPhone: !!customerPhone,
+          };
+        })}
+        onSearchChange={setReprintSearch}
+        onPrint={id => {
+          const sale = reprintBills.find(item => item.id === id);
+          if (sale) openReprintSale(sale);
+        }}
+        onWhatsApp={id => {
+          const sale = reprintBills.find(item => item.id === id);
+          if (sale) sendReprintWhatsApp(sale);
+        }}
+        onClose={() => setReprintOpen(false)}
+      />
 
       <POSReprintWhatsAppModal
         open={!!reprintWhatsAppSale}
