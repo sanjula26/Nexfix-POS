@@ -11,6 +11,7 @@ import {
   ensureRecoveryKey,
 } from './backupCrypto';
 import { ensureCloudShop } from './cloudSync';
+import { isValidGoogleBackupManifest, type GoogleBackupManifest } from './backupManifest';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
@@ -788,14 +789,7 @@ interface LatestGoogleBackup {
   backupId?: string;
   encrypted?: boolean;
   multipart?: boolean;
-  manifest?: {
-    backupId: string;
-    totalBytes: number;
-    totalParts: number;
-    partNames: string[];
-    sha256: string;
-    exportedAt: string;
-  };
+  manifest?: GoogleBackupManifest;
 }
 
 function getJsonp<T>(url: URL, timeoutMs = 30000): Promise<T | null> {
@@ -862,7 +856,7 @@ export async function fetchLatestGoogleBackup(timeoutMs = 30000): Promise<Latest
     let rawPayload = '';
     if (backup.multipart && backup.manifest) {
       const manifest = backup.manifest;
-      if (!manifest.backupId || !Number.isInteger(manifest.totalParts) || manifest.totalParts < 1 || manifest.partNames.length !== manifest.totalParts) {
+      if (!isValidGoogleBackupManifest(manifest)) {
         throw new Error('Invalid multipart backup manifest. Restore was not performed.');
       }
       const chunks: string[] = [];
