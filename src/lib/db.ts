@@ -1,6 +1,5 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
-import { buildSeed } from './seed';
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
@@ -62,6 +61,9 @@ export async function idbLoadState():Promise<POSState|null>{
     const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
     if (row?.value) return row.value;
 
+    // Load the seed lazily so the IndexedDB persistence layer can be tested
+    // independently in Node without eagerly importing browser-only seed code.
+    const { buildSeed } = await import('./seed');
     const seed = buildSeed();
     const saved = await idbSaveState(seed);
     return saved ? seed : null;
