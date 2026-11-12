@@ -21,6 +21,7 @@ import POSReprintWhatsAppModal from '../components/POSReprintWhatsAppModal';
 import POSQuickAddCustomerModal from '../components/POSQuickAddCustomerModal';
 import POSHeldSalesModal from '../components/POSHeldSalesModal';
 import POSCashDrawerModal from '../components/POSCashDrawerModal';
+import POSBillReversalModal from '../components/POSBillReversalModal';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1885,37 +1886,30 @@ export default function POS() {
       <POSToastStack toasts={toasts} />
 
       {/* admin-approved bill reverse request */}
-      <Modal open={reverseOpen} onClose={() => setReverseOpen(false)} title="Request bill reversal" sub="A cashier can request; only an admin can approve. The original sale stays in history.">
-        <div className="space-y-4">
-          <Field label="Recent completed bill">
-            <select className="input" value={reverseSale?.id || ''} onChange={e => setReverseSale(state.sales.find(x => x.id === e.target.value) || null)}>
-              <option value="">Select a recent bill...</option>
-              {[...state.sales].filter(x => x.status === 'completed').sort((a,b) => +new Date(b.date) - +new Date(a.date)).slice(0, 20).map(sale => (
-                <option key={sale.id} value={sale.id}>{sale.billNo} · {sale.customerName} · {fmtRs(sale.total)}</option>
-              ))}
-            </select>
-          </Field>
-          {reverseSale && (
-            <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 p-3 text-sm">
-              <div className="font-bold text-ink">{reverseSale.billNo} · {fmtRs(reverseSale.total)}</div>
-              <div className="text-xs text-sub mt-1">{reverseSale.items.map(i => i.name + ' ×' + i.qty).join(' · ')}</div>
-            </div>
-          )}
-          <Field label="Reason">
-            <textarea className="input min-h-[82px] resize-none" value={reverseReason} onChange={e => setReverseReason(e.target.value)} placeholder="Enter the reason for reversing this bill..." maxLength={240} />
-          </Field>
-          <div className="rounded-xl bg-raised border border-line px-3 py-2.5 text-[11px] text-sub">Admin approval will restore stock and mark the bill as <b className="text-ink">REVERSED</b>. No sale history is deleted.</div>
-          <div className="flex gap-2.5">
-            <button className="btn btn-danger-soft flex-1" disabled={!reverseSale || !reverseReason.trim()} onClick={async () => {
-              if (!reverseSale) return;
-              const ok = await requestBillReverse(reverseSale.id, reverseReason);
-              if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
-              else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
-            }}><ShieldCheck size={15} /> Request approval</button>
-            <button className="btn btn-soft flex-1" onClick={() => setReverseOpen(false)}>Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      <POSBillReversalModal
+        open={reverseOpen}
+        options={[...state.sales]
+          .filter(sale => sale.status === 'completed')
+          .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+          .slice(0, 20)
+          .map(sale => ({ id: sale.id, label: `${sale.billNo} · ${sale.customerName} · ${fmtRs(sale.total)}` }))}
+        selectedBill={reverseSale ? {
+          id: reverseSale.id,
+          billNo: reverseSale.billNo,
+          totalLabel: fmtRs(reverseSale.total),
+          itemsSummary: reverseSale.items.map(item => item.name + ' ×' + item.qty).join(' · '),
+        } : null}
+        reason={reverseReason}
+        onSelect={id => setReverseSale(state.sales.find(sale => sale.id === id) || null)}
+        onReasonChange={setReverseReason}
+        onRequest={async () => {
+          if (!reverseSale) return;
+          const ok = await requestBillReverse(reverseSale.id, reverseReason);
+          if (ok) { toast('Reverse request sent · ' + reverseSale.billNo, 'amber'); setReverseOpen(false); setReverseSale(null); setReverseReason(''); }
+          else toast('A pending reverse request already exists or the bill is no longer reversible', 'rose');
+        }}
+        onClose={() => setReverseOpen(false)}
+      />
       <POSCashDrawerModal
         open={drawerOpen}
         sub={`Today · ${user?.name}`}
