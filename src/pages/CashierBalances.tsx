@@ -15,6 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/driveSync';
 import { hasRecoveryKey } from '../lib/backupCrypto';
 import type { DaySession } from '../lib/types';
+import { parseOpeningFloatInput } from '../lib/openingFloat';
 
 type BackupStatus = { target: string; kind: 'backing-up' | 'success' | 'failed' | 'offline' | 'skipped'; message: string };
 
@@ -175,9 +176,10 @@ export default function CashierBalances() {
       setOpeningInput('');
       return;
     }
-    const opening = Math.round(Number(openingInput) * 100) / 100;
-    if (openingInput.trim() === '' || !Number.isFinite(opening) || opening < 0) return;
-    if (existing && existing.openingConfirmed === true && existing.opening !== opening) {
+    const parsedOpening = parseOpeningFloatInput(openingInput);
+    if (!parsedOpening) return;
+    const { opening, confirmed } = parsedOpening;
+    if (existing && confirmed && existing.openingConfirmed === true && existing.opening !== opening) {
       const cashierName = state.users.find(person => person.id === openFloatId)?.name || '';
       const hasSales = state.sales.some(sale => dkey(sale.date) === today && sale.cashierId === openFloatId);
       const hasCashExpenses = state.expenses.some(expense => dkey(expense.date) === today && (expense.paymentMethod || 'cash') === 'cash' && expense.by === cashierName);
@@ -186,7 +188,7 @@ export default function CashierBalances() {
         return;
       }
     }
-    openSession(openFloatId, opening);
+    openSession(openFloatId, opening, confirmed);
     setOpenFloatId(null);
     setOpeningInput('');
   };
@@ -355,7 +357,7 @@ export default function CashierBalances() {
         }
       />
 
-      {currentSession && !currentSession.closed && currentSession.openingConfirmed === false && (
+      {currentSession && !currentSession.closed && currentSession.openingConfirmed !== true && (
         <div className="card p-4 border border-amber-500/25 bg-amber-500/[0.06] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-start gap-2">
             <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
@@ -470,13 +472,15 @@ export default function CashierBalances() {
 
       <Modal open={!!openFloatId} onClose={() => setOpenFloatId(null)} title="Add / set opening float">
         <div className="space-y-3">
-          <p className="text-sm text-sub">Opening cash is optional. You can add it at any time before the drawer is signed off. If you have already added and confirmed an opening amount, it cannot be changed after sales or cash expenses.</p>
-          <Field label="Opening amount (Rs.)">
-            <input className="input num" type="number" min={0} step={0.01} value={openingInput} onChange={event => setOpeningInput(event.target.value)} autoFocus />
+          <p className="text-sm text-sub">Opening cash is optional. Leave this blank to open the cashier drawer with Rs. 0 opening cash; you can add a float later before sign-off. Once a float is confirmed, it cannot be changed after sales or cash expenses.</p>
+          <Field label="Opening amount (Rs.)" hint="Optional — leave blank if there is no starting cash">
+            <input className="input num" type="number" min={0} step={0.01} value={openingInput} onChange={event => setOpeningInput(event.target.value)} placeholder="Leave blank to continue without opening cash" autoFocus />
           </Field>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn btn-soft" onClick={() => setOpenFloatId(null)}>Cancel</button>
-            <button type="button" className="btn btn-primary" onClick={startDay} disabled={openingInput.trim() === '' || !Number.isFinite(Number(openingInput)) || Number(openingInput) < 0}><CheckCircle2 size={15} /> Save opening float</button>
+            <button type="button" className="btn btn-primary" onClick={startDay} disabled={parseOpeningFloatInput(openingInput) === null}>
+              <CheckCircle2 size={15} /> {openingInput.trim() === '' ? 'Continue without opening cash' : 'Save opening float'}
+            </button>
           </div>
         </div>
       </Modal>
