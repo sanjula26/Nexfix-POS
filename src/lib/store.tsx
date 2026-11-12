@@ -189,7 +189,7 @@ interface StoreCtx {
   saveCategory: (name: string) => void;
   removeCategory: (name: string) => void;
   renameCategory: (oldName: string, newName: string) => void;
-  openSession: (cashierId: string, opening: number) => void;
+  openSession: (cashierId: string, opening: number, openingConfirmed?: boolean) => void;
   saveBrand: (name: string) => void;
   removeBrand: (name: string) => void;
 }
@@ -4076,7 +4076,7 @@ const deletePurchase = useCallback((id: string) => {
     pushAudit('UPDATE', 'Category', `Renamed "${oldName}" → "${n}"`);
   }, [pushAudit, user, can]);
 
-  const openSession = useCallback((cashierId: string, opening: number) => {
+  const openSession = useCallback((cashierId: string, opening: number, openingConfirmed = true) => {
     if (!user || (user.role !== 'admin' && (user.id !== cashierId || !can('page:pos')))) {
       pushAudit('DENIED', 'Session', 'Blocked cash-session open: only the cashier or an admin may set this opening float');
       return;
@@ -4091,7 +4091,7 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Session', 'Blocked day-session open because this POS is not assigned to an active branch.');
       return;
     }
-    const normalizedOpening = Math.round(Math.max(0, Number(opening)) * 100) / 100;
+    const normalizedOpening = openingConfirmed ? Math.round(Math.max(0, Number(opening)) * 100) / 100 : 0;
     if (!Number.isFinite(normalizedOpening)) {
       pushAudit('DENIED', 'Session', 'Blocked invalid cash-session opening float');
       return;
@@ -4103,6 +4103,14 @@ const deletePurchase = useCallback((id: string) => {
         if (existing.closed) {
           pushAudit('DENIED', 'Session', 'Blocked reopening a closed cash session');
           return s;
+        }
+        if (!openingConfirmed) {
+          if (existing.openingConfirmed === true || (existing.opening === 0 && existing.openingConfirmed === false)) return s;
+          opened = true;
+          return {
+            ...s,
+            sessions: s.sessions.map(x => x.id === existing.id ? { ...x, opening: 0, openingConfirmed: false } : x),
+          };
         }
         if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         const hasSales = s.sales.some(sale => dkey(sale.date) === today && sale.cashierId === cashierId && effectiveBranch(sale.branchId) === effectiveBranch(selectedBranchId));
@@ -4123,13 +4131,15 @@ const deletePurchase = useCallback((id: string) => {
         cashierName: u.name,
         date: today,
         opening: normalizedOpening,
-        openingConfirmed: true,
+        openingConfirmed,
         closed: false,
       };
       opened = true;
       return { ...s, sessions: [...s.sessions, ns] };
     });
-    if (opened) pushAudit('DAY-OPEN', 'Session', `Opening float Rs. ${normalizedOpening.toLocaleString()} · ${u.name}`);
+    if (opened) pushAudit('DAY-OPEN', 'Session', openingConfirmed
+      ? `Opening float Rs. ${normalizedOpening.toLocaleString()} · ${u.name}`
+      : `Cashier session opened without an opening float · ${u.name}`);
   }, [state.users, pushAudit, user, can]);
 
   const saveBrand = useCallback((name: string) => {
