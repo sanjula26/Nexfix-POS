@@ -6,28 +6,28 @@ import {
   validateBackupForRestore,
 } from '../src/lib/backupValidation.ts';
 
-function validState() {
+function validState(): Record<string, unknown> {
   return {
-    products: [],
-    customers: [],
-    suppliers: [],
-    sales: [],
-    purchases: [],
-    expenses: [],
-    exchanges: [],
-    users: [],
-    audit: [],
-    held: [],
-    sessions: [],
-    units: [],
-    repairs: [],
+    products: [] as unknown[],
+    customers: [] as unknown[],
+    suppliers: [] as unknown[],
+    sales: [] as unknown[],
+    purchases: [] as unknown[],
+    expenses: [] as unknown[],
+    exchanges: [] as unknown[],
+    users: [] as unknown[],
+    audit: [] as unknown[],
+    held: [] as unknown[],
+    sessions: [] as unknown[],
+    units: [] as unknown[],
+    repairs: [] as unknown[],
     settings: {},
     permissions: {},
     counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
   };
 }
 
-function validEnvelope(state = validState()) {
+function validEnvelope(state: Record<string, unknown> = validState()) {
   return {
     _meta: {
       app: 'Nexfix POS',
@@ -41,7 +41,9 @@ function validEnvelope(state = validState()) {
 
 test('backup validation accepts a valid v2 POS backup', () => {
   assert.equal(validateBackup(validEnvelope()), true);
-  assert.equal(validateBackup(validEnvelope()), true);
+  const automatic = validEnvelope();
+  (automatic._meta as unknown as Record<string, unknown>).kind = 'auto';
+  assert.equal(validateBackup(automatic), true);
 });
 
 test('backup parsing accepts valid JSON and safely rejects malformed JSON', () => {
@@ -52,7 +54,7 @@ test('backup parsing accepts valid JSON and safely rejects malformed JSON', () =
 
 test('backup validation rejects unsupported metadata and malformed required collections', () => {
   const wrongVersion = validEnvelope();
-  wrongVersion._meta.version = 3;
+  (wrongVersion._meta as unknown as Record<string, unknown>).version = 3;
   assert.equal(validateBackup(wrongVersion), false);
 
   const missingSales = validEnvelope();
@@ -66,7 +68,7 @@ test('backup validation rejects duplicate record IDs and invalid counters', () =
   assert.equal(validateBackup(validEnvelope(duplicateIds)), false);
 
   const invalidCounter = validState();
-  invalidCounter.counters.bill = -1;
+  (invalidCounter.counters as Record<string, number>).bill = -1;
   assert.equal(validateBackup(validEnvelope(invalidCounter)), false);
 });
 
