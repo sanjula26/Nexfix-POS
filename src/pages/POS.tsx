@@ -5,7 +5,7 @@ import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
-  Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
+  ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
 } from 'lucide-react';
@@ -1495,8 +1495,6 @@ export default function POS() {
               splitOn={splitOn}
               legs={legs}
               canCreditSale={can('act:creditSale')}
-              total={total}
-              legSum={legSum}
               coverageLabel={Math.abs(total - legSum) < 0.01 ? 'Fully covered' : legSum > total ? `${fmtRs(legSum - total)} over (change)` : `${fmtRs(total - legSum)} remaining`}
               coverageClassName={Math.abs(total - legSum) < 0.01 ? 'text-emerald-500' : legSum > total ? 'text-sky-500' : 'text-amber-500'}
               formatAmount={amount => fmtMoneyInput(String(amount))}
