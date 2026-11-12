@@ -7,7 +7,7 @@ import {
   UserRound, Coins, UserPlus, Search, CheckCircle2, Percent, Truck,
   Split, ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, StickyNote, ArrowLeftRight, ShieldCheck,
-  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer, Sparkles,
+  Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, MessageCircle, Printer,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { findCloudCustomerByPhone, getCloudShopId } from '../lib/cloudSync';
@@ -25,6 +25,8 @@ import POSBillReversalModal from '../components/POSBillReversalModal';
 import POSPriceOverrideGate from '../components/POSPriceOverrideGate';
 import POSReprintBillsModal from '../components/POSReprintBillsModal';
 import POSImeiUnitPicker from '../components/POSImeiUnitPicker';
+import POSTradeInEntry from '../components/POSTradeInEntry';
+import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1353,10 +1355,7 @@ export default function POS() {
               )}
             </div>
 
-            {bundleSuggestions.length > 0 && <div className="px-5 sm:px-6 py-3 border-t border-line bg-emerald-500/[0.035]">
-              <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sub mb-2"><Sparkles size={12} className="text-emerald-600"/> Helpful accessories in stock</div>
-              <div className="flex flex-wrap gap-2">{bundleSuggestions.map(product=><button key={product.id} type="button" onClick={()=>add(product.id)} className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"><span className="block text-xs font-semibold truncate">{product.name}</span><span className="block text-[10px] text-sub mt-0.5">{fmtRs(product.price,false)} · stock {product.stock}</span></button>)}</div>
-            </div>}
+            <POSAccessorySuggestions items={bundleSuggestions} onAdd={id => add(id)} />
 
             {/* keyboard hints */}
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 px-5 sm:px-6 py-3 border-t border-line text-[10px] text-faint font-medium">
@@ -1489,28 +1488,22 @@ export default function POS() {
               </div>
             )}
 
-            {!tradeInOpen ? (
-              <button className="text-[11.5px] font-semibold text-emerald-600 dark:text-emerald-400 hover:opacity-80 flex items-center gap-1" onClick={() => setTradeInOpen(true)}>
-                <ArrowLeftRight size={11} /> Add trade-in
-              </button>
-            ) : (
-              <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5 space-y-2">
-                <div className="flex items-center justify-between"><span className="text-[12px] font-bold text-emerald-700 dark:text-emerald-400">Trade-in device</span><button className="text-faint hover:text-rose-500" onClick={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}><X size={11} /></button></div>
-                <select className="input !py-1.5 !text-[12px]" value={tradeIn.productId} onChange={e => setTradeIn(v => ({ ...v, productId: e.target.value }))}>
-                  <option value="">Select device/product</option>
-                  {products.filter(p => p.trackImei || p.trackSerial).map(p => <option key={p.id} value={p.id}>{p.name} · {p.trackImei && p.trackSerial ? 'IMEI + Serial' : p.trackImei ? 'IMEI' : 'Serial'}</option>)}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <input className="input !py-1.5 !text-[12px]" placeholder="IMEI" value={tradeIn.imei} onChange={e => setTradeIn(v => ({ ...v, imei: e.target.value }))} />
-                  <input className="input !py-1.5 !text-[12px]" placeholder="Serial" value={tradeIn.serial} onChange={e => setTradeIn(v => ({ ...v, serial: e.target.value }))} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input className="input !py-1.5 !text-[12px] num flex-1" placeholder="Trade-in value (Rs.)" value={tradeIn.value} onChange={e => setTradeIn(v => ({ ...v, value: e.target.value.replace(/[^\d.]/g, '') }))} inputMode="decimal" />
-                  <label className="flex items-center gap-1.5 text-[10.5px] text-sub whitespace-nowrap"><input type="checkbox" checked={tradeIn.addToInventory} onChange={e => setTradeIn(v => ({ ...v, addToInventory: e.target.checked }))} /> Add to inventory</label>
-                </div>
-                <div className="text-[10px] text-faint">Trade-in value is deducted from this bill. When added to inventory, the device is recorded at the trade-in value.</div>
-              </div>
-            )}
+            <POSTradeInEntry
+              open={tradeInOpen}
+              productId={tradeIn.productId}
+              imei={tradeIn.imei}
+              serial={tradeIn.serial}
+              value={tradeIn.value}
+              addToInventory={tradeIn.addToInventory}
+              products={products.filter(product => product.trackImei || product.trackSerial)}
+              onOpen={() => setTradeInOpen(true)}
+              onClose={() => { setTradeInOpen(false); setTradeIn({ productId: '', imei: '', serial: '', value: '', addToInventory: true }); }}
+              onProductChange={productId => setTradeIn(v => ({ ...v, productId }))}
+              onImeiChange={imei => setTradeIn(v => ({ ...v, imei }))}
+              onSerialChange={serial => setTradeIn(v => ({ ...v, serial }))}
+              onValueChange={value => setTradeIn(v => ({ ...v, value: value.replace(/[^\d.]/g, '') }))}
+              onAddToInventoryChange={addToInventory => setTradeIn(v => ({ ...v, addToInventory }))}
+            />
 
             {/* full amount before payment */}
             <div className="rounded-xl border border-line bg-surface px-3.5 py-2.5">
