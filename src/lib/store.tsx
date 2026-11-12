@@ -4107,7 +4107,7 @@ const deletePurchase = useCallback((id: string) => {
         if (existing.opening === normalizedOpening && existing.openingConfirmed === true) return s;
         const hasSales = s.sales.some(sale => dkey(sale.date) === today && sale.cashierId === cashierId && effectiveBranch(sale.branchId) === effectiveBranch(selectedBranchId));
         const hasCashExpenses = s.expenses.some(exp => dkey(exp.date) === today && (exp.paymentMethod || 'cash') === 'cash' && exp.by === u.name && effectiveBranch(exp.branchId) === effectiveBranch(selectedBranchId));
-        if ((hasSales || hasCashExpenses) && existing.openingConfirmed !== false && existing.opening !== normalizedOpening) {
+        if ((hasSales || hasCashExpenses) && existing.openingConfirmed === true && existing.opening !== normalizedOpening) {
           pushAudit('DENIED', 'Session', `Blocked opening-float change after activity for ${u.name}`);
           return s;
         }
