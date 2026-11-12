@@ -34,6 +34,7 @@ import POSCheckoutWhatsAppField from '../components/POSCheckoutWhatsAppField';
 import POSWhatsAppReceiptOptIn from '../components/POSWhatsAppReceiptOptIn';
 import POSDiscountControl from '../components/POSDiscountControl';
 import POSTaxControl from '../components/POSTaxControl';
+import POSServiceDeliveryCharge from '../components/POSServiceDeliveryCharge';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
