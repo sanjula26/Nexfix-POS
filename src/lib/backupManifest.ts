@@ -28,13 +28,13 @@ export function isValidGoogleBackupManifest(value: unknown): value is GoogleBack
   if (typeof manifest.exportedAt !== 'string' || !Number.isFinite(Date.parse(manifest.exportedAt))) return false;
 
   const names = manifest.partNames;
-  const first = typeof names[0] === 'string' ? names[0].match(/^(NEXFIX_[a-f0-9]{24}_.+)\.part(\d{3,})$/i) : null;
+  const first = typeof names[0] === 'string' ? names[0].match(/^(NEXFIX_[a-f0-9]{24}_\\d{4}-\\d{2}-\\d{2})\.part(\d{3,})$/i) : null;
   if (!first || Number(first[2]) !== 1) return false;
   const prefix = first[1];
   for (let index = 0; index < names.length; index += 1) {
     const name = names[index];
     if (typeof name !== 'string' || name.length > 180) return false;
-    const match = name.match(/^(NEXFIX_[a-f0-9]{24}_.+)\.part(\d{3,})$/i);
+    const match = name.match(/^(NEXFIX_[a-f0-9]{24}_\\d{4}-\\d{2}-\\d{2})\.part(\d{3,})$/i);
     if (!match || match[1] !== prefix || Number(match[2]) !== index + 1) return false;
   }
   return true;
