@@ -1,22 +1,11 @@
 name: Windows Desktop Build
 # Release workflow verifies Windows installer/portable outputs and publishes checksums.
 
+# Production publishing is manual-only. Merging application code must not
+# automatically publish an installer, change the active updater release, or
+# trigger retention cleanup in private R2/Supabase storage.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'electron/**'
-      - 'public/**'
-      - 'google-apps-script/**'
-      - 'supabase/migrations/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'vite.config.*'
-      - 'eslint.config.js'
-      - 'assets/**'
-      - 'build/**'
 
 concurrency:
   group: windows-desktop-${{ github.ref }}
