@@ -30,6 +30,7 @@ import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import POSSalesmanNoteControls from '../components/POSSalesmanNoteControls';
 import POSLoyaltyRedeemPanel from '../components/POSLoyaltyRedeemPanel';
 import POSPaymentMethodSelector from '../components/POSPaymentMethodSelector';
+import POSCheckoutWhatsAppField from '../components/POSCheckoutWhatsAppField';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1555,42 +1556,24 @@ export default function POS() {
               </div>
             )}
 
-            {/* billing WhatsApp number — available at checkout near the payment amount */}
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-faint">WhatsApp number</span>
-                {billingWhatsAppCustomer && (
-                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                    Customer matched
-                  </span>
-                )}
-              </div>
-              <input
-                className="input num !py-2.5"
-                value={billingWhatsApp}
-                onChange={e => {
-                  const value = e.target.value;
-                  setBillingWhatsApp(value);
-                  const digits = normalizeWhatsAppPhone(value);
-                  const match = digits.length >= 9
-                    ? state.customers.find(c => normalizeWhatsAppPhone(c.phone) === digits)
-                    : undefined;
-                  if (match) {
-                    setCustomerId(match.id);
-                    setCustQuery(match.phone);
-                  } else if (customerId) {
-                    setCustomerId('');
-                    setCustQuery('');
-                  }
-                }}
-                placeholder="+94 77 000 0000"
-                inputMode="tel"
-                autoComplete="tel"
-              />
-              <div className="text-[10px] text-faint mt-1">
-                Enter the customer's WhatsApp number here for the receipt. Existing customers are matched automatically.
-              </div>
-            </div>
+            <POSCheckoutWhatsAppField
+              value={billingWhatsApp}
+              customerMatched={Boolean(billingWhatsAppCustomer)}
+              onChange={value => {
+                setBillingWhatsApp(value);
+                const digits = normalizeWhatsAppPhone(value);
+                const match = digits.length >= 9
+                  ? state.customers.find(c => normalizeWhatsAppPhone(c.phone) === digits)
+                  : undefined;
+                if (match) {
+                  setCustomerId(match.id);
+                  setCustQuery(match.phone);
+                } else if (customerId) {
+                  setCustomerId('');
+                  setCustQuery('');
+                }
+              }}
+            />
 
             {/* change / balance due */}
             <AnimatePresence mode="wait">
