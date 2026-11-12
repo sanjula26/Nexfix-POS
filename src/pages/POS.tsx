@@ -29,6 +29,7 @@ import POSTradeInEntry from '../components/POSTradeInEntry';
 import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
 import POSSalesmanNoteControls from '../components/POSSalesmanNoteControls';
 import POSLoyaltyRedeemPanel from '../components/POSLoyaltyRedeemPanel';
+import POSPaymentMethodSelector from '../components/POSPaymentMethodSelector';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1487,83 +1488,29 @@ export default function POS() {
               <div className="num text-[32px] leading-none font-extrabold text-white drop-shadow-sm">{fmtRs(total)}</div>
             </div>
 
-            {/* payment methods */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] font-bold tracking-wider uppercase text-faint">Payment method</span>
-                <button
-                  onClick={() => { setSplitOn(s => !s); if (!splitOn) setLegs([{ method: 'cash', amount: total }]); }}
-                  className={`inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-1 rounded-lg border transition-all ${
-                    splitOn ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-raised text-sub border-line hover:text-ink'
-                  }`}
-                >
-                  <Split size={11} /> Split
-                </button>
-              </div>
-              {!splitOn ? (
-                <div className="grid grid-cols-5 gap-1.5">
-                  {PAYMENTS.map(m => {
-                    const disabled = m.key === 'credit' && !can('act:creditSale');
-                    return (
-                      <button
-                        key={m.key}
-                        disabled={disabled}
-                        onClick={() => {
-                          setPayment(m.key);
-                          if (m.key === 'credit') { setPaidAuto(false); setPaid(''); }
-                          else { setPaidAuto(true); setPaid(total > 0 ? String(total) : ''); }
-                        }}
-                        className={`flex flex-col items-center gap-1 rounded-xl py-2 border text-[9.5px] font-bold transition-all ${
-                          payment === m.key
-                            ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/30'
-                            : disabled
-                              ? 'bg-raised/50 border-line text-faint opacity-50 cursor-not-allowed'
-                              : 'bg-surface border-line text-sub hover:text-ink hover:border-violet-300'
-                        }`}
-                      >
-                        <m.icon size={15} />
-                        {m.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {legs.map((leg, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <select
-                        className="input !w-28 !py-1.5 !px-2 !text-[12px]"
-                        value={leg.method}
-                        onChange={e => setLegs(ls => ls.map((x, xi) => xi === i ? { ...x, method: e.target.value as PaymentMethod } : x))}
-                      >
-                        {SPLIT_METHODS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-                      </select>
-                      <input
-                        className="input flex-1 !py-1.5 !px-2.5 num !text-[12.5px] text-right"
-                        value={leg.amount ? fmtMoneyInput(String(leg.amount)) : ''}
-                        onChange={e => setLegs(ls => ls.map((x, xi) => xi === i ? { ...x, amount: parseFloat(e.target.value.replace(/[^\d.]/g, '')) || 0 } : x))}
-                        placeholder="Amount" inputMode="decimal"
-                      />
-                      <button
-                        className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500"
-                        disabled={legs.length === 1}
-                        onClick={() => setLegs(ls => ls.filter((_, xi) => xi !== i))}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between">
-                    <button className="text-[11px] font-bold text-indigo-500 hover:text-indigo-600 flex items-center gap-1" onClick={() => setLegs(ls => [...ls, { method: 'card', amount: Math.max(0, total - legSum) }])}>
-                      <Plus size={11} /> Add payment
-                    </button>
-                    <span className={`text-[11px] font-bold num ${Math.abs(total - legSum) < 0.01 ? 'text-emerald-500' : legSum > total ? 'text-sky-500' : 'text-amber-500'}`}>
-                      {Math.abs(total - legSum) < 0.01 ? 'Fully covered' : legSum > total ? `${fmtRs(legSum - total)} over (change)` : `${fmtRs(total - legSum)} remaining`}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
+            <POSPaymentMethodSelector
+              methods={PAYMENTS}
+              splitMethods={SPLIT_METHODS}
+              payment={payment}
+              splitOn={splitOn}
+              legs={legs}
+              canCreditSale={can('act:creditSale')}
+              total={total}
+              legSum={legSum}
+              coverageLabel={Math.abs(total - legSum) < 0.01 ? 'Fully covered' : legSum > total ? `${fmtRs(legSum - total)} over (change)` : `${fmtRs(total - legSum)} remaining`}
+              coverageClassName={Math.abs(total - legSum) < 0.01 ? 'text-emerald-500' : legSum > total ? 'text-sky-500' : 'text-amber-500'}
+              formatAmount={amount => fmtMoneyInput(String(amount))}
+              onPaymentSelect={method => {
+                setPayment(method);
+                if (method === 'credit') { setPaidAuto(false); setPaid(''); }
+                else { setPaidAuto(true); setPaid(total > 0 ? String(total) : ''); }
+              }}
+              onToggleSplit={() => { setSplitOn(value => !value); if (!splitOn) setLegs([{ method: 'cash', amount: total }]); }}
+              onLegMethodChange={(index, method) => setLegs(current => current.map((leg, i) => i === index ? { ...leg, method } : leg))}
+              onLegAmountChange={(index, value) => setLegs(current => current.map((leg, i) => i === index ? { ...leg, amount: parseFloat(value.replace(/[^\d.]/g, '')) || 0 } : leg))}
+              onRemoveLeg={index => setLegs(current => current.filter((_, i) => i !== index))}
+              onAddPayment={() => setLegs(current => [...current, { method: 'card', amount: Math.max(0, total - legSum) }])}
+            />
 
             {splitOn && hasCredit && (
               <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 grid grid-cols-3 gap-2 text-center">
