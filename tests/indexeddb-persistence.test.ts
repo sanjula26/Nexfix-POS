@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
-import { buildSeed } from '../src/lib/seed.ts';
+import type { POSState } from '../src/lib/types.ts';
 import {
   idbAcknowledgeQueue,
   idbClearQueue,
@@ -64,7 +64,7 @@ test('IndexedDB acknowledgement removes only acknowledged operations', async () 
 });
 
 test('restore checkpoint can recover the previous IndexedDB state after a failed replacement', async () => {
-  const original = buildSeed();
+  const original = { counters: { bill: 10 } } as unknown as POSState;
   assert.equal(await idbSaveState(original), true);
   assert.equal(await idbSaveRestoreCheckpoint(original), true);
 
