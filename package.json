@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "verify:boundaries": "node scripts/production-boundary-check.mjs",
     "test": "node --experimental-strip-types --test",
-    "test:domain": "node --experimental-strip-types --test tests/domain-invariants.test.ts tests/indexeddb-persistence.test.ts tests/electron-security.test.cjs",
+    "test:domain": "node --experimental-strip-types --test tests/domain-invariants.test.ts tests/indexeddb-persistence.test.ts tests/electron-security.test.cjs tests/backup-validation.test.ts",
     "preview": "vite preview",
     "desktop:build": "npm run build && electron-builder --win --publish never",
     "desktop:dir": "npm run build && electron-builder --win --dir --publish never"
