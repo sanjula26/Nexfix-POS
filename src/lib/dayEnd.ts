@@ -159,7 +159,7 @@ export function calculateDayEndTotals(
     .reduce((sum, expense) => sum + Math.max(0, Number(expense.amount) || 0), 0);
   const daySessions = state.sessions.filter(item => item.date === date);
   const opening = session
-    ? Math.max(0, Number(session.opening) || 0)
+    ? session.openingConfirmed === false ? 0 : Math.max(0, Number(session.opening) || 0)
     : daySessions.length
       ? daySessions.reduce((sum, item) => sum + Math.max(0, Number(item.opening) || 0), 0)
       : Math.max(0, Number(state.settings.openingFloat) || 0);
