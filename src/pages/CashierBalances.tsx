@@ -15,6 +15,7 @@ import { downloadBackup } from '../lib/backup';
 import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/driveSync';
 import { hasRecoveryKey } from '../lib/backupCrypto';
 import type { DaySession } from '../lib/types';
+import { parseOpeningFloatInput } from '../lib/openingFloat';
 
 type BackupStatus = { target: string; kind: 'backing-up' | 'success' | 'failed' | 'offline' | 'skipped'; message: string };
 
@@ -75,7 +76,7 @@ export default function CashierBalances() {
         cashierId,
         cashierName: person?.name || user?.name || 'Cashier',
         date: today,
-        opening: state.settings.openingFloat || 0,
+        opening: 0,
         closed: false,
       };
       cache.set(cashierId, { ...calculateDayEndTotals(state, today, effectiveSession), session: session || null });
@@ -101,7 +102,7 @@ export default function CashierBalances() {
       const person = state.users.find(item => item.id === user?.id);
       return calculateDayEndTotals(state, today, {
         id: 'preview-current', cashierId: user?.id || '', cashierName: person?.name || user?.name || '',
-        date: today, opening: state.settings.openingFloat || 0, closed: false,
+        date: today, opening: 0, closed: false,
       });
     }
     const branchSessions = state.sessions.filter(session => session.date === today && effectiveBranch(session.branchId) === selectedBranchKey);
@@ -140,10 +141,6 @@ export default function CashierBalances() {
       setSignOffError('Please add a short note explaining the shortage or overage.');
       return;
     }
-    if (selectedRow.session?.openingConfirmed === false) {
-      setSignOffError('Confirm the opening float before signing off this drawer.');
-      return;
-    }
     if (state.held.length) {
       setSignOffError('Complete or clear held bills before signing off.');
       return;
@@ -179,9 +176,10 @@ export default function CashierBalances() {
       setOpeningInput('');
       return;
     }
-    const opening = Math.round(Number(openingInput) * 100) / 100;
-    if (openingInput.trim() === '' || !Number.isFinite(opening) || opening < 0) return;
-    if (existing && existing.opening !== opening) {
+    const parsedOpening = parseOpeningFloatInput(openingInput);
+    if (!parsedOpening) return;
+    const { opening, confirmed } = parsedOpening;
+    if (existing && confirmed && existing.openingConfirmed === true && existing.opening !== opening) {
       const cashierName = state.users.find(person => person.id === openFloatId)?.name || '';
       const hasSales = state.sales.some(sale => dkey(sale.date) === today && sale.cashierId === openFloatId);
       const hasCashExpenses = state.expenses.some(expense => dkey(expense.date) === today && (expense.paymentMethod || 'cash') === 'cash' && expense.by === cashierName);
@@ -190,7 +188,7 @@ export default function CashierBalances() {
         return;
       }
     }
-    openSession(openFloatId, opening);
+    openSession(openFloatId, opening, confirmed);
     setOpenFloatId(null);
     setOpeningInput('');
   };
@@ -207,10 +205,6 @@ export default function CashierBalances() {
 
   const submitDayClose = () => {
     if (!openSessions.length) return;
-    if (openSessions.some(session => session.openingConfirmed === false)) {
-      setDayCloseError('Confirm the opening float for every open drawer before closing the full day.');
-      return;
-    }
     if (state.held.length) {
       setDayCloseError('Complete or clear held bills before closing the full day.');
       return;
@@ -348,7 +342,7 @@ export default function CashierBalances() {
                 if (!id) return;
                 const session = state.sessions.find(item => item.cashierId === id && item.date === today);
                 setOpenFloatId(id);
-                setOpeningInput(String(session?.opening ?? state.settings.openingFloat ?? 0));
+                setOpeningInput(session ? String(session.opening) : '');
               }}
               disabled={currentClosed && user?.role !== 'admin'}
             >
@@ -363,13 +357,13 @@ export default function CashierBalances() {
         }
       />
 
-      {currentSession && !currentSession.closed && currentSession.openingConfirmed === false && (
+      {currentSession && !currentSession.closed && currentSession.openingConfirmed !== true && (
         <div className="card p-4 border border-amber-500/25 bg-amber-500/[0.06] flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-start gap-2">
             <AlertTriangle className="text-amber-600 mt-0.5" size={18} />
-            <div><div className="font-bold text-ink">Opening float not confirmed</div><p className="text-sm text-sub mt-1">Confirm the physical starting cash before making sales or collecting credit settlements.</p></div>
+            <div><div className="font-bold text-ink">Opening float is optional</div><p className="text-sm text-sub mt-1">You can add the physical starting cash now or later. Sales and credit collections can continue without it.</p></div>
           </div>
-          <button type="button" className="btn btn-primary print:hidden" onClick={() => { setOpenFloatId(currentSession.cashierId); setOpeningInput(String(currentSession.opening)); }}><Unlock size={15} /> Confirm opening float</button>
+          <button type="button" className="btn btn-primary print:hidden" onClick={() => { setOpenFloatId(currentSession.cashierId); setOpeningInput(String(currentSession.opening)); }}><Unlock size={15} /> Add opening float</button>
         </div>
       )}
 
@@ -476,15 +470,17 @@ export default function CashierBalances() {
         </div>
       </div>
 
-      <Modal open={!!openFloatId} onClose={() => setOpenFloatId(null)} title="Open / set opening float">
+      <Modal open={!!openFloatId} onClose={() => setOpenFloatId(null)} title="Add / set opening float">
         <div className="space-y-3">
-          <p className="text-sm text-sub">Enter the physical starting cash before sales. The opening float cannot be changed after sales or cash expenses have been recorded.</p>
-          <Field label="Opening amount (Rs.)">
-            <input className="input num" type="number" min={0} step={0.01} value={openingInput} onChange={event => setOpeningInput(event.target.value)} autoFocus />
+          <p className="text-sm text-sub">Opening cash is optional. Leave this blank to open the cashier drawer with Rs. 0 opening cash; you can add a float later before sign-off. Once a float is confirmed, it cannot be changed after sales or cash expenses.</p>
+          <Field label="Opening amount (Rs.)" hint="Optional — leave blank if there is no starting cash">
+            <input className="input num" type="number" min={0} step={0.01} value={openingInput} onChange={event => setOpeningInput(event.target.value)} placeholder="Leave blank to continue without opening cash" autoFocus />
           </Field>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn btn-soft" onClick={() => setOpenFloatId(null)}>Cancel</button>
-            <button type="button" className="btn btn-primary" onClick={startDay} disabled={openingInput.trim() === '' || !Number.isFinite(Number(openingInput)) || Number(openingInput) < 0}><CheckCircle2 size={15} /> Save opening float</button>
+            <button type="button" className="btn btn-primary" onClick={startDay} disabled={parseOpeningFloatInput(openingInput) === null}>
+              <CheckCircle2 size={15} /> {openingInput.trim() === '' ? 'Continue without opening cash' : 'Save opening float'}
+            </button>
           </div>
         </div>
       </Modal>
