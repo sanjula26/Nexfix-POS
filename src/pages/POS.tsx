@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Plus, Trash2, PauseCircle, Landmark,
   CreditCard, Banknote, Smartphone, HandCoins, X, Boxes, History, Zap,
-  UserRound, Coins, UserPlus, Search, CheckCircle2, Truck,
+  UserRound, Coins, UserPlus, Search, CheckCircle2,
   ReceiptText, ChevronDown, Tag, ShoppingBag, Keyboard, Grid3X3,
   AlertTriangle, LockKeyhole, ArrowLeftRight, ShieldCheck,
   Loader2, Eye, EyeOff, Lock, Star, BadgeDollarSign, Printer,
@@ -1378,28 +1378,14 @@ export default function POS() {
               onTaxRateChange={setTaxPct}
             />
 
-            {/* service / delivery charge — always obvious at checkout */}
-            {shipOpen ? (
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-sky-500/[0.04] border border-sky-500/20 px-2.5 py-2">
-                <span className="text-[12.5px] text-sub flex items-center gap-1.5 font-semibold">
-                  <Truck size={12} className="text-sky-500" /> Service / Delivery
-                  <button className="text-faint hover:text-rose-500 ml-0.5" onClick={() => { setShipOpen(false); setShipping(''); }} title="Remove service charge"><X size={11} /></button>
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    className="input !w-24 !py-1.5 !px-2.5 num !text-[13px] text-right"
-                    value={shipping} onChange={e => setShipping(e.target.value.replace(/[^\d.]/g, ''))}
-                    placeholder="0" inputMode="decimal"
-                  />
-                  <span className="w-24 text-right num text-[12.5px] font-semibold text-sky-600 dark:text-sky-400">{shipAmt > 0 ? fmtRs(shipAmt, false) : '—'}</span>
-                </div>
-              </div>
-            ) : (
-              <button className="w-full flex items-center justify-between rounded-xl border border-dashed border-line bg-raised/30 px-3 py-2 text-[11.5px] font-semibold text-sub hover:text-violet-600 hover:border-violet-300 transition-colors" onClick={() => setShipOpen(true)}>
-                <span className="flex items-center gap-1.5"><Truck size={12} /> Add service / delivery charge</span>
-                <Plus size={13} />
-              </button>
-            )}
+            <POSServiceDeliveryCharge
+              open={shipOpen}
+              amount={shipping}
+              calculatedAmount={shipAmt}
+              onOpen={() => setShipOpen(true)}
+              onClose={() => { setShipOpen(false); setShipping(''); }}
+              onAmountChange={setShipping}
+            />
 
             {tradeInOpen && tradeInValue > 0 && <div className="flex items-center justify-between gap-3 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/20 px-2.5 py-2">
               <span className="text-[12.5px] text-sub">Trade-in credit</span>
