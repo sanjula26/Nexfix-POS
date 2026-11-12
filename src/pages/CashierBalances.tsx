@@ -342,7 +342,7 @@ export default function CashierBalances() {
                 if (!id) return;
                 const session = state.sessions.find(item => item.cashierId === id && item.date === today);
                 setOpenFloatId(id);
-                setOpeningInput(String(session?.opening ?? state.settings.openingFloat ?? 0));
+                setOpeningInput(session ? String(session.opening) : '');
               }}
               disabled={currentClosed && user?.role !== 'admin'}
             >
