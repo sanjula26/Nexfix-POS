@@ -26,6 +26,7 @@ export default function POSAccessorySuggestions({ items, onAdd }: POSAccessorySu
           <button
             key={product.id}
             type="button"
+            aria-label={`Add ${product.name} to bill`}
             onClick={() => onAdd(product.id)}
             className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-2 text-left hover:border-emerald-500/50 transition-colors"
           >
