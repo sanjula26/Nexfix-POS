@@ -6,6 +6,8 @@ import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
 } from '../src/lib/customerCredit.ts';
+import { calculateDayEndTotals } from '../src/lib/dayEnd.ts';
+import type { DaySession, POSState } from '../src/lib/types.ts';
 import {
   appendInventoryTransaction,
   buildInventoryTransaction,
@@ -226,4 +228,47 @@ test('branch stock single-row cache refresh preserves other cached products', ()
   assert.equal(getCachedBranchStock('branch-1', 'product-1'), 5);
   assert.equal(getCachedBranchStock('branch-1', 'product-2'), 9);
   assert.equal(cacheBranchStockProduct('branch-1', 'product-3', -1), false);
+});
+
+test('unconfirmed optional opening float is excluded from expected drawer cash', () => {
+  const session = {
+    id: 'session-1', cashierId: 'cashier-1', cashierName: 'Cashier',
+    date: '2026-11-12', opening: 2500, openingConfirmed: false, closed: false,
+  } as DaySession;
+  const state = {
+    sales: [{
+      id: 'sale-1', billNo: 'NFX-001', date: '2026-11-12T10:00:00.000Z',
+      cashierId: 'cashier-1', customerName: 'Walk-in', items: [], total: 100,
+      amountPaid: 100, payment: 'cash', payments: [{ method: 'cash', amount: 100 }],
+      change: 0, discount: 0, status: 'completed',
+    }],
+    sessions: [session], settings: { openingFloat: 2500 }, expenses: [],
+    exchanges: [], customerCreditPayments: [],
+  } as unknown as POSState;
+
+  const totals = calculateDayEndTotals(state, '2026-11-12', session);
+  assert.equal(totals.opening, 0);
+  assert.equal(totals.cash, 100);
+  assert.equal(totals.expected, 100);
+});
+
+test('confirmed opening float remains included in expected drawer cash', () => {
+  const session = {
+    id: 'session-1', cashierId: 'cashier-1', cashierName: 'Cashier',
+    date: '2026-11-12', opening: 2500, openingConfirmed: true, closed: false,
+  } as DaySession;
+  const state = {
+    sales: [{
+      id: 'sale-1', billNo: 'NFX-001', date: '2026-11-12T10:00:00.000Z',
+      cashierId: 'cashier-1', customerName: 'Walk-in', items: [], total: 100,
+      amountPaid: 100, payment: 'cash', payments: [{ method: 'cash', amount: 100 }],
+      change: 0, discount: 0, status: 'completed',
+    }],
+    sessions: [session], settings: { openingFloat: 2500 }, expenses: [],
+    exchanges: [], customerCreditPayments: [],
+  } as unknown as POSState;
+
+  const totals = calculateDayEndTotals(state, '2026-11-12', session);
+  assert.equal(totals.opening, 2500);
+  assert.equal(totals.expected, 2600);
 });
