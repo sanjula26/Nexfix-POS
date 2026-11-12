@@ -3,7 +3,7 @@ import type { CustomerCreditPayment } from './customerCredit';
 import { dkey } from './utils';
 import { getCloudShopId } from './cloudSync';
 import { getDefaultBranchId } from './branchStock';
-import { getEffectiveOpeningFloat } from './openingFloat';
+import { getEffectiveOpeningFloat, sumEffectiveOpeningFloats } from './openingFloat';
 
 export type TenderTotals = Record<Exclude<PaymentMethod, 'credit'>, number>;
 
@@ -161,9 +161,7 @@ export function calculateDayEndTotals(
   const daySessions = state.sessions.filter(item => item.date === date);
   const opening = session
     ? getEffectiveOpeningFloat(session)
-    : daySessions.length
-      ? daySessions.reduce((sum, item) => sum + Math.max(0, Number(item.opening) || 0), 0)
-      : Math.max(0, Number(state.settings.openingFloat) || 0);
+    : sumEffectiveOpeningFloats(daySessions);
   const cash = money(tenders.cash);
   const expected = money(opening + cash + creditSettled.cash - cashRefunds - cashExpenses);
 
