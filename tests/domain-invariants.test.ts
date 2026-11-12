@@ -6,7 +6,7 @@ import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
 } from '../src/lib/customerCredit.ts';
-import { getEffectiveOpeningFloat, sumEffectiveOpeningFloats } from '../src/lib/openingFloat.ts';
+import { getEffectiveOpeningFloat, parseOpeningFloatInput, sumEffectiveOpeningFloats } from '../src/lib/openingFloat.ts';
 import {
   appendInventoryTransaction,
   buildInventoryTransaction,
@@ -248,4 +248,20 @@ test('whole-day opening total includes only explicitly confirmed cashier floats'
     { opening: 1200, openingConfirmed: false },
     { opening: 2500 },
   ]), 500);
+});
+
+test('blank opening float starts an unconfirmed zero-float session', () => {
+  assert.deepEqual(parseOpeningFloatInput(''), { opening: 0, confirmed: false });
+  assert.deepEqual(parseOpeningFloatInput('   '), { opening: 0, confirmed: false });
+});
+
+test('explicit zero or positive opening float is confirmed and rounded to cents', () => {
+  assert.deepEqual(parseOpeningFloatInput('0'), { opening: 0, confirmed: true });
+  assert.deepEqual(parseOpeningFloatInput('125.678'), { opening: 125.68, confirmed: true });
+});
+
+test('invalid or negative opening float is rejected', () => {
+  assert.equal(parseOpeningFloatInput('-1'), null);
+  assert.equal(parseOpeningFloatInput('not-a-number'), null);
+  assert.equal(parseOpeningFloatInput('Infinity'), null);
 });
