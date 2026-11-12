@@ -1,6 +1,6 @@
 import type { POSState } from './types';
-import { isValidInventoryTransaction } from './inventoryLedger';
-import { hasValidCustomerCreditPayment } from './creditPaymentBackupValidation';
+import { isValidInventoryTransaction } from './inventoryLedger.ts';
+import { hasValidCustomerCreditPayment } from './creditPaymentBackupValidation.ts';
 
 export interface BackupEnvelope {
   _meta: { app: 'Nexfix POS'; version: 2; exportedAt: string; kind: 'manual' | 'auto' };
