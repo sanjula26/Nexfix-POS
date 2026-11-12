@@ -84,3 +84,19 @@ test('restore checkpoint can recover the previous IndexedDB state after a failed
   assert.equal(await idbClearRestoreCheckpoint(), true);
   assert.equal(await idbLoadRestoreCheckpoint(), null);
 });
+
+test('committed queue entries survive a fresh IndexedDB module connection', async () => {
+  const operationId = 'test-reopen-queue-operation';
+  assert.equal(await idbEnqueue({
+    type: 'state_write',
+    id: operationId,
+    ts: '2026-11-12T10:02:00.000Z',
+  }), true);
+
+  const reopenedDb = await import(`../src/lib/db.ts?reopen=${Date.now()}`);
+  const reopenedQueue = await reopenedDb.idbListQueue();
+  assert.ok(reopenedQueue.some((item) => item.id === operationId));
+
+  await reopenedDb.idbAcknowledgeQueue([operationId]);
+  assert.equal((await idbListQueue()).some((item) => item.id === operationId), false);
+});
