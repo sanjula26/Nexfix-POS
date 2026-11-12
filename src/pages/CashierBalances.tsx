@@ -177,7 +177,7 @@ export default function CashierBalances() {
     }
     const opening = Math.round(Number(openingInput) * 100) / 100;
     if (openingInput.trim() === '' || !Number.isFinite(opening) || opening < 0) return;
-    if (existing && existing.openingConfirmed !== false && existing.opening !== opening) {
+    if (existing && existing.openingConfirmed === true && existing.opening !== opening) {
       const cashierName = state.users.find(person => person.id === openFloatId)?.name || '';
       const hasSales = state.sales.some(sale => dkey(sale.date) === today && sale.cashierId === openFloatId);
       const hasCashExpenses = state.expenses.some(expense => dkey(expense.date) === today && (expense.paymentMethod || 'cash') === 'cash' && expense.by === cashierName);
