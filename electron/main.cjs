@@ -1,5 +1,6 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const path = require('path');
+const { createNavigationGuard } = require('./navigation-security.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -505,7 +506,11 @@ function setupAutoUpdater(){
   }catch(error){console.warn('[Nexfix updater] unavailable:',error?.message||error);}
 }
 
-function isAllowedNavigation(url){try{const parsed=new URL(url);if(isDev)return parsed.origin===new URL(DEV_URL).origin;return parsed.protocol==='file:';}catch{return false;}}
+const isAllowedNavigation = createNavigationGuard({
+  isDev,
+  devUrl: DEV_URL,
+  rendererPath: path.join(__dirname, '..', 'dist', 'index.html'),
+});
 function createWindow(){
   const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
   win.webContents.setWindowOpenHandler(({url})=>{
@@ -547,8 +552,8 @@ function createWindow(){
   }
 }
 ipcMain.handle('app:version',()=>app.getVersion());
-ipcMain.handle('app:copy-text',(_event,text)=>{if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
-ipcMain.handle('app:open-external',async(_event,url)=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
+ipcMain.handle('app:copy-text',(event,text)=>{if(!isTrustedRenderer(event))return false;if(typeof text!=='string'||!text.trim()||text.length>10000)return false;try{clipboard.writeText(text);return true;}catch{return false;}});
+ipcMain.handle('app:open-external',async(event,url)=>{if(!isTrustedRenderer(event))return false;try{const parsed=new URL(url);if(parsed.protocol!=='https:')return false;await shell.openExternal(parsed.toString());return true;}catch{return false;}});
 let exitBackupPending=false;
 let allowQuit=false;
 let exitBackupTimer=null;
@@ -569,8 +574,9 @@ const requestExitWithBackup=()=>{
     app.quit();
   },5000);
 };
-ipcMain.handle('app:exit',()=>{ requestExitWithBackup(); return true; });
-ipcMain.handle('app:exit-ready',()=>{
+ipcMain.handle('app:exit',(event)=>{ if(!isTrustedRenderer(event)) return false; requestExitWithBackup(); return true; });
+ipcMain.handle('app:exit-ready',(event)=>{
+  if(!isTrustedRenderer(event)) return false;
   if(exitBackupTimer)clearTimeout(exitBackupTimer);
   exitBackupTimer=null;
   exitBackupPending=false;
