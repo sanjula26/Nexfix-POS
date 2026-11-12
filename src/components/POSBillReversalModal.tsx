@@ -9,7 +9,7 @@ export interface POSReverseBillOption {
 export interface POSReverseBillDetails {
   id: string;
   billNo: string;
-  total: number;
+  totalLabel: string;
   itemsSummary: string;
 }
 
@@ -47,7 +47,7 @@ export default function POSBillReversalModal({
         </Field>
         {selectedBill && (
           <div className="rounded-xl bg-amber-500/[0.07] border border-amber-500/25 p-3 text-sm">
-            <div className="font-bold text-ink">{selectedBill.billNo} · {selectedBill.total}</div>
+            <div className="font-bold text-ink">{selectedBill.billNo} · {selectedBill.totalLabel}</div>
             <div className="text-xs text-sub mt-1">{selectedBill.itemsSummary}</div>
           </div>
         )}
