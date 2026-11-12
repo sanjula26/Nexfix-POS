@@ -36,6 +36,7 @@ import POSDiscountControl from '../components/POSDiscountControl';
 import POSTaxControl from '../components/POSTaxControl';
 import POSServiceDeliveryCharge from '../components/POSServiceDeliveryCharge';
 import POSBillSummary from '../components/POSBillSummary';
+import POSPaymentBalanceIndicator from '../components/POSPaymentBalanceIndicator';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1526,49 +1527,14 @@ export default function POS() {
               }}
             />
 
-            {/* change / balance due */}
-            <AnimatePresence mode="wait">
-              {total > 0 && (
-                <motion.div
-                  key={payState}
-                  initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.15 }}
-                  className={`flex justify-between items-center rounded-xl px-4 py-3 border ${
-                    payState === 'change'
-                      ? 'bg-emerald-500/10 border-emerald-500/30'
-                      : payState === 'exact'
-                        ? 'bg-sky-500/10 border-sky-500/30'
-                        : payState === 'due' || payState === 'short'
-                          ? 'bg-rose-500/10 border-rose-500/30'
-                          : 'bg-raised border-line'
-                  }`}
-                >
-                  <span className={`text-[11px] font-extrabold tracking-wide ${
-                    payState === 'change' ? 'text-emerald-600 dark:text-emerald-400'
-                    : payState === 'exact' ? 'text-sky-600 dark:text-sky-400'
-                    : payState === 'due' || payState === 'short' ? 'text-rose-500'
-                    : 'text-faint'
-                  }`}>
-                    {payState === 'change' && 'CHANGE TO GIVE'}
-                    {payState === 'exact' && (paidNum > 0 ? 'EXACT AMOUNT' : 'AWAITING PAYMENT')}
-                    {payState === 'due' && 'BALANCE DUE (CREDIT)'}
-                    {payState === 'short' && 'SHORT OF TOTAL'}
-                    {payState === 'idle' && 'AWAITING PAYMENT'}
-                  </span>
-                  <span className={`num text-[17px] font-extrabold ${
-                    payState === 'change' ? 'text-emerald-600 dark:text-emerald-400'
-                    : payState === 'exact' ? 'text-sky-600 dark:text-sky-400'
-                    : payState === 'due' || payState === 'short' ? 'text-rose-500'
-                    : 'text-faint'
-                  }`}>
-                    {payState === 'change' && fmtRs(change)}
-                    {payState === 'exact' && (paidNum > 0 ? fmtRs(0) : fmtRs(total))}
-                    {(payState === 'due' || payState === 'short') && fmtRs(shortage)}
-                    {payState === 'idle' && fmtRs(total)}
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <POSPaymentBalanceIndicator
+              payState={payState}
+              total={total}
+              paidNum={paidNum}
+              change={change}
+              shortage={shortage}
+              formatRs={fmtRs}
+            />
 
             <POSWhatsAppReceiptOptIn
               visible={Boolean(customer?.phone) && !state.settings.whatsappReceipts}
