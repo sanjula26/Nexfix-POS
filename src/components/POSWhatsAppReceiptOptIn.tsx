@@ -1,3 +1,4 @@
+// Presentation-only control; receipt opt-in state and sending stay in the parent POS page.
 import { AnimatePresence, motion } from 'framer-motion';
 import { MessageCircle } from 'lucide-react';
 
