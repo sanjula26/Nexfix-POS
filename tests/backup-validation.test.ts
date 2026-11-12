@@ -90,7 +90,6 @@ test('backup validation checks local user credentials, role and timestamp shape'
     id: 'user-1',
     name: 'Admin',
     email: 'admin@example.test',
-    password: '',
     role: 'owner',
     active: true,
     createdAt: 'not-a-date',
