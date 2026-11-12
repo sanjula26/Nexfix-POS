@@ -20,6 +20,7 @@ import POSMobileCheckoutBar from '../components/POSMobileCheckoutBar';
 import POSReprintWhatsAppModal from '../components/POSReprintWhatsAppModal';
 import POSQuickAddCustomerModal from '../components/POSQuickAddCustomerModal';
 import POSHeldSalesModal from '../components/POSHeldSalesModal';
+import POSCashDrawerModal from '../components/POSCashDrawerModal';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
