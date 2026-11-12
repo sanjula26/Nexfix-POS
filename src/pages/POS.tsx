@@ -27,6 +27,8 @@ import POSReprintBillsModal from '../components/POSReprintBillsModal';
 import POSImeiUnitPicker from '../components/POSImeiUnitPicker';
 import POSTradeInEntry from '../components/POSTradeInEntry';
 import POSAccessorySuggestions from '../components/POSAccessorySuggestions';
+import POSSalesmanNoteControls from '../components/POSSalesmanNoteControls';
+import POSLoyaltyRedeemPanel from '../components/POSLoyaltyRedeemPanel';
 import { fmtRs, dkey, timeAgo, uid, salePayments, waLink, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { PaymentMethod, PaymentLeg, Sale, Customer } from '../lib/types';
@@ -1210,40 +1212,15 @@ export default function POS() {
                 </div>
               )}
 
-              {/* salesman + note row */}
-              <div className="flex flex-wrap items-center gap-2 mt-3">
-                <span className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider uppercase text-faint">
-                  Salesman
-                </span>
-                <select
-                  className="input !w-auto !py-1.5 !px-2.5 !text-[12px] font-semibold"
-                  value={salesmanId}
-                  onChange={e => setSalesmanId(e.target.value)}
-                >
-                  {activeStaff.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-                <button
-                  className={`ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-all ${
-                    noteOpen || note ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' : 'bg-raised text-sub border-line hover:text-ink'
-                  }`}
-                  onClick={() => setNoteOpen(o => !o)}
-                >
-                  <StickyNote size={12} /> {note ? 'Note added' : 'Bill note'}
-                </button>
-              </div>
-              <AnimatePresence>
-                {noteOpen && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <textarea
-                      className="input mt-2.5 !text-[12.5px] min-h-[56px] resize-none"
-                      placeholder="e.g. Gift packing · Deliver tomorrow after 4 PM"
-                      value={note}
-                      onChange={e => setNote(e.target.value)}
-                      maxLength={160}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <POSSalesmanNoteControls
+                staff={activeStaff}
+                salesmanId={salesmanId}
+                note={note}
+                noteOpen={noteOpen}
+                onSalesmanChange={setSalesmanId}
+                onToggleNote={() => setNoteOpen(open => !open)}
+                onNoteChange={setNote}
+              />
             </div>
 
             {/* B. HERO ITEM SEARCH — primary cashier entry point */}
@@ -1456,37 +1433,18 @@ export default function POS() {
               </div>
             )}
 
-            {/* loyalty redeem */}
-            {customer && customer.loyaltyPoints > 0 && (
-              <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-2.5">
-                <div className="flex items-center justify-between">
-                  <button className="flex items-center gap-2" onClick={() => { setRedeemOn(r => !r); if (redeemOn) setPoints(''); }}>
-                    <span className={`w-[16px] h-[16px] rounded-[4px] border flex items-center justify-center transition-all ${redeemOn ? 'bg-amber-500 border-amber-500 text-white' : 'border-amber-400/50 bg-surface'}`}>
-                      {redeemOn && <CheckCircle2 size={11} strokeWidth={3} />}
-                    </span>
-                    <span className="text-[12px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                      <Coins size={12} /> Redeem points · {customer.loyaltyPoints} available
-                    </span>
-                  </button>
-                  {redeemOn && (
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        className="input !w-20 !py-1 !px-2 num !text-[12px] text-right"
-                        value={points}
-                        onChange={e => setPoints(e.target.value.replace(/\D/g, ''))}
-                        placeholder={String(maxRedeem)} inputMode="numeric"
-                      />
-                      <button className="text-[10px] font-bold text-amber-600 dark:text-amber-400" onClick={() => setPoints(String(maxRedeem))}>MAX</button>
-                    </div>
-                  )}
-                </div>
-                {redeemOn && redeemedPts > 0 && (
-                  <div className="text-right text-[11px] font-bold text-amber-600 dark:text-amber-400 num mt-1">
-                    − {fmtRs(pointsVal)} ({redeemedPts} pts × Rs. {loyaltyPointValue})
-                  </div>
-                )}
-              </div>
-            )}
+            <POSLoyaltyRedeemPanel
+              customer={customer}
+              enabled={redeemOn}
+              points={points}
+              maxRedeem={maxRedeem}
+              redeemedPoints={redeemedPts}
+              pointsValue={pointsVal}
+              pointValue={loyaltyPointValue}
+              onToggle={() => { setRedeemOn(r => !r); if (redeemOn) setPoints(''); }}
+              onPointsChange={value => setPoints(value.replace(/\D/g, ''))}
+              onSetMax={() => setPoints(String(maxRedeem))}
+            />
 
             <POSTradeInEntry
               open={tradeInOpen}
