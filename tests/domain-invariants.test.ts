@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
+import { isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import {
@@ -356,4 +357,21 @@ test('inventory ledger state builder records only a pending-to-received purchase
 
   const unchanged = applyInventoryLedger(previous, updated, 'PURCHASE_RECEIVE', 'Admin');
   assert.equal(unchanged.inventoryTransactions?.length, 1);
+});
+
+test('updater authorization recovery recognizes HTTP 401 responses', () => {
+  assert.equal(isUpdaterAuthorizationError('HTTP 401 Unauthorized'), true);
+  assert.equal(isUpdaterAuthorizationError('Request failed with status 401'), true);
+});
+
+test('updater authorization recovery recognizes explicit device-token failures', () => {
+  assert.equal(isUpdaterAuthorizationError('Invalid updater device credential'), true);
+  assert.equal(isUpdaterAuthorizationError('This device is not authorized for private updates'), true);
+  assert.equal(isUpdaterAuthorizationError('POS device is registered to a different cloud account'), true);
+});
+
+test('updater authorization recovery does not match unrelated or partial status codes', () => {
+  assert.equal(isUpdaterAuthorizationError('HTTP 500 Internal Server Error'), false);
+  assert.equal(isUpdaterAuthorizationError('HTTP 1401 Internal Error'), false);
+  assert.equal(isUpdaterAuthorizationError('network timeout'), false);
 });
