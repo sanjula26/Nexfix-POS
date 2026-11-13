@@ -5,6 +5,11 @@ name: Windows Desktop Build
 # automatically publish an installer, change the active updater release, or
 # trigger retention cleanup in private R2/Supabase storage.
 on:
+  # One-time recovery entry point for the 2026-11-13 production installer.
+  # Ordinary pushes never publish a production release.
+  push:
+    tags:
+      - 'nexfix-production-recovery-2026-11-13'
   workflow_dispatch:
     inputs:
       confirm_production_release:
@@ -43,16 +48,24 @@ jobs:
         shell: pwsh
         env:
           RELEASE_REF: ${{ github.ref }}
-          RELEASE_CONFIRMED: ${{ inputs.confirm_production_release }}
+          RELEASE_CONFIRMED: ${{ inputs.confirm_production_release == true || github.ref == 'refs/tags/nexfix-production-recovery-2026-11-13' }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ($env:RELEASE_REF -ne 'refs/heads/main') {
-            throw "Production Windows releases may only run from main. Selected ref: $env:RELEASE_REF"
+          $isMain = $env:RELEASE_REF -eq 'refs/heads/main'
+          $isOneTimeRecoveryTag = $env:RELEASE_REF -eq 'refs/tags/nexfix-production-recovery-2026-11-13'
+          if (-not $isMain -and -not $isOneTimeRecoveryTag) {
+            throw "Production Windows releases may only run from main or the one-time recovery tag. Selected ref: $env:RELEASE_REF"
           }
-          if ($env:RELEASE_CONFIRMED -ne 'true') {
-            throw 'Production release was not explicitly confirmed. Re-run manually and check confirm_production_release only when ready to publish.'
+          if ($isOneTimeRecoveryTag) {
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'Could not fetch main to verify the one-time release tag.' }
+            git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'The one-time recovery tag does not point to a commit contained in main.' }
           }
-          Write-Host 'Production release confirmation and main branch guard passed.'
+          if ($env:RELEASE_CONFIRMED -ne 'True' -and $env:RELEASE_CONFIRMED -ne 'true') {
+            throw 'Production release was not explicitly confirmed. Use the manual confirmation or the one-time recovery tag.'
+          }
+          Write-Host 'Production release confirmation and main ancestry guard passed.'
 
       - name: Setup Node
         uses: actions/setup-node@v7
