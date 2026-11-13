@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { POSState } from '../src/lib/types.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import {
@@ -8,6 +9,7 @@ import {
 } from '../src/lib/customerCredit.ts';
 import { getEffectiveOpeningFloat, parseOpeningFloatInput, sumEffectiveOpeningFloats } from '../src/lib/openingFloat.ts';
 import {
+  applyInventoryLedger,
   appendInventoryTransaction,
   buildInventoryTransaction,
   isValidInventoryTransaction,
@@ -283,4 +285,75 @@ test('invalid or negative opening float is rejected', () => {
   assert.equal(parseOpeningFloatInput('-1'), null);
   assert.equal(parseOpeningFloatInput('not-a-number'), null);
   assert.equal(parseOpeningFloatInput('Infinity'), null);
+});
+
+function ledgerState(overrides: Record<string, unknown> = {}): POSState {
+  return {
+    products: [],
+    sales: [],
+    purchases: [],
+    exchanges: [],
+    kitItems: [],
+    purchaseReturns: [],
+    repairs: [],
+    units: [],
+    inventoryTransactions: [],
+    ...overrides,
+  } as unknown as POSState;
+}
+
+test('inventory ledger state builder records a new sale as a negative stock movement', () => {
+  const previous = ledgerState();
+  const next = ledgerState({
+    sales: [{
+      id: 'sale-1',
+      billNo: 'NFX-001',
+      items: [{ productId: 'product-1', qty: 2, unitIds: ['unit-1', 'unit-2'] }],
+    }],
+  });
+
+  const updated = applyInventoryLedger(previous, next, 'SALE', 'Cashier');
+
+  assert.equal(updated.inventoryTransactions?.length, 1);
+  assert.deepEqual(updated.inventoryTransactions?.[0], {
+    id: 'inv:sale:sale-1:product-1',
+    type: 'SALE',
+    productId: 'product-1',
+    quantity: -2,
+    referenceId: 'sale-1',
+    referenceNo: 'NFX-001',
+    unitIds: ['unit-1', 'unit-2'],
+    occurredAt: updated.inventoryTransactions?.[0].occurredAt,
+    by: 'Cashier',
+  });
+});
+
+test('inventory ledger state builder records only a pending-to-received purchase transition', () => {
+  const previous = ledgerState({
+    purchases: [{
+      id: 'purchase-1',
+      poNo: 'GRN-001',
+      status: 'pending',
+      items: [{ productId: 'product-1', qty: 5 }],
+    }],
+  });
+  const next = ledgerState({
+    purchases: [{
+      id: 'purchase-1',
+      poNo: 'GRN-001',
+      status: 'received',
+      items: [{ productId: 'product-1', qty: 5 }],
+    }],
+  });
+
+  const updated = applyInventoryLedger(previous, next, 'PURCHASE_RECEIVE', 'Admin');
+
+  assert.equal(updated.inventoryTransactions?.length, 1);
+  assert.equal(updated.inventoryTransactions?.[0].type, 'PURCHASE_RECEIVE');
+  assert.equal(updated.inventoryTransactions?.[0].quantity, 5);
+  assert.equal(updated.inventoryTransactions?.[0].referenceId, 'purchase-1');
+  assert.equal(updated.inventoryTransactions?.[0].by, 'Admin');
+
+  const unchanged = applyInventoryLedger(previous, updated, 'PURCHASE_RECEIVE', 'Admin');
+  assert.equal(unchanged.inventoryTransactions?.length, 1);
 });
