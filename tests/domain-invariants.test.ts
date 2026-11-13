@@ -258,7 +258,7 @@ test('unconfirmed or legacy-unconfirmed opening float contributes zero to drawer
 });
 
 test('unconfirmed opening float does not block credit collection in an open cashier session', () => {
-  assert.equal(getCreditPaymentSessionBlockReason({ closed: false, opening: 0, openingConfirmed: false }), '');
+  assert.equal(getCreditPaymentSessionBlockReason({ closed: false, openingConfirmed: false }), '');
   assert.equal(getCreditPaymentSessionBlockReason({ closed: false, openingConfirmed: true }), '');
   assert.equal(getCreditPaymentSessionBlockReason({ closed: true, openingConfirmed: false }), "Today's cashier drawer is already closed. Credit payments cannot be collected in a closed session.");
   assert.equal(getCreditPaymentSessionBlockReason(undefined), "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session.");
