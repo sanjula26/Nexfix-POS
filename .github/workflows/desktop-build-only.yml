@@ -125,7 +125,16 @@ jobs:
           Get-Content release/SHA256SUMS.txt
           Write-Host 'Windows installer, portable EXE, blockmap and SHA-256 checksums verified.'
 
-      - name: Upload QA artifacts (no release publication)
+      - name: Explain public artifact restriction
+        if: ${{ github.event.repository.private != true }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "Windows QA EXEs were built and verified on the ephemeral runner but were not uploaded because this repository is public. Production installers remain available only through the private updater." | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Write-Host 'Public repository: skipping downloadable Windows EXE artifacts.'
+
+      - name: Upload QA artifacts only for private repositories
+        if: ${{ github.event.repository.private == true }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: nexfix-windows-qa-build-${{ github.run_number }}
