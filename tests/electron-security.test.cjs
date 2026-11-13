@@ -4,6 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { pathToFileURL } = require('node:url');
 const { createNavigationGuard } = require('../electron/navigation-security.cjs');
+const { writeBufferFully } = require('../electron/write-buffer.cjs');
 
 const mainSource = fs.readFileSync(
   path.join(__dirname, '..', 'electron', 'main.cjs'),
@@ -58,4 +59,32 @@ test('privileged clipboard, external-open and exit IPC handlers reject untrusted
       `${channel} must verify the trusted main-frame URL`,
     );
   }
+});
+
+
+test('private updater writes every streamed installer byte despite partial file writes', async () => {
+  const source = Buffer.from('nexfix-installer-bytes');
+  const output = Buffer.alloc(source.length);
+  let calls = 0;
+  const handle = {
+    async write(buffer, offset, length, position) {
+      const bytesWritten = Math.min(3, length);
+      buffer.copy(output, position, offset, offset + bytesWritten);
+      calls += 1;
+      return { bytesWritten };
+    },
+  };
+
+  assert.equal(await writeBufferFully(handle, source, 0), source.length);
+  assert.equal(output.toString(), source.toString());
+  assert.ok(calls > 1, 'test handle should simulate partial writes');
+  assert.match(mainSource, /writeBufferFully\(handle, buffer, total\)/);
+});
+
+test('private updater aborts when the installer file handle makes no write progress', async () => {
+  const handle = { async write() { return { bytesWritten: 0 }; } };
+  await assert.rejects(
+    writeBufferFully(handle, Buffer.from('installer'), 0),
+    /did not make forward progress/,
+  );
 });

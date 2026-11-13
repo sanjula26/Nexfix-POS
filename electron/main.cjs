@@ -1,4 +1,5 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
+const { writeBufferFully } = require('./write-buffer.cjs');
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
 const fs = require('fs');
@@ -182,7 +183,7 @@ async function downloadDirectPrivateUpdate() {
       if (done) break;
       const buffer = Buffer.from(value);
       if (!buffer.length) continue;
-      await handle.write(buffer, 0, buffer.length, total);
+      await writeBufferFully(handle, buffer, total);
       hash.update(buffer);
       total += buffer.length;
       sendUpdateEvent('progress', { percent: Math.min(99, (total / expectedSize) * 100) });
