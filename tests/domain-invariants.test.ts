@@ -21,6 +21,8 @@ import {
   cacheBranchStock,
   cacheBranchStockProduct,
   getCachedBranchStock,
+  isBranchStockCacheReady,
+  isLocalMainStockReady,
 } from '../src/lib/branchStock.ts';
 
 test('credit balance excludes allocations for other invoices', () => {
@@ -133,6 +135,23 @@ test('supplier ledger is chronological and calculates running balance', () => {
     { date: '2026-01-02T10:00:00.000Z', type: 'purchase', reference: 'PO-001', amount: 1000, balance: 1000 },
     { date: '2026-01-03T10:00:00.000Z', type: 'payment', reference: 'payment-1', amount: -250, balance: 750, paymentMethod: 'cash' },
   ]);
+});
+
+test('Inventory does not expose stale stock from a previously cached branch', () => {
+  assert.equal(isBranchStockCacheReady('branch-a', '', true), false, 'a cache alone is not proof the current Inventory view loaded this branch');
+  assert.equal(isBranchStockCacheReady('branch-b', 'branch-a', true), false, 'a different branch cache must not be shown or edited');
+  assert.equal(isBranchStockCacheReady('branch-a', 'branch-a', false), false, 'the loaded branch must contain a valid cache');
+  assert.equal(isBranchStockCacheReady('branch-a', 'branch-a', true), true, 'the exact branch loaded by this view is ready');
+  assert.equal(isBranchStockCacheReady('branch-a', '', true, 'branch-a', true), true, 'a previously server-verified device branch can use its cached quantity offline');
+  assert.equal(isBranchStockCacheReady('branch-a', '', true, 'branch-a', false), false, 'online mode must refresh and re-verify the branch before using cached values');
+  assert.equal(isBranchStockCacheReady('branch-a', '', true, 'branch-b', true), false, 'offline cache for a different branch must not be used');
+});
+
+test('cloud-bound POS cannot use legacy local-main stock before branch resolution', () => {
+  assert.equal(isLocalMainStockReady('shop-1', false), false, 'a cloud shop must resolve its branch even when cached branch metadata is not loaded yet');
+  assert.equal(isLocalMainStockReady('shop-1', true), false, 'multi-branch cloud shops must never fall back to aggregate stock');
+  assert.equal(isLocalMainStockReady('', true), false, 'a multi-branch local cache must not use the local-main sentinel');
+  assert.equal(isLocalMainStockReady('', false), true, 'legacy local-only single-branch mode remains available');
 });
 
 test('branch stock cache applies valid deltas and rejects negative stock', () => {
