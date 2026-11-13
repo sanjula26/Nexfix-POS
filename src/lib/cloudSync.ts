@@ -212,6 +212,23 @@ export async function getCloudBranchStockQuantity(
   if (!shopId || !branchId || !productId || branchId === 'local-main') {
     return { ok: false, error: 'A valid cloud shop, branch, and product are required' };
   }
+  // App startup restores the persisted Cloud session asynchronously. Resolve
+  // the authenticated shop membership here too, before the RLS-protected read,
+  // so an early Inventory edit cannot mistake an RLS-hidden row for missing stock.
+  const shop = await ensureCloudShop();
+  if (!shop.ok || !shop.shopId) {
+    return { ok: false, error: shop.error || 'Cloud sign-in is required once in Settings before editing branch stock.' };
+  }
+  if (shop.shopId !== shopId) {
+    return { ok: false, error: 'The selected cloud shop changed. Refresh Inventory and reopen the product editor.' };
+  }
+  const branch = await resolveCloudBranchId(shopId, branchId);
+  if (!branch.ok || !branch.branchId) {
+    return { ok: false, error: branch.error || 'This POS is not assigned to an active branch.' };
+  }
+  if (branch.branchId !== branchId) {
+    return { ok: false, error: 'This POS is assigned to a different branch. Refresh Inventory and reopen the product editor.' };
+  }
   const { data, error } = await supabase.from('branch_stock').select('qty')
     .eq('shop_id', shopId).eq('branch_id', branchId).eq('product_id', productId).maybeSingle();
   if (error) return { ok: false, error: error.message };
