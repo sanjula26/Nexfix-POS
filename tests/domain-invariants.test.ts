@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
-import { isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
+import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import {
@@ -357,6 +357,42 @@ test('inventory ledger state builder records only a pending-to-received purchase
 
   const unchanged = applyInventoryLedger(previous, updated, 'PURCHASE_RECEIVE', 'Admin');
   assert.equal(unchanged.inventoryTransactions?.length, 1);
+});
+
+test('updater reauthorization clears both native credentials before retrying', async () => {
+  const calls: string[] = [];
+  const result = await clearUpdaterCredentialsForRecovery(
+    async () => { calls.push('active'); return { ok: true }; },
+    async () => { calls.push('device'); return { ok: true }; },
+  );
+  assert.deepEqual(calls, ['active', 'device']);
+  assert.deepEqual(result, { ok: true });
+});
+
+test('updater reauthorization stops when active credential clearing fails', async () => {
+  let deviceClearCalled = false;
+  const result = await clearUpdaterCredentialsForRecovery(
+    async () => ({ ok: false, error: 'IPC failed' }),
+    async () => { deviceClearCalled = true; return { ok: true }; },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(deviceClearCalled, false);
+});
+
+test('updater reauthorization reports device-token storage failures', async () => {
+  const result = await clearUpdaterCredentialsForRecovery(
+    async () => ({ ok: true }),
+    async () => ({ ok: false, error: 'Secure storage failed' }),
+  );
+  assert.deepEqual(result, { ok: false, error: 'Secure storage failed' });
+});
+
+test('updater reauthorization handles rejected native clear operations', async () => {
+  const result = await clearUpdaterCredentialsForRecovery(
+    async () => { throw new Error('Native IPC unavailable'); },
+    async () => ({ ok: true }),
+  );
+  assert.deepEqual(result, { ok: false, error: 'Native IPC unavailable' });
 });
 
 test('updater authorization recovery recognizes HTTP 401 responses', () => {
