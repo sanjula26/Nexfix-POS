@@ -8,7 +8,17 @@ on:
   workflow_dispatch:
     inputs:
       confirm_production_release:
-        description: 'Confirm publishing a production Windows EXE to private R2/Supabase and running retention cleanup'
+        description: 'Confirm publishing a production Windows EXE to private R2/Supabase (does not run retention cleanup)'
+        required: true
+        type: boolean
+        default: false
+      confirm_private_retention_cleanup:
+        description: 'Separately confirm deletion of superseded private Supabase chunks and old private R2 installers'
+        required: true
+        type: boolean
+        default: false
+      confirm_public_github_release_cleanup:
+        description: 'Separately confirm deletion of all public GitHub Releases in this repository'
         required: true
         type: boolean
         default: false
@@ -427,7 +437,69 @@ jobs:
 
           Write-Host "Private Windows release chunks published and verified atomically: $version (installer $installerParts parts; byte total exact)"
 
+      - name: Verify private Windows release
+        shell: pwsh
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
+          if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
+          if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
+          if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
+          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
+          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
+
+      - name: Create release tag after private release verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:BUILD_VERSION"
+          $currentCommit = (git rev-parse HEAD).Trim()
+          $remoteTagLines = @(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          if ($LASTEXITCODE -ne 0) { throw "Could not check whether release tag $tag already exists." }
+          $remoteTagRefs = @(
+            $remoteTagLines | ForEach-Object {
+              $parts = "$_" -split '\s+'
+              if ($parts.Count -ge 2) { [pscustomobject]@{ Sha = $parts[0]; Ref = $parts[1] } }
+            }
+          )
+          # Handle both lightweight tags and annotated tags. A rerun is safe only
+          # when the existing tag resolves to this exact source commit.
+          $tagCommit = ($remoteTagRefs | Where-Object { $_.Ref -eq "refs/tags/$tag^{}" } | Select-Object -First 1).Sha
+          if (-not $tagCommit) {
+            $tagCommit = ($remoteTagRefs | Where-Object { $_.Ref -eq "refs/tags/$tag" } | Select-Object -First 1).Sha
+          }
+          if ($tagCommit) {
+            if ($tagCommit -ne $currentCommit) {
+              throw "Release tag $tag already points to a different commit ($tagCommit != $currentCommit)."
+            }
+            Write-Host "Release tag $tag already points to this exact commit; safe rerun will reuse it."
+          } else {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag $tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not create release tag $tag." }
+            git push origin $tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not push release tag $tag." }
+            Write-Host "Created release tag $tag after private R2/Supabase release verification."
+          }
+
       - name: Remove superseded private release chunks
+        if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -452,18 +524,41 @@ jobs:
           if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
 
           $currentNames = @($installer.Name)
-          $listBody = @{ prefix='win32/latest/'; limit=1000; with_delimiter=$false } | ConvertTo-Json -Compress
-          $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $releasePaths = @(
-            $listResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
+
+          # list-v2 uses cursor pagination. Never assume the first 1,000 rows
+          # represent every historical installer chunk in a busy release prefix.
+          function Get-ReleaseChunkPaths {
+            $pageSize = 1000
+            $cursor = $null
+            $paths = [System.Collections.Generic.List[string]]::new()
+            do {
+              $listOptions = @{ prefix='win32/latest/'; limit=$pageSize; with_delimiter=$false }
+              if (-not [string]::IsNullOrWhiteSpace($cursor)) { $listOptions.cursor = $cursor }
+              $pageBody = $listOptions | ConvertTo-Json -Compress
+              $page = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $pageBody
+              $objects = @($page.objects)
+              foreach ($object in $objects) {
+                if ($null -eq $object.id) { continue }
+                $name = [string]$object.name
+                if (-not $name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name = "win32/latest/$name" }
+                if ($name -like 'win32/latest/Nexfix-POS-*.part*') { $paths.Add($name) }
+              }
+
+              if ([bool]$page.hasNext) {
+                $nextCursor = [string]$page.nextCursor
+                if ([string]::IsNullOrWhiteSpace($nextCursor) -or $nextCursor -eq $cursor) {
+                  throw 'Supabase Storage list-v2 indicated another page but returned a missing or repeated cursor.'
+                }
+                $cursor = $nextCursor
+              } else {
+                $cursor = $null
+              }
+            } while ([bool]$page.hasNext)
+
+            return @($paths | Sort-Object -Unique)
+          }
+
+          $releasePaths = @(Get-ReleaseChunkPaths)
           $removePaths = @(
             $releasePaths |
               Where-Object {
@@ -473,7 +568,7 @@ jobs:
           )
 
           Write-Host "Current release: $version"
-          Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
+          Write-Host "Storage list-v2 file rows across all cursor pages: $($releasePaths.Count)"
           Write-Host "Superseded chunks to remove: $($removePaths.Count)"
           if ($removePaths.Count -gt 0) {
             # Delete superseded chunks in one Storage API request instead of one
@@ -484,17 +579,7 @@ jobs:
             Write-Host "Requested deletion of $($removePaths.Count) superseded storage chunk(s) in one batch."
           }
 
-          $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $remaining = @(
-            $verifyResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
+          $remaining = @(Get-ReleaseChunkPaths)
           $bad = @(
             $remaining |
               Where-Object {
@@ -513,6 +598,7 @@ jobs:
           
 
       - name: Retain the three newest private R2 installers
+        if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -581,44 +667,8 @@ jobs:
           }
           Write-Host "R2 retention verified: $($remainingKeys.Count) newest private installer(s) remain, including the active version."
 
-      - name: Verify private Windows release
-        shell: pwsh
-        env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: nexfix-desktop-updates
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
-          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
-          if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
-          if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
-          if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
-          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
-          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
-          $env:AWS_DEFAULT_REGION = 'auto'
-          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
-          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
-          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
-
-      - name: Create release tag after private release verification
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = "v$env:BUILD_VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag $tag
-          git push origin $tag
-          Write-Host "Created release tag $tag after private R2/Supabase release verification."
-
-      - name: Remove public GitHub installer releases
+      - name: Remove public GitHub installer releases (separate explicit confirmation)
+        if: ${{ inputs.confirm_public_github_release_cleanup }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
