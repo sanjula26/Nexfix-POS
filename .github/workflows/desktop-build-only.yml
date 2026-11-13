@@ -1,0 +1,134 @@
+name: Windows Desktop Build (No Publish)
+# Safe QA build only. This workflow must never create tags, publish releases,
+# upload to R2/Supabase, or delete/retain remote release objects.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'electron/**'
+      - 'public/**'
+      - 'google-apps-script/**'
+      - 'supabase/migrations/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.*'
+      - 'eslint.config.js'
+      - 'assets/**'
+      - 'build/**'
+      - '.github/workflows/desktop-build-only.yml'
+
+concurrency:
+  group: windows-build-only-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build-only:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Nexfix Windows icon assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command magick -ErrorAction SilentlyContinue)) { throw "ImageMagick (magick) is required on windows-latest." }
+          $source = "assets/nexfix-pos-icon.svg"
+          if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $svgText = Get-Content $source -Raw
+          $match = [regex]::Match($svgText, 'data:image/(?<type>jpeg|jpg|png);base64,(?<data>[^"]+)')
+          if (-not $match.Success) { throw "Logo SVG does not contain an embedded PNG/JPEG artwork image." }
+          $extension = if ($match.Groups['type'].Value -eq 'png') { 'png' } else { 'jpg' }
+          $embedded = "build/icon-source.$extension"
+          [IO.File]::WriteAllBytes($embedded, [Convert]::FromBase64String($match.Groups['data'].Value))
+          magick $embedded -auto-orient -background white -alpha remove -alpha off -resize "1024x1024" -gravity center -extent 1024x1024 "build/icon.png"
+          magick "build/icon.png" -define icon:auto-resize=16,24,32,48,64,128,256 "build/icon.ico"
+          $identify = magick identify -format "%m %wx%h %[fx:standard_deviation]" "build/icon.png"
+          if ($identify -notmatch "PNG 1024x1024") { throw "Unexpected icon.png output: $identify" }
+          if (-not (Test-Path "build/icon.ico")) { throw "build/icon.ico was not generated." }
+          $variance = [double](magick identify -format "%[fx:standard_deviation]" "build/icon.png")
+          if ($variance -lt 0.01) { throw "Generated Windows icon appears blank/flat: standard deviation $variance" }
+          Write-Host "Generated Nexfix Windows icon from original artwork: $identify"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build web app with production client configuration
+        env:
+          VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
+          VITE_SUPABASE_URL: https://ocmzgamnehwbkuwkjdrr.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
+          $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $env:VITE_APP_VERSION = $base
+          $env:VITE_PUBLIC_APP_URL = "https://sanjula26.github.io/Nexfix-POS/"
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Vite production build failed.' }
+          $bundled = (Get-ChildItem -Path dist/assets -File -ErrorAction Stop | ForEach-Object { Get-Content $_.FullName -Raw }) -join [Environment]::NewLine
+          if (-not $bundled.Contains('ocmzgamnehwbkuwkjdrr.supabase.co')) { throw 'Supabase URL was not bundled into the desktop web build.' }
+          Write-Host 'Supabase client configuration is present in the generated renderer bundle.'
+
+      - name: Verify Electron asset paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $html = Get-Content dist/index.html -Raw
+          if ($html -match '(?:src|href)="/assets/') { throw 'Electron build contains absolute /assets/ URLs.' }
+          $assetRefs = [regex]::Matches($html, '(?:src|href)="([^"]*assets/[^"]*)"') | ForEach-Object { $_.Groups[1].Value }
+          if ($assetRefs.Count -eq 0) { throw 'No Vite asset references found in dist/index.html.' }
+          if ($assetRefs | Where-Object { $_ -notmatch '^(?:\./)?assets/' }) { throw "Electron asset references must be relative. Found: $($assetRefs -join ', ')" }
+          Write-Host 'Electron-safe relative asset paths verified.'
+
+      - name: Build Windows installer and portable app without publishing
+        run: npx electron-builder --win --publish never
+
+      - name: Verify Windows artifacts and generate checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Path release -File
+          $exeFiles = @($files | Where-Object { $_.Extension -eq '.exe' })
+          $installer = @($exeFiles | Where-Object { $_.Name -match '-installer\.exe$' })
+          $portable = @($exeFiles | Where-Object { $_.Name -match '-portable\.exe$' })
+          $blockmaps = @($files | Where-Object { $_.Name -like '*.blockmap' })
+          if ($installer.Count -lt 1) { throw 'Expected an NSIS installer artifact.' }
+          if ($portable.Count -lt 1) { throw 'Expected a portable EXE artifact.' }
+          if ($blockmaps.Count -lt 1) { throw 'Expected an NSIS blockmap.' }
+          $lines = foreach ($file in ($exeFiles | Sort-Object Name)) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
+          Get-Content release/SHA256SUMS.txt
+          Write-Host 'Windows installer, portable EXE, blockmap and SHA-256 checksums verified.'
+
+      - name: Upload QA artifacts (no release publication)
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: nexfix-windows-qa-build-${{ github.run_number }}
+          path: release/**
+          if-no-files-found: error
+          retention-days: 7
