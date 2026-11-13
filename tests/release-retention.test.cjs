@@ -33,5 +33,5 @@ test('shared retention helper protects the active database pointer before deleti
 
 test('Windows no-publish QA parses the shared PowerShell retention script', () => {
   assert.match(qaWorkflow, /Validate private R2 retention script syntax/);
-  assert.match(qaWorkflow, /Language\]::Parser\]::ParseFile/);
+  assert.match(qaWorkflow, /System\.Management\.Automation\.Language\.Parser\]::ParseFile/);
 });
