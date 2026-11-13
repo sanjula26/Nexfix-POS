@@ -468,11 +468,35 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = "v$env:BUILD_VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag $tag
-          git push origin $tag
-          Write-Host "Created release tag $tag after private R2/Supabase release verification."
+          $currentCommit = (git rev-parse HEAD).Trim()
+          $remoteTagLines = @(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          if ($LASTEXITCODE -ne 0) { throw "Could not check whether release tag $tag already exists." }
+          $remoteTagRefs = @(
+            $remoteTagLines | ForEach-Object {
+              $parts = "$_" -split '\s+'
+              if ($parts.Count -ge 2) { [pscustomobject]@{ Sha = $parts[0]; Ref = $parts[1] } }
+            }
+          )
+          # Handle both lightweight tags and annotated tags. A rerun is safe only
+          # when the existing tag resolves to this exact source commit.
+          $tagCommit = ($remoteTagRefs | Where-Object { $_.Ref -eq "refs/tags/$tag^{}" } | Select-Object -First 1).Sha
+          if (-not $tagCommit) {
+            $tagCommit = ($remoteTagRefs | Where-Object { $_.Ref -eq "refs/tags/$tag" } | Select-Object -First 1).Sha
+          }
+          if ($tagCommit) {
+            if ($tagCommit -ne $currentCommit) {
+              throw "Release tag $tag already points to a different commit ($tagCommit != $currentCommit)."
+            }
+            Write-Host "Release tag $tag already points to this exact commit; safe rerun will reuse it."
+          } else {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag $tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not create release tag $tag." }
+            git push origin $tag
+            if ($LASTEXITCODE -ne 0) { throw "Could not push release tag $tag." }
+            Write-Host "Created release tag $tag after private R2/Supabase release verification."
+          }
 
       - name: Remove superseded private release chunks
         if: ${{ inputs.confirm_private_retention_cleanup }}
