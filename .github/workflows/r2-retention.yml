@@ -10,7 +10,7 @@ on:
         default: false
 
 concurrency:
-  group: private-r2-retention-${{ github.ref }}
+  group: nexfix-private-release-storage-${{ github.repository }}
   cancel-in-progress: false
 
 permissions:
