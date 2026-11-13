@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: windows-desktop-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -109,12 +109,6 @@ jobs:
           $buildVersion = "$($parts[0]).$($parts[1]).${{ github.run_number }}"
           "BUILD_VERSION=$buildVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           Write-Host "Automatic release version: $buildVersion"
-          $tag = "v$buildVersion"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag $tag
-          git push origin $tag
-          Write-Host "Created release tag $tag"
       - name: Build Windows installer and portable app
         env:
           VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
@@ -153,27 +147,6 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
-      - name: Remove public GitHub installer releases
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # The source repository is public, so GitHub Release assets are public too.
-          # Delete releases by database ID, including old untagged releases whose
-          # tag no longer exists. Cloudflare R2 is the primary installer distribution channel; temporary Supabase chunks remain only for legacy installed clients.
-          $ids = gh api --paginate "repos/sanjula26/Nexfix-POS/releases?per_page=100" --jq '.[].id' |
-            Where-Object { $_ -and $_.Trim() } |
-            Sort-Object -Unique
-          if ($LASTEXITCODE -ne 0) { throw 'Could not list GitHub releases for public-installer cleanup.' }
-          foreach ($id in $ids) {
-            Write-Host "Removing public GitHub release id: $id"
-            gh api --method DELETE "repos/sanjula26/Nexfix-POS/releases/$id"
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "GitHub release id $id was already absent or could not be removed; continuing cleanup."
-            }
-          }
-          Write-Host 'Public GitHub installer release cleanup complete. Cloudflare R2 is the primary Windows installer distribution channel.'
       - name: Publish Windows release to private Cloudflare R2
         shell: pwsh
         env:
@@ -611,3 +584,36 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
           if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
           Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
+
+      - name: Create release tag after private release verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:BUILD_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag $tag
+          git push origin $tag
+          Write-Host "Created release tag $tag after private R2/Supabase release verification."
+
+      - name: Remove public GitHub installer releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The source repository is public, so GitHub Release assets are public too.
+          # Delete releases by database ID, including old untagged releases whose
+          # tag no longer exists. Cloudflare R2 is the primary installer distribution channel; temporary Supabase chunks remain only for legacy installed clients.
+          $ids = gh api --paginate "repos/sanjula26/Nexfix-POS/releases?per_page=100" --jq '.[].id' |
+            Where-Object { $_ -and $_.Trim() } |
+            Sort-Object -Unique
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list GitHub releases for public-installer cleanup.' }
+          foreach ($id in $ids) {
+            Write-Host "Removing public GitHub release id: $id"
+            gh api --method DELETE "repos/sanjula26/Nexfix-POS/releases/$id"
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "GitHub release id $id was already absent or could not be removed; continuing cleanup."
+            }
+          }
+          Write-Host 'Public GitHub installer release cleanup complete. Cloudflare R2 is the primary Windows installer distribution channel.'
