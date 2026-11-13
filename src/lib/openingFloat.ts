@@ -27,3 +27,10 @@ export function getEffectiveOpeningFloat(session: OpeningFloatSource): number {
 export function sumEffectiveOpeningFloats(sessions: OpeningFloatSource[]): number {
   return sessions.reduce((sum, session) => sum + getEffectiveOpeningFloat(session), 0);
 }
+
+export function getCreditPaymentSessionBlockReason(session: { closed?: boolean; openingConfirmed?: boolean } | null | undefined): string {
+  if (!session) return "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session.";
+  if (session.closed) return "Today's cashier drawer is already closed. Credit payments cannot be collected in a closed session.";
+  // Opening float is optional; an unconfirmed zero-float session can collect credit.
+  return '';
+}

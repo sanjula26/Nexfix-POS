@@ -7,6 +7,7 @@ import { dkey, fmtDate, fmtDateTime, fmtRs, normalizeWhatsAppPhone, openWhatsApp
 import { getDefaultBranchId, getPOSBranchId, hasMultipleCachedBranches } from '../lib/branchStock';
 import { getCloudShopId } from '../lib/cloudSync';
 import { getOpenCreditInvoiceBalance } from '../lib/customerCredit';
+import { getCreditPaymentSessionBlockReason } from '../lib/openingFloat';
 import { matchesCreditPhoneDigits, normalizeCreditPhoneSearch } from '../lib/creditSearch';
 import type { PaymentMethod, PaymentLeg } from '../lib/types';
 
@@ -128,13 +129,7 @@ export default function CreditSettle() {
   );
   const sessionBlockReason = hasMultipleCachedBranches(getCloudShopId()) && selectedBranchId === 'local-main'
     ? "This POS is not assigned to an active branch. Ask the shop admin to assign this PC before collecting credit payments."
-    : !todaySession
-      ? "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session."
-      : todaySession.closed
-        ? "Today's cashier drawer is already closed. Credit payments cannot be collected in a closed session."
-        : todaySession.openingConfirmed === false
-          ? "Confirm today's opening float in Cashier Balance Report before collecting credit."
-          : '';
+    : getCreditPaymentSessionBlockReason(todaySession);
 
   const selectCustomer = (id: string) => {
     setCustomerId(id);

@@ -8,7 +8,7 @@ import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
 } from '../src/lib/customerCredit.ts';
-import { getEffectiveOpeningFloat, parseOpeningFloatInput, sumEffectiveOpeningFloats } from '../src/lib/openingFloat.ts';
+import { getCreditPaymentSessionBlockReason, getEffectiveOpeningFloat, parseOpeningFloatInput, sumEffectiveOpeningFloats } from '../src/lib/openingFloat.ts';
 import {
   applyInventoryLedger,
   appendInventoryTransaction,
@@ -255,6 +255,13 @@ test('unconfirmed or legacy-unconfirmed opening float contributes zero to drawer
   assert.equal(getEffectiveOpeningFloat({ opening: 2500, openingConfirmed: false }), 0);
   assert.equal(getEffectiveOpeningFloat({ opening: 2500 }), 0);
   assert.equal(getEffectiveOpeningFloat({ opening: 0, openingConfirmed: false }), 0);
+});
+
+test('unconfirmed opening float does not block credit collection in an open cashier session', () => {
+  assert.equal(getCreditPaymentSessionBlockReason({ closed: false, openingConfirmed: false }), '');
+  assert.equal(getCreditPaymentSessionBlockReason({ closed: false, openingConfirmed: true }), '');
+  assert.equal(getCreditPaymentSessionBlockReason({ closed: true, openingConfirmed: false }), "Today's cashier drawer is already closed. Credit payments cannot be collected in a closed session.");
+  assert.equal(getCreditPaymentSessionBlockReason(undefined), "Open a cashier drawer session for today first. Go to Cashier Balance Report and open today's session.");
 });
 
 test('confirmed opening float remains included in drawer cash', () => {
