@@ -24,7 +24,7 @@ on:
         default: false
 
 concurrency:
-  group: windows-desktop-${{ github.ref }}
+  group: nexfix-private-release-storage-${{ github.repository }}
   cancel-in-progress: false
 
 permissions:
