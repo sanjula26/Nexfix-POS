@@ -2,10 +2,12 @@ name: Private R2 Installer Retention
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/r2-retention.yml'
+    inputs:
+      confirm_retention_cleanup:
+        description: 'Confirm deleting private R2 installer versions older than the three newest'
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: private-r2-retention-${{ github.ref }}
@@ -19,6 +21,21 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
+      - name: Validate explicit retention cleanup approval
+        shell: pwsh
+        env:
+          RETENTION_REF: ${{ github.ref }}
+          RETENTION_CONFIRMED: ${{ inputs.confirm_retention_cleanup }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RETENTION_REF -ne 'refs/heads/main') {
+            throw "Private R2 retention may only run from main. Selected ref: $env:RETENTION_REF"
+          }
+          if ($env:RETENTION_CONFIRMED -ne 'true') {
+            throw 'R2 retention cleanup was not explicitly confirmed. No private objects were changed.'
+          }
+          Write-Host 'Main branch and explicit private R2 retention approval verified.'
+
       - name: Retain the three newest private installers
         shell: pwsh
         env:
