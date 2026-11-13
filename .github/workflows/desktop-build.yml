@@ -57,7 +57,7 @@ jobs:
             throw "Production Windows releases may only run from main or the one-time recovery tag. Selected ref: $env:RELEASE_REF"
           }
           if ($isOneTimeRecoveryTag) {
-            git fetch --no-tags origin main
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
             if ($LASTEXITCODE -ne 0) { throw 'Could not fetch main to verify the one-time release tag.' }
             git merge-base --is-ancestor $env:GITHUB_SHA origin/main
             if ($LASTEXITCODE -ne 0) { throw 'The one-time recovery tag does not point to a commit contained in main.' }
