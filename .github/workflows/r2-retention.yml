@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_retention_cleanup:
-        description: 'Confirm deleting private R2 installer versions older than the three newest'
+        description: 'Confirm retaining the active release plus the two newest other private installers, and deleting the rest'
         required: true
         type: boolean
         default: false
