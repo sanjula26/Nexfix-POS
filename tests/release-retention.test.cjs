@@ -35,3 +35,12 @@ test('Windows no-publish QA parses the shared PowerShell retention script', () =
   assert.match(qaWorkflow, /Validate private R2 retention script syntax/);
   assert.match(qaWorkflow, /System\.Management\.Automation\.Language\.Parser\]::ParseFile/);
 });
+
+test('production publishing and standalone R2 cleanup share one concurrency lock', () => {
+  const releaseGroup = releaseWorkflow.match(/concurrency:\s*\n\s+group:\s*(.+)/)?.[1];
+  const retentionGroup = retentionWorkflow.match(/concurrency:\s*\n\s+group:\s*(.+)/)?.[1];
+  assert.ok(releaseGroup, 'production workflow must define a storage concurrency group');
+  assert.equal(retentionGroup, releaseGroup, 'standalone cleanup must serialize with production releases');
+  assert.match(releaseWorkflow, /cancel-in-progress:\s*false/);
+  assert.match(retentionWorkflow, /cancel-in-progress:\s*false/);
+});
