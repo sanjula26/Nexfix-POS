@@ -5,7 +5,7 @@ export function isUpdaterAuthorizationError(message: string): boolean {
 
 /** Clear both native updater credentials before retrying a rejected device token. */
 export async function clearUpdaterCredentialsForRecovery(
-  clearUpdateCredentials: (() => Promise<unknown>) | undefined,
+  clearUpdateCredentials: (() => Promise<unknown> | undefined) | undefined,
   clearDeviceToken: (() => Promise<{ ok?: boolean; error?: string }>) | undefined,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!clearUpdateCredentials || !clearDeviceToken) {
