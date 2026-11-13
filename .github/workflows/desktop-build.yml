@@ -437,6 +437,32 @@ jobs:
 
           Write-Host "Private Windows release chunks published and verified atomically: $version (installer $installerParts parts; byte total exact)"
 
+      - name: Verify private Windows release
+        shell: pwsh
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: nexfix-desktop-updates
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
+          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
+          if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
+          if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
+          if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
+          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
+          $env:AWS_DEFAULT_REGION = 'auto'
+          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
+          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
+          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
+
       - name: Remove superseded private release chunks
         if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
@@ -592,32 +618,6 @@ jobs:
             throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
           }
           Write-Host "R2 retention verified: $($remainingKeys.Count) newest private installer(s) remain, including the active version."
-
-      - name: Verify private Windows release
-        shell: pwsh
-        env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET: nexfix-desktop-updates
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
-          $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
-          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; 'User-Agent' = 'Nexfix-GitHub-Action/2.0' }
-          $rows = Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,installer_path,installer_size" -Headers $headers
-          if ($rows.Count -ne 1) { throw 'Expected exactly one active private Windows release.' }
-          if ($rows[0].version -ne $env:BUILD_VERSION) { throw "Private release version mismatch: $($rows[0].version) != $env:BUILD_VERSION" }
-          if ([int64]$rows[0].installer_size -le 0) { throw 'Private installer size is invalid.' }
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
-          $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
-          $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
-          $env:AWS_DEFAULT_REGION = 'auto'
-          $head = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$rows[0].installer_path) --endpoint-url $r2Endpoint --region auto --output json | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'R2 active installer object could not be verified.' }
-          if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
-          Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
 
       - name: Create release tag after private release verification
         shell: pwsh
