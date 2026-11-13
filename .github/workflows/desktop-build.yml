@@ -524,18 +524,41 @@ jobs:
           if ([string]$active[0].version -ne $version) { throw "Active private release mismatch: $($active[0].version) != $version" }
 
           $currentNames = @($installer.Name)
-          $listBody = @{ prefix='win32/latest/'; limit=1000; with_delimiter=$false } | ConvertTo-Json -Compress
-          $listResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $releasePaths = @(
-            $listResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
+
+          # list-v2 uses cursor pagination. Never assume the first 1,000 rows
+          # represent every historical installer chunk in a busy release prefix.
+          function Get-ReleaseChunkPaths {
+            $pageSize = 1000
+            $cursor = $null
+            $paths = [System.Collections.Generic.List[string]]::new()
+            do {
+              $listOptions = @{ prefix='win32/latest/'; limit=$pageSize; with_delimiter=$false }
+              if (-not [string]::IsNullOrWhiteSpace($cursor)) { $listOptions.cursor = $cursor }
+              $pageBody = $listOptions | ConvertTo-Json -Compress
+              $page = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $pageBody
+              $objects = @($page.objects)
+              foreach ($object in $objects) {
+                if ($null -eq $object.id) { continue }
+                $name = [string]$object.name
+                if (-not $name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name = "win32/latest/$name" }
+                if ($name -like 'win32/latest/Nexfix-POS-*.part*') { $paths.Add($name) }
+              }
+
+              if ([bool]$page.hasNext) {
+                $nextCursor = [string]$page.nextCursor
+                if ([string]::IsNullOrWhiteSpace($nextCursor) -or $nextCursor -eq $cursor) {
+                  throw 'Supabase Storage list-v2 indicated another page but returned a missing or repeated cursor.'
+                }
+                $cursor = $nextCursor
+              } else {
+                $cursor = $null
+              }
+            } while ([bool]$page.hasNext)
+
+            return @($paths | Sort-Object -Unique)
+          }
+
+          $releasePaths = @(Get-ReleaseChunkPaths)
           $removePaths = @(
             $releasePaths |
               Where-Object {
@@ -545,7 +568,7 @@ jobs:
           )
 
           Write-Host "Current release: $version"
-          Write-Host "Storage list-v2 file rows: $($releasePaths.Count)"
+          Write-Host "Storage list-v2 file rows across all cursor pages: $($releasePaths.Count)"
           Write-Host "Superseded chunks to remove: $($removePaths.Count)"
           if ($removePaths.Count -gt 0) {
             # Delete superseded chunks in one Storage API request instead of one
@@ -556,17 +579,7 @@ jobs:
             Write-Host "Requested deletion of $($removePaths.Count) superseded storage chunk(s) in one batch."
           }
 
-          $verifyResult = Invoke-RestMethod -Uri "$storageUrl/object/list-v2/$bucket" -Method Post -Headers $headers -Body $listBody
-          $remaining = @(
-            $verifyResult.objects |
-              Where-Object { $_.id -ne $null } |
-              ForEach-Object {
-                $name = [string]$_.name
-                if ($name.StartsWith('win32/latest/', [StringComparison]::Ordinal)) { $name } else { "win32/latest/$name" }
-              } |
-              Where-Object { $_ -like 'win32/latest/Nexfix-POS-*.part*' } |
-              Sort-Object -Unique
-          )
+          $remaining = @(Get-ReleaseChunkPaths)
           $bad = @(
             $remaining |
               Where-Object {
