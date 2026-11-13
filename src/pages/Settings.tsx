@@ -19,7 +19,7 @@ import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInT
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { restoreCloudSession, supabase, supabaseConfigured, verifyCloudSessionPersistence } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
-import { isUpdaterAuthorizationError } from '../lib/updaterErrors';
+import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../lib/updaterErrors';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
 
@@ -473,8 +473,11 @@ export default function Settings() {
     // A stale device token can happen after an older/duplicate installation
     // re-authorizes the same terminal. Drop only the updater token, not the
     // cloud recovery credential or local POS session, then issue one fresh token.
-    await desktopApi?.clearUpdateCredentials?.();
-    await desktopApi?.clearCloudUpdaterDeviceToken?.();
+    const cleared = await clearUpdaterCredentialsForRecovery(
+      () => desktopApi?.clearUpdateCredentials?.(),
+      () => desktopApi?.clearCloudUpdaterDeviceToken?.() || Promise.resolve({ ok: false, error: 'Secure updater token storage is unavailable.' }),
+    );
+    if (!cleared.ok) return false;
     return refreshDesktopUpdaterCredentials();
   };
   const runUpdateCheck=async()=>{
