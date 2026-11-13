@@ -14,6 +14,10 @@ on:
       - 'supabase/migrations/**'
       - 'package.json'
       - 'package-lock.json'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/r2-retention.yml'
       - 'vite.config.*'
       - 'eslint.config.js'
       - 'assets/**'
@@ -66,6 +70,23 @@ jobs:
           $variance = [double](magick identify -format "%[fx:standard_deviation]" "build/icon.png")
           if ($variance -lt 0.01) { throw "Generated Windows icon appears blank/flat: standard deviation $variance" }
           Write-Host "Generated Nexfix Windows icon from original artwork: $identify"
+
+      - name: Validate private R2 retention script syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $env:GITHUB_WORKSPACE 'scripts/retain-private-r2-installers.ps1'),
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Private R2 retention PowerShell script has syntax errors.'
+          }
+          Write-Host 'Private R2 retention PowerShell syntax verified.'
 
       - name: Typecheck
         run: npm run typecheck
