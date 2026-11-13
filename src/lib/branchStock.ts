@@ -117,6 +117,25 @@ export function hasMultipleCachedBranches(shopId: string): boolean {
   } catch { return false; }
 }
 
+/** Do not display or edit a cached quantity until this Inventory view loaded that exact branch. */
+export function isBranchStockCacheReady(
+  selectedBranchId: string,
+  loadedBranchId: string,
+  hasCachedStock: boolean,
+  cachedDeviceBranchId = '',
+  offline = false,
+): boolean {
+  if (!selectedBranchId || selectedBranchId === 'local-main' || !hasCachedStock) return false;
+  const loadedThisView = selectedBranchId === loadedBranchId;
+  const previouslyVerifiedOfflineBranch = offline && selectedBranchId === cachedDeviceBranchId;
+  return loadedThisView || previouslyVerifiedOfflineBranch;
+}
+
+/** A cloud-bound POS must resolve its server branch before treating legacy local-main stock as safe. */
+export function isLocalMainStockReady(shopId: string, multipleBranches: boolean): boolean {
+  return !shopId && !multipleBranches;
+}
+
 /** Resolve the branch used by the single-branch POS UI without requiring a Settings selector. */
 export function getPOSBranchId(shopId: string, configuredBranchId?: string | null): string {
   // Once resolved online, the device's server-side branch assignment is the
