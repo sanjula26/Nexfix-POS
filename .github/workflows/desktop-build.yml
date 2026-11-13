@@ -42,7 +42,7 @@ jobs:
   windows-desktop:
     # The create event is broad; only the exact one-time recovery branch may run.
     # Normal branch creation should not start a Windows production-release job.
-    if: ${{ github.event_name != 'create' || (github.event.ref_type == 'branch' && github.event.ref == 'nexfix-production-recovery-2026-11-13') }}
+    if: ${{ github.event_name != 'create' || (github.event.ref_type == 'branch' && (github.event.ref == 'nexfix-production-recovery-2026-11-13' || github.event.ref == 'nexfix-production-release-2026-11-13')) }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -54,11 +54,11 @@ jobs:
         shell: pwsh
         env:
           RELEASE_REF: ${{ github.ref }}
-          RELEASE_CONFIRMED: ${{ inputs.confirm_production_release == true || github.ref == 'refs/tags/nexfix-production-recovery-2026-11-13' || github.ref == 'refs/heads/nexfix-production-recovery-2026-11-13' }}
+          RELEASE_CONFIRMED: ${{ inputs.confirm_production_release == true || github.ref == 'refs/tags/nexfix-production-recovery-2026-11-13' || github.ref == 'refs/heads/nexfix-production-recovery-2026-11-13' || github.ref == 'refs/heads/nexfix-production-release-2026-11-13' }}
         run: |
           $ErrorActionPreference = 'Stop'
           $isMain = $env:RELEASE_REF -eq 'refs/heads/main'
-          $isOneTimeRecoveryRef = $env:RELEASE_REF -eq 'refs/tags/nexfix-production-recovery-2026-11-13' -or $env:RELEASE_REF -eq 'refs/heads/nexfix-production-recovery-2026-11-13'
+          $isOneTimeRecoveryRef = $env:RELEASE_REF -eq 'refs/tags/nexfix-production-recovery-2026-11-13' -or $env:RELEASE_REF -eq 'refs/heads/nexfix-production-recovery-2026-11-13' -or $env:RELEASE_REF -eq 'refs/heads/nexfix-production-release-2026-11-13'
           if (-not $isMain -and -not $isOneTimeRecoveryRef) {
             throw "Production Windows releases may only run from main or the one-time recovery ref. Selected ref: $env:RELEASE_REF"
           }
