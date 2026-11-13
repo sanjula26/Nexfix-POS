@@ -6,6 +6,12 @@ name: Windows Desktop Build
 # trigger retention cleanup in private R2/Supabase storage.
 on:
   workflow_dispatch:
+    inputs:
+      confirm_production_release:
+        description: 'Confirm publishing a production Windows EXE to private R2/Supabase and running retention cleanup'
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: windows-desktop-${{ github.ref }}
@@ -21,6 +27,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Validate production release confirmation
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_CONFIRMED: ${{ inputs.confirm_production_release }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_REF -ne 'refs/heads/main') {
+            throw "Production Windows releases may only run from main. Selected ref: $env:RELEASE_REF"
+          }
+          if ($env:RELEASE_CONFIRMED -ne 'true') {
+            throw 'Production release was not explicitly confirmed. Re-run manually and check confirm_production_release only when ready to publish.'
+          }
+          Write-Host 'Production release confirmation and main branch guard passed.'
 
       - name: Setup Node
         uses: actions/setup-node@v7
