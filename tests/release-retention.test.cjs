@@ -44,3 +44,10 @@ test('production publishing and standalone R2 cleanup share one concurrency lock
   assert.match(releaseWorkflow, /cancel-in-progress:\s*false/);
   assert.match(retentionWorkflow, /cancel-in-progress:\s*false/);
 });
+
+test('retention validates active object and size before the first delete', () => {
+  const activeSizeCheck = retentionScript.indexOf('Active R2 installer size does not match');
+  const firstDelete = retentionScript.indexOf('aws s3api delete-object');
+  assert.ok(activeSizeCheck >= 0, 'active R2 object size must be compared with the database row');
+  assert.ok(firstDelete > activeSizeCheck, 'no R2 deletion may occur before active object validation');
+});
