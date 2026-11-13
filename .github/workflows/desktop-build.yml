@@ -8,7 +8,17 @@ on:
   workflow_dispatch:
     inputs:
       confirm_production_release:
-        description: 'Confirm publishing a production Windows EXE to private R2/Supabase and running retention cleanup'
+        description: 'Confirm publishing a production Windows EXE to private R2/Supabase (does not run retention cleanup)'
+        required: true
+        type: boolean
+        default: false
+      confirm_private_retention_cleanup:
+        description: 'Separately confirm deletion of superseded private Supabase chunks and old private R2 installers'
+        required: true
+        type: boolean
+        default: false
+      confirm_public_github_release_cleanup:
+        description: 'Separately confirm deletion of all public GitHub Releases in this repository'
         required: true
         type: boolean
         default: false
@@ -428,6 +438,7 @@ jobs:
           Write-Host "Private Windows release chunks published and verified atomically: $version (installer $installerParts parts; byte total exact)"
 
       - name: Remove superseded private release chunks
+        if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -513,6 +524,7 @@ jobs:
           
 
       - name: Retain the three newest private R2 installers
+        if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -618,7 +630,8 @@ jobs:
           git push origin $tag
           Write-Host "Created release tag $tag after private R2/Supabase release verification."
 
-      - name: Remove public GitHub installer releases
+      - name: Remove public GitHub installer releases (separate explicit confirmation)
+        if: ${{ inputs.confirm_public_github_release_cleanup }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
