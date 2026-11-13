@@ -605,6 +605,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: nexfix-desktop-updates
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
           $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
@@ -612,40 +613,49 @@ jobs:
           if (-not $installer) { throw 'Current installer artifact is missing during R2 retention cleanup.' }
           $currentKey = "win32/latest/$($installer.Name)"
           $maxRetainedReleases = 3
+          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)) { throw 'SUPABASE_SERVICE_ROLE_KEY is required to protect the active installer during R2 retention.' }
+          $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
+          $headers = @{ apikey = $env:SUPABASE_SERVICE_ROLE_KEY; Authorization = "Bearer $($env:SUPABASE_SERVICE_ROLE_KEY)" }
+          $activeRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_path,installer_size" -Headers $headers)
+          if ($activeRows.Count -ne 1) { throw "Expected exactly one active private Windows release before R2 retention; found $($activeRows.Count)." }
+          $activeKey = [string]$activeRows[0].installer_path
+          if ($activeKey -ne $currentKey) { throw "Published installer does not match the active release pointer. Active: $activeKey; current build: $currentKey. No R2 objects were deleted." }
+
           $env:AWS_ACCESS_KEY_ID = $env:R2_ACCESS_KEY_ID
           $env:AWS_SECRET_ACCESS_KEY = $env:R2_SECRET_ACCESS_KEY
           $env:AWS_DEFAULT_REGION = 'auto'
-
-          $rows = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          $rows = aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output json
           if ($LASTEXITCODE -ne 0) { throw 'Could not list R2 installer objects.' }
-          $keys = @(
-            $rows |
-              ForEach-Object { [string]$_ -split '\s+' } |
-              Where-Object { $_ -and $_ -ne 'None' }
-          )
-
-          # Fail safely on unexpected object names rather than deleting objects
-          # whose version cannot be interpreted and ordered.
+          $keys = @(ConvertFrom-Json -InputObject ($rows -join "`n"))
           $versionedInstallers = @(
             $keys | ForEach-Object {
-              if ($_ -match '^win32/latest/Nexfix-POS-(?<version>\d+\.\d+\.\d+)-x64-installer\.exe$') {
-                [pscustomobject]@{ Key = [string]$_; Version = [version]$Matches['version'] }
+              $key = [string]$_
+              if ($key -match '^win32/latest/Nexfix-POS-(?<version>\d+\.\d+\.\d+)-x64-installer\.exe$') {
+                [pscustomobject]@{ Key = $key; Version = [version]$Matches['version'] }
               } else {
-                throw "Unexpected object key under the private installer prefix: $_"
+                throw "Unexpected object key under the private installer prefix: $key"
               }
             } | Sort-Object Version -Descending
           )
           if ($versionedInstallers.Count -lt 1) { throw 'No versioned private R2 installers were found.' }
-          if (-not ($versionedInstallers | Where-Object { $_.Key -eq $currentKey })) {
-            throw "The active installer is missing from R2: $currentKey"
-          }
+          $activeEntry = @($versionedInstallers | Where-Object { $_.Key -eq $activeKey })
+          if ($activeEntry.Count -ne 1) { throw "The active private installer is missing from R2: $activeKey. No R2 objects were deleted." }
+          $activeHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $activeKey --endpoint-url $r2Endpoint --region auto --output json
+          if ($LASTEXITCODE -ne 0) { throw "The active private installer could not be verified in R2: $activeKey. No R2 objects were deleted." }
+          $activeHead = ConvertFrom-Json -InputObject ($activeHeadJson -join "`n")
+          if ([int64]$activeHead.ContentLength -ne [int64]$activeRows[0].installer_size) { throw 'Active R2 installer size does not match the Supabase release record. No R2 objects were deleted.' }
 
-          $retained = @($versionedInstallers | Select-Object -First $maxRetainedReleases)
+          # Always retain the active database-published installer, even if a
+          # stale/older release is being re-run. Fill the other slots with the
+          # newest versions so retention cannot delete the current download.
+          $newestOtherInstallers = @($versionedInstallers | Where-Object { $_.Key -ne $activeKey } | Select-Object -First ($maxRetainedReleases - 1))
+          $retained = @($activeEntry) + @($newestOtherInstallers)
           $retainedKeys = @($retained | ForEach-Object { [string]$_.Key } | Sort-Object)
           $removeKeys = @($versionedInstallers | Where-Object { $retainedKeys -notcontains $_.Key } | ForEach-Object { [string]$_.Key })
 
-          Write-Host "Current release: $currentKey"
-          Write-Host "Keeping the $($retainedKeys.Count) newest private installer(s) (maximum $maxRetainedReleases)."
+          if ($retainedKeys -notcontains $activeKey) { throw 'Active private installer is not in the retention set. No R2 objects were deleted.' }
+          Write-Host "Active release protected: $activeKey"
+          Write-Host "Keeping the $($retainedKeys.Count) installer(s), including the active release (maximum $maxRetainedReleases)."
           Write-Host "Superseded R2 installers to remove: $($removeKeys.Count)"
           foreach ($key in $removeKeys) {
             Write-Host "Removing superseded R2 installer: $key"
@@ -653,20 +663,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to remove superseded R2 object: $key" }
           }
 
-          $remainingRows = @(aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output text)
+          $remainingJson = aws s3api list-objects-v2 --bucket $env:R2_BUCKET --prefix 'win32/latest/Nexfix-POS-' --endpoint-url $r2Endpoint --region auto --query 'Contents[].Key' --output json
           if ($LASTEXITCODE -ne 0) { throw 'Could not verify R2 retention cleanup.' }
-          $remainingKeys = @(
-            $remainingRows |
-              ForEach-Object { [string]$_ -split '\s+' } |
-              Where-Object { $_ -and $_ -ne 'None' } |
-              Sort-Object
-          )
+          $remainingKeys = @(ConvertFrom-Json -InputObject ($remainingJson -join "`n") | ForEach-Object { [string]$_ } | Sort-Object)
           $differences = @(Compare-Object -ReferenceObject $retainedKeys -DifferenceObject $remainingKeys -CaseSensitive)
-          if ($differences.Count -gt 0) {
-            throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
-          }
-          Write-Host "R2 retention verified: $($remainingKeys.Count) newest private installer(s) remain, including the active version."
-
+          if ($differences.Count -gt 0) { throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')" }
+          $finalHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $activeKey --endpoint-url $r2Endpoint --region auto --output json
+          if ($LASTEXITCODE -ne 0) { throw 'Active installer disappeared during R2 retention cleanup.' }
+          $finalHead = ConvertFrom-Json -InputObject ($finalHeadJson -join "`n")
+          if ([int64]$finalHead.ContentLength -ne [int64]$activeRows[0].installer_size) { throw 'Active installer size changed during R2 retention cleanup.' }
+          Write-Host "R2 retention verified: active release $($activeRows[0].version) remains and $($remainingKeys.Count) installer(s) are retained."
       - name: Remove public GitHub installer releases (separate explicit confirmation)
         if: ${{ inputs.confirm_public_github_release_cleanup }}
         shell: pwsh
