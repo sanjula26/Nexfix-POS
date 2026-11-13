@@ -28,6 +28,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # This guard must remain before all build and production publication steps.
       - name: Validate production release confirmation
         shell: pwsh
         env:
