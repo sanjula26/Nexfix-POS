@@ -19,6 +19,7 @@ import { provisionCloudUpdaterAccount, refreshDesktopUpdaterCredentials, signInT
 import { authorizeLegacyCloudPassword, completeLegacyCloudEmailMagicLink } from '../lib/cloudLegacyAuth';
 import { restoreCloudSession, supabase, supabaseConfigured, verifyCloudSessionPersistence } from '../lib/supabase';
 import { getMachineIdentity } from '../lib/machine';
+import { isUpdaterAuthorizationError } from '../lib/updaterErrors';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
 
@@ -468,7 +469,6 @@ export default function Settings() {
     });
     return unsubscribe;
   }, [cloudSetupEmail, desktopApi]);
-  const isUpdaterAuthorizationError=(message:string)=>/\\b401\\b|not authorized for private updates|invalid updater device credential|POS device is registered to a different cloud account/i.test(message);
   const reauthorizeUpdater=async()=>{
     // A stale device token can happen after an older/duplicate installation
     // re-authorizes the same terminal. Drop only the updater token, not the
