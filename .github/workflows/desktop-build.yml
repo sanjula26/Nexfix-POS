@@ -463,6 +463,17 @@ jobs:
           if ([int64]$head.ContentLength -ne [int64]$rows[0].installer_size) { throw "R2 active installer size mismatch: $($head.ContentLength) != $($rows[0].installer_size)" }
           Write-Host "Private R2 release verified: $($rows[0].version) / $($rows[0].installer_name) / $($rows[0].installer_path)"
 
+      - name: Create release tag after private release verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "v$env:BUILD_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag $tag
+          git push origin $tag
+          Write-Host "Created release tag $tag after private R2/Supabase release verification."
+
       - name: Remove superseded private release chunks
         if: ${{ inputs.confirm_private_retention_cleanup }}
         shell: pwsh
@@ -618,17 +629,6 @@ jobs:
             throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
           }
           Write-Host "R2 retention verified: $($remainingKeys.Count) newest private installer(s) remain, including the active version."
-
-      - name: Create release tag after private release verification
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $tag = "v$env:BUILD_VERSION"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag $tag
-          git push origin $tag
-          Write-Host "Created release tag $tag after private R2/Supabase release verification."
 
       - name: Remove public GitHub installer releases (separate explicit confirmation)
         if: ${{ inputs.confirm_public_github_release_cleanup }}
