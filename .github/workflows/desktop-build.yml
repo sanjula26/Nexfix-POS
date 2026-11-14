@@ -531,11 +531,16 @@ jobs:
           if (-not $installer) { throw 'Current installer artifact is missing during storage cleanup.' }
 
           $storageUrl = "$projectUrl/storage/v1"
+          $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
           $headers = @{
-            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
-            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
+            apikey = $supabaseApiKey
             'Content-Type' = 'application/json'
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+          }
+          # Opaque sb_secret_* API keys are not JWT bearer tokens. Preserve
+          # Authorization only for legacy service_role JWT keys.
+          if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
+            $headers.Authorization = "Bearer $supabaseApiKey"
           }
 
           $active = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_name,is_active&order=published_at.desc" -Headers $headers)
