@@ -18,9 +18,16 @@ if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
   }
 }
 
+$supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
 $headers = @{
-  apikey = $env:SUPABASE_SERVICE_ROLE_KEY
-  Authorization = "Bearer $($env:SUPABASE_SERVICE_ROLE_KEY)"
+  apikey = $supabaseApiKey
+  'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+}
+# New Supabase sb_secret_* keys are opaque API keys, not JWTs. They must be
+# sent only as apikey, never as Authorization: Bearer. Keep Authorization for
+# legacy service_role JWTs so existing deployments remain compatible.
+if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
+  $headers.Authorization = "Bearer $supabaseApiKey"
 }
 $activeRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_path,installer_size" -Headers $headers)
 if ($activeRows.Count -ne 1) {
