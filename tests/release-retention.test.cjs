@@ -72,11 +72,11 @@ test('retention validates active object and size before the first delete', () =>
 });
 
 test('Supabase legacy chunk upload verification uses server-safe API-key headers', () => {
-  const uploadStep = releaseWorkflow.match(/- name: Publish legacy compatibility chunks to private Supabase Storage[\\s\\S]*?(?=\\n      - name: Publish private updater release metadata)/)?.[0] ?? '';
+  const uploadStep = releaseWorkflow.match(/- name: Publish legacy compatibility chunks to private Supabase Storage[\s\S]*?(?=\n      - name: Publish private updater release metadata)/)?.[0] ?? '';
   assert.ok(uploadStep, 'production workflow must contain the legacy chunk upload and verification step');
-  assert.match(uploadStep, /apikey = \\$supabaseApiKey/);
-  assert.match(uploadStep, /'User-Agent' = 'Nexfix-GitHub-Action\\/1\\.0'/);
-  assert.match(uploadStep, /if \\(\\$supabaseApiKey\\.StartsWith\\('eyJ'/);
-  assert.match(uploadStep, /\\$storageHeaders\\.Authorization = "Bearer \\$supabaseApiKey"/);
-  assert.doesNotMatch(uploadStep, /Authorization = "Bearer \\$env:SUPABASE_SERVICE_ROLE_KEY"/);
+  assert.match(uploadStep, /apikey = \$supabaseApiKey/);
+  assert.match(uploadStep, /'User-Agent' = 'Nexfix-GitHub-Action\/1\.0'/);
+  assert.match(uploadStep, /if \(\$supabaseApiKey\.StartsWith\('eyJ'/);
+  assert.match(uploadStep, /\$storageHeaders\.Authorization = "Bearer \$supabaseApiKey"/);
+  assert.doesNotMatch(uploadStep, /Authorization = "Bearer \$env:SUPABASE_SERVICE_ROLE_KEY"/);
 });
