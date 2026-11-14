@@ -31,6 +31,14 @@ test('shared retention helper protects the active database pointer before deleti
   assert.match(retentionScript, /head-object[\s\S]*?Active installer disappeared during R2 retention cleanup/);
 });
 
+test('Supabase secret API key requests use a server User-Agent and only legacy JWTs as bearer tokens', () => {
+  assert.match(retentionScript, /apikey\s*=\s*\$supabaseApiKey/);
+  assert.match(retentionScript, /'User-Agent'\s*=\s*'Nexfix-GitHub-Action\/1\.0'/);
+  assert.match(retentionScript, /if\s*\(\$supabaseApiKey\.StartsWith\('eyJ'/);
+  assert.match(retentionScript, /\$headers\.Authorization\s*=\s*"Bearer \$supabaseApiKey"/);
+  assert.doesNotMatch(retentionScript, /Authorization\s*=\s*"Bearer \$\(\$env:SUPABASE_SERVICE_ROLE_KEY\)"/);
+});
+
 test('Windows no-publish QA parses the shared PowerShell retention script', () => {
   assert.match(qaWorkflow, /Validate private R2 retention script syntax/);
   assert.match(qaWorkflow, /System\.Management\.Automation\.Language\.Parser\]::ParseFile/);
