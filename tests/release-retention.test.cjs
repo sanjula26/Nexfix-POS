@@ -74,14 +74,13 @@ test('retention validates active object and size before the first delete', () =>
 
 test('owner phone link registry sync uses apikey-only auth for opaque Supabase keys', () => {
   const ownerSyncWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'sync-owner-phone-links.yml'), 'utf8');
-  const authLine = ownerSyncWorkflow.match(/^\\s*auth=\\(.*\\)$/m)?.[0] ?? '';
+  const authLine = ownerSyncWorkflow.match(/^\s*auth=\(.*\)$/m)?.[0] ?? '';
   assert.ok(authLine, 'owner registry sync must define the Supabase auth header array');
-  assert.match(authLine, /apikey: \\$\\{SUPABASE_SERVICE_ROLE_KEY\\}/);
+  assert.match(authLine, /apikey: \$\{SUPABASE_SERVICE_ROLE_KEY\}/);
   assert.doesNotMatch(authLine, /Authorization:/);
-  assert.match(ownerSyncWorkflow, /if \\[\\[ "\\$\\{SUPABASE_SERVICE_ROLE_KEY\\}" == eyJ\\* \\]\\]; then/);
-  assert.match(ownerSyncWorkflow, /Authorization: Bearer \\$\\{SUPABASE_SERVICE_ROLE_KEY\\}/);
+  assert.match(ownerSyncWorkflow, /if \[\[ "\$\{SUPABASE_SERVICE_ROLE_KEY\}" == eyJ\* \]\]; then/);
+  assert.match(ownerSyncWorkflow, /Authorization: Bearer \$\{SUPABASE_SERVICE_ROLE_KEY\}/);
 });
-
 test('Supabase legacy chunk upload verification uses server-safe API-key headers', () => {
   const uploadStep = releaseWorkflow.match(/- name: Publish legacy compatibility chunks to private Supabase Storage[\s\S]*?(?=\n      - name: Verify private Windows release)/)?.[0] ?? '';
   assert.ok(uploadStep, 'production workflow must contain the legacy chunk upload and verification step');
