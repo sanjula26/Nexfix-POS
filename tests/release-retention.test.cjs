@@ -90,3 +90,16 @@ test('Supabase legacy chunk upload verification uses server-safe API-key headers
   assert.match(uploadStep, /\$storageHeaders\.Authorization = "Bearer \$supabaseApiKey"/);
   assert.doesNotMatch(uploadStep, /Authorization = "Bearer \$env:SUPABASE_SERVICE_ROLE_KEY"/);
 });
+
+test('production publishing is manual-only, main-only, and explicitly confirmed', () => {
+  const triggerBlock = releaseWorkflow.match(/^on:\\n([\\s\\S]*?)\\n\\nconcurrency:/m)?.[1] ?? '';
+  assert.match(triggerBlock, /^\\s+workflow_dispatch:/m);
+  assert.doesNotMatch(triggerBlock, /^\\s+(?:push|create):/m);
+  assert.match(releaseWorkflow, /RELEASE_REF:\\s*\\$\\{\\{\\s*github\\.ref\\s*\\}\\}/);
+  assert.match(releaseWorkflow, /RELEASE_CONFIRMED:\\s*\\$\\{\\{\\s*inputs\\.confirm_production_release\\s*\\}\\}/);
+  assert.match(releaseWorkflow, /\\$isMain = \\$env:RELEASE_REF -eq 'refs\\/heads\\/main'/);
+  assert.match(releaseWorkflow, /if \\(-not \\$isMain\\)/);
+  assert.match(releaseWorkflow, /if \\(-not \\$isMain\\)[\\s\\S]*?throw "Production Windows releases may only run from main/);
+  assert.match(releaseWorkflow, /if \\(\\$env:RELEASE_CONFIRMED -ne 'True' -and \\$env:RELEASE_CONFIRMED -ne 'true'\\)/);
+  assert.doesNotMatch(releaseWorkflow, /nexfix-production-recovery-2026-11-13|nexfix-production-release-2026-11-13/);
+});
