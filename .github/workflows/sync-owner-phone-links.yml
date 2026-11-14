@@ -44,7 +44,12 @@ jobs:
           : "${OWNER_USER_ID:?Missing OWNER_USER_ID secret}"
 
           api="${SUPABASE_URL%/}/rest/v1"
-          auth=(-H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
+          auth=(-H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}")
+          # Opaque sb_secret_* API keys are not JWT bearer tokens. Preserve
+          # Authorization only for legacy service_role JWT keys.
+          if [[ "${SUPABASE_SERVICE_ROLE_KEY}" == eyJ* ]]; then
+            auth+=(-H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
+          fi
 
           curl --fail-with-body --silent --show-error "${api}/shops?select=id,name&order=name" "${auth[@]}" -o /tmp/shops.json
           curl --fail-with-body --silent --show-error "${api}/pos_devices?select=owner_id,shop_id,device_id,last_seen_at,revoked_at&order=shop_id,device_id" "${auth[@]}" -o /tmp/devices.json
