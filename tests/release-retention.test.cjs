@@ -39,6 +39,17 @@ test('Supabase secret API key requests use a server User-Agent and only legacy J
   assert.doesNotMatch(retentionScript, /Authorization\s*=\s*"Bearer \$\(\$env:SUPABASE_SERVICE_ROLE_KEY\)"/);
 });
 
+
+test('Supabase chunk cleanup uses server-safe API-key headers for opaque and legacy keys', () => {
+  const cleanupStep = releaseWorkflow.match(/- name: Remove superseded private release chunks[\\s\\S]*?(?=\\n      - name: Retain active private installer)/)?.[0] ?? '';
+  assert.ok(cleanupStep, 'production workflow must contain the separately gated private chunk cleanup step');
+  assert.match(cleanupStep, /apikey\\s*=\\s*\\$supabaseApiKey/);
+  assert.match(cleanupStep, /'User-Agent'\\s*=\\s*'Nexfix-GitHub-Action\\/1\\.0'/);
+  assert.match(cleanupStep, /if\\s*\\(\\$supabaseApiKey\\.StartsWith\\('eyJ'/);
+  assert.match(cleanupStep, /\\$headers\\.Authorization\\s*=\\s*"Bearer \\$supabaseApiKey"/);
+  assert.doesNotMatch(cleanupStep, /Authorization\\s*=\\s*"Bearer \\$env:SUPABASE_SERVICE_ROLE_KEY"/);
+});
+
 test('Windows no-publish QA parses the shared PowerShell retention script', () => {
   assert.match(qaWorkflow, /Validate private R2 retention script syntax/);
   assert.match(qaWorkflow, /System\.Management\.Automation\.Language\.Parser\]::ParseFile/);
