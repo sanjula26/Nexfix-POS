@@ -372,11 +372,16 @@ jobs:
           # active release pointer. The Storage Data API does not expose the internal
           # storage.objects table through /rest/v1, so use the supported object-list endpoint.
           $installerParts = [math]::Ceiling([double]$installer.Length / $chunkBytes)
+          $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
           $storageHeaders = @{
-            apikey = $env:SUPABASE_SERVICE_ROLE_KEY
-            Authorization = "Bearer $env:SUPABASE_SERVICE_ROLE_KEY"
+            apikey = $supabaseApiKey
             'Content-Type' = 'application/json'
             'User-Agent' = 'Nexfix-GitHub-Action/1.0'
+          }
+          # Opaque sb_secret_* API keys are not JWT bearer tokens. Preserve
+          # Authorization only for legacy service_role JWT keys.
+          if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
+            $storageHeaders.Authorization = "Bearer $supabaseApiKey"
           }
 
           function Get-StorageObjectSize([string]$path) {
