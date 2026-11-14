@@ -70,3 +70,13 @@ test('retention validates active object and size before the first delete', () =>
   assert.ok(activeSizeCheck >= 0, 'active R2 object size must be compared with the database row');
   assert.ok(firstDelete > activeSizeCheck, 'no R2 deletion may occur before active object validation');
 });
+
+test('Supabase legacy chunk upload verification uses server-safe API-key headers', () => {
+  const uploadStep = releaseWorkflow.match(/- name: Publish legacy compatibility chunks to private Supabase Storage[\s\S]*?(?=\n      - name: Verify private Windows release)/)?.[0] ?? '';
+  assert.ok(uploadStep, 'production workflow must contain the legacy chunk upload and verification step');
+  assert.match(uploadStep, /apikey = \$supabaseApiKey/);
+  assert.match(uploadStep, /'User-Agent' = 'Nexfix-GitHub-Action\/1\.0'/);
+  assert.match(uploadStep, /if \(\$supabaseApiKey\.StartsWith\('eyJ'/);
+  assert.match(uploadStep, /\$storageHeaders\.Authorization = "Bearer \$supabaseApiKey"/);
+  assert.doesNotMatch(uploadStep, /Authorization = "Bearer \$env:SUPABASE_SERVICE_ROLE_KEY"/);
+});
