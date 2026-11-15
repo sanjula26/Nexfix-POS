@@ -1,0 +1,122 @@
+name: Windows Desktop QA (No Publish)
+
+# Manual-only QA build. This workflow never uploads to R2/Supabase,
+# changes updater metadata, creates tags/releases, or deletes old releases.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexfix-windows-no-publish-qa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-qa:
+    name: Build and verify Windows EXE without publishing
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Windows icon assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command magick -ErrorAction SilentlyContinue)) { throw 'ImageMagick (magick) is required on windows-latest.' }
+          $source = 'assets/nexfix-pos-icon.svg'
+          if (-not (Test-Path $source)) { throw "Missing logo source: $source" }
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $svgText = Get-Content $source -Raw
+          $match = [regex]::Match($svgText, 'data:image/(?<type>jpeg|jpg|png);base64,(?<data>[^"]+)')
+          if (-not $match.Success) { throw 'Logo SVG does not contain embedded PNG/JPEG artwork.' }
+          $extension = if ($match.Groups['type'].Value -eq 'png') { 'png' } else { 'jpg' }
+          $embedded = "build/icon-source.$extension"
+          [IO.File]::WriteAllBytes($embedded, [Convert]::FromBase64String($match.Groups['data'].Value))
+          magick $embedded -auto-orient -background white -alpha remove -alpha off -resize '1024x1024' -gravity center -extent 1024x1024 build/icon.png
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to generate build/icon.png.' }
+          magick build/icon.png -define icon:auto-resize=16,24,32,48,64,128,256 build/icon.ico
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path build/icon.ico)) { throw 'Failed to generate build/icon.ico.' }
+
+      - name: Verify production boundaries
+        run: npm run verify:boundaries
+
+      - name: Run domain regression tests
+        run: npm run test:domain
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build renderer
+        env:
+          VITE_SUPABASE_URL: https://ocmzgamnehwbkuwkjdrr.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-
+          VITE_PUBLIC_APP_URL: https://sanjula26.github.io/Nexfix-POS/
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $parts = $base.Split('.')
+          if ($parts.Count -lt 3) { throw 'package.json version must be MAJOR.MINOR.PATCH.' }
+          $env:VITE_APP_VERSION = "$($parts[0]).$($parts[1]).${{ github.run_number }}"
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw 'Vite renderer build failed.' }
+
+      - name: Verify Electron asset paths
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $html = Get-Content dist/index.html -Raw
+          if ($html -match '(?:src|href)="/assets/') { throw 'Electron build contains absolute /assets/ URLs.' }
+          $assetRefs = [regex]::Matches($html, '(?:src|href)="([^"]*assets/[^"]*)"') | ForEach-Object { $_.Groups[1].Value }
+          if ($assetRefs.Count -eq 0) { throw 'No Vite asset references found in dist/index.html.' }
+          if ($assetRefs | Where-Object { $_ -notmatch '^(?:\./)?assets/' }) { throw "Non-relative Electron asset URL found: $($assetRefs -join ', ')" }
+
+      - name: Build installer and portable EXE (no publish)
+        env:
+          EP_GH_IGNORE_TIME: 'true'
+        run: npx electron-builder --win --publish never
+
+      - name: Verify EXE artifacts and generate checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem -Path release -File)
+          $exeFiles = @($files | Where-Object { $_.Extension -eq '.exe' })
+          $installer = @($exeFiles | Where-Object { $_.Name -match '-installer\.exe$' })
+          $portable = @($exeFiles | Where-Object { $_.Name -match '-portable\.exe$' })
+          $blockmaps = @($files | Where-Object { $_.Name -like '*.blockmap' })
+          if ($installer.Count -ne 1) { throw "Expected exactly one installer EXE; found $($installer.Count)." }
+          if ($portable.Count -ne 1) { throw "Expected exactly one portable EXE; found $($portable.Count)." }
+          if ($blockmaps.Count -lt 1) { throw 'Expected at least one NSIS blockmap.' }
+          $lines = foreach ($file in ($installer + $portable | Sort-Object Name)) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Upload QA artifacts only
+        uses: actions/upload-artifact@v6
+        with:
+          name: nexfix-windows-qa-${{ github.run_number }}
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
