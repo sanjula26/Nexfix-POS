@@ -37,7 +37,7 @@ jobs:
           # an untracked schema.sql. The checked-in baseline captures that
           # schema at a later version, so reorder only this temporary copy.
           cp /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql /tmp/nexfix-supabase-test/supabase/migrations/00000000000000_baseline_production_schema.sql
-          printf 'select 1;\\n' > /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql
+          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql
 
       - name: Start isolated local Supabase database
         working-directory: /tmp/nexfix-supabase-test
