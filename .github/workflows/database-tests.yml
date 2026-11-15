@@ -38,6 +38,9 @@ jobs:
           # schema at a later version, so reorder only this temporary copy.
           cp /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql /tmp/nexfix-supabase-test/supabase/migrations/00000000000000_baseline_production_schema.sql
           echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
+          create schema if not exists private;
+          SQL
 
       - name: Start isolated local Supabase database
         working-directory: /tmp/nexfix-supabase-test
