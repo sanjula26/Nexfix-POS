@@ -1,0 +1,65 @@
+name: Supabase Local Database Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-database:
+    name: Rebuild local Supabase schema and run pgTAP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare an isolated migration workspace
+        run: |
+          mkdir -p /tmp/nexfix-supabase-test
+          cp -a supabase /tmp/nexfix-supabase-test/
+          # The original production security migration (001) was applied after
+          # an untracked schema.sql. The checked-in baseline captures that
+          # schema at a later version, so reorder only this temporary copy.
+          cp /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql /tmp/nexfix-supabase-test/supabase/migrations/00000000000000_baseline_production_schema.sql
+          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
+          create schema if not exists private;
+          SQL
+          # The legacy grant migration predates the checked-in function
+          # definitions it grants. Reorder only this temporary copy.
+          cp /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql /tmp/nexfix-supabase-test/supabase/migrations/20260815000000_harden_cloud_sync_rpcs.sql
+          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql
+
+      - name: Start isolated local Supabase database
+        working-directory: /tmp/nexfix-supabase-test
+        run: |
+          supabase start -x realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Reapply all migrations to a clean local database
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase db reset --local --no-seed
+
+      - name: Run pgTAP database tests against local database
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase test db --local
+
+      - name: Stop local Supabase containers
+        if: always()
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase stop --no-backup || true
