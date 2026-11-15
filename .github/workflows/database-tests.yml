@@ -41,6 +41,10 @@ jobs:
           cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
           create schema if not exists private;
           SQL
+          # The legacy grant migration predates the checked-in function
+          # definitions it grants. Reorder only this temporary copy.
+          cp /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql /tmp/nexfix-supabase-test/supabase/migrations/20260815000000_harden_cloud_sync_rpcs.sql
+          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql
 
       - name: Start isolated local Supabase database
         working-directory: /tmp/nexfix-supabase-test
