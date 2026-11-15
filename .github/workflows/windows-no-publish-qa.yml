@@ -139,7 +139,16 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
-      - name: Upload QA artifacts only
+      - name: Explain public artifact restriction
+        if: ${{ github.event.repository.private != true }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          "Windows QA EXEs were built and checksummed on the ephemeral runner but were not uploaded because this repository is public. Production installers remain available only through the private updater." | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          Write-Host 'Public repository: skipping downloadable Windows EXE artifacts.'
+
+      - name: Upload QA artifacts only for private repositories
+        if: ${{ github.event.repository.private == true }}
         uses: actions/upload-artifact@v6
         with:
           name: nexfix-windows-qa-${{ github.run_number }}
