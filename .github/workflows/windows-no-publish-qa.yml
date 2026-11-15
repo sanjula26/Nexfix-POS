@@ -1,6 +1,6 @@
 name: Windows Desktop QA (No Publish)
 
-# Manual-only QA build. This workflow never uploads to R2/Supabase,
+# Non-publishing QA build. This workflow never uploads to R2/Supabase,
 # changes updater metadata, creates tags/releases, or deletes old releases.
 on:
   pull_request:
