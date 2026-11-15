@@ -92,7 +92,7 @@ test('Supabase legacy chunk upload verification uses server-safe API-key headers
 });
 
 test('production publishing is manual-only, main-only, and explicitly confirmed', () => {
-  const triggerBlock = releaseWorkflow.match(/^on:\n([\s\S]*?)\n\nconcurrency:/m)?.[1] ?? '';
+  const triggerBlock = releaseWorkflow.match(/^on:\r?\n([\s\S]*?)\r?\n\r?\nconcurrency:/m)?.[1] ?? '';
   assert.match(triggerBlock, /^\s+workflow_dispatch:/m);
   assert.doesNotMatch(triggerBlock, /^\s+(?:push|create):/m);
   assert.match(releaseWorkflow, /RELEASE_REF:\s*\$\{\{\s*github\.ref\s*\}\}/);
