@@ -100,3 +100,18 @@ test('committed queue entries survive a fresh IndexedDB module connection', asyn
   await reopenedDb.idbAcknowledgeQueue([operationId]);
   assert.equal((await idbListQueue()).some((item) => item.id === operationId), false);
 });
+
+test('IndexedDB queue read failures are surfaced instead of treated as an empty queue', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?queue-read-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'sync_queue') throw new DOMException('Injected queue read failure', 'InvalidStateError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    await assert.rejects(reopenedDb.idbListQueue(), /Injected queue read failure/);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
