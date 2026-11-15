@@ -7,7 +7,7 @@ const root = path.join(__dirname, '..');
 const releaseWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'desktop-build.yml'), 'utf8');
 const retentionWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'r2-retention.yml'), 'utf8');
 const retentionScript = fs.readFileSync(path.join(root, 'scripts', 'retain-private-r2-installers.ps1'), 'utf8');
-const qaWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'desktop-build-only.yml'), 'utf8');
+const qaWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'windows-no-publish-qa.yml'), 'utf8');
 
 test('production release passes the newly built installer path to shared retention guard', () => {
   assert.match(releaseWorkflow, /EXPECTED_ACTIVE_INSTALLER_PATH\s*=\s*"win32\/latest\/\$\(\$installer\.Name\)"/);
