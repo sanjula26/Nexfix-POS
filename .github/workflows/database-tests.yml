@@ -1,0 +1,44 @@
+name: Supabase Local Database Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-database:
+    name: Rebuild local Supabase schema and run pgTAP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start isolated local Supabase database
+        run: |
+          supabase start -x realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Reapply all migrations to a clean local database
+        run: supabase db reset --local --no-seed
+
+      - name: Run pgTAP database tests against local database
+        run: supabase test db --local
+
+      - name: Stop local Supabase containers
+        if: always()
+        run: supabase stop --no-backup || true
