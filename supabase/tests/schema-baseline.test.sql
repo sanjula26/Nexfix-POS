@@ -1,3 +1,4 @@
+-- Minimal pgTAP smoke tests for the isolated, locally rebuilt POS schema.
 begin;
 
 select plan(13);
