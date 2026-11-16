@@ -85,10 +85,10 @@ jobs:
           grant execute on function public.rls_auto_enable() to service_role;
           create event trigger ensure_rls on ddl_command_end execute function public.rls_auto_enable();
           SQL
-          # The baseline is the starting schema for this isolated replay. The old
-          # UUID/owner_id snapshot chain is a retired alternate implementation;
-          # production uses the canonical text-shop schema created below.
-          # Remove only those obsolete migrations from this temporary copy.
+          # The baseline is the starting schema for this isolated replay. Exclude
+          # only files verified as absent from production's applied migration
+          # history, including the retired UUID/owner_id chain and superseded
+          # 20260913 alternate hardening variants. Repository SQL is untouched.
           python3 - <<'PY'
           from pathlib import Path
 
@@ -103,6 +103,14 @@ jobs:
               '20260816000400_device_revocation.sql',
               '20260816000500_enforce_active_device.sql',
               '20260908100000_finalize_pos_cloud_sync_security.sql',
+              # These alternate hardening migrations are present in Git but
+              # their versions are absent from the production applied history.
+              # Production uses 20260913143800 and 20260913143851 for the
+              # purchase/customer and pending-RLS hardening steps instead.
+              '20260913000100_harden_inventory_master_writes.sql',
+              '20260913000200_harden_sales_child_writes.sql',
+              '20260913000300_harden_profile_role_updates.sql',
+              '20260913000400_harden_supplier_and_expense_writes.sql',
           ]
           for name in retired:
               path = root / name
