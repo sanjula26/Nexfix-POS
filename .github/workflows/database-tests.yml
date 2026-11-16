@@ -372,6 +372,25 @@ jobs:
           credit_sql = credit_sql.replace(compact_anchor, spaced_anchor).replace(compact_replacement, spaced_replacement)
           credit_migration.write_text(credit_sql)
           print('Verified: temporary credit-limit migration matches baseline declaration formatting.')
+
+          # The historical idempotent-sale patch expects a minified prior
+          # idempotency block. The checked-in baseline function is formatted
+          # across lines. Match the exact local baseline block in this temp
+          # migration copy so its production-intent reconciliation patch applies.
+          idempotency_migration = root / '20261005115000_fix_cloud_sale_idempotent_reconciliation.sql'
+          if not idempotency_migration.is_file():
+              raise SystemExit('Expected sale idempotency migration is missing')
+          idempotency_sql = idempotency_migration.read_text()
+          compact_old = "old_block text := $old$select * into v_existing from public.sales s where s.id=p_sale_id; if found then if v_existing.shop_id<>p_shop_id then raise exception 'Sale id already belongs to another shop'; end if; return jsonb_build_object('ok',true,'already_committed',true,'sale_id',v_existing.id,'bill_no',v_existing.bill_no,'total',v_existing.total); end if;$old$;"
+          multiline_old = """old_block text := $old$select * into v_existing from public.sales s where s.id=p_sale_id;
+            if found then
+              if v_existing.shop_id <> p_shop_id then raise exception 'Sale id already belongs to another shop'; end if;
+              return jsonb_build_object('ok',true,'already_committed',true,'sale_id',v_existing.id,'bill_no',v_existing.bill_no,'total',v_existing.total);
+            end if;$old$;"""
+          if idempotency_sql.count(compact_old) != 1:
+              raise SystemExit('Unexpected sale idempotency migration old-block anchor')
+          idempotency_migration.write_text(idempotency_sql.replace(compact_old, multiline_old))
+          print('Verified: temporary sale-idempotency migration matches baseline function formatting.')
           PY
 
       - name: Start isolated local Supabase database
