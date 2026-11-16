@@ -203,7 +203,7 @@ jobs:
             if d is null then raise exception 'private.complete_sale_atomic not found'; end if;
             if position(old_block in d)>0 then return; end if;
             if position(anchor in d)=0 then raise exception 'Kit aggregate fixture insertion point not found'; end if;
-            execute replace(d,anchor,old_block || E'\\n' || anchor);
+            execute replace(d,anchor,old_block || chr(10) || anchor);
           end
           $fixture$;
           SQL
