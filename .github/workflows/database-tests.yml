@@ -41,32 +41,47 @@ jobs:
           cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
           create schema if not exists private;
           SQL
-          # 002_offline_sync.sql owns snapshot table/policy setup, but also
-          # carries a superseded UUID RPC whose OUT-column order conflicts with
-          # the later canonical UUID RPC migration. Keep its table/policy setup;
-          # remove only that obsolete function/grants from this temporary copy.
-          # Repository migrations remain untouched.
+          # The baseline is the starting schema for this isolated replay. The old
+          # UUID/owner_id snapshot chain is a retired alternate implementation;
+          # production uses the canonical text-shop schema created below.
+          # Remove only those obsolete migrations from this temporary copy.
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('/tmp/nexfix-supabase-test/supabase/migrations/002_offline_sync.sql')
-          sql = path.read_text()
-          start_marker = 'create or replace function public.upsert_pos_snapshot('
-          end_marker = 'grant execute on function public.upsert_pos_snapshot(uuid,text,bigint,jsonb) to authenticated;'
-          if sql.count(start_marker) != 1 or sql.count(end_marker) != 1:
-              raise SystemExit('Expected exactly one legacy UUID snapshot RPC definition and grant')
-          start = sql.index(start_marker)
-          end = sql.index(end_marker, start) + len(end_marker)
-          sql = sql[:start] + '-- Legacy UUID snapshot RPC superseded by the canonical later migration.\\n' + sql[end:]
-          if start_marker in sql or end_marker in sql:
-              raise SystemExit('Legacy UUID snapshot RPC removal verification failed')
-          path.write_text(sql)
-          print('Verified: only the superseded UUID snapshot RPC and its grants were removed from the temporary migration copy.')
-          PY
 
-          # The legacy grant migration predates the checked-in function
-          # definitions it grants. Reorder only this temporary copy.
-          cp /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql /tmp/nexfix-supabase-test/supabase/migrations/20260815000000_harden_cloud_sync_rpcs.sql
-          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql
+          root = Path('/tmp/nexfix-supabase-test/supabase/migrations')
+          retired = [
+              '002_offline_sync.sql',
+              '20260816000100_pos_snapshot_security.sql',
+              '202608160001_cloud_snapshot_sync.sql',
+              '20260816000200_device_registry.sql',
+              '20260816000300_enforce_registered_device.sql',
+              '20260816000301_enforce_registered_device_sync.sql',
+              '20260816000400_device_revocation.sql',
+              '20260816000500_enforce_active_device.sql',
+          ]
+          for name in retired:
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f'Expected retired migration is missing: {name}')
+              path.unlink()
+              print(f'Excluded retired migration from temporary fixture: {name}')
+
+          # The private implementation functions are defined by the canonical
+          # RPC migration. Apply their authenticated grants only after that file.
+          source = root / '20260816000000_fix_cloud_sync_private_rpc_permissions.sql'
+          target = root / '20260816215101_fix_cloud_sync_private_rpc_permissions.sql'
+          if not source.is_file() or target.exists():
+              raise SystemExit('Unexpected private RPC grant migration fixture state')
+          for required in (
+              '20260816161816_create_pos_cloud_sync_schema.sql',
+              '20260816161848_harden_cloud_sync_function_permissions.sql',
+              '20260816215100_harden_cloud_sync_rpcs.sql',
+          ):
+              if not (root / required).is_file():
+                  raise SystemExit(f'Canonical cloud-sync migration is missing: {required}')
+          source.rename(target)
+          print('Verified: private RPC grants follow canonical private function definitions.')
+          PY
 
       - name: Start isolated local Supabase database
         working-directory: /tmp/nexfix-supabase-test
