@@ -106,10 +106,10 @@ test('production publishing is manual-only, main-only, and explicitly confirmed'
 
 
 test('public repository Windows QA never uploads downloadable EXE artifacts', () => {
-  assert.match(qaWorkflow, /permissions:\\s*\\n\\s+contents:\\s*read/);
-  assert.match(qaWorkflow, /github\\.event\\.repository\\.private\\s*!=\\s*true/);
-  assert.match(qaWorkflow, /github\\.event\\.repository\\.private\\s*==\\s*true/);
-  assert.match(qaWorkflow, /actions\\/upload-artifact@/);
-  assert.doesNotMatch(qaWorkflow, /secrets\\.|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY/);
-  assert.doesNotMatch(qaWorkflow, /aws s3api (?:put-object|delete-object)|storage\\/v1\\/object\\/upload/);
+  assert.match(qaWorkflow, /permissions:\s*\n\s+contents:\s*read/);
+  assert.match(qaWorkflow, /github\.event\.repository\.private\s*!=\s*true/);
+  assert.match(qaWorkflow, /github\.event\.repository\.private\s*==\s*true/);
+  assert.match(qaWorkflow, /actions\/upload-artifact@/);
+  assert.doesNotMatch(qaWorkflow, /secrets\.|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(qaWorkflow, /aws s3api (?:put-object|delete-object)|storage\/v1\/object\/upload/);
 });
