@@ -216,6 +216,25 @@ jobs:
                   if re.search(rf'(?<![A-Za-z0-9_.]){helper}[(]', sql):
                       raise SystemExit(f'Unqualified {helper} reference remains in {migration.name}')
           print(f'Verified private-schema helper normalization in temporary fixture: {replacements}')
+
+          # The current repository baseline's private sale function uses spaces
+          # around :=, while the historical credit-limit migration's string
+          # replacement expects a minified declaration. Production's applied
+          # function contains the credit-limit variable. Adapt only the temp
+          # migration's declaration anchor to the checked-in baseline formatting.
+          credit_migration = root / '20260920211000_enforce_customer_credit_limit.sql'
+          if not credit_migration.is_file():
+              raise SystemExit('Expected credit-limit migration is missing')
+          credit_sql = credit_migration.read_text()
+          compact_anchor = "'v_balance_due numeric(12,2):=0; v_points_earned integer:=0;'"
+          spaced_anchor = "'v_balance_due numeric(12,2) := 0; v_points_earned integer := 0;'"
+          compact_replacement = "'v_balance_due numeric(12,2):=0; v_credit_limit numeric(12,2):=0; v_points_earned integer:=0;'"
+          spaced_replacement = "'v_balance_due numeric(12,2) := 0; v_credit_limit numeric(12,2) := 0; v_points_earned integer := 0;'"
+          if credit_sql.count(compact_anchor) != 1 or credit_sql.count(compact_replacement) != 1:
+              raise SystemExit('Unexpected credit-limit migration declaration anchors')
+          credit_sql = credit_sql.replace(compact_anchor, spaced_anchor).replace(compact_replacement, spaced_replacement)
+          credit_migration.write_text(credit_sql)
+          print('Verified: temporary credit-limit migration matches baseline declaration formatting.')
           PY
 
       - name: Start isolated local Supabase database
