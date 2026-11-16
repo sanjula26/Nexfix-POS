@@ -137,6 +137,39 @@ jobs:
           grant all on table public.phone_sales_tokens to service_role;
           SQL
 
+          # desktop_releases is a pre-existing production baseline table that
+          # is not present in the tracked baseline/schema.sql. Recreate its
+          # catalog-verified columns, checks, active index, RLS policy and
+          # service_role-only ACL before the atomic publish migration.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260928000000_desktop_releases_baseline.sql <<'SQL'
+          create table if not exists public.desktop_releases (
+            version text not null,
+            channel text not null default 'latest',
+            platform text not null default 'win32',
+            installer_path text not null,
+            installer_name text not null,
+            installer_sha512 text not null,
+            installer_size bigint not null,
+            portable_path text,
+            portable_name text,
+            release_notes text,
+            published_at timestamptz not null default now(),
+            is_active boolean not null default true,
+            constraint desktop_releases_pkey primary key (version),
+            constraint desktop_releases_installer_size_check check (installer_size > 0)
+          );
+
+          create index if not exists desktop_releases_active_idx
+            on public.desktop_releases(platform, channel, is_active, published_at desc);
+
+          alter table public.desktop_releases enable row level security;
+          drop policy if exists deny_public_access on public.desktop_releases;
+          create policy deny_public_access on public.desktop_releases
+            for all to anon, authenticated using (false) with check (false);
+          revoke all on table public.desktop_releases from public, anon, authenticated;
+          grant all on table public.desktop_releases to service_role;
+          SQL
+
           # The public invoker wrapper is present in production alongside the
           # private branch-aware implementation. Recreate its catalog-verified
           # SQL wrapper and grants after the tracked migration defines private.*.
