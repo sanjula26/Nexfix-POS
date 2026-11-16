@@ -164,8 +164,7 @@ BEGIN
   END IF;
   RETURN jsonb_build_object('ok',true,'inserted',v_inserted,'updated',v_updated,'reconciled_products',v_reconciled);
 END;
-$function$
-
+$function$;
 
 REVOKE ALL ON FUNCTION public.add_inventory_units_atomic(uuid,uuid,text,jsonb) FROM public,anon;
 GRANT EXECUTE ON FUNCTION public.add_inventory_units_atomic(uuid,uuid,text,jsonb) TO authenticated;
