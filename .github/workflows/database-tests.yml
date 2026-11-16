@@ -91,6 +91,43 @@ jobs:
           for each row execute function private.enforce_customer_credit_limit();
           SQL
 
+          # phone_sales_tokens exists in production but is absent from the
+          # tracked baseline and has no separate recorded migration before the
+          # FK-index migration. Reconstruct its exact catalog-verified columns,
+          # constraints, indexes, RLS policy and service_role-only ACL here.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260926000000_phone_sales_tokens_baseline.sql <<'SQL'
+          create table if not exists public.phone_sales_tokens (
+            id uuid not null default gen_random_uuid(),
+            token_hash text not null,
+            shop_id uuid not null,
+            device_id text,
+            created_by uuid not null,
+            label text,
+            expires_at timestamptz,
+            revoked_at timestamptz,
+            last_used_at timestamptz,
+            created_at timestamptz not null default now(),
+            constraint phone_sales_tokens_pkey primary key (id),
+            constraint phone_sales_tokens_token_hash_key unique (token_hash),
+            constraint phone_sales_tokens_shop_id_fkey foreign key (shop_id)
+              references public.shops(id) on delete cascade,
+            constraint phone_sales_tokens_created_by_fkey foreign key (created_by)
+              references auth.users(id)
+          );
+
+          create index if not exists phone_sales_tokens_active_idx
+            on public.phone_sales_tokens(token_hash) where revoked_at is null;
+          create index if not exists phone_sales_tokens_shop_idx
+            on public.phone_sales_tokens(shop_id);
+
+          alter table public.phone_sales_tokens enable row level security;
+          drop policy if exists deny_public_access on public.phone_sales_tokens;
+          create policy deny_public_access on public.phone_sales_tokens
+            for all to anon, authenticated using (false) with check (false);
+          revoke all on table public.phone_sales_tokens from public, anon, authenticated;
+          grant all on table public.phone_sales_tokens to service_role;
+          SQL
+
           # Production has this event-trigger helper even though it is absent
           # from the checked-in baseline and staging migration history. Recreate
           # its verified definition in the temporary fixture so the following
