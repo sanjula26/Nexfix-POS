@@ -70,8 +70,7 @@ BEGIN
       p_unit_id,p_branch_id,v_expected_branch_qty));
   RETURN jsonb_build_object('ok',true,'deleted',true,'product_id',v_unit.product_id,'branch_qty',v_expected_branch_qty,'product_stock',v_total_qty);
 END;
-$function$
-
+$function$;
 
 REVOKE ALL ON FUNCTION public.delete_inventory_unit_atomic(uuid,uuid,text,uuid) FROM public,anon;
 GRANT EXECUTE ON FUNCTION public.delete_inventory_unit_atomic(uuid,uuid,text,uuid) TO authenticated;
