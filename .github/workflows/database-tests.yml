@@ -102,6 +102,7 @@ jobs:
               '20260816000301_enforce_registered_device_sync.sql',
               '20260816000400_device_revocation.sql',
               '20260816000500_enforce_active_device.sql',
+              '20260908100000_finalize_pos_cloud_sync_security.sql',
           ]
           for name in retired:
               path = root / name
