@@ -127,22 +127,38 @@ jobs:
           source.rename(target)
           print('Verified: private RPC grants follow canonical private function definitions.')
 
-          # The checked-in purchase/customer hardening migration still uses
-          # unqualified membership helpers. Production's applied RLS policies
-          # were read-only verified to call private.is_shop_member/admin.
-          # Normalize only this temporary test copy to that production contract.
-          policy_migration = root / '20260913000000_harden_purchase_and_customer_writes.sql'
-          if not policy_migration.is_file():
-              raise SystemExit('Expected purchase/customer policy migration is missing')
-          policy_sql = policy_migration.read_text()
-          if policy_sql.count('is_shop_member(') != 6 or policy_sql.count('is_shop_admin(') != 9:
-              raise SystemExit('Unexpected membership-helper references in purchase/customer migration')
-          policy_sql = policy_sql.replace('is_shop_member(', 'private.is_shop_member(')
-          policy_sql = policy_sql.replace('is_shop_admin(', 'private.is_shop_admin(')
-          if policy_sql.count('private.is_shop_member(') != 6 or policy_sql.count('private.is_shop_admin(') != 9:
-              raise SystemExit('Failed to qualify purchase/customer RLS helpers')
-          policy_migration.write_text(policy_sql)
-          print('Verified: purchase/customer RLS helpers match production private-schema policies.')
+          # Several checked-in RLS migrations still contain legacy unqualified
+          # calls to membership helpers after those helpers moved into private.
+          # Production policies use private.*. Normalize every later migration
+          # in this temporary test workspace only, leaving repository SQL and
+          # hosted databases untouched.
+          import re
+
+          helper_migrations = sorted(
+              p for p in root.glob('*.sql')
+              if p.name > '20260911045059_move_shop_membership_helpers_to_private_schema.sql'
+          )
+          if not helper_migrations:
+              raise SystemExit('No post-private-helper migrations found')
+          replacements = {'is_shop_member': 0, 'is_shop_admin': 0}
+          for migration in helper_migrations:
+              sql = migration.read_text()
+              for helper in replacements:
+                  sql, count = re.subn(
+                      rf'(?<![A-Za-z0-9_.]){helper}\\(',
+                      f'private.{helper}(',
+                      sql,
+                  )
+                  replacements[helper] += count
+              migration.write_text(sql)
+          if not all(count > 0 for count in replacements.values()):
+              raise SystemExit(f'Expected both helper types to be normalized: {replacements}')
+          for migration in helper_migrations:
+              sql = migration.read_text()
+              for helper in replacements:
+                  if re.search(rf'(?<![A-Za-z0-9_.]){helper}\\(', sql):
+                      raise SystemExit(f'Unqualified {helper} reference remains in {migration.name}')
+          print(f'Verified private-schema helper normalization in temporary fixture: {replacements}')
           PY
 
       - name: Start isolated local Supabase database
