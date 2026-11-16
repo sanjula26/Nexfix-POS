@@ -91,6 +91,15 @@ jobs:
           for each row execute function private.enforce_customer_credit_limit();
           SQL
 
+          # The 20260927193000 repair-delivery migration is not in production's
+          # applied migration history. Production's repairs.parts_deducted_at
+          # column predates the tracked branch-aware implementation; recreate
+          # the column before that later production-equivalent function migration.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261014000000_repair_delivery_column_baseline.sql <<'SQL'
+          alter table public.repairs
+            add column if not exists parts_deducted_at timestamptz;
+          SQL
+
           # phone_sales_tokens exists in production but is absent from the
           # tracked baseline and has no separate recorded migration before the
           # FK-index migration. Reconstruct its exact catalog-verified columns,
@@ -126,6 +135,25 @@ jobs:
             for all to anon, authenticated using (false) with check (false);
           revoke all on table public.phone_sales_tokens from public, anon, authenticated;
           grant all on table public.phone_sales_tokens to service_role;
+          SQL
+
+          # The public invoker wrapper is present in production alongside the
+          # private branch-aware implementation. Recreate its catalog-verified
+          # SQL wrapper and grants after the tracked migration defines private.*.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261014103300_repair_delivery_invoker_wrapper_fixture.sql <<'SQL'
+          create or replace function public.process_repair_delivery_atomic(
+            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
+          )
+          returns table(ok boolean, already_committed boolean, repair_id uuid)
+          language sql
+          set search_path to ''
+          as $function$
+            select * from private.process_repair_delivery_atomic($1,$2,$3,$4);
+          $function$;
+          revoke all on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon, service_role;
+          grant execute on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
+          revoke all on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
+          grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated, service_role;
           SQL
 
           # Production has this event-trigger helper even though it is absent
@@ -197,6 +225,7 @@ jobs:
               '20260913000200_harden_sales_child_writes.sql',
               '20260913000300_harden_profile_role_updates.sql',
               '20260913000400_harden_supplier_and_expense_writes.sql',
+              '20260927193000_atomic_repair_delivery.sql',
           ]
           for name in retired:
               path = root / name
