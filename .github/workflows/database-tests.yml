@@ -126,6 +126,23 @@ jobs:
                   raise SystemExit(f'Canonical cloud-sync migration is missing: {required}')
           source.rename(target)
           print('Verified: private RPC grants follow canonical private function definitions.')
+
+          # The checked-in purchase/customer hardening migration still uses
+          # unqualified membership helpers. Production's applied RLS policies
+          # were read-only verified to call private.is_shop_member/admin.
+          # Normalize only this temporary test copy to that production contract.
+          policy_migration = root / '20260913000000_harden_purchase_and_customer_writes.sql'
+          if not policy_migration.is_file():
+              raise SystemExit('Expected purchase/customer policy migration is missing')
+          policy_sql = policy_migration.read_text()
+          if policy_sql.count('is_shop_member(') != 6 or policy_sql.count('is_shop_admin(') != 9:
+              raise SystemExit('Unexpected membership-helper references in purchase/customer migration')
+          policy_sql = policy_sql.replace('is_shop_member(', 'private.is_shop_member(')
+          policy_sql = policy_sql.replace('is_shop_admin(', 'private.is_shop_admin(')
+          if policy_sql.count('private.is_shop_member(') != 6 or policy_sql.count('private.is_shop_admin(') != 9:
+              raise SystemExit('Failed to qualify purchase/customer RLS helpers')
+          policy_migration.write_text(policy_sql)
+          print('Verified: purchase/customer RLS helpers match production private-schema policies.')
           PY
 
       - name: Start isolated local Supabase database
