@@ -41,6 +41,28 @@ jobs:
           cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
           create schema if not exists private;
           SQL
+          # The baseline already contains the current snapshot table and policies.
+          # 002_offline_sync.sql also carries a superseded UUID RPC whose OUT-column
+          # order conflicts with the later canonical UUID RPC migration. Keep the
+          # legacy table/policy setup, but remove only that obsolete function/grants
+          # from this temporary copy; repository migrations remain untouched.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('/tmp/nexfix-supabase-test/supabase/migrations/002_offline_sync.sql')
+          sql = path.read_text()
+          start_marker = 'create or replace function public.upsert_pos_snapshot('
+          end_marker = 'grant execute on function public.upsert_pos_snapshot(uuid,text,bigint,jsonb) to authenticated;'
+          if sql.count(start_marker) != 1 or sql.count(end_marker) != 1:
+              raise SystemExit('Expected exactly one legacy UUID snapshot RPC definition and grant')
+          start = sql.index(start_marker)
+          end = sql.index(end_marker, start) + len(end_marker)
+          sql = sql[:start] + '-- Legacy UUID snapshot RPC superseded by the canonical later migration.\\n' + sql[end:]
+          if start_marker in sql or end_marker in sql:
+              raise SystemExit('Legacy UUID snapshot RPC removal verification failed')
+          path.write_text(sql)
+          print('Verified: only the superseded UUID snapshot RPC and its grants were removed from the temporary migration copy.')
+          PY
+
           # The legacy grant migration predates the checked-in function
           # definitions it grants. Reorder only this temporary copy.
           cp /tmp/nexfix-supabase-test/supabase/migrations/20260816215100_harden_cloud_sync_rpcs.sql /tmp/nexfix-supabase-test/supabase/migrations/20260815000000_harden_cloud_sync_rpcs.sql
