@@ -170,6 +170,44 @@ jobs:
           grant all on table public.desktop_releases to service_role;
           SQL
 
+          # Production history includes the intermediate 20261005091127
+          # repair_cloud_kit_sale_duplicate_patch_20261005 before the combined
+          # stock-validation patch. Its SQL source is missing from this repo.
+          # Reconstruct the exact old block expected by the next tracked patch,
+          # in the temporary function only; the next migration replaces it with
+          # the catalog-verified aggregate kit/component validation.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261005112000_repair_cloud_kit_duplicate_stock_block_fixture.sql <<'SQL'
+          do $fixture$
+          declare
+            d text;
+            anchor text := 'for v_line in select value from jsonb_array_elements(p_lines) loop';
+            old_block text := $old$
+          if exists (
+            select 1 from (
+              select (value->>'product_id')::uuid as product_id,
+                     sum((value->>'qty')::numeric) as requested_qty
+              from jsonb_array_elements(p_lines)
+              group by (value->>'product_id')::uuid
+            ) req
+            join public.products p on p.id=req.product_id and p.shop_id=p_shop_id
+            where p.stock < req.requested_qty
+          ) then
+            raise exception 'Duplicate product quantities in sale request exceed available stock';
+          end if;
+          $old$;
+          begin
+            select pg_get_functiondef(p.oid) into d
+            from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+            where n.nspname='private' and p.proname='complete_sale_atomic'
+            order by p.oid desc limit 1;
+            if d is null then raise exception 'private.complete_sale_atomic not found'; end if;
+            if position(old_block in d)>0 then return; end if;
+            if position(anchor in d)=0 then raise exception 'Kit aggregate fixture insertion point not found'; end if;
+            execute replace(d,anchor,old_block || E'\\n' || anchor);
+          end
+          $fixture$;
+          SQL
+
           # The public invoker wrapper is present in production alongside the
           # private branch-aware implementation. Recreate its catalog-verified
           # SQL wrapper and grants after the tracked migration defines private.*.
