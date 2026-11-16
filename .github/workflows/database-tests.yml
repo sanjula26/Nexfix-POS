@@ -1,0 +1,423 @@
+name: Supabase Local Database Tests
+
+on:
+  push:
+    branches: [main, 'test/**']
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/database-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-database:
+    name: Rebuild local Supabase schema and run pgTAP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Prepare an isolated migration workspace
+        run: |
+          mkdir -p /tmp/nexfix-supabase-test
+          cp -a supabase /tmp/nexfix-supabase-test/
+          # The original production security migration (001) was applied after
+          # an untracked schema.sql. The checked-in baseline captures that
+          # schema at a later version, so reorder only this temporary copy.
+          cp /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_baseline_production_schema.sql
+          echo 'select 1;' > /tmp/nexfix-supabase-test/supabase/migrations/20260908180000_baseline_production_schema.sql
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000002_private_schema_bootstrap.sql <<'SQL'
+          create schema if not exists private;
+          SQL
+
+          # Production history contains 20260912055657_enforce_cloud_sale_credit_limit,
+          # but its SQL source is absent from the current repository. Reconstruct
+          # the exact catalog-verified trigger function and trigger in this local
+          # fixture so the later applied grant-restriction migration has its
+          # expected prerequisite. This file exists only under /tmp.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260912055657_enforce_cloud_sale_credit_limit.sql <<'SQL'
+          create or replace function private.enforce_customer_credit_limit()
+          returns trigger
+          language plpgsql
+          security definer
+          set search_path to ''
+          as $function$
+          declare
+            v_credit_limit numeric(12,2);
+            v_credit_balance numeric(12,2);
+            v_new_balance numeric(12,2);
+          begin
+            if new.customer_id is null then
+              return new;
+            end if;
+
+            select c.credit_limit, c.credit_balance
+              into v_credit_limit, v_credit_balance
+            from public.customers c
+            where c.id = new.customer_id
+              and c.shop_id = new.shop_id
+            for update;
+
+            if not found then
+              raise exception 'Customer not found for this shop';
+            end if;
+
+            v_new_balance := coalesce(v_credit_balance, 0)
+              + greatest(0, coalesce(new.total, 0) - coalesce(new.amount_paid, 0));
+
+            if coalesce(v_credit_limit, 0) > 0 and v_new_balance > v_credit_limit then
+              raise exception 'Credit limit exceeded for customer';
+            end if;
+
+            return new;
+          end;
+          $function$;
+
+          drop trigger if exists trg_enforce_customer_credit_limit on public.sales;
+          create trigger trg_enforce_customer_credit_limit
+          before insert on public.sales
+          for each row execute function private.enforce_customer_credit_limit();
+          SQL
+
+          # The repair-delivery objects already exist in production before the
+          # 20261006063000 grant migration, but the repo's baseline omits them
+          # and the 20260927193000 alternate implementation is not in production
+          # migration history. Recreate the catalog-verified column/index and
+          # function signatures here; the tracked 20261014103200 migration
+          # replaces the private stub with the full branch-aware implementation
+          # before pgTAP runs.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261005150000_repair_delivery_baseline.sql <<'SQL'
+          alter table public.repairs
+            add column if not exists parts_deducted_at timestamptz;
+          create index if not exists repairs_shop_status_idx
+            on public.repairs(shop_id,status);
+
+          create or replace function private.process_repair_delivery_atomic(
+            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
+          )
+          returns table(ok boolean, already_committed boolean, repair_id uuid)
+          language plpgsql security definer set search_path to ''
+          as $function$
+          begin
+            raise exception 'Temporary baseline stub; replaced by the tracked branch-aware migration before pgTAP';
+          end;
+          $function$;
+
+          create or replace function public.process_repair_delivery_atomic(
+            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
+          )
+          returns table(ok boolean, already_committed boolean, repair_id uuid)
+          language sql set search_path to ''
+          as $function$
+            select * from private.process_repair_delivery_atomic($1,$2,$3,$4);
+          $function$;
+
+          revoke all on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon, service_role;
+          grant execute on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
+          revoke all on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
+          grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated, service_role;
+          SQL
+
+          # phone_sales_tokens exists in production but is absent from the
+          # tracked baseline and has no separate recorded migration before the
+          # FK-index migration. Reconstruct its exact catalog-verified columns,
+          # constraints, indexes, RLS policy and service_role-only ACL here.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260926000000_phone_sales_tokens_baseline.sql <<'SQL'
+          create table if not exists public.phone_sales_tokens (
+            id uuid not null default gen_random_uuid(),
+            token_hash text not null,
+            shop_id uuid not null,
+            device_id text,
+            created_by uuid not null,
+            label text,
+            expires_at timestamptz,
+            revoked_at timestamptz,
+            last_used_at timestamptz,
+            created_at timestamptz not null default now(),
+            constraint phone_sales_tokens_pkey primary key (id),
+            constraint phone_sales_tokens_token_hash_key unique (token_hash),
+            constraint phone_sales_tokens_shop_id_fkey foreign key (shop_id)
+              references public.shops(id) on delete cascade,
+            constraint phone_sales_tokens_created_by_fkey foreign key (created_by)
+              references auth.users(id)
+          );
+
+          create index if not exists phone_sales_tokens_active_idx
+            on public.phone_sales_tokens(token_hash) where revoked_at is null;
+          create index if not exists phone_sales_tokens_shop_idx
+            on public.phone_sales_tokens(shop_id);
+
+          alter table public.phone_sales_tokens enable row level security;
+          drop policy if exists deny_public_access on public.phone_sales_tokens;
+          create policy deny_public_access on public.phone_sales_tokens
+            for all to anon, authenticated using (false) with check (false);
+          revoke all on table public.phone_sales_tokens from public, anon, authenticated;
+          grant all on table public.phone_sales_tokens to service_role;
+          SQL
+
+          # desktop_releases is a pre-existing production baseline table that
+          # is not present in the tracked baseline/schema.sql. Recreate its
+          # catalog-verified columns, checks, active index, RLS policy and
+          # service_role-only ACL before the atomic publish migration.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260928000000_desktop_releases_baseline.sql <<'SQL'
+          create table if not exists public.desktop_releases (
+            version text not null,
+            channel text not null default 'latest',
+            platform text not null default 'win32',
+            installer_path text not null,
+            installer_name text not null,
+            installer_sha512 text not null,
+            installer_size bigint not null,
+            portable_path text,
+            portable_name text,
+            release_notes text,
+            published_at timestamptz not null default now(),
+            is_active boolean not null default true,
+            constraint desktop_releases_pkey primary key (version),
+            constraint desktop_releases_installer_size_check check (installer_size > 0)
+          );
+
+          create index if not exists desktop_releases_active_idx
+            on public.desktop_releases(platform, channel, is_active, published_at desc);
+
+          alter table public.desktop_releases enable row level security;
+          drop policy if exists deny_public_access on public.desktop_releases;
+          create policy deny_public_access on public.desktop_releases
+            for all to anon, authenticated using (false) with check (false);
+          revoke all on table public.desktop_releases from public, anon, authenticated;
+          grant all on table public.desktop_releases to service_role;
+          SQL
+
+          # Production history includes the intermediate 20261005091127
+          # repair_cloud_kit_sale_duplicate_patch_20261005 before the combined
+          # stock-validation patch. Its SQL source is missing from this repo.
+          # Reconstruct the exact old block expected by the next tracked patch,
+          # in the temporary function only; the next migration replaces it with
+          # the catalog-verified aggregate kit/component validation.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261005112000_repair_cloud_kit_duplicate_stock_block_fixture.sql <<'SQL'
+          do $fixture$
+          declare
+            d text;
+            anchor text := 'for v_line in select value from jsonb_array_elements(p_lines) loop';
+            old_block text := $old$
+          if exists (
+            select 1 from (
+              select (value->>'product_id')::uuid as product_id,
+                     sum((value->>'qty')::numeric) as requested_qty
+              from jsonb_array_elements(p_lines)
+              group by (value->>'product_id')::uuid
+            ) req
+            join public.products p on p.id=req.product_id and p.shop_id=p_shop_id
+            where p.stock < req.requested_qty
+          ) then
+            raise exception 'Duplicate product quantities in sale request exceed available stock';
+          end if;
+          $old$;
+          begin
+            select pg_get_functiondef(p.oid) into d
+            from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+            where n.nspname='private' and p.proname='complete_sale_atomic'
+            order by p.oid desc limit 1;
+            if d is null then raise exception 'private.complete_sale_atomic not found'; end if;
+            if position(old_block in d)>0 then return; end if;
+            if position(anchor in d)=0 then raise exception 'Kit aggregate fixture insertion point not found'; end if;
+            execute replace(d,anchor,old_block || chr(10) || anchor);
+          end
+          $fixture$;
+          SQL
+
+          # Production has this event-trigger helper even though it is absent
+          # from the checked-in baseline and staging migration history. Recreate
+          # its verified definition in the temporary fixture so the following
+          # permission migration can be replayed and new public tables receive
+          # the same RLS-by-default protection as production.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000000_rls_auto_enable_event_trigger.sql <<'SQL'
+          create or replace function public.rls_auto_enable()
+          returns event_trigger
+          language plpgsql
+          security definer
+          set search_path to 'pg_catalog'
+          as $function$
+          declare
+            cmd record;
+          begin
+            for cmd in
+              select *
+              from pg_event_trigger_ddl_commands()
+              where command_tag in ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+                and object_type in ('table', 'partitioned table')
+            loop
+              if cmd.schema_name is not null
+                and cmd.schema_name in ('public')
+                and cmd.schema_name not in ('pg_catalog', 'information_schema')
+                and cmd.schema_name not like 'pg_toast%'
+                and cmd.schema_name not like 'pg_temp%' then
+                begin
+                  execute format('alter table if exists %s enable row level security', cmd.object_identity);
+                  raise log 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
+                exception when others then
+                  raise log 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
+                end;
+              else
+                raise log 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
+              end if;
+            end loop;
+          end;
+          $function$;
+
+          revoke all on function public.rls_auto_enable() from public, anon, authenticated;
+          grant execute on function public.rls_auto_enable() to service_role;
+          create event trigger ensure_rls on ddl_command_end execute function public.rls_auto_enable();
+          SQL
+          # The baseline is the starting schema for this isolated replay. Exclude
+          # only files verified as absent from production's applied migration
+          # history, including the retired UUID/owner_id chain and superseded
+          # 20260913 alternate hardening variants. Repository SQL is untouched.
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('/tmp/nexfix-supabase-test/supabase/migrations')
+          retired = [
+              '002_offline_sync.sql',
+              '20260816000100_pos_snapshot_security.sql',
+              '202608160001_cloud_snapshot_sync.sql',
+              '20260816000200_device_registry.sql',
+              '20260816000300_enforce_registered_device.sql',
+              '20260816000301_enforce_registered_device_sync.sql',
+              '20260816000400_device_revocation.sql',
+              '20260816000500_enforce_active_device.sql',
+              '20260908100000_finalize_pos_cloud_sync_security.sql',
+              # These alternate hardening migrations are present in Git but
+              # their versions are absent from the production applied history.
+              # Production uses 20260913143800 and 20260913143851 for the
+              # purchase/customer and pending-RLS hardening steps instead.
+              '20260913000100_harden_inventory_master_writes.sql',
+              '20260913000200_harden_sales_child_writes.sql',
+              '20260913000300_harden_profile_role_updates.sql',
+              '20260913000400_harden_supplier_and_expense_writes.sql',
+              '20260927193000_atomic_repair_delivery.sql',
+          ]
+          for name in retired:
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f'Expected retired migration is missing: {name}')
+              path.unlink()
+              print(f'Excluded retired migration from temporary fixture: {name}')
+
+          # The private implementation functions are defined by the canonical
+          # RPC migration. Apply their authenticated grants only after that file.
+          source = root / '20260816000000_fix_cloud_sync_private_rpc_permissions.sql'
+          target = root / '20260816215101_fix_cloud_sync_private_rpc_permissions.sql'
+          if not source.is_file() or target.exists():
+              raise SystemExit('Unexpected private RPC grant migration fixture state')
+          for required in (
+              '20260816161816_create_pos_cloud_sync_schema.sql',
+              '20260816161848_harden_cloud_sync_function_permissions.sql',
+              '20260816215100_harden_cloud_sync_rpcs.sql',
+          ):
+              if not (root / required).is_file():
+                  raise SystemExit(f'Canonical cloud-sync migration is missing: {required}')
+          source.rename(target)
+          print('Verified: private RPC grants follow canonical private function definitions.')
+
+          # Several checked-in RLS migrations still contain legacy unqualified
+          # calls to membership helpers after those helpers moved into private.
+          # Production policies use private.*. Normalize every later migration
+          # in this temporary test workspace only, leaving repository SQL and
+          # hosted databases untouched.
+          import re
+
+          helper_migrations = sorted(
+              p for p in root.glob('*.sql')
+              if p.name > '20260911045059_move_shop_membership_helpers_to_private_schema.sql'
+          )
+          if not helper_migrations:
+              raise SystemExit('No post-private-helper migrations found')
+          replacements = {'is_shop_member': 0, 'is_shop_admin': 0}
+          for migration in helper_migrations:
+              sql = migration.read_text()
+              for helper in replacements:
+                  sql, count = re.subn(
+                      rf'(?<![A-Za-z0-9_.]){helper}[(]',
+                      f'private.{helper}(',
+                      sql,
+                  )
+                  replacements[helper] += count
+              migration.write_text(sql)
+          if not all(count > 0 for count in replacements.values()):
+              raise SystemExit(f'Expected both helper types to be normalized: {replacements}')
+          for migration in helper_migrations:
+              sql = migration.read_text()
+              for helper in replacements:
+                  if re.search(rf'(?<![A-Za-z0-9_.]){helper}[(]', sql):
+                      raise SystemExit(f'Unqualified {helper} reference remains in {migration.name}')
+          print(f'Verified private-schema helper normalization in temporary fixture: {replacements}')
+
+          # The current repository baseline's private sale function uses spaces
+          # around :=, while the historical credit-limit migration's string
+          # replacement expects a minified declaration. Production's applied
+          # function contains the credit-limit variable. Adapt only the temp
+          # migration's declaration anchor to the checked-in baseline formatting.
+          credit_migration = root / '20260920211000_enforce_customer_credit_limit.sql'
+          if not credit_migration.is_file():
+              raise SystemExit('Expected credit-limit migration is missing')
+          credit_sql = credit_migration.read_text()
+          compact_anchor = "'v_balance_due numeric(12,2):=0; v_points_earned integer:=0;'"
+          spaced_anchor = "'v_balance_due numeric(12,2) := 0; v_points_earned integer := 0;'"
+          compact_replacement = "'v_balance_due numeric(12,2):=0; v_credit_limit numeric(12,2):=0; v_points_earned integer:=0;'"
+          spaced_replacement = "'v_balance_due numeric(12,2) := 0; v_credit_limit numeric(12,2) := 0; v_points_earned integer := 0;'"
+          if credit_sql.count(compact_anchor) != 1 or credit_sql.count(compact_replacement) != 1:
+              raise SystemExit('Unexpected credit-limit migration declaration anchors')
+          credit_sql = credit_sql.replace(compact_anchor, spaced_anchor).replace(compact_replacement, spaced_replacement)
+          credit_migration.write_text(credit_sql)
+          print('Verified: temporary credit-limit migration matches baseline declaration formatting.')
+
+          # The historical idempotent-sale patch expects a minified prior
+          # idempotency block. The checked-in baseline function is formatted
+          # across lines. Match the exact local baseline block in this temp
+          # migration copy so its production-intent reconciliation patch applies.
+          idempotency_migration = root / '20261005115000_fix_cloud_sale_idempotent_reconciliation.sql'
+          if not idempotency_migration.is_file():
+              raise SystemExit('Expected sale idempotency migration is missing')
+          idempotency_sql = idempotency_migration.read_text()
+          compact_old = "old_block text := $old$select * into v_existing from public.sales s where s.id=p_sale_id; if found then if v_existing.shop_id<>p_shop_id then raise exception 'Sale id already belongs to another shop'; end if; return jsonb_build_object('ok',true,'already_committed',true,'sale_id',v_existing.id,'bill_no',v_existing.bill_no,'total',v_existing.total); end if;$old$;"
+          multiline_old = """old_block text := $old$select * into v_existing from public.sales s where s.id=p_sale_id;
+            if found then
+              if v_existing.shop_id <> p_shop_id then raise exception 'Sale id already belongs to another shop'; end if;
+              return jsonb_build_object('ok',true,'already_committed',true,'sale_id',v_existing.id,'bill_no',v_existing.bill_no,'total',v_existing.total);
+            end if;$old$;"""
+          if idempotency_sql.count(compact_old) != 1:
+              raise SystemExit('Unexpected sale idempotency migration old-block anchor')
+          idempotency_migration.write_text(idempotency_sql.replace(compact_old, multiline_old))
+          print('Verified: temporary sale-idempotency migration matches baseline function formatting.')
+          PY
+
+      - name: Start isolated local Supabase database
+        working-directory: /tmp/nexfix-supabase-test
+        run: |
+          supabase start -x realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+
+      - name: Reapply all migrations to a clean local database
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase db reset --local --no-seed
+
+      - name: Run pgTAP database tests against local database
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase test db --local
+
+      - name: Stop local Supabase containers
+        if: always()
+        working-directory: /tmp/nexfix-supabase-test
+        run: supabase stop --no-backup || true
