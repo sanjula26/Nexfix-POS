@@ -145,7 +145,7 @@ jobs:
               sql = migration.read_text()
               for helper in replacements:
                   sql, count = re.subn(
-                      rf'(?<![A-Za-z0-9_.]){helper}\\(',
+                      rf'(?<![A-Za-z0-9_.]){helper}[(]',
                       f'private.{helper}(',
                       sql,
                   )
@@ -156,7 +156,7 @@ jobs:
           for migration in helper_migrations:
               sql = migration.read_text()
               for helper in replacements:
-                  if re.search(rf'(?<![A-Za-z0-9_.]){helper}\\(', sql):
+                  if re.search(rf'(?<![A-Za-z0-9_.]){helper}[(]', sql):
                       raise SystemExit(f'Unqualified {helper} reference remains in {migration.name}')
           print(f'Verified private-schema helper normalization in temporary fixture: {replacements}')
           PY
