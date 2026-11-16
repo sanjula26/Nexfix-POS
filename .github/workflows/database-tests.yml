@@ -91,13 +91,43 @@ jobs:
           for each row execute function private.enforce_customer_credit_limit();
           SQL
 
-          # The 20260927193000 repair-delivery migration is not in production's
-          # applied migration history. Production's repairs.parts_deducted_at
-          # column predates the tracked branch-aware implementation; recreate
-          # the column before that later production-equivalent function migration.
-          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261014000000_repair_delivery_column_baseline.sql <<'SQL'
+          # The repair-delivery objects already exist in production before the
+          # 20261006063000 grant migration, but the repo's baseline omits them
+          # and the 20260927193000 alternate implementation is not in production
+          # migration history. Recreate the catalog-verified column/index and
+          # function signatures here; the tracked 20261014103200 migration
+          # replaces the private stub with the full branch-aware implementation
+          # before pgTAP runs.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261005150000_repair_delivery_baseline.sql <<'SQL'
           alter table public.repairs
             add column if not exists parts_deducted_at timestamptz;
+          create index if not exists repairs_shop_status_idx
+            on public.repairs(shop_id,status);
+
+          create or replace function private.process_repair_delivery_atomic(
+            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
+          )
+          returns table(ok boolean, already_committed boolean, repair_id uuid)
+          language plpgsql security definer set search_path to ''
+          as $function$
+          begin
+            raise exception 'Temporary baseline stub; replaced by the tracked branch-aware migration before pgTAP';
+          end;
+          $function$;
+
+          create or replace function public.process_repair_delivery_atomic(
+            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
+          )
+          returns table(ok boolean, already_committed boolean, repair_id uuid)
+          language sql set search_path to ''
+          as $function$
+            select * from private.process_repair_delivery_atomic($1,$2,$3,$4);
+          $function$;
+
+          revoke all on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon, service_role;
+          grant execute on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
+          revoke all on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
+          grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated, service_role;
           SQL
 
           # phone_sales_tokens exists in production but is absent from the
@@ -206,25 +236,6 @@ jobs:
             execute replace(d,anchor,old_block || chr(10) || anchor);
           end
           $fixture$;
-          SQL
-
-          # The public invoker wrapper is present in production alongside the
-          # private branch-aware implementation. Recreate its catalog-verified
-          # SQL wrapper and grants after the tracked migration defines private.*.
-          cat > /tmp/nexfix-supabase-test/supabase/migrations/20261014103300_repair_delivery_invoker_wrapper_fixture.sql <<'SQL'
-          create or replace function public.process_repair_delivery_atomic(
-            p_shop_id uuid, p_repair_id uuid, p_device_id text, p_repair jsonb
-          )
-          returns table(ok boolean, already_committed boolean, repair_id uuid)
-          language sql
-          set search_path to ''
-          as $function$
-            select * from private.process_repair_delivery_atomic($1,$2,$3,$4);
-          $function$;
-          revoke all on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon, service_role;
-          grant execute on function private.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated;
-          revoke all on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) from public, anon;
-          grant execute on function public.process_repair_delivery_atomic(uuid,uuid,text,jsonb) to authenticated, service_role;
           SQL
 
           # Production has this event-trigger helper even though it is absent
