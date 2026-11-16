@@ -41,11 +41,11 @@ jobs:
           cat > /tmp/nexfix-supabase-test/supabase/migrations/00000000000001_private_schema_bootstrap.sql <<'SQL'
           create schema if not exists private;
           SQL
-          # The baseline already contains the current snapshot table and policies.
-          # 002_offline_sync.sql also carries a superseded UUID RPC whose OUT-column
-          # order conflicts with the later canonical UUID RPC migration. Keep the
-          # legacy table/policy setup, but remove only that obsolete function/grants
-          # from this temporary copy; repository migrations remain untouched.
+          # 002_offline_sync.sql owns snapshot table/policy setup, but also
+          # carries a superseded UUID RPC whose OUT-column order conflicts with
+          # the later canonical UUID RPC migration. Keep its table/policy setup;
+          # remove only that obsolete function/grants from this temporary copy.
+          # Repository migrations remain untouched.
           python3 - <<'PY'
           from pathlib import Path
           path = Path('/tmp/nexfix-supabase-test/supabase/migrations/002_offline_sync.sql')
