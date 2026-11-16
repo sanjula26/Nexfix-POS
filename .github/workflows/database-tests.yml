@@ -42,6 +42,55 @@ jobs:
           create schema if not exists private;
           SQL
 
+          # Production history contains 20260912055657_enforce_cloud_sale_credit_limit,
+          # but its SQL source is absent from the current repository. Reconstruct
+          # the exact catalog-verified trigger function and trigger in this local
+          # fixture so the later applied grant-restriction migration has its
+          # expected prerequisite. This file exists only under /tmp.
+          cat > /tmp/nexfix-supabase-test/supabase/migrations/20260912055657_enforce_cloud_sale_credit_limit.sql <<'SQL'
+          create or replace function private.enforce_customer_credit_limit()
+          returns trigger
+          language plpgsql
+          security definer
+          set search_path to ''
+          as $function$
+          declare
+            v_credit_limit numeric(12,2);
+            v_credit_balance numeric(12,2);
+            v_new_balance numeric(12,2);
+          begin
+            if new.customer_id is null then
+              return new;
+            end if;
+
+            select c.credit_limit, c.credit_balance
+              into v_credit_limit, v_credit_balance
+            from public.customers c
+            where c.id = new.customer_id
+              and c.shop_id = new.shop_id
+            for update;
+
+            if not found then
+              raise exception 'Customer not found for this shop';
+            end if;
+
+            v_new_balance := coalesce(v_credit_balance, 0)
+              + greatest(0, coalesce(new.total, 0) - coalesce(new.amount_paid, 0));
+
+            if coalesce(v_credit_limit, 0) > 0 and v_new_balance > v_credit_limit then
+              raise exception 'Credit limit exceeded for customer';
+            end if;
+
+            return new;
+          end;
+          $function$;
+
+          drop trigger if exists trg_enforce_customer_credit_limit on public.sales;
+          create trigger trg_enforce_customer_credit_limit
+          before insert on public.sales
+          for each row execute function private.enforce_customer_credit_limit();
+          SQL
+
           # Production has this event-trigger helper even though it is absent
           # from the checked-in baseline and staging migration history. Recreate
           # its verified definition in the temporary fixture so the following
