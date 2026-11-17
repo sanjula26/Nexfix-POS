@@ -130,3 +130,29 @@ The two supplied static review reports were cross-checked against the current `m
 - PR #263 `source-security`: completed successfully.
 - PR #263 `verify`: completed successfully.
 - These are CI checks for this documentation-only change; they do not prove branch RLS isolation or runtime business correctness.
+
+## Owner Web authorization cross-check (production read-only, 2026-11-17)
+
+Owner Web is read-only, but read-only does not mean owner-only. The current UI and deployed RPCs have a shop-membership authorization boundary, not an owner/admin or per-branch boundary.
+
+### Confirmed in current main source
+- `apps/owner-web/src/App.tsx` resolves one active `shop_memberships` row for the signed-in user. It selects `role`, but the current tenant state stores only shop ID/name/currency; the role is not used to gate Owner Web access.
+- The branch selector is a client-side presentation filter. A caller can bypass it and call the RPCs directly.
+- The app invokes `get_owner_branch_daily_sales` with `p_branch_id = NULL` for all-branch aggregates, and invokes `get_owner_branch_stock_valuation` with NULL for all-branch valuation.
+- Owner Web also invokes `get_owner_credit_customers`, which returns shop-wide customer names, phone/email, credit balances and open-invoice balances.
+
+### Confirmed against deployed production definitions
+- `public.get_owner_branch_daily_sales(uuid,date,date,uuid)`, `public.get_owner_branch_stock_valuation(uuid,uuid)`, and `public.get_owner_credit_customers(uuid)` are SECURITY INVOKER, have an empty search_path, and are executable by authenticated (not anon). These are positive controls.
+- Each function checks only for an active `shop_memberships` row. Branch sales and stock valuation accept any active branch in the shop; NULL returns all branches. The credit RPC returns shop-wide credit/customer data.
+- `public.owner_daily_sales` has an authenticated SELECT policy using `private.is_shop_member(shop_id)`; it is also shop-level, not owner-only.
+- The current active production membership inventory contains one active `admin` membership. This is a latent authorization gap for future staff cloud identities, not evidence that a non-admin staff user has already accessed Owner Web.
+- `pos_state_snapshots` currently has 0 rows in production. Its active SELECT policy is still membership-based (legacy `pos_shop_members` check); this is a latent exposure path, not an observed snapshot disclosure.
+
+### Required correction before branch staff cloud accounts are enabled
+1. Make Owner Web explicitly owner/admin-only at the server boundary, or define a narrowly scoped branch-report role with explicit grants. Do not trust the UI role check alone.
+2. Add branch grant validation to branch-specific reports and keep all-branch aggregates/stock valuation behind an explicit owner/admin privilege.
+3. Decide whether customer credit, phone/email, and shop-wide customer balances are owner-only or shared by branch before exposing them to staff.
+4. Test direct authenticated RPC calls for Branch A, Branch B, manager, cashier, technician, revoked member and owner/admin; include NULL/all-branch arguments and cross-branch IDs.
+5. Keep the full POS snapshot read path unavailable to branch-only users until a branch-safe sync protocol exists.
+
+No production function, grant, RLS policy, data, or setting was changed during this inspection.
