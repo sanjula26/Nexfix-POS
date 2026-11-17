@@ -43,3 +43,48 @@ test('allows an unchanged quantity and enforces a caller-supplied delta limit', 
   assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 8 }), { ok: true, delta: 0 });
   assert.equal(validateBranchStockEdit({ ...base, nextQuantity: 10, maxDelta: 1 }).ok, false);
 });
+
+import { buildBranchStockAdjustmentRpcRequest } from '../src/lib/branchStockRpc.ts';
+
+const branchStockRpcBase = {
+  shopId: 'shop-1',
+  branchId: 'requested-branch',
+  deviceId: 'device-1',
+  productId: 'product-1',
+  delta: 4,
+  note: 'Inventory editor stock change',
+  adjustmentId: 'adjustment-1',
+};
+
+test('branch stock editor sends expected quantity through the compare-and-set RPC', () => {
+  const request = buildBranchStockAdjustmentRpcRequest(
+    { ...branchStockRpcBase, expectedBranchQty: 9 },
+    'resolved-branch',
+  );
+  assert.equal(request.rpcName, 'adjust_branch_stock_atomic_expected');
+  assert.deepEqual(request.rpcArgs, {
+    p_shop_id: 'shop-1',
+    p_branch_id: 'resolved-branch',
+    p_device_id: 'device-1',
+    p_product_id: 'product-1',
+    p_delta: 4,
+    p_note: 'Inventory editor stock change',
+    p_adjustment_id: 'adjustment-1',
+    p_expected_branch_qty: 9,
+  });
+});
+
+test('branch stock legacy adjustments keep the existing RPC contract without an expected quantity', () => {
+  const request = buildBranchStockAdjustmentRpcRequest(branchStockRpcBase, 'resolved-branch');
+  assert.equal(request.rpcName, 'adjust_branch_stock_atomic');
+  assert.equal(Object.hasOwn(request.rpcArgs, 'p_expected_branch_qty'), false);
+});
+
+test('zero is a valid expected branch quantity and still selects compare-and-set', () => {
+  const request = buildBranchStockAdjustmentRpcRequest(
+    { ...branchStockRpcBase, expectedBranchQty: 0 },
+    'resolved-branch',
+  );
+  assert.equal(request.rpcName, 'adjust_branch_stock_atomic_expected');
+  assert.equal(request.rpcArgs.p_expected_branch_qty, 0);
+});
