@@ -5,6 +5,7 @@ import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
+import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -145,12 +146,7 @@ export async function adjustBranchStockAtomic(input: {
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   const branch = await resolveCloudBranchId(input.shopId, input.branchId);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const rpcName = input.expectedBranchQty === undefined ? 'adjust_branch_stock_atomic' : 'adjust_branch_stock_atomic_expected';
-  const rpcArgs: Record<string, unknown> = {
-    p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId,
-    p_product_id: input.productId, p_delta: input.delta, p_note: input.note, p_adjustment_id: input.adjustmentId,
-  };
-  if (input.expectedBranchQty !== undefined) rpcArgs.p_expected_branch_qty = input.expectedBranchQty;
+  const { rpcName, rpcArgs } = buildBranchStockAdjustmentRpcRequest(input, branch.branchId);
   const { data, error } = await supabase.rpc(rpcName, rpcArgs);
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
