@@ -5,6 +5,14 @@ const test = require('node:test');
 const { pathToFileURL } = require('node:url');
 const { createNavigationGuard } = require('../electron/navigation-security.cjs');
 const { writeBufferFully } = require('../electron/write-buffer.cjs');
+const {
+  normalizeUpdaterDeviceCredential,
+  parseStoredUpdaterDeviceCredential,
+  buildUpdaterRequestHeaders,
+  saveEncryptedUpdaterCredential,
+  loadEncryptedUpdaterCredential,
+  clearEncryptedUpdaterCredential,
+} = require('../electron/updater-credentials.cjs');
 
 const mainSource = fs.readFileSync(
   path.join(__dirname, '..', 'electron', 'main.cjs'),
@@ -87,4 +95,95 @@ test('private updater aborts when the installer file handle makes no write progr
     writeBufferFully(handle, Buffer.from('installer'), 0),
     /did not make forward progress/,
   );
+});
+
+test('updater device credential validation trims values and rejects missing, short or oversized credentials', () => {
+  const token = 'a'.repeat(64);
+  assert.deepEqual(normalizeUpdaterDeviceCredential({ token: ` ${token} `, deviceId: ' device-1 ' }), {
+    token,
+    deviceId: 'device-1',
+  });
+  assert.equal(normalizeUpdaterDeviceCredential({ token: 'short', deviceId: 'device-1' }), null);
+  assert.equal(normalizeUpdaterDeviceCredential({ token: 'a'.repeat(513), deviceId: 'device-1' }), null);
+  assert.equal(normalizeUpdaterDeviceCredential({ token, deviceId: '' }), null);
+  assert.equal(normalizeUpdaterDeviceCredential({ token, deviceId: 'd'.repeat(201) }), null);
+});
+
+test('encrypted updater credential survives save/load and preserves unrelated secure recovery fields', () => {
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: value => Buffer.from(`encrypted:${value}`),
+    decryptString: value => Buffer.from(value).toString().replace(/^encrypted:/, ''),
+  };
+  const token = 'b'.repeat(64);
+  const saved = saveEncryptedUpdaterCredential(
+    { token, deviceId: 'device-2' },
+    safeStorage,
+    { version: 1, cloudUpdaterRecovery: 'keep-this-encrypted-value' },
+  );
+  assert.equal(saved.ok, true);
+  assert.equal(saved.record.cloudUpdaterRecovery, 'keep-this-encrypted-value');
+  assert.equal(saved.record.version, 2);
+  const loaded = loadEncryptedUpdaterCredential(saved.record, safeStorage);
+  assert.deepEqual(loaded, { ok: true, found: true, token, deviceId: 'device-2' });
+  assert.equal(JSON.stringify(saved.record).includes(token), false, 'plaintext token must not be persisted');
+});
+
+test('updater credential load fails closed for unavailable secure storage and corrupt ciphertext', () => {
+  assert.deepEqual(loadEncryptedUpdaterCredential({}, { isEncryptionAvailable: () => false }), {
+    ok: false,
+    error: 'OS secure storage is unavailable',
+  });
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    decryptString: () => { throw new Error('bad ciphertext'); },
+  };
+  assert.deepEqual(loadEncryptedUpdaterCredential({ cloudUpdaterDeviceToken: 'corrupt' }, safeStorage), {
+    ok: false,
+    error: 'Stored Windows updater authorization could not be opened',
+  });
+});
+
+test('legacy token-only updater records load for renderer migration but cannot restore without a device id', () => {
+  const token = 'c'.repeat(64);
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    decryptString: () => token,
+  };
+  assert.deepEqual(loadEncryptedUpdaterCredential({ cloudUpdaterDeviceToken: 'legacy' }, safeStorage), {
+    ok: true,
+    found: true,
+    token,
+    deviceId: '',
+  });
+  assert.equal(parseStoredUpdaterDeviceCredential('short'), null);
+});
+
+test('updater request headers bind the token to the device and never fall back to public URLs', () => {
+  const token = 'd'.repeat(64);
+  assert.deepEqual(buildUpdaterRequestHeaders(token, 'device-3', 'device'), {
+    'X-Nexfix-Update-Token': token,
+    'X-Nexfix-Device': 'device-3',
+    'Cache-Control': 'no-cache',
+  });
+  assert.deepEqual(buildUpdaterRequestHeaders('opaque-bearer', 'device-3', 'bearer'), {
+    Authorization: 'Bearer opaque-bearer',
+    'X-Nexfix-Device': 'device-3',
+    'Cache-Control': 'no-cache',
+  });
+  assert.equal(buildUpdaterRequestHeaders('', 'device-3', 'device'), null);
+  assert.match(mainSource, /UPDATE_FEED_URL = 'https:\/\/ocmzgamnehwbkuwkjdrr\.supabase\.co\/functions\/v1\/desktop-updates'/);
+});
+
+test('clearing updater credentials preserves the separate cloud recovery credential', () => {
+  const cleared = clearEncryptedUpdaterCredential({
+    version: 2,
+    cloudUpdaterDeviceToken: 'encrypted-device-token',
+    cloudUpdaterDeviceTokenVersion: 1,
+    cloudUpdaterRecovery: 'encrypted-cloud-recovery',
+  });
+  assert.deepEqual(cleared, {
+    version: 2,
+    cloudUpdaterRecovery: 'encrypted-cloud-recovery',
+  });
 });
