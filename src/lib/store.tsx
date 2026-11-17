@@ -499,7 +499,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   // path cannot silently bypass Google Drive backup. Existing event-specific scheduling
   // remains as an earlier debounce trigger; this watcher is the safety net.
   useEffect(() => {
-    if (!ready || !user) {
+    if (!ready || storageStatusRef.current !== 'healthy' || !user) {
       previousBackupStateRef.current = state;
       return;
     }
@@ -507,11 +507,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       scheduleGoogleBackup(() => stateRef.current, 'settings');
     }
     previousBackupStateRef.current = state;
-  }, [state, ready, user?.id]);
+  }, [state, ready, user?.id, storageStatus]);
 
   // Debounced persist to IndexedDB + localStorage
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || storageStatus !== 'healthy') return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       void persistState(state).then(saved => {
@@ -527,7 +527,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
   useEffect(() => {
-    if (!ready || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
+    if (!ready || storageStatus !== 'healthy' || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
     let cancelled = false;
     (async () => {
       const shop = await ensureCloudShop('Nexfix Shop');
@@ -547,13 +547,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
     })();
     return () => { cancelled = true; };
-  }, [ready, user?.id, user?.role, connectivity]);
+  }, [ready, storageStatus, user?.id, user?.role, connectivity]);
 
   // Connectivity listeners + auto-flush queue when back online
   useEffect(() => {
     const unsub = onConnectivityChange(async (status) => {
       setConnectivity(status);
-      if (status === 'online') {
+      if (status === 'online' && storageStatusRef.current === 'healthy') {
         const { flushed, pending } = await flushSyncQueue();
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
@@ -582,7 +582,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Automatic backups are a system operation. Any authenticated POS user
     // may keep the scheduler running; manual JSON export remains permission-gated.
-    if (!ready || !user) return;
+    if (!ready || storageStatus !== 'healthy' || !user) return;
     const stop = startAutoBackup(
       () => stateRef.current,
       async () => {
@@ -593,7 +593,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       },
     );
     return stop;
-  }, [ready, backupMeta.autoBackupHours, user?.id, user?.role, can]);
+  }, [ready, storageStatus, backupMeta.autoBackupHours, user?.id, user?.role, can]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -3446,6 +3446,7 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const refreshPOS = useCallback(async () => {
+    if (!canMutatePOSState(storageStatusRef.current)) return;
     // A refresh is a data reload, not an authentication operation. Capture the
     // React session first and restore that exact session after the data reload.
     // This prevents a stale IDB snapshot from making user temporarily null and
