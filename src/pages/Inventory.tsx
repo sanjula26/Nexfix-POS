@@ -11,6 +11,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getCachedPOSDeviceBranchId, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isBranchStockCacheReady, isLocalMainStockReady } from '../lib/branchStock';
 import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
+import { validateBranchStockEdit } from '../lib/branchStockEditor';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -285,23 +286,21 @@ export default function Inventory() {
       const branchStockEdit = branchScopedExisting && !currentTracked && !nextTracked;
       const shouldApplyBranchStockEdit = branchStockEdit && branchStockDraftDirty;
       const currentBranchStock = shouldApplyBranchStockEdit ? branchStockExpectedQty : null;
-      if (shouldApplyBranchStockEdit && (branchStockExpectedBranchId !== selectedBranchId || branchStockExpectedShopId !== shopId)) {
-        alert('The selected shop or branch changed while this editor was open. Close and reopen the product editor to verify the correct branch quantity.');
+      const branchStockValidation = shouldApplyBranchStockEdit
+        ? validateBranchStockEdit({
+          expectedShopId: branchStockExpectedShopId,
+          expectedBranchId: branchStockExpectedBranchId,
+          selectedShopId: shopId,
+          selectedBranchId,
+          expectedQuantity: currentBranchStock,
+          nextQuantity: editing.stock,
+        })
+        : { ok: true as const, delta: 0 };
+      if (!branchStockValidation.ok) {
+        alert(branchStockValidation.error);
         return;
       }
-      if (shouldApplyBranchStockEdit && (currentBranchStock === null || !Number.isSafeInteger(currentBranchStock) || currentBranchStock < 0)) {
-        alert('The original branch quantity is unavailable. Close and reopen the product editor to reload it.');
-        return;
-      }
-      if (shouldApplyBranchStockEdit && (!Number.isSafeInteger(editing.stock) || editing.stock < 0)) {
-        alert('Stock must be a non-negative whole number.');
-        return;
-      }
-      const branchStockDelta = shouldApplyBranchStockEdit ? editing.stock - (currentBranchStock as number) : 0;
-      if (shouldApplyBranchStockEdit && Math.abs(branchStockDelta) > 1_000_000) {
-        alert('A single stock adjustment cannot exceed 1,000,000 units. Enter a smaller change.');
-        return;
-      }
+      const branchStockDelta = shouldApplyBranchStockEdit ? branchStockValidation.delta : 0;
       const productForSave = branchScopedExisting ? { ...editing, stock: current!.stock } : editing;
       const forceZeroStock = isNew && !branchStockReady && !nextTracked && editing.stock > 0;
       const saved = await saveProduct(forceZeroStock ? { ...productForSave, stock: 0 } : productForSave);
