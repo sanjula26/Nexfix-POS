@@ -161,3 +161,13 @@ Read-only Supabase inspection of the configured production project confirmed:
 ### Implication
 
 The current production data confirms this is not a hypothetical multi-branch UI issue: there are two active branches and multiple devices, but all active devices use one cloud identity and the current RLS rules authorize at shop level. A safe solution must first decide how branch identities are represented. The most practical candidate is separate cloud identities or explicit member-to-branch grants for each branch terminal/user, with owner/admin all-branch access; however, if one cloud identity remains shared by every terminal, user-level grants alone will not isolate those terminals. The design must not rely on a renderer-supplied device_id as a read security credential.
+
+
+## 12. Owner Web reporting RPC authorization gap — production (read-only, 2026-11-17)
+
+Deployed function definitions and execute grants were inspected read-only:
+- public.get_owner_branch_daily_sales(shop_id, from, to, branch_id DEFAULT NULL) is executable by authenticated, not anon. It checks only active shop_memberships and accepts any active branch in the shop; NULL returns all branch totals.
+- public.get_owner_branch_stock_valuation(shop_id, branch_id DEFAULT NULL) is executable by authenticated, not anon. It checks only active shop membership and accepts any branch or NULL for all branches. Its result includes stock quantities, unit cost, selling value and potential profit.
+- public.get_owner_credit_customers(shop_id) is executable by authenticated, not anon and checks only active shop membership; it returns shop-wide customer credit balances and open-invoice balances.
+
+These functions use an empty search_path and authenticated-only execute grants, which are positive controls, but their authorization scope is shop-wide rather than branch/owner-only. The UI branch selector is not a security boundary. The isolation rollout must add explicit owner/admin authorization for all-branch and financial reports, and branch grant checks for branch-specific reports. No function, grant, data or schema was changed during this inspection.
