@@ -1,5 +1,6 @@
 const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
 const { writeBufferFully } = require('./write-buffer.cjs');
+const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncryptedUpdaterCredential, loadEncryptedUpdaterCredential, clearEncryptedUpdaterCredential } = require('./updater-credentials.cjs');
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
 const fs = require('fs');
@@ -85,21 +86,10 @@ function restoreStoredUpdaterCredentials(){
   try{
     const encrypted=readSecureRecoveryFile().cloudUpdaterDeviceToken;
     if(typeof encrypted!=='string'||!encrypted) return false;
-    const decrypted=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
-    let token='';
-    let deviceId='';
-    try{
-      const parsed=JSON.parse(decrypted);
-      token=typeof parsed?.token==='string'?parsed.token.trim():'';
-      deviceId=typeof parsed?.deviceId==='string'?parsed.deviceId.trim():'';
-    }catch{
-      // Older v3.0.1279 records contain only the token; the renderer will
-      // provide the current device identity during its normal auth restore.
-      token=decrypted;
-    }
-    if(!token || token.length<64 || token.length>512 || !deviceId || deviceId.length>200) return false;
-    updateAuthToken=token;
-    updateDeviceId=deviceId;
+    const credential=parseStoredUpdaterDeviceCredential(safeStorage.decryptString(Buffer.from(encrypted,'base64')));
+    if(!credential || !credential.deviceId) return false;
+    updateAuthToken=credential.token;
+    updateDeviceId=credential.deviceId;
     updateAuthMode='device';
     return true;
   }catch{
@@ -114,13 +104,9 @@ function configureUpdaterCredentials(){
   // electron-updater reads requestHeaders from the updater instance. Passing
   // requestHeaders only to setFeedURL() does not reliably carry them into
   // manifest/download requests on installed clients.
-  autoUpdater.requestHeaders = authorized ? {
-    ...(updateAuthMode === 'device'
-      ? { 'X-Nexfix-Update-Token': updateAuthToken }
-      : { Authorization: `Bearer ${updateAuthToken}` }),
-    'X-Nexfix-Device': updateDeviceId,
-    'Cache-Control': 'no-cache',
-  } : null;
+  autoUpdater.requestHeaders = authorized
+    ? buildUpdaterRequestHeaders(updateAuthToken, updateDeviceId, updateAuthMode)
+    : null;
 
   autoUpdater.setFeedURL({
     provider: 'generic',
@@ -136,9 +122,7 @@ function configureUpdaterCredentials(){
 
 async function downloadDirectPrivateUpdate() {
   if (!updateAuthToken || !updateDeviceId) throw new Error('Update authorization is not ready.');
-  const headers = { 'X-Nexfix-Device': updateDeviceId };
-  if (updateAuthMode === 'device') headers['X-Nexfix-Update-Token'] = updateAuthToken;
-  else headers.Authorization = `Bearer ${updateAuthToken}`;
+  const headers = buildUpdaterRequestHeaders(updateAuthToken, updateDeviceId, updateAuthMode);
 
   const manifestResponse = await fetch(`${UPDATE_FEED_URL}?download=1`, { headers });
   const manifestText = await manifestResponse.text();
@@ -350,45 +334,21 @@ function setupAutoUpdater(){
     ipcMain.handle('cloud-updater-token:save',(event,payload)=>{
       if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
       if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
-      const token=typeof payload?.token==='string'?payload.token.trim():'';
-      const deviceId=typeof payload?.deviceId==='string'?payload.deviceId.trim():'';
-      if(!token || token.length<64 || token.length>512 || !deviceId || deviceId.length>200) return {ok:false,error:'Invalid Windows updater authorization token'};
+      const result=saveEncryptedUpdaterCredential(payload,safeStorage,readSecureRecoveryFile());
+      if(!result.ok) return result;
       try{
-        const current=readSecureRecoveryFile();
-        current.cloudUpdaterDeviceToken=safeStorage.encryptString(JSON.stringify({token,deviceId})).toString('base64');
-        current.cloudUpdaterDeviceTokenVersion=1;
-        writeSecureRecoveryFile({...current,version:2});
+        writeSecureRecoveryFile(result.record);
         return {ok:true};
       }catch(error){return {ok:false,error:error?.message||String(error)};}
     });
     ipcMain.handle('cloud-updater-token:load',(event)=>{
       if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
-      if(!safeStorage.isEncryptionAvailable()) return {ok:false,error:'OS secure storage is unavailable'};
-      try{
-        const encrypted=readSecureRecoveryFile().cloudUpdaterDeviceToken;
-        if(typeof encrypted!=='string'||!encrypted) return {ok:true,found:false};
-        const decrypted=safeStorage.decryptString(Buffer.from(encrypted,'base64')).trim();
-        let token='';
-        let storedDeviceId='';
-        try{
-          const parsed=JSON.parse(decrypted);
-          token=typeof parsed?.token==='string'?parsed.token.trim():'';
-          storedDeviceId=typeof parsed?.deviceId==='string'?parsed.deviceId.trim():'';
-        }catch{
-          // Backward-compatible migration for tokens saved by v3.0.1279 before
-          // the device id was included in the encrypted record.
-          token=decrypted;
-        }
-        if(!token || token.length<64 || token.length>512) return {ok:true,found:false};
-        return {ok:true,found:true,token,deviceId:storedDeviceId};
-      }catch{return {ok:false,error:'Stored Windows updater authorization could not be opened'};}
+      return loadEncryptedUpdaterCredential(readSecureRecoveryFile(),safeStorage);
     });
     ipcMain.handle('cloud-updater-token:clear',(event)=>{
       if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
       try{
-        const current=readSecureRecoveryFile();
-        delete current.cloudUpdaterDeviceToken;
-        delete current.cloudUpdaterDeviceTokenVersion;
+        const current=clearEncryptedUpdaterCredential(readSecureRecoveryFile());
         if(Object.keys(current).length===0){try{fs.rmSync(getSecureRecoveryFile(),{force:true});}catch{}}
         else writeSecureRecoveryFile(current);
         return {ok:true};
