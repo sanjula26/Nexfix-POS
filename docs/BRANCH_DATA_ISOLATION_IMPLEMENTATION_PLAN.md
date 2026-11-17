@@ -98,3 +98,12 @@ Unknown or unclassified data must not be exposed to branch-only users by default
 - No automatic movement of old sales, credit balances, repairs, or stock records between branches.
 - No production policy changes before staging verification and owner approval.
 - No weakening of the admin-only snapshot write path to make cashier sync appear to work.
+
+## Production policy/table inventory (read-only query, 2026-11-17)
+- Tables with a direct branch_id column in the current public schema: branch_stock, branch_stock_adjustments, day_sessions, expenses, inventory_units, pos_device_branches, purchases, and sales.
+- Operational child tables without their own branch_id must be authorized through their parent: sale_items and sale_payments through sales; purchase_items through purchases; repair_parts through repairs; transfer lines through stock transfers.
+- repairs, warranty_claims, customers, quotations, suppliers, and the transfer header tables do not have a direct branch_id column in the inspected schema. Their intended branch visibility therefore cannot be safely implemented by adding a client-side filter alone.
+- Read policies for branches, branch_stock, branch_stock_adjustments, day_sessions, expenses, inventory_units, pos_device_branches, purchases, sales, customers, quotations, repairs, suppliers, warranty_claims, and transfer records currently rely on shop-membership checks in the inspected policies. This is a shop boundary, not a per-branch boundary.
+- pos_state_snapshots has a member SELECT policy keyed to shop membership. Because the snapshot is one row per shop, this is a direct cross-branch disclosure risk if non-admin branch users can read it.
+- Some child table policies correctly traverse to a parent row, but the parent predicate is still shop-membership based. Parent traversal alone does not enforce branch isolation.
+- These findings are based on schema metadata and pg_policies inspection only; no application queries were run as a different employee identity and no production records were read or changed.
