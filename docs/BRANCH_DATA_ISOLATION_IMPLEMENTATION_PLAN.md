@@ -156,3 +156,33 @@ Owner Web is read-only, but read-only does not mean owner-only. The current UI a
 5. Keep the full POS snapshot read path unavailable to branch-only users until a branch-safe sync protocol exists.
 
 No production function, grant, RLS policy, data, or setting was changed during this inspection.
+
+## Owner Web direct data-access and policy matrix (production read-only, 2026-11-17)
+
+The current Owner Web `App.tsx` data calls were enumerated from source. These are all read paths; the branch selector does not change the underlying database authorization rules.
+
+| Owner Web data path | Current application filter | Production policy / RPC boundary | Isolation requirement |
+|---|---|---|---|
+| `shop_memberships`, `shops` | Active signed-in membership resolves one shop | Membership self/admin read; shop member read | Retain and enforce cloud role; do not treat every active member as Owner Web owner |
+| `branches` | Active branches for selected shop | `private.is_shop_member(shop_id)` | Branch list may be available to member, but branch data/report access must use explicit grants |
+| `sales` | Shop + completed + date range; selected branch filter is added client-side | `private.is_shop_member(shop_id)` | Enforce branch scope in RLS; do not trust the optional client filter |
+| `get_owner_branch_daily_sales` | Selected branch or NULL for all | SECURITY INVOKER; active shop membership; any active branch / NULL all | Owner/admin-only for NULL; branch grant for specific branch |
+| `get_owner_branch_stock_valuation` | Selected branch or NULL for all | SECURITY INVOKER; active shop membership; any active branch / NULL all; exposes unit cost and potential profit | Owner/admin-only for all-branch and cost-sensitive output; branch grant for branch-specific output |
+| `sale_items`, `sale_payments` | Fetched only after parent invoice is loaded | Parent `sales` row + `private.is_shop_member(shop_id)` | Parent access must be branch-authorized before child access |
+| `get_owner_credit_customers` | No branch parameter | SECURITY INVOKER; active shop membership; shop-wide customer contact and credit/open-invoice balances | Owner-only or an explicitly approved shared-credit policy; cannot be safely branch-filtered today |
+| `day_sessions` | Shop + selected branch filter | SELECT `private.is_shop_member(shop_id)` | Branch-level read policy; verify cashier identity and branch ownership on inserts/updates |
+| `expenses` | Shop + selected branch filter | SELECT `private.is_shop_member(shop_id)` | Branch-level read policy; existing insert/update/delete are admin-only but not branch-scoped |
+| `profiles` | Profile details for visible cloud members | Self or shop-admin read | Keep minimal profile disclosure; do not mistake this for local POS cashier directory |
+
+### Additional verified policy details
+- `sales` SELECT and `branches` SELECT are shop-member policies. `sale_items` and `sale_payments` traverse to the parent sale but still use shop-member scope.
+- `day_sessions` SELECT and `expenses` SELECT are also shop-member policies. Their application-side branch filters do not enforce isolation.
+- `customers` SELECT is shop-member; `get_owner_credit_customers` returns phone/email and credit data across the shop. Customer/credit branch policy remains an owner decision.
+- `owner_daily_sales` SELECT is shop-member. `pos_state_snapshots` SELECT is legacy membership-based; current production row count was zero when checked.
+- These policy results were read from production `pg_policies`; no user data rows were queried or changed.
+
+### Storage boot-path clarification
+- `POSProvider` initializes its React state synchronously from `loadState()` (localStorage or `buildSeed()`). If IndexedDB is not available, `ready` starts as true and the boot effect returns after `setReady(true)`; it does not block the POS tree.
+- If IndexedDB is available but `idbLoadState()` returns null after an open/read error, the boot effect falls back to localStorage or seed and attempts `idbSaveState(local)` without checking the boolean result.
+- The debounced `persistState()` later emits `nexfix:storage-error` on a failed durable write, but the listener is mounted inside `POS.tsx`, not as a global write gate. This warning is not equivalent to preventing unsafe writes or disabling the checkout action.
+- No fix is included here because a safe change needs a provider-level storage status, a clearly defined read-only/degraded mode, and tests covering first-run empty database, legacy migration, IndexedDB unavailable, IndexedDB open failure, failed initial seed save, and failed later writes. A simplistic `ready=false` or seed removal could lock out existing shops or cause data-loss confusion.
