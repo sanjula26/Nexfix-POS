@@ -138,3 +138,26 @@ In either design:
 - Do not weaken admin-only full-state snapshot writes.
 - Do not migrate production data or alter production RLS until staging tests and owner approval pass.
 - Do not change Google Drive shop partitioning as part of the first branch-isolation migration.
+
+
+## 11. Production and staging read-only verification (2026-11-17)
+
+### Production project
+
+Read-only Supabase inspection of the configured production project confirmed:
+- 1 shop, 2 active branches, 6 non-revoked devices, 3 device-to-branch binding rows.
+- The 3 binding rows cover only 1 of the 2 active branches at the time of inspection.
+- 1 active cloud shop membership exists (role admin); all 6 active devices resolve to 1 distinct cloud Auth user. Therefore device binding cannot distinguish branch access at RLS level while the same cloud identity is shared across terminals.
+- 35 normalized sales rows exist. No purchase, repair or warranty rows were returned by the aggregate count. The POS snapshot table currently has 0 rows, so the snapshot policy is a latent exposure path, not evidence that a snapshot was downloaded in this inspection.
+- Read-only pg_policies inspection confirmed SELECT policies for branches, branch_stock, pos_device_branches, stock_transfers, stock_transfer_lines, branch_stock_adjustments, sales, day_sessions, expenses, inventory_units, purchases, repairs, warranty_claims and child sale/purchase/repair records are based on shop membership, not branch grants.
+- The production pos_state_snapshots SELECT policy is named pos_state_snapshots_select_member and checks legacy pos_shop_members membership. Snapshot writes remain separately hardened; do not weaken or re-open them.
+
+### Staging project
+
+- Supabase project status currently reports ACTIVE_HEALTHY and database tools respond.
+- The staging project is not yet a full NexFix schema deployment: migration history contains only three staging fixture/policy migrations (20261110131158, 20261110131205, 20261110131510), and the public schema inventory shows only the minimal POS cloud fixture tables. The production branch tables and operational tables are not present there.
+- Therefore staging is reachable but not yet suitable for validating the complete branch-isolation migration. Do not apply production migrations or copy production data into staging as an automatic shortcut.
+
+### Implication
+
+The current production data confirms this is not a hypothetical multi-branch UI issue: there are two active branches and multiple devices, but all active devices use one cloud identity and the current RLS rules authorize at shop level. A safe solution must first decide how branch identities are represented. The most practical candidate is separate cloud identities or explicit member-to-branch grants for each branch terminal/user, with owner/admin all-branch access; however, if one cloud identity remains shared by every terminal, user-level grants alone will not isolate those terminals. The design must not rely on a renderer-supplied device_id as a read security credential.
