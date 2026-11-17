@@ -1,6 +1,5 @@
 export type BranchStockAdjustmentRpcInput = {
   shopId: string;
-  branchId: string;
   deviceId: string;
   productId: string;
   delta: number;
