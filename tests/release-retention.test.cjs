@@ -7,7 +7,7 @@ const root = path.join(__dirname, '..');
 const releaseWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'desktop-build.yml'), 'utf8');
 const retentionWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'r2-retention.yml'), 'utf8');
 const retentionScript = fs.readFileSync(path.join(root, 'scripts', 'retain-private-r2-installers.ps1'), 'utf8');
-const qaWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'desktop-build-only.yml'), 'utf8');
+const qaWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'windows-no-publish-qa.yml'), 'utf8');
 
 test('production release passes the newly built installer path to shared retention guard', () => {
   assert.match(releaseWorkflow, /EXPECTED_ACTIVE_INSTALLER_PATH\s*=\s*"win32\/latest\/\$\(\$installer\.Name\)"/);
@@ -92,7 +92,7 @@ test('Supabase legacy chunk upload verification uses server-safe API-key headers
 });
 
 test('production publishing is manual-only, main-only, and explicitly confirmed', () => {
-  const triggerBlock = releaseWorkflow.match(/^on:\n([\s\S]*?)\n\nconcurrency:/m)?.[1] ?? '';
+  const triggerBlock = releaseWorkflow.match(/^on:\r?\n([\s\S]*?)\r?\n\r?\nconcurrency:/m)?.[1] ?? '';
   assert.match(triggerBlock, /^\s+workflow_dispatch:/m);
   assert.doesNotMatch(triggerBlock, /^\s+(?:push|create):/m);
   assert.match(releaseWorkflow, /RELEASE_REF:\s*\$\{\{\s*github\.ref\s*\}\}/);
@@ -102,4 +102,14 @@ test('production publishing is manual-only, main-only, and explicitly confirmed'
   assert.match(releaseWorkflow, /if \(-not \$isMain\)[\s\S]*?throw "Production Windows releases may only run from main/);
   assert.match(releaseWorkflow, /if \(\$env:RELEASE_CONFIRMED -ne 'True' -and \$env:RELEASE_CONFIRMED -ne 'true'\)/);
   assert.doesNotMatch(releaseWorkflow, /nexfix-production-recovery-2026-11-13|nexfix-production-release-2026-11-13/);
+});
+
+
+test('public repository Windows QA never uploads downloadable EXE artifacts', () => {
+  assert.match(qaWorkflow, /permissions:\s*\n\s+contents:\s*read/);
+  assert.match(qaWorkflow, /github\.event\.repository\.private\s*!=\s*true/);
+  assert.match(qaWorkflow, /github\.event\.repository\.private\s*==\s*true/);
+  assert.match(qaWorkflow, /actions\/upload-artifact@/);
+  assert.doesNotMatch(qaWorkflow, /secrets\.|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(qaWorkflow, /aws s3api (?:put-object|delete-object)|storage\/v1\/object\/upload/);
 });
