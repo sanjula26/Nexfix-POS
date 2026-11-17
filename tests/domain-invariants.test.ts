@@ -84,6 +84,46 @@ test('credit payment allocation is FIFO and never exceeds invoice balance', () =
   ]);
 });
 
+test('credit FIFO allocation excludes other customers and non-completed invoices and honors prior partial settlements', () => {
+  const sales = [
+    { id: 'sale-old', billNo: 'B-001', customerId: 'customer-1', total: 100, amountPaid: 0, date: '2026-01-01T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-other-customer', billNo: 'B-002', customerId: 'customer-2', total: 900, amountPaid: 0, date: '2026-01-02T10:00:00.000Z', status: 'completed' },
+    { id: 'sale-pending', billNo: 'B-003', customerId: 'customer-1', total: 800, amountPaid: 0, date: '2026-01-03T10:00:00.000Z', status: 'pending' },
+    { id: 'sale-next', billNo: 'B-004', customerId: 'customer-1', total: 200, amountPaid: 0, date: '2026-01-04T10:00:00.000Z', status: 'completed' },
+  ];
+  const priorPayments = [{
+    id: 'prior-payment',
+    customerId: 'customer-1',
+    amount: 40,
+    method: 'cash',
+    date: '2026-01-05T10:00:00.000Z',
+    by: 'cashier-1',
+    allocations: [{ saleId: 'sale-old', billNo: 'B-001', amount: 40 }],
+  }];
+
+  assert.deepEqual(allocateCreditPaymentFIFO('customer-1', 120, sales, priorPayments), [
+    { saleId: 'sale-old', billNo: 'B-001', amount: 60 },
+    { saleId: 'sale-next', billNo: 'B-004', amount: 60 },
+  ]);
+});
+
+test('credit settlement sync fingerprint changes when branch attribution changes', () => {
+  const customer = [{ id: 'customer-1', name: 'Customer 1', phone: '0771234567', creditBalance: 900 }];
+  const payment = {
+    id: 'credit-payment-1',
+    customerId: 'customer-1',
+    cashierId: 'cashier-1',
+    amount: 100,
+    method: 'cash',
+    date: '2026-11-17T05:00:00.000Z',
+    branchId: 'branch-a',
+    by: 'Cashier',
+  };
+  const branchA = buildCreditSettlementSyncFingerprint(customer, [payment]);
+  const branchB = buildCreditSettlementSyncFingerprint(customer, [{ ...payment, branchId: 'branch-b' }]);
+  assert.notEqual(branchA, branchB);
+});
+
 test('inventory transaction builder rejects zero quantities and invalid dates', () => {
   const base = {
     id: 'tx-1',
