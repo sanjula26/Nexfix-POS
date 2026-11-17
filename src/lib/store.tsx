@@ -523,7 +523,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
-  }, [state, ready, markStorageStatus]);
+  }, [state, ready, storageStatus, markStorageStatus]);
 
   // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
   useEffect(() => {
