@@ -107,3 +107,26 @@ Unknown or unclassified data must not be exposed to branch-only users by default
 - pos_state_snapshots has a member SELECT policy keyed to shop membership. Because the snapshot is one row per shop, this is a direct cross-branch disclosure risk if non-admin branch users can read it.
 - Some child table policies correctly traverse to a parent row, but the parent predicate is still shop-membership based. Parent traversal alone does not enforce branch isolation.
 - These findings are based on schema metadata and pg_policies inspection only; no application queries were run as a different employee identity and no production records were read or changed.
+
+
+## Claude review cross-check (2026-11-17)
+
+The two supplied static review reports were cross-checked against the current `main` source and the branch-isolation audit. They are useful risk inventories, not runtime verification; both reports explicitly state that they did not run the live POS, production Supabase workflows, device/printer tests, or penetration tests.
+
+### Findings confirmed or still open
+- Large-file maintainability concern remains valid: `src/lib/store.tsx` is about 235 KB in the current main snapshot; `src/pages/POS.tsx`, `src/pages/Settings.tsx`, and `src/lib/cloudSync.ts` are also substantial. Continue with characterization tests and small extractions, not a rewrite.
+- Offline queue, crash recovery, concurrent checkout, duplicate replay, and restore failure scenarios still need runtime/integration coverage.
+- Backup existence is not proof of restore readiness. Wrong-shop, partial, corrupted, old-version, interrupted, duplicate, and large-backup restore scenarios remain release gates.
+- Role/permission checks must be tested through direct PostgREST/RPC calls, not only UI visibility.
+- Branch-level access remains a confirmed separate gap from shop-level tenant isolation; this plan and Issue #259 track it.
+
+### Corrections against the 2026-11-12 report snapshot
+- The report says no unit-test script/test runner was observed. Current `package.json` has `test` (Node test runner with TypeScript stripping) and `test:domain`; CI runs `npm test`, `npm run verify:boundaries`, typecheck, lint, and production build. Existing tests include IndexedDB queue/checkpoint persistence, credit allocation, supplier ledger, opening-float behavior, and branch-stock cache invariants. This is meaningful progress, but it is not yet full UI/E2E or live Supabase integration coverage.
+- The report cites Vite 7.3.1 and an open update to 7.3.7. Current `main/package.json` declares Vite `^7.3.7`; verify the lockfile and advisory status in the release audit rather than treating that old finding as current.
+- The report describes the fallback as if it lives in `src/lib/db.ts`. Current `db.ts:idbLoadState()` returns `null` on IndexedDB read/open failure instead of returning a seed. However, `src/lib/store.tsx` still handles a null boot result by loading localStorage or `buildSeed()`, setting that state, and attempting an IndexedDB save. This remaining boot-path behaviour needs a focused fail-closed/read-only UX review; do not claim the whole storage fallback risk is resolved.
+- The current snapshot sanitizer removes local users, sessions, device-local branch selection and admin PIN hash, but otherwise serializes the POS state. A single shop-wide snapshot remains incompatible with branch-private state until the server-side read/write model is redesigned.
+
+### Current CI evidence for this documentation PR
+- PR #263 `source-security`: completed successfully.
+- PR #263 `verify`: completed successfully.
+- These are CI checks for this documentation-only change; they do not prove branch RLS isolation or runtime business correctness.
