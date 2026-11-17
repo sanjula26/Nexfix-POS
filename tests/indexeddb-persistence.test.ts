@@ -115,3 +115,21 @@ test('IndexedDB queue read failures are surfaced instead of treated as an empty 
     IDBDatabase.prototype.transaction = originalTransaction;
   }
 });
+
+
+test('IndexedDB state read failures return null instead of being treated as an empty shop', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?state-read-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'app_state' && args[1] === 'readonly') {
+      throw new DOMException('Injected state read failure', 'InvalidStateError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    assert.equal(await reopenedDb.idbLoadState(), null);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
