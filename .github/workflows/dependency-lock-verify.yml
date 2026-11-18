@@ -48,8 +48,13 @@ jobs:
         run: npm run build
       - name: Development dependency audit report
         id: development-audit
+        timeout-minutes: 2
         continue-on-error: true
         run: npm audit --audit-level=high --json > npm-audit-all.json
+      - name: Capture picomatch dependency tree
+        if: always()
+        continue-on-error: true
+        run: npm ls picomatch --all --json > npm-picomatch-tree.json
       - name: Publish audit outcome
         if: always()
         env:
@@ -64,4 +69,5 @@ jobs:
           path: |
             package-lock.json
             npm-audit-all.json
+            npm-picomatch-tree.json
           if-no-files-found: warn
