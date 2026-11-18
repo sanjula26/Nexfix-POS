@@ -3502,9 +3502,16 @@ const deletePurchase = useCallback((id: string) => {
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
       if (activeSession) setSession(activeSession);
-    } catch {
-      // A refresh failure must leave the authenticated POS session untouched.
-      setState(current);
+    } catch (error) {
+      // A thrown IndexedDB read/write error is just as unsafe as a null result.
+      // Lock mutations immediately; keep the current in-memory state/session
+      // visible for reconciliation instead of allowing another write attempt.
+      markStorageStatus(
+        'degraded',
+        error instanceof Error
+          ? `POS refresh failed while accessing IndexedDB: ${error.message}. Existing local data has been kept untouched; editing and sales are locked until storage is healthy.`
+          : 'POS refresh failed while accessing IndexedDB. Existing local data has been kept untouched; editing and sales are locked until storage is healthy.',
+      );
       if (activeSession) setSession(activeSession);
     }
   }, [ready, session, markStorageStatus]);
