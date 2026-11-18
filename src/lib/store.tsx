@@ -343,12 +343,15 @@ async function persistState(state: POSState): Promise<boolean> {
       // records are confirmed durable in IndexedDB. Clearing them immediately
       // after a cloud commit leaves a crash window for duplicate transactions.
       for (const sale of state.sales) {
-        if (sale.status === 'refunded' || (sale.refunds || []).length > 0) {
-          localStorage.removeItem('nexfix_pending_refund_v1:' + sale.id);
+        const key = 'nexfix_pending_refund_v1:' + sale.id;
+        const pendingReturnId = localStorage.getItem(key);
+        if (pendingReturnId && (sale.status === 'refunded' || (sale.refunds || []).some(refund => refund.id === pendingReturnId))) {
+          localStorage.removeItem(key);
         }
       }
       for (const purchaseReturn of state.purchaseReturns || []) {
-        localStorage.removeItem('nexfix_pending_purchase_return_v1:' + purchaseReturn.purchaseId);
+        const key = 'nexfix_pending_purchase_return_v1:' + purchaseReturn.purchaseId;
+        if (localStorage.getItem(key) === purchaseReturn.id) localStorage.removeItem(key);
       }
     } catch { /* ignore malformed/stale marker */ }
   } else {
@@ -2390,7 +2393,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const refundCreditAmount = Math.min(refundCreditDue, refundValue);
     const refundCashAmount = Math.max(0, Math.round((refundValue - refundCreditAmount) * 100) / 100);
     const refundEvent = {
-      id: uid(),
+      // Reuse the cloud/queue idempotency key so durable local reconciliation
+      // can clear only the matching pending marker, not a newer retry.
+      id: returnId || uid(),
       date: new Date().toISOString(),
       amount: Math.round(refundValue * 100) / 100,
       cashAmount: refundCashAmount,
