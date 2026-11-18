@@ -208,3 +208,23 @@ A filename/content review of the current `main` migration history was used to se
 
 ### Implementation consequence
 Do not start by adding a UI branch filter or by reusing `pos_device_branches` as if it were a staff membership table. The next safe database design step is to specify the member-grant identity, grant lifecycle/revocation, owner/admin all-branch privilege and same-cloud-user/multiple-device semantics, then test it on a complete isolated staging schema. The shared customer/credit, supplier/cost, quotation and warranty decisions remain separate owner decisions. No migration, RLS policy, grant, production data or environment was changed by this cross-check.
+
+
+
+## Owner Web RPC and aggregate scope cross-check (2026-11-18)
+
+The current `main` migration source was inspected for the Owner Web reporting functions. These are additional, concrete cases where a branch selector is not an authorization boundary.
+
+- `20261009094114_owner_web_branch_reporting.sql` defines `get_owner_branch_daily_sales(p_shop_id, p_from, p_to, p_branch_id default null)` and `get_owner_branch_stock_valuation(p_shop_id, p_branch_id default null)` as `SECURITY INVOKER`. Both check active shop membership and validate that a supplied branch belongs to the shop and is active. Neither checks that the caller is an owner/admin or has an explicit grant to the requested branch. When `p_branch_id` is null, the function intentionally returns all branches in the shop. With shop-member RLS still in place, a branch-only member can potentially request another branch or omit the filter.
+- `20261009095808_owner_web_operational_read_views.sql` defines `get_owner_credit_customers(p_shop_id)` as `SECURITY INVOKER`, checks only active shop membership, has no branch argument, and aggregates customer credit against completed sales across the shop. It is therefore explicitly shop-wide and must not be exposed to branch-only users until the owner decides whether customer/credit data is shared or branch-private and the server-side scope is implemented.
+- The branch model migration comments that `owner_daily_sales` remains a shop-level aggregate for Owner Web Phase 1 compatibility; its member SELECT policy is also shop-scoped. It cannot be treated as a branch-private report source without a separate branch-aware aggregate and authorization contract.
+- The device-to-branch assignment table's own SELECT policy is shop-member based. That can reveal device-to-branch mapping to shop members; review whether that mapping itself is confidential, but do not confuse this with granting the member access to operational records.
+
+### Required follow-up before enabling branch-only Owner Web access
+
+1. Put an explicit owner/admin-or-member-branch-grant check inside each Owner Web RPC. A supplied `p_branch_id` must be checked against the caller's grant; null/all-branch mode must require explicit owner/admin privilege.
+2. Either keep customer credit and the legacy shop-wide aggregate behind an owner/admin-only boundary, or obtain an explicit product decision and implement branch attribution/reconciliation before granting branch-only access.
+3. Test each RPC directly under Branch A and Branch B cloud identities, including omitted/null branch arguments, forged foreign branch IDs, inactive grants, revoked membership, and owner all-branch access.
+4. Review all underlying table RLS policies and view/function grants as well; `SECURITY INVOKER` alone does not make a shop-member policy branch-aware.
+
+This is a source/migration review, not a live impersonation test. No database, RLS, grants, production rows or application behavior were changed.
