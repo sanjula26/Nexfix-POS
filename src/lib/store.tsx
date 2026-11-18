@@ -2299,7 +2299,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(pendingRefundKey, returnId);
         }
       } catch {
-        returnId = crypto.randomUUID();      }
+        pushAudit('DENIED', 'Sale', 'Cloud refund blocked: the retry/idempotency key could not be read or saved locally. Check the refund status before retrying.');
+        return false;
+      }
     }
 
     const returnLines = remainingItems.map(({ it, qty }) => {
@@ -2851,7 +2853,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             localStorage.setItem(returnKey, returnId);
           }
         } catch {
-          returnId = uid();
+          pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: the retry/idempotency key could not be read or saved locally. Check the return status before retrying.');
+          return null;
         }
       } else {
         returnId = uid();
