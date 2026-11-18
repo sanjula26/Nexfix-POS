@@ -54,7 +54,8 @@ jobs:
         if: always()
         env:
           DEVELOPMENT_AUDIT_OUTCOME: ${{ steps.development-audit.outcome }}
-        run: echo "Development dependency audit outcome: $DEVELOPMENT_AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Development dependency audit outcome: $DEVELOPMENT_AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload generated lockfile and development audit report
         if: always()
         uses: actions/upload-artifact@v7.0.2
