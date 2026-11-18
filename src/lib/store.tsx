@@ -339,6 +339,17 @@ async function persistState(state: POSState): Promise<boolean> {
           localStorage.removeItem(pendingKey);
         }
       }
+      // Refund/return retry keys are cleared only after the resulting local
+      // records are confirmed durable in IndexedDB. Clearing them immediately
+      // after a cloud commit leaves a crash window for duplicate transactions.
+      for (const sale of state.sales) {
+        if (sale.status === 'refunded' || (sale.refunds || []).length > 0) {
+          localStorage.removeItem('nexfix_pending_refund_v1:' + sale.id);
+        }
+      }
+      for (const purchaseReturn of state.purchaseReturns || []) {
+        localStorage.removeItem('nexfix_pending_purchase_return_v1:' + purchaseReturn.purchaseId);
+      }
     } catch { /* ignore malformed/stale marker */ }
   } else {
     // The POS can boot from its legacy cache when IndexedDB is unavailable,
@@ -2351,7 +2362,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
         return false;
       }
-      try { localStorage.removeItem(pendingRefundKey); } catch { /* ignore */ }
+      // Keep the retry key until persistState confirms the local refund is
+      // durable in IndexedDB. A crash before that save must reuse this ID.
     }
 
     // Offline cloud-enabled refunds are queued as a normalized atomic return
@@ -2965,9 +2977,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       if (!applied) return null;
 
-      if (cloudEnabled) {
-        try { localStorage.removeItem(returnKey); } catch (error) { void error; }
-      }
+      // Keep the cloud return key until persistState confirms this return
+      // is durable in IndexedDB, so a crash cannot create a second return ID.
       pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
       return ret;
     } finally {
