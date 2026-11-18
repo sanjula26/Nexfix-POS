@@ -12,6 +12,7 @@ import {
   idbLoadState,
   idbReadState,
   idbHasPriorUseEvidence,
+  idbInitializeStateIfAbsent,
   idbSetMeta,
   idbSaveRestoreCheckpoint,
   idbSaveState,
@@ -54,6 +55,32 @@ test('IndexedDB read-only state probe distinguishes an empty store from a read f
   await clearStore('meta');
   assert.equal(await idbReadState(), undefined);
   assert.equal(await idbHasPriorUseEvidence(), false);
+});
+
+test('concurrent first-run initialization never overwrites a state created by another window', async () => {
+  await clearAuthoritativeStateRow();
+  const first = await idbLoadState();
+  assert.ok(first, 'test database should initialize a valid state');
+  await clearAuthoritativeStateRow();
+
+  const firstCandidate = {
+    ...first,
+    counters: { ...first.counters, bill: 111 },
+  };
+  const secondCandidate = {
+    ...first,
+    counters: { ...first.counters, bill: 222 },
+  };
+  const [firstResult, secondResult] = await Promise.all([
+    idbInitializeStateIfAbsent(firstCandidate),
+    idbInitializeStateIfAbsent(secondCandidate),
+  ]);
+  const persisted = await idbReadState();
+  assert.ok(persisted);
+  assert.deepEqual(firstResult, persisted);
+  assert.deepEqual(secondResult, persisted);
+  assert.ok(persisted.counters.bill === 111 || persisted.counters.bill === 222);
+  await clearAuthoritativeStateRow();
 });
 
 test('IndexedDB prior-use probe detects queue, restore checkpoint and backup metadata', async () => {
