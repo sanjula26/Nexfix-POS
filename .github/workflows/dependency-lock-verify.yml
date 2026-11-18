@@ -29,7 +29,9 @@ jobs:
       - name: Regenerate lockfile with npm
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Apply semver-compatible audit fixes without force
-        run: npm audit fix --package-lock-only --ignore-scripts --no-fund
+        id: audit-fix
+        continue-on-error: true
+        run: timeout 120s npm audit fix --package-lock-only --ignore-scripts --no-fund
       - name: Verify clean install
         run: npm ci --no-audit --no-fund
       - name: Production dependency audit
@@ -46,9 +48,8 @@ jobs:
         run: npm run build
       - name: Development dependency audit report
         id: development-audit
-        timeout-minutes: 2
         continue-on-error: true
-        run: npm audit --audit-level=high --json > npm-audit-all.json
+        run: timeout 120s npm audit --audit-level=high --json > npm-audit-all.json
       - name: Capture picomatch dependency tree
         if: always()
         continue-on-error: true
@@ -57,7 +58,9 @@ jobs:
         if: always()
         env:
           DEVELOPMENT_AUDIT_OUTCOME: ${{ steps.development-audit.outcome }}
+          AUDIT_FIX_OUTCOME: ${{ steps.audit-fix.outcome }}
         run: |
+          echo "Semver-only audit fix outcome: $AUDIT_FIX_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
           echo "Development dependency audit outcome: $DEVELOPMENT_AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       - name: Commit generated lockfile to the isolated feature branch
         if: github.ref == 'refs/heads/fix/build-tools-dev-deps-20261118'
@@ -69,6 +72,8 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add package-lock.json
             git commit -m "build: regenerate lockfile after moving Tailwind tooling to dev"
+            git fetch origin refs/heads/fix/build-tools-dev-deps-20261118:refs/remotes/origin/fix/build-tools-dev-deps-20261118
+            git rebase refs/remotes/origin/fix/build-tools-dev-deps-20261118
             AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
             git -c "http.extraheader=AUTHORIZATION: basic $AUTH_HEADER" push origin HEAD:refs/heads/fix/build-tools-dev-deps-20261118
           else
