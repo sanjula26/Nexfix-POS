@@ -4126,6 +4126,9 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
+    // Manual queue flush is also a cloud write path; keep it disabled whenever
+    // local IndexedDB is not verified healthy, just like automatic reconnect.
+    if (!canMutatePOSState(storageStatusRef.current)) return 0;
     const { flushed, pending } = await flushSyncQueue();
     setPendingQueueCount(pending);
     if (flushed > 0) pushAudit('SYNC', 'Offline', `Flushed ${flushed} queued write(s)`);
