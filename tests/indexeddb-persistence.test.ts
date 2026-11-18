@@ -10,6 +10,7 @@ import {
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
+  idbReadState,
   idbSaveRestoreCheckpoint,
   idbSaveState,
 } from '../src/lib/db.ts';
@@ -23,6 +24,27 @@ before(async () => {
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+});
+
+async function clearAuthoritativeStateRow(): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('nexfix_pos_db', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('app_state', 'readwrite');
+    tx.objectStore('app_state').clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Could not clear test state'));
+    tx.onabort = () => reject(tx.error || new Error('Test state clear aborted'));
+  });
+  db.close();
+}
+
+test('IndexedDB read-only state probe distinguishes an empty store from a read failure', async () => {
+  await clearAuthoritativeStateRow();
+  assert.equal(await idbReadState(), undefined);
 });
 
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
