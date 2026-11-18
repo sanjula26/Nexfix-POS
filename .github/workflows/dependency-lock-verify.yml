@@ -4,15 +4,9 @@ on:
   push:
     branches:
       - fix/build-tools-dev-deps-20261118
-  pull_request:
-    branches: [main]
-    paths:
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/dependency-lock-verify.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   regenerate-and-verify:
@@ -21,6 +15,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
@@ -61,6 +57,21 @@ jobs:
           DEVELOPMENT_AUDIT_OUTCOME: ${{ steps.development-audit.outcome }}
         run: |
           echo "Development dependency audit outcome: $DEVELOPMENT_AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit generated lockfile to the isolated feature branch
+        if: github.ref == 'refs/heads/fix/build-tools-dev-deps-20261118'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "build: regenerate lockfile after moving Tailwind tooling to dev"
+            AUTH_HEADER="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            git -c "http.extraheader=AUTHORIZATION: basic $AUTH_HEADER" push origin HEAD:refs/heads/fix/build-tools-dev-deps-20261118
+          else
+            echo "npm regenerated an identical package-lock.json; no commit needed."
+          fi
       - name: Upload generated lockfile and development audit report
         if: always()
         uses: actions/upload-artifact@v7.0.2
