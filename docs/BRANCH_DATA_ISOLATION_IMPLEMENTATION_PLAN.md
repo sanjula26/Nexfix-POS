@@ -228,3 +228,39 @@ The current `main` migration source was inspected for the Owner Web reporting fu
 4. Review all underlying table RLS policies and view/function grants as well; `SECURITY INVOKER` alone does not make a shop-member policy branch-aware.
 
 This is a source/migration review, not a live impersonation test. No database, RLS, grants, production rows or application behavior were changed.
+
+
+## Follow-up source audit — table policies and cross-branch RPCs (2026-11-18)
+
+This section is a source-level migration review against current `main`, not a new production query or an identity-impersonation test. It complements the production policy observations above.
+
+### Effective policy scope still stops at shop membership
+
+- Branch-keyed operational tables — `sales`, `purchases`, `day_sessions`, `expenses`, `inventory_units`, `branch_stock`, and `branch_stock_adjustments` — have read policies using `private.is_shop_member(shop_id)` (or the equivalent membership helper). Their `branch_id` does not narrow SELECT visibility to the caller's assigned branch.
+- Branch model tables — `branches`, `pos_device_branches`, `stock_transfers`, and `stock_transfer_lines` — also allow shop-member reads. Device assignment is therefore not itself a private employee-to-branch grant.
+- Child rows inherit the same gap through their parent: `sale_items` and `sale_payments` authorize through `sales.shop_id`; `purchase_items` through `purchases.shop_id`; `repair_parts` through `repairs.shop_id`; and `quotation_items` through `quotations.shop_id`. Parent traversal is structurally useful but currently enforces shop, not branch.
+- The hardening migrations narrow some writes to admin/manager while retaining shop-member reads. This improves mutation control but does not provide branch confidentiality.
+- `audit_log` and `owner_daily_sales` are also shop-member readable. Treat their contents as shop-wide until a branch-aware policy or owner-only boundary is implemented.
+
+### Tables without a reliable branch key
+
+- `customers`, `repairs`, `warranty_claims`, and `quotations` have no direct branch key in the inspected schema. Their current membership-based policies cannot safely hide another branch's records.
+- `suppliers` are shop-wide; the hardened policy permits shop-member reads while restricting writes. If supplier identity, purchase price, or terms are private between branches, split shared supplier identity from branch-specific supplier terms/cost data rather than applying an arbitrary UI filter.
+- `products` are shop-wide catalogue records and include `cost` as well as selling price. A future shared-catalogue policy must explicitly decide whether cost is owner/manager-only or branch-granted; do not assume product SELECT is harmless simply because SKU/name are shared.
+- `inventory_units` have a branch key but are currently shop-member readable; their IMEI/serial, purchase cost, warranty and sale linkage therefore need the same branch enforcement as stock quantities.
+
+### RPC paths requiring explicit branch authorization
+
+- `complete_stock_transfer` is a SECURITY DEFINER RPC executable by authenticated users. Its latest source definition checks active shop membership with role admin/manager, validates both branch IDs belong to the same shop and are active, and validates stock/IMEI movement. It does not check the caller's explicit grant to the source and destination branches or a registered device binding. Keep it owner/admin-only until both-end branch authorization is added; a manager should not gain cross-branch transfer power merely from the shop role.
+- `get_owner_branch_daily_sales` and `get_owner_branch_stock_valuation` check active shop membership and validate a supplied branch, but not owner/admin role or member branch grant; NULL requests all branches. Their SECURITY INVOKER setting is positive, but the current underlying shop-member SELECT policies still permit shop-wide data.
+- `get_owner_credit_customers` has no branch parameter and returns customer identifiers/contact details and shop-wide credit/open-invoice balances. Keep owner/admin-only until a deliberate customer/credit sharing model is approved and enforced in the database.
+- Device-bound sale, GRN, stock-adjustment and tracked-unit RPC wrappers check registered device identity and branch binding in multi-branch shops. They still do not intersect that binding with a per-member branch grant because no such grant layer exists yet. Do not treat device binding as employee authorization.
+- `set_pos_device_branch` checks the caller's shop role and that the target branch is active in the shop. Its source-level checks do not prove that the supplied device ID corresponds to a registered, non-revoked device; add this integrity check in a future staged change.
+
+### Snapshot and rollout cautions
+
+- The snapshot SELECT policy in the migration history still references legacy `pos_shop_members`. The device registration bridge creates/updates that compatibility membership from an active `shop_memberships` identity; the later snapshot hardening restricts snapshot writes to admin but does not itself replace the legacy SELECT policy. Keep snapshot reads admin-only until the deployed policy is verified and replaced safely. A previous production read-only inspection found zero snapshot rows; that is a latent access-path finding, not evidence of an observed disclosure.
+- Do not add a new permissive policy alongside an old broad policy: PostgreSQL permissive policies combine with OR. The eventual migration must drop/replace superseded policies and test the complete effective policy set.
+- Before rollout, test direct table SELECT/INSERT/UPDATE/DELETE and direct RPC invocation as Branch A, Branch B, unassigned member, revoked member, wrong device, reassigned device, and owner/admin. Include NULL/all-branch RPC calls, transfer source/destination combinations, parent/child row IDs, stale cache and offline replay.
+
+No SQL, production policy, grant, customer data, or application behavior was changed as part of this source audit.
