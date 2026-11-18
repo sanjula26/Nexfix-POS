@@ -55,21 +55,33 @@ function getDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-export async function idbLoadState():Promise<POSState|null>{
+/** Read the authoritative state without creating demo data when the row is absent.
+ * Returns undefined for a genuinely empty store and null when IndexedDB access fails.
+ */
+export async function idbReadState(): Promise<POSState | undefined | null> {
   try {
-    const db=await getDB();
-    const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
-    if (row?.value) return row.value;
+    const db = await getDB();
+    const row = await idbReq<{ key: string; value: POSState } | undefined>(
+      db.transaction(STORE_STATE, 'readonly').objectStore(STORE_STATE).get('main'),
+    );
+    return row?.value ?? undefined;
+  } catch {
+    return null;
+  }
+}
 
-    // Load the seed lazily so the IndexedDB persistence layer can be tested
-    // independently in Node without eagerly importing browser-only seed code.
+export async function idbLoadState(): Promise<POSState | null> {
+  const stored = await idbReadState();
+  if (stored !== undefined) return stored;
+
+  // Only callers that have established this is a genuine first run should
+  // request seed initialization. Existing shops must use the read-only probe.
+  try {
     const { buildSeed } = await import('./seed');
     const seed = buildSeed();
     const saved = await idbSaveState(seed);
     return saved ? seed : null;
   } catch {
-    // Let callers choose an explicit localStorage fallback. Returning a seed
-    // here could make a storage failure look like an empty, safe shop dataset.
     return null;
   }
 }
