@@ -31,7 +31,7 @@ jobs:
       - name: Apply semver-compatible audit fixes without force
         id: audit-fix
         continue-on-error: true
-        run: timeout 120s npm audit fix --package-lock-only --ignore-scripts --no-fund
+        run: timeout 240s npm audit fix --package-lock-only --ignore-scripts --no-fund
       - name: Verify clean install
         run: npm ci --no-audit --no-fund
       - name: Production dependency audit
