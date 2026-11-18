@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbReadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { canMutatePOSState, type POSStorageStatus } from './storageHealth';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -306,6 +306,18 @@ function loadState(): POSState {
   return loadStateFromLocalStorage() || buildSeed();
 }
 
+/** Any old local cache is evidence that this browser may contain an existing shop.
+ * If the authoritative IndexedDB row is missing, do not silently start with demo seed.
+ */
+function hasLegacyLocalState(): boolean {
+  try {
+    return localStorage.getItem(STORE_KEY) !== null || localStorage.getItem(STORE_KEY_V1) !== null;
+  } catch {
+    // If we cannot inspect the legacy cache, choose recovery/lockout over seed initialization.
+    return true;
+  }
+}
+
 /** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
 async function persistState(state: POSState): Promise<boolean> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
@@ -438,14 +450,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } else {
         let bootError = '';
         try {
-          const fromIdb = await idbLoadState();
+          const storedState = await idbReadState();
           if (cancelled) return;
-          if (!fromIdb) {
-            // A null result can mean an open/read/initial-seed write failure.
-            // Never overwrite an unknown existing database with localStorage or seed data.
-            bootError = 'IndexedDB could not be read or initialized. Existing local data has been kept untouched; POS editing and sales are locked to prevent data loss.';
+          let fromIdb: POSState | null = null;
+          if (storedState === null) {
+            bootError = 'IndexedDB could not be read. Existing local data has been kept untouched; POS editing and sales are locked to prevent data loss.';
+          } else if (storedState === undefined && hasLegacyLocalState()) {
+            // An empty authoritative store plus any legacy cache is not a safe first run.
+            // Do not replace a potentially existing shop with demo seed data.
+            bootError = 'IndexedDB has no saved POS state, but a legacy local POS cache exists. The POS is locked to protect your shop data; use a verified backup recovery before continuing.';
+          } else if (storedState === undefined) {
+            // Seed is allowed only when IndexedDB is empty and no legacy shop cache exists.
+            fromIdb = await idbLoadState();
+            if (!fromIdb) bootError = 'IndexedDB could not be initialized. POS editing and sales remain locked.';
           } else {
-            // idbLoadState initializes the seed only when the database is genuinely empty.
+            fromIdb = storedState;
+          }
+          if (fromIdb) {
             let hydrated = migrate(fromIdb);
             const local = loadStateFromLocalStorage();
             if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
@@ -3497,11 +3518,11 @@ const deletePurchase = useCallback((id: string) => {
         markStorageStatus('unavailable', 'IndexedDB became unavailable during POS refresh. Existing local data has been kept untouched; editing and sales are locked.');
         return;
       }
-      const fromIdb = await idbLoadState();
+      const fromIdb = await idbReadState();
       if (!fromIdb) {
-        // A failed read is not an empty shop. Never replace the current state
-        // with localStorage or seed data after an IndexedDB read failure.
-        markStorageStatus('degraded', 'IndexedDB could not be read during POS refresh. Existing local data has been kept untouched; editing and sales are locked.');
+        // A missing authoritative row is not a first-run opportunity during refresh.
+        // Never replace the current state with a seed or legacy cache.
+        markStorageStatus('degraded', 'IndexedDB has no readable saved POS state during refresh. Existing in-memory data has been kept untouched; editing and sales are locked.');
         return;
       }
       let refreshed = migrate(fromIdb);
