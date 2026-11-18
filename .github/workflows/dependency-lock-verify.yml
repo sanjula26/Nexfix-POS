@@ -28,6 +28,8 @@ jobs:
           npm --version
       - name: Regenerate lockfile with npm
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Apply semver-compatible audit fixes without force
+        run: npm audit fix --package-lock-only --ignore-scripts --no-fund
       - name: Verify clean install
         run: npm ci --no-audit --no-fund
       - name: Production dependency audit
