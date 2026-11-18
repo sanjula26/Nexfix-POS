@@ -47,6 +47,24 @@ test('IndexedDB read-only state probe distinguishes an empty store from a read f
   assert.equal(await idbReadState(), undefined);
 });
 
+test('IndexedDB read-only state probe rejects a malformed authoritative row', async () => {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('nexfix_pos_db', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('app_state', 'readwrite');
+    tx.objectStore('app_state').put({ key: 'main' });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Could not write malformed test row'));
+    tx.onabort = () => reject(tx.error || new Error('Malformed test row write aborted'));
+  });
+  db.close();
+  assert.equal(await idbReadState(), null);
+  await clearAuthoritativeStateRow();
+});
+
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
   assert.equal(await idbEnqueue({
     type: 'state_write',
