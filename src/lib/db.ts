@@ -92,6 +92,33 @@ export async function idbHasPriorUseEvidence(): Promise<boolean | null> {
   }
 }
 
+/** Atomically create the initial main row without overwriting a concurrent restore.
+ * All readwrite transactions for this object store are serialized by IndexedDB.
+ */
+export async function idbInitializeStateIfAbsent(state: POSState): Promise<POSState | null> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_STATE, 'readwrite');
+    const completed = idbTransactionComplete(tx, 'Initial POS state creation failed');
+    const store = tx.objectStore(STORE_STATE);
+    const existing = await idbReq<{ key: string; value: unknown } | undefined>(store.get('main'));
+    if (existing) {
+      await completed;
+      return existing.value && typeof existing.value === 'object' && !Array.isArray(existing.value)
+        ? existing.value as POSState
+        : null;
+    }
+    store.add({ key: 'main', value: state, updatedAt: new Date().toISOString() });
+    await completed;
+    return state;
+  } catch {
+    // If another window completed initialization, return its committed state.
+    // Never fall back to put(), which could overwrite that state.
+    const latest = await idbReadState();
+    return latest && latest !== undefined ? latest : null;
+  }
+}
+
 export async function idbLoadState(): Promise<POSState | null> {
   const stored = await idbReadState();
   if (stored !== undefined) return stored;
@@ -100,9 +127,7 @@ export async function idbLoadState(): Promise<POSState | null> {
   // request seed initialization. Existing shops must use the read-only probe.
   try {
     const { buildSeed } = await import('./seed');
-    const seed = buildSeed();
-    const saved = await idbSaveState(seed);
-    return saved ? seed : null;
+    return await idbInitializeStateIfAbsent(buildSeed());
   } catch {
     return null;
   }
