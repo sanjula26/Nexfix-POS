@@ -79,12 +79,13 @@ export async function idbHasPriorUseEvidence(): Promise<boolean | null> {
   try {
     const db = await getDB();
     const tx = db.transaction([STORE_STATE, STORE_QUEUE, STORE_META], 'readonly');
+    const completed = idbTransactionComplete(tx, 'Could not verify IndexedDB prior-use evidence');
     const [stateCount, queueCount, metaCount] = await Promise.all([
       idbReq(tx.objectStore(STORE_STATE).count()),
       idbReq(tx.objectStore(STORE_QUEUE).count()),
       idbReq(tx.objectStore(STORE_META).count()),
+      completed,
     ]);
-    await idbTransactionComplete(tx, 'Could not verify IndexedDB prior-use evidence');
     return stateCount > 0 || queueCount > 0 || metaCount > 0;
   } catch {
     return null;
