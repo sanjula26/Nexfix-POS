@@ -11,6 +11,8 @@ import {
   idbLoadRestoreCheckpoint,
   idbLoadState,
   idbReadState,
+  idbHasPriorUseEvidence,
+  idbSetMeta,
   idbSaveRestoreCheckpoint,
   idbSaveState,
 } from '../src/lib/db.ts';
@@ -26,25 +28,57 @@ after(async () => {
   await idbClearRestoreCheckpoint();
 });
 
-async function clearAuthoritativeStateRow(): Promise<void> {
+async function clearStore(storeName: string): Promise<void> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('nexfix_pos_db', 1);
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
   });
   await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('app_state', 'readwrite');
-    tx.objectStore('app_state').clear();
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).clear();
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('Could not clear test state'));
-    tx.onabort = () => reject(tx.error || new Error('Test state clear aborted'));
+    tx.onerror = () => reject(tx.error || new Error(`Could not clear test store: ${storeName}`));
+    tx.onabort = () => reject(tx.error || new Error(`Test store clear aborted: ${storeName}`));
   });
   db.close();
 }
 
+async function clearAuthoritativeStateRow(): Promise<void> {
+  await clearStore('app_state');
+}
+
 test('IndexedDB read-only state probe distinguishes an empty store from a read failure', async () => {
   await clearAuthoritativeStateRow();
+  await idbClearQueue();
+  await clearStore('meta');
   assert.equal(await idbReadState(), undefined);
+  assert.equal(await idbHasPriorUseEvidence(), false);
+});
+
+test('IndexedDB prior-use probe detects queue, restore checkpoint and backup metadata', async () => {
+  await clearAuthoritativeStateRow();
+  await idbClearQueue();
+  await clearStore('meta');
+  assert.equal(await idbHasPriorUseEvidence(), false);
+
+  assert.equal(await idbEnqueue({
+    type: 'state_write',
+    id: 'test-prior-use-queue',
+    ts: '2026-11-18T10:00:00.000Z',
+  }), true);
+  assert.equal(await idbHasPriorUseEvidence(), true);
+  await idbClearQueue();
+
+  const checkpoint = { counters: { bill: 20 } } as unknown as POSState;
+  assert.equal(await idbSaveRestoreCheckpoint(checkpoint), true);
+  assert.equal(await idbHasPriorUseEvidence(), true);
+  assert.equal(await idbClearRestoreCheckpoint(), true);
+
+  await idbSetMeta({ backupCount: 1 });
+  assert.equal(await idbHasPriorUseEvidence(), true);
+  await clearStore('meta');
+  assert.equal(await idbHasPriorUseEvidence(), false);
 });
 
 test('IndexedDB read-only state probe rejects a malformed authoritative row', async () => {
