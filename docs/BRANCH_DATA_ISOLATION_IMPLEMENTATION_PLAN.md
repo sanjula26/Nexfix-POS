@@ -264,3 +264,31 @@ This section is a source-level migration review against current `main`, not a ne
 - Before rollout, test direct table SELECT/INSERT/UPDATE/DELETE and direct RPC invocation as Branch A, Branch B, unassigned member, revoked member, wrong device, reassigned device, and owner/admin. Include NULL/all-branch RPC calls, transfer source/destination combinations, parent/child row IDs, stale cache and offline replay.
 
 No SQL, production policy, grant, customer data, or application behavior was changed as part of this source audit.
+
+
+## Follow-up source audit — offline replay and sale/repair workflows (2026-11-18)
+
+### Branch-sensitive mutation paths that currently rely on shop membership
+
+- The current `private.process_sale_return_atomic` SECURITY DEFINER implementation checks active shop membership and role (`admin`, `manager`, `cashier`), loads the sale by `shop_id + sale_id`, derives its `branch_id`, and restores stock to that sale branch. It does not verify the caller's branch grant or registered device branch. The public SECURITY INVOKER wrapper is executable by authenticated users. A branch-only cashier could therefore attempt a return against another branch's sale ID unless another layer blocks the request; the current source does not show that branch check.
+- `private.request_sale_reversal` likewise checks shop membership/role and sale existence/status, but not the sale branch against the caller's branch. Approval/rejection are admin-only, but a cashier/manager can create a pending request for another branch's sale.
+- `private.register_trade_in_atomic` checks shop membership/role and derives branch from the linked sale, but does not validate a registered device or caller branch grant. It must be included in the same branch authorization review as returns.
+- `private.process_purchase_return_atomic` does check active shop membership/role, registered device identity, and (in multi-branch shops) device binding against the original purchase branch. This is a useful control but still needs the member-grant intersection.
+- `private.process_repair_delivery_atomic` uses the currently assigned device branch for stock consumption because `repairs` has no durable branch column. That protects stock from arbitrary branch arguments but does not prove that the repair itself originated at the current branch. Do not expose repairs as branch-private until a durable, trustworthy branch attribution/backfill rule is designed.
+
+### Offline queue metadata and reassignment risk
+
+- The normalized `sale_create` queue payload stores `input.branchId`, but not the original device ID; replay uses the current `getMachineIdentity().id`. Server validation must reject stale or mismatched branch/device/session combinations. Do not silently reroute a queued sale after device reassignment.
+- `purchase_receive` stores the purchase payload (including its branch where present) and device ID. It still requires server-side member-grant + device-binding validation.
+- `return_create` stores sale ID and return lines only; `sale_reversal_request` stores sale ID/reason only. The server must derive the immutable branch from the parent sale and authorize the current actor/device against that branch at replay, not trust a client-supplied branch.
+- `repair_delivery` stores repair ID, repair payload and device ID, but no immutable branch ID or original branch attribution. Because the RPC uses the device's current branch, an offline repair queued on one branch and replayed after the device is reassigned could consume parts from the new branch while updating a branchless repair record. This is a data-attribution risk; fail closed until a durable repair branch and immutable queue metadata are implemented.
+- Snapshot sync remains a separate full-shop compatibility path. Branch-only users must not download or publish a shop-wide snapshot; normalized branch-scoped operations are the required path.
+
+### Required direct tests before enabling branch-only staff
+
+- Branch A cashier calls return/trade-in/reversal request using Branch B sale ID: must be denied by the database RPC.
+- Branch A device queues a sale/return/repair offline, then is reassigned to Branch B before replay: stale operations must be rejected and remain pending/quarantined, never be re-attributed.
+- Branch B technician attempts to deliver a Branch A repair: denied until repair branch ownership is represented and validated.
+- Branch A inventory manager attempts supplier return for Branch B GRN: denied even if the client sends a forged purchase ID/device/branch tuple.
+
+These are source-level authorization findings, not live exploit tests. No SQL, production policy, application code, queue behavior, or production data was changed.
