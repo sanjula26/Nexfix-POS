@@ -3454,10 +3454,26 @@ const deletePurchase = useCallback((id: string) => {
     const current = stateRef.current;
     const activeSession = session;
     try {
-      if (ready) await persistState(current);
+      if (ready) {
+        const saved = await persistState(current);
+        if (!saved) {
+          markStorageStatus('degraded', 'The current POS state could not be confirmed in IndexedDB before refresh. Editing and sales are locked; verify any recent sale before retrying.');
+          return;
+        }
+      }
 
-      const fromIdb = idbAvailable() ? await idbLoadState() : null;
-      let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
+      if (!idbAvailable()) {
+        markStorageStatus('unavailable', 'IndexedDB became unavailable during POS refresh. Existing local data has been kept untouched; editing and sales are locked.');
+        return;
+      }
+      const fromIdb = await idbLoadState();
+      if (!fromIdb) {
+        // A failed read is not an empty shop. Never replace the current state
+        // with localStorage or seed data after an IndexedDB read failure.
+        markStorageStatus('degraded', 'IndexedDB could not be read during POS refresh. Existing local data has been kept untouched; editing and sales are locked.');
+        return;
+      }
+      let refreshed = migrate(fromIdb);
 
       if (activeSession) {
         const currentUser = current.users.find(u => u.id === activeSession.userId);
@@ -3491,7 +3507,7 @@ const deletePurchase = useCallback((id: string) => {
       setState(current);
       if (activeSession) setSession(activeSession);
     }
-  }, [ready, session]);
+  }, [ready, session, markStorageStatus]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback(async (u: InventoryUnit): Promise<boolean> => {
