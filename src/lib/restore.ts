@@ -1,6 +1,6 @@
 import type { POSState } from './types';
-import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint } from './db';
-import { persistAndVerifyRestoredState } from './restorePersistence';
+import { idbClearRestoreCheckpoint, idbSaveRestoreCheckpoint } from './db';
+import { persistAndVerifyRestoredState, rollbackAndVerifyRestore } from './restorePersistence';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
 import { isCloudSafeBackup } from './driveSync';
 
@@ -32,17 +32,7 @@ export async function prepareRestore(current: POSState): Promise<void> {
 }
 
 export async function rollbackRestore(): Promise<boolean> {
-  try {
-    const checkpoint = await idbLoadRestoreCheckpoint();
-    if (!checkpoint) return false;
-    // Do not discard the only rollback copy until its restored main row has
-    // itself been read back and verified.
-    await persistAndVerifyRestoredState(checkpoint);
-    return idbClearRestoreCheckpoint();
-  } catch {
-    // Keep the checkpoint for manual recovery if rollback cannot be verified.
-    return false;
-  }
+  return rollbackAndVerifyRestore();
 }
 
 export async function restoreBackup(input: unknown): Promise<BackupEnvelope> {
