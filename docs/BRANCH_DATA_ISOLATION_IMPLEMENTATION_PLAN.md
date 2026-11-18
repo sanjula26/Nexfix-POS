@@ -186,3 +186,25 @@ The current Owner Web `App.tsx` data calls were enumerated from source. These ar
 - If IndexedDB is available but `idbLoadState()` returns null after an open/read error, the boot effect falls back to localStorage or seed and attempts `idbSaveState(local)` without checking the boolean result.
 - The debounced `persistState()` later emits `nexfix:storage-error` on a failed durable write, but the listener is mounted inside `POS.tsx`, not as a global write gate. This warning is not equivalent to preventing unsafe writes or disabling the checkout action.
 - No fix is included here because a safe change needs a provider-level storage status, a clearly defined read-only/degraded mode, and tests covering first-run empty database, legacy migration, IndexedDB unavailable, IndexedDB open failure, failed initial seed save, and failed later writes. A simplistic `ready=false` or seed removal could lock out existing shops or cause data-loss confusion.
+
+
+## Existing branch-migration enforcement cross-check (2026-11-18)
+
+A filename/content review of the current `main` migration history was used to separate controls that already exist from the missing employee-level authorization layer. This is a repository-source audit; it does not claim that every historical migration has been applied to every environment.
+
+### Controls already present in the migration source
+- `20261009080000_add_branch_model_and_backfill.sql` creates `branches` and `branch_stock`, adds `branch_id` to sales, expenses, day sessions, purchases and inventory units, and backfills the legacy single-branch rows to the default branch. It also creates a trigger that validates an active branch belongs to the same shop.
+- That migration's SELECT policies for `branches`, `branch_stock`, `stock_transfers` and `stock_transfer_lines` still use `private.is_shop_member(shop_id)`. These policies establish shop membership, not branch visibility.
+- `20261009083000_bind_pos_devices_to_branches.sql` creates `pos_device_branches` and an admin/manager-controlled device assignment RPC. Its branch-aware sale/GRN wrappers check the selected device binding when the shop has multiple active branches.
+- `20261014085952_restrict_direct_branch_transaction_rpc.sql` revokes direct authenticated execution of the lower-level sale/GRN SECURITY DEFINER implementations and leaves the device-bound wrapper entry points available.
+- `20261014091202_enforce_registered_device_branch_binding.sql` strengthens the device-bound transaction path by requiring a registered, non-revoked device belonging to the authenticated cloud user and matching the selected branch. Other branch stock/unit RPCs contain similar device registration/binding checks.
+- `20260923180000_harden_cloud_snapshot_admin_only.sql` retains an explicit shop-admin requirement for publishing the full-shop POS snapshot. This must remain separate from any branch-user read path.
+
+### Missing authorization layer — do not confuse device assignment with staff assignment
+- The reviewed migration inventory contains the device-to-branch table `pos_device_branches`, but no equivalent active cloud-member-to-branch grant table or helper was found in the branch-related migration set.
+- The branch transaction wrappers validate shop membership/role and device binding; they do not establish that the signed-in staff identity has an independently granted branch membership. A shared cloud identity therefore remains a shared authorization identity even when two devices have different branch bindings.
+- The branch-related RLS policies still need a complete current-policy inventory and branch-aware replacement. A device-bound mutation RPC does not make direct PostgREST SELECTs branch-private.
+- The existing owner reporting RPCs also need explicit owner/admin or branch-grant enforcement; a client-side branch selector is not authorization.
+
+### Implementation consequence
+Do not start by adding a UI branch filter or by reusing `pos_device_branches` as if it were a staff membership table. The next safe database design step is to specify the member-grant identity, grant lifecycle/revocation, owner/admin all-branch privilege and same-cloud-user/multiple-device semantics, then test it on a complete isolated staging schema. The shared customer/credit, supplier/cost, quotation and warranty decisions remain separate owner decisions. No migration, RLS policy, grant, production data or environment was changed by this cross-check.
