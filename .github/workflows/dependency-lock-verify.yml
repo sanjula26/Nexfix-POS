@@ -1,0 +1,60 @@
+name: Verify build-tool dependency classification
+
+on:
+  push:
+    branches:
+      - fix/build-tools-dev-deps-20261118
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate-and-verify:
+    runs-on: ubuntu-slim
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Record toolchain
+        run: |
+          node --version
+          npm --version
+      - name: Regenerate lockfile with npm
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify clean install
+        run: npm ci --no-audit --no-fund
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Full domain and boundary tests
+        run: |
+          npm run verify:boundaries
+          npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint -- --ignore-pattern 'apps/owner-web/**'
+      - name: Production build
+        run: npm run build
+      - name: Development dependency audit report
+        id: development-audit
+        continue-on-error: true
+        run: npm audit --audit-level=high --json > npm-audit-all.json
+      - name: Publish audit outcome
+        if: always()
+        env:
+          DEVELOPMENT_AUDIT_OUTCOME: ${{ steps.development-audit.outcome }}
+        run: echo "Development dependency audit outcome: $DEVELOPMENT_AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload generated lockfile and development audit report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build-tool-dependency-verification
+          path: |
+            package-lock.json
+            npm-audit-all.json
+          if-no-files-found: warn
