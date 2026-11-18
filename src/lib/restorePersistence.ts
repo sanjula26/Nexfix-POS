@@ -4,7 +4,7 @@ import {
   idbLoadRestoreCheckpoint,
   idbReadState,
   idbSaveState,
-} from './db';
+} from './db.ts';
 
 /**
  * Persist a fully validated restore and verify the committed row before the
