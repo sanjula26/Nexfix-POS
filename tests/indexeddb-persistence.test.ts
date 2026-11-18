@@ -133,3 +133,22 @@ test('IndexedDB state read failures return null instead of being treated as an e
     IDBDatabase.prototype.transaction = originalTransaction;
   }
 });
+
+
+test('IndexedDB state write failures return false instead of reporting a durable save', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?state-write-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'app_state' && args[1] === 'readwrite') {
+      throw new DOMException('Injected state write failure', 'InvalidStateError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const state = { counters: { bill: 12 } } as unknown as POSState;
+    assert.equal(await reopenedDb.idbSaveState(state), false);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
