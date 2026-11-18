@@ -292,3 +292,10 @@ No SQL, production policy, grant, customer data, or application behavior was cha
 - Branch A inventory manager attempts supplier return for Branch B GRN: denied even if the client sends a forged purchase ID/device/branch tuple.
 
 These are source-level authorization findings, not live exploit tests. No SQL, production policy, application code, queue behavior, or production data was changed.
+
+
+## Post-merge CI baseline — 2026-11-18
+
+- Main now classifies root `@tailwindcss/vite` and `tailwindcss` as development-only dependencies and carries an npm-generated lockfile. The production-only security audit passed on the merged commit; Electron runtime is updated to 44.11.4.
+- The full development/build-tool audit remains separate: 19 findings (14 high, 5 moderate), tracked in Issue #267. Do not force-downgrade Vite/electron-builder or suppress advisories to clear the report.
+- This plan remains documentation only. No production branch authorization, RLS policy, grants, snapshot policy, customer-sharing rule, or SQL migration has been changed. The implementation risks described above still require isolated staging tests and owner decisions for branchless customer/repair/warranty/quotation data.
