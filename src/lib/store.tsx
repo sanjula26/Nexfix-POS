@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbReadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbReadState, idbHasPriorUseEvidence, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { canMutatePOSState, type POSStorageStatus } from './storageHealth';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -455,14 +455,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           let fromIdb: POSState | null = null;
           if (storedState === null) {
             bootError = 'IndexedDB could not be read. Existing local data has been kept untouched; POS editing and sales are locked to prevent data loss.';
-          } else if (storedState === undefined && hasLegacyLocalState()) {
-            // An empty authoritative store plus any legacy cache is not a safe first run.
-            // Do not replace a potentially existing shop with demo seed data.
-            bootError = 'IndexedDB has no saved POS state, but a legacy local POS cache exists. The POS is locked to protect your shop data; use a verified backup recovery before continuing.';
           } else if (storedState === undefined) {
-            // Seed is allowed only when IndexedDB is empty and no legacy shop cache exists.
-            fromIdb = await idbLoadState();
-            if (!fromIdb) bootError = 'IndexedDB could not be initialized. POS editing and sales remain locked.';
+            const priorUseEvidence = await idbHasPriorUseEvidence();
+            if (priorUseEvidence === null) {
+              bootError = 'IndexedDB is empty but its prior-use metadata could not be verified. POS editing and sales remain locked to protect shop data.';
+            } else if (priorUseEvidence || hasLegacyLocalState()) {
+              // An empty main row plus any queue/checkpoint/backup metadata or legacy cache
+              // is not a safe first run. Re-read in case another window restored it meanwhile.
+              const recoveredState = await idbReadState();
+              if (recoveredState) fromIdb = recoveredState;
+              else bootError = 'IndexedDB has no saved POS state, but previous shop data or recovery evidence exists. The POS is locked to protect your data; use a verified backup recovery before continuing.';
+            } else {
+              // Seed is allowed only when every durable store and legacy cache are empty.
+              fromIdb = await idbLoadState();
+              if (!fromIdb) bootError = 'IndexedDB could not be initialized. POS editing and sales remain locked.';
+            }
           } else {
             fromIdb = storedState;
           }
