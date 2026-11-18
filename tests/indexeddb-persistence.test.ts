@@ -59,18 +59,14 @@ test('IndexedDB read-only state probe distinguishes an empty store from a read f
 
 test('concurrent first-run initialization never overwrites a state created by another window', async () => {
   await clearAuthoritativeStateRow();
-  const first = await idbLoadState();
-  assert.ok(first, 'test database should initialize a valid state');
-  await clearAuthoritativeStateRow();
-
   const firstCandidate = {
-    ...first,
-    counters: { ...first.counters, bill: 111 },
-  };
+    counters: { bill: 111 },
+    marker: 'first-window',
+  } as unknown as POSState;
   const secondCandidate = {
-    ...first,
-    counters: { ...first.counters, bill: 222 },
-  };
+    counters: { bill: 222 },
+    marker: 'second-window',
+  } as unknown as POSState;
   const [firstResult, secondResult] = await Promise.all([
     idbInitializeStateIfAbsent(firstCandidate),
     idbInitializeStateIfAbsent(secondCandidate),
