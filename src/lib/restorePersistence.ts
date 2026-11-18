@@ -1,5 +1,10 @@
 import type { POSState } from './types';
-import { idbReadState, idbSaveState } from './db';
+import {
+  idbClearRestoreCheckpoint,
+  idbLoadRestoreCheckpoint,
+  idbReadState,
+  idbSaveState,
+} from './db';
 
 /**
  * Persist a fully validated restore and verify the committed row before the
@@ -16,5 +21,21 @@ export async function persistAndVerifyRestoredState(nextState: POSState): Promis
   const persisted = await idbReadState();
   if (!persisted || JSON.stringify(persisted) !== JSON.stringify(nextState)) {
     throw new Error('Restored POS state could not be verified after saving. The restore must be rolled back.');
+  }
+}
+
+/**
+ * Restore the last checkpoint and verify the resulting main row before
+ * deleting the checkpoint. Any ambiguous failure leaves the checkpoint intact
+ * for a later recovery attempt.
+ */
+export async function rollbackAndVerifyRestore(): Promise<boolean> {
+  try {
+    const checkpoint = await idbLoadRestoreCheckpoint();
+    if (!checkpoint) return false;
+    await persistAndVerifyRestoredState(checkpoint);
+    return idbClearRestoreCheckpoint();
+  } catch {
+    return false;
   }
 }
