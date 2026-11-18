@@ -76,9 +76,15 @@ test('rollback keeps its checkpoint when read-back verification fails', async ()
   await idbSaveState(candidateState(78));
 
   const originalTransaction = IDBDatabase.prototype.transaction;
+  let stateReadCount = 0;
   IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
     if (args[0] === 'app_state' && args[1] === 'readonly') {
-      throw new DOMException('Injected rollback read-back failure', 'InvalidStateError');
+      stateReadCount += 1;
+      // First read loads the checkpoint; fail only the second read, which
+      // verifies the restored main row after its write has committed.
+      if (stateReadCount === 2) {
+        throw new DOMException('Injected rollback read-back failure', 'InvalidStateError');
+      }
     }
     return originalTransaction.apply(this, args);
   } as IDBDatabase['transaction'];
