@@ -72,6 +72,25 @@ export async function idbReadState(): Promise<POSState | undefined | null> {
   }
 }
 
+/** Detect durable evidence of previous use when the authoritative main row is missing.
+ * Returns null when any of the required stores cannot be inspected.
+ */
+export async function idbHasPriorUseEvidence(): Promise<boolean | null> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction([STORE_STATE, STORE_QUEUE, STORE_META], 'readonly');
+    const [stateCount, queueCount, metaCount] = await Promise.all([
+      idbReq(tx.objectStore(STORE_STATE).count()),
+      idbReq(tx.objectStore(STORE_QUEUE).count()),
+      idbReq(tx.objectStore(STORE_META).count()),
+    ]);
+    await idbTransactionComplete(tx, 'Could not verify IndexedDB prior-use evidence');
+    return stateCount > 0 || queueCount > 0 || metaCount > 0;
+  } catch {
+    return null;
+  }
+}
+
 export async function idbLoadState(): Promise<POSState | null> {
   const stored = await idbReadState();
   if (stored !== undefined) return stored;
