@@ -1820,6 +1820,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      throw new Error('POS local storage is not healthy. The sale was not started; verify storage and check Sales History before retrying.');
+    }
     if (!user) throw new Error('Sign in again before completing this sale.');
     if (!can('page:pos')) {
       pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
@@ -2251,6 +2254,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      pushAudit('DENIED', 'Sale', 'Blocked refund because local IndexedDB storage is not healthy');
+      return false;
+    }
     if (!user || !can('act:refund')) {
       pushAudit('DENIED', 'Sale', 'Blocked refund without refund permission');
       return false;
@@ -2606,6 +2613,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit, user, can]);
 
   const receivePurchase = useCallback(async (id: string, processorName?: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!canMutatePOSState(storageStatusRef.current)) return { ok: false, error: 'POS local storage is not healthy. GRN was not processed; verify storage before retrying.' };
     if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
@@ -2760,6 +2768,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback(async (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): Promise<PurchaseReturn | null> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      pushAudit('DENIED', 'Purchase', 'Blocked supplier return because local IndexedDB storage is not healthy');
+      return null;
+    }
     if (purchaseReturnLockRef.current) return null;
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
