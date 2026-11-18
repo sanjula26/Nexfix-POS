@@ -64,7 +64,9 @@ export async function idbReadState(): Promise<POSState | undefined | null> {
     const row = await idbReq<{ key: string; value: POSState } | undefined>(
       db.transaction(STORE_STATE, 'readonly').objectStore(STORE_STATE).get('main'),
     );
-    return row?.value ?? undefined;
+    if (!row) return undefined;
+    if (!row.value || typeof row.value !== 'object' || Array.isArray(row.value)) return null;
+    return row.value;
   } catch {
     return null;
   }
