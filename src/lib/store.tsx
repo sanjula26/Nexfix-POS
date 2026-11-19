@@ -819,10 +819,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
     const upgradedAdminPin = pinWasUnset ? await hashPasswordAsync(password) : stateRef.current.settings.adminPinHash;
+    const latestState = stateRef.current;
+    const initializeAdminPin = pinWasUnset && !(latestState.settings.adminPinHash || '');
+    const nextState = {
+      ...latestState,
+      users: needsUpgrade ? latestState.users.map(x => x.id === u!.id ? nextUser : x) : latestState.users,
+      settings: initializeAdminPin ? { ...latestState.settings, adminPinHash: upgradedAdminPin } : latestState.settings,
+      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(latestState.audit || [])].slice(0, 500),
+    };
+    stateRef.current = nextState;
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: upgradedAdminPin } : s.settings,
+      settings: initializeAdminPin && !(s.settings.adminPinHash || '') ? { ...s.settings, adminPinHash: upgradedAdminPin } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
