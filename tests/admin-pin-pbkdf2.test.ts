@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hashPin, isLegacyPasswordHash, isPasswordHash } from '../src/lib/utils.ts';
-import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from '../src/lib/passwordAsync.ts';
+import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordAsyncWithFallback, verifyPasswordWithLegacyUpgrade } from '../src/lib/passwordAsync.ts';
 
 test('legacy admin PIN hashes remain readable during migration', async () => {
   const legacyHash = hashPin('2468');
@@ -76,6 +76,37 @@ test('PBKDF2 creation and verification remain secure when WebCrypto subtle is un
     assert.equal(atob(derivedText).length, 32);
     assert.equal(await verifyPasswordAsync('fallback-pin', fallbackHash), true);
     assert.equal(await verifyPasswordAsync('wrong-pin', fallbackHash), false);
+  } finally {
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+  }
+});
+
+
+test('a completed WebCrypto mismatch rejects without running the synchronous PBKDF2 fallback', async () => {
+  const storedHash = await hashPasswordAsync('correct-pin');
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const nativeCrypto = globalThis.crypto;
+  assert.ok(cryptoDescriptor?.configurable, 'test runtime must allow isolated WebCrypto simulation');
+
+  let fallbackCalls = 0;
+  Object.defineProperty(globalThis, 'crypto', {
+    configurable: true,
+    value: {
+      getRandomValues: nativeCrypto.getRandomValues.bind(nativeCrypto),
+      subtle: {
+        importKey: async () => ({}),
+        deriveBits: async () => new ArrayBuffer(32),
+      },
+    },
+  });
+
+  try {
+    const valid = await verifyPasswordAsyncWithFallback('wrong-pin', storedHash, () => {
+      fallbackCalls += 1;
+      return false;
+    });
+    assert.equal(valid, false);
+    assert.equal(fallbackCalls, 0, 'a completed but mismatching WebCrypto derivation must not repeat PBKDF2 synchronously');
   } finally {
     if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
   }
