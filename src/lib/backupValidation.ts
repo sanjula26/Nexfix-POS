@@ -81,6 +81,7 @@ function hasValidSettings(value: unknown): boolean {
 function hasValidPermissions(value: unknown): boolean {
   if (!hasPlainObjectShape(value)) return false;
   return ['admin', 'cashier'].every((role) => hasPlainObjectShape(value[role])
+    && Object.keys(value[role] as Record<string, unknown>).length > 0
     && Object.values(value[role] as Record<string, unknown>).every((flag) => typeof flag === 'boolean'))
     && ['manager', 'technician'].every((role) => value[role] === undefined
       || hasPlainObjectShape(value[role])
