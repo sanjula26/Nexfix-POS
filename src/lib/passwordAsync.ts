@@ -74,6 +74,22 @@ export const verifyPasswordAsync = async (plain: string, storedHash: string): Pr
   return verifyPassword(plain, storedHash);
 };
 
+/**
+ * Verify a stored PIN/password and prepare a PBKDF2 replacement only after
+ * a successful legacy-hash match. Callers persist upgradedHash after success.
+ */
+export const verifyPasswordWithLegacyUpgrade = async (
+  plain: string,
+  storedHash: string,
+): Promise<{ valid: boolean; upgradedHash?: string }> => {
+  const valid = await verifyPasswordAsync(plain, storedHash);
+  if (!valid) return { valid: false };
+  if (isLegacyPasswordHash(storedHash)) {
+    return { valid: true, upgradedHash: await hashPasswordAsync(plain) };
+  }
+  return { valid: true };
+};
+
 /** Create a fresh random-salt PBKDF2-SHA-256 password hash. */
 export const hashPasswordAsync = async (plain: string): Promise<string> => {
   try {
