@@ -113,3 +113,11 @@ test('public repository Windows QA never uploads downloadable EXE artifacts', ()
   assert.doesNotMatch(qaWorkflow, /secrets\.|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(qaWorkflow, /aws s3api (?:put-object|delete-object)|storage\/v1\/object\/upload/);
 });
+
+
+test('Windows packaging step receives no private storage credentials or unused backup transport key', () => {
+  const packagingStep = releaseWorkflow.match(/- name: Build Windows installer and portable app[\\s\\S]*?(?=\\n      - name: Verify Windows artifacts)/)?.[0] ?? '';
+  assert.ok(packagingStep, 'production workflow must contain the Windows packaging step');
+  assert.match(packagingStep, /EP_GH_IGNORE_TIME/);
+  assert.doesNotMatch(packagingStep, /SUPABASE_SERVICE_ROLE_KEY|VITE_GOOGLE_BACKUP_API_KEY/);
+});
