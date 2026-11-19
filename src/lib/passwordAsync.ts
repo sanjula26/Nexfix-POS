@@ -1,4 +1,4 @@
-import { hashPassword, verifyLegacyPassword, verifyPassword, isLegacyPasswordHash, isPasswordHash } from './utils';
+import { hashPassword, verifyLegacyPassword, verifyPassword, isLegacyPasswordHash, isPasswordHash } from './utils.ts';
 
 const PBKDF2_ITERATIONS = 600_000;
 const PBKDF2_SALT_BYTES = 16;

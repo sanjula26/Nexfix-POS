@@ -519,12 +519,12 @@ export default function AppLayout() {
     }
   }, [unlockLockedUntil, unlockSecondsLeft]);
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
     if (unlockBusy || !unlockCredential || unlockSecondsLeft > 0) return;
     setUnlockBusy(true);
     setUnlockError('');
     try {
-      if (unlockSession(unlockCredential)) {
+      if (await unlockSession(unlockCredential)) {
         setSessionLocked(false);
         setUnlockCredential('');
         setUnlockAttempts(0);
@@ -542,6 +542,9 @@ export default function AppLayout() {
           setUnlockError('Incorrect password or admin unlock password.');
         }
       }
+    } catch {
+      setUnlockCredential('');
+      setUnlockError('Could not verify the credential. Please try again.');
     } finally { setUnlockBusy(false); }
   };
 
@@ -654,7 +657,7 @@ export default function AppLayout() {
           setSensitiveBusy(true);
           setSensitiveError('');
           try {
-            const accepted = resolveSensitiveAdmin(sensitiveCredential);
+            const accepted = await resolveSensitiveAdmin(sensitiveCredential);
             if (!accepted) {
               setSensitiveCredential('');
               setSensitiveError('Incorrect administrator password or PIN.');
