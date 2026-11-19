@@ -1,0 +1,63 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  clearAuthThrottle,
+  getAuthThrottleWaitMs,
+  recordAuthThrottleFailure,
+  type AuthThrottleStorage,
+} from '../src/lib/authThrottle.ts';
+
+const createStorage = (): AuthThrottleStorage => {
+  const values = new Map<string, string>();
+  return {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value); },
+    removeItem: key => { values.delete(key); },
+  };
+};
+
+test('admin credential attempts share a persisted backoff across reload-like reads', () => {
+  const storage = createStorage();
+  for (let i = 0; i < 4; i++) {
+    const result = recordAuthThrottleFailure('admin', 1_000 + i, storage);
+    assert.equal(result.lockedUntil, 0);
+  }
+  const fifth = recordAuthThrottleFailure('admin', 2_000, storage);
+  assert.equal(fifth.failures, 5);
+  assert.equal(fifth.lockedUntil, 17_000);
+  assert.equal(getAuthThrottleWaitMs('admin', 2_001, storage), 14_999);
+});
+
+test('backoff grows exponentially and is capped at five minutes', () => {
+  const storage = createStorage();
+  let state = { failures: 0, lockedUntil: 0 };
+  for (let i = 0; i < 9; i++) state = recordAuthThrottleFailure('bounded', 10_000, storage);
+  assert.equal(state.lockedUntil, 310_000);
+  state = recordAuthThrottleFailure('bounded', 20_000, storage);
+  assert.equal(state.lockedUntil, 320_000);
+});
+
+test('successful authentication clears persisted and in-memory failures', () => {
+  const storage = createStorage();
+  recordAuthThrottleFailure('admin', 1_000, storage);
+  clearAuthThrottle('admin', storage);
+  assert.equal(getAuthThrottleWaitMs('admin', 1_000, storage), 0);
+  assert.equal(recordAuthThrottleFailure('admin', 1_000, storage).failures, 1);
+});
+
+test('malformed persisted limiter data is ignored safely', () => {
+  const storage = createStorage();
+  storage.setItem('nexfix_auth_throttle_v1:admin', JSON.stringify({ failures: -2, lockedUntil: 'later' }));
+  assert.equal(getAuthThrottleWaitMs('admin', 5_000, storage), 0);
+  assert.equal(recordAuthThrottleFailure('admin', 5_000, storage).failures, 1);
+});
+
+test('storage exceptions do not disable the in-memory limiter', () => {
+  const storage: AuthThrottleStorage = {
+    getItem: () => { throw new Error('blocked'); },
+    setItem: () => { throw new Error('blocked'); },
+    removeItem: () => { throw new Error('blocked'); },
+  };
+  for (let i = 0; i < 5; i++) recordAuthThrottleFailure('private', 10_000, storage);
+  assert.equal(getAuthThrottleWaitMs('private', 10_001, storage), 14_999);
+});
