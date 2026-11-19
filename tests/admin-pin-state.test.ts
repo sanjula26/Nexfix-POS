@@ -133,4 +133,13 @@ test('cashier admin unlock identifies the active admin whose password was verifi
   assert.equal(matched?.id, 'admin-second');
   const noMatch = await findActiveAdminByCredential(state, async admin => admin.password === 'not-a-password');
   assert.equal(noMatch, null);
+
+  const ambiguousState = {
+    ...state,
+    users: state.users.map(admin => admin.id === 'admin-first' || admin.id === 'admin-second'
+      ? { ...admin, password: 'same-password-for-two-admins' }
+      : admin),
+  } as POSState;
+  const ambiguous = await findActiveAdminByCredential(ambiguousState, async admin => admin.password === 'same-password-for-two-admins');
+  assert.equal(ambiguous, null);
 });
