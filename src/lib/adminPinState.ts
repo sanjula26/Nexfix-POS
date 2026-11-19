@@ -53,3 +53,12 @@ export function adminCredentialSnapshotMatches(
       && admin.password === snapshot.admins[index].password
     );
 }
+
+
+/** Return only the active administrator who owns the current POS session. */
+export function findActiveAdminById(
+  state: Pick<POSState, 'users'>,
+  userId: string,
+): POSState['users'][number] | null {
+  return state.users.find(user => user.id === userId && user.role === 'admin' && user.active) ?? null;
+}
