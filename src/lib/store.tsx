@@ -689,6 +689,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
       return Promise.resolve(false);
     }
+    const activeAdmin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    if (!activeAdmin) {
+      pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator account is no longer active');
+      return Promise.resolve(false);
+    }
     const FRESH_MS = 5 * 60 * 1000;
     if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return Promise.resolve(true);
     if (sensitiveAdminResolverRef.current) {
