@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
+import { getAdminCredentialFingerprint, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
 import type { POSState } from '../src/lib/types.ts';
 
 function stateWithPin(adminPinHash: string): POSState {
@@ -56,4 +56,40 @@ test('a delayed legacy PIN upgrade cannot overwrite a PIN changed while verifica
 
   assert.equal(await delayedUpgrade, false);
   assert.equal(state.settings.adminPinHash, newPinHash);
+});
+
+test('sensitive-admin freshness fingerprint changes when any active admin credential or shared PIN changes', () => {
+  const base = {
+    settings: { adminPinHash: 'pin-hash-a' },
+    users: [
+      { id: 'admin-b', role: 'admin', active: true, password: 'password-b' },
+      { id: 'cashier-1', role: 'cashier', active: true, password: 'cashier-password' },
+      { id: 'admin-a', role: 'admin', active: true, password: 'password-a' },
+    ],
+  } as unknown as POSState;
+  const original = getAdminCredentialFingerprint(base);
+
+  const reordered = {
+    ...base,
+    users: [...base.users].reverse(),
+  } as POSState;
+  assert.equal(getAdminCredentialFingerprint(reordered), original);
+
+  const adminPasswordChanged = {
+    ...base,
+    users: base.users.map(user => user.id === 'admin-a' ? { ...user, password: 'new-admin-password' } : user),
+  } as POSState;
+  assert.notEqual(getAdminCredentialFingerprint(adminPasswordChanged), original);
+
+  const pinChanged = {
+    ...base,
+    settings: { ...base.settings, adminPinHash: 'pin-hash-b' },
+  } as POSState;
+  assert.notEqual(getAdminCredentialFingerprint(pinChanged), original);
+
+  const cashierPasswordChanged = {
+    ...base,
+    users: base.users.map(user => user.id === 'cashier-1' ? { ...user, password: 'new-cashier-password' } : user),
+  } as POSState;
+  assert.equal(getAdminCredentialFingerprint(cashierPasswordChanged), original);
 });

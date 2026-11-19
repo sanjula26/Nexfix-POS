@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
-import { replaceAdminPinHashIfCurrent } from './adminPinState';
+import { getAdminCredentialFingerprint, replaceAdminPinHashIfCurrent } from './adminPinState';
 import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
@@ -683,7 +683,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
     return false;
   }, [pushAudit, user, commitAdminPinHashIfCurrent]);
-  const sensitiveAuthAtRef = useRef(0);
+  const sensitiveAuthRef = useRef<{ at: number; userId: string; fingerprint: string } | null>(null);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
     if (user?.role !== 'admin') {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
@@ -695,7 +695,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return Promise.resolve(false);
     }
     const FRESH_MS = 5 * 60 * 1000;
-    if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return Promise.resolve(true);
+    const currentFingerprint = getAdminCredentialFingerprint(stateRef.current);
+    const cachedAuth = sensitiveAuthRef.current;
+    if (cachedAuth && cachedAuth.userId === user.id && cachedAuth.fingerprint === currentFingerprint
+      && Date.now() - cachedAuth.at < FRESH_MS) return Promise.resolve(true);
+    sensitiveAuthRef.current = null;
     if (sensitiveAdminResolverRef.current) {
       sensitiveAdminResolverRef.current(false);
       sensitiveAdminResolverRef.current = null;
@@ -743,7 +747,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       || !latestActor || latestActor.role !== 'admin' || !latestActor.active || latestActor.password !== actorSnapshot.password) return false;
     if (pinUpgradeHash && !commitAdminPinHashIfCurrent(storedPinHash, pinUpgradeHash)) return false;
     clearAuthThrottle('admin');
-    sensitiveAuthAtRef.current = Date.now();
+    sensitiveAuthRef.current = {
+      at: Date.now(),
+      userId: actorSnapshot.id,
+      fingerprint: getAdminCredentialFingerprint(stateRef.current),
+    };
     pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + prompt.reason);
     resolver(true);
     sensitiveAdminResolverRef.current = null;
@@ -985,6 +993,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
+    sensitiveAuthRef.current = null;
     setSession(null);
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit]);
 
@@ -1103,6 +1112,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
+    sensitiveAuthRef.current = null;
     setSession(sess);
     try {
       // Keep the authenticated POS session durable across a normal browser refresh.
