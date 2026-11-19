@@ -62,3 +62,20 @@ export function findActiveAdminById(
 ): POSState['users'][number] | null {
   return state.users.find(user => user.id === userId && user.role === 'admin' && user.active) ?? null;
 }
+
+
+/**
+ * Find the active administrator whose own password verifies. The caller
+ * must re-read that administrator after the async check before changing the
+ * authenticated POS session.
+ */
+export async function findActiveAdminByCredential(
+  state: Pick<POSState, 'users'>,
+  verify: (admin: POSState['users'][number]) => Promise<boolean>,
+): Promise<POSState['users'][number] | null> {
+  for (const admin of state.users) {
+    if (admin.role !== 'admin' || !admin.active) continue;
+    if (await verify(admin)) return admin;
+  }
+  return null;
+}
