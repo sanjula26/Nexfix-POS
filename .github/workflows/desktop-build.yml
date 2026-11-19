@@ -144,13 +144,12 @@ jobs:
           "BUILD_VERSION=$buildVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           Write-Host "Automatic release version: $buildVersion"
       - name: Build Windows installer and portable app
+        # Keep private storage credentials out of the packaging process. The
+        # renderer build already receives its explicitly allowlisted VITE_ values,
+        # and the later upload step receives the service-role key separately.
         env:
-          VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EP_GH_IGNORE_TIME: "true"
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
-          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)) { throw "SUPABASE_SERVICE_ROLE_KEY secret is empty." }
           $package = Get-Content package.json -Raw | ConvertFrom-Json
           $package.version = $env:BUILD_VERSION
           $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
