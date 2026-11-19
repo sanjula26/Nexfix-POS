@@ -890,6 +890,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       active: true, createdAt: nowIso, mustChangePassword: false,
     } : null;
     const adminPinHash = await hashPasswordAsync(next);
+    // Hashing is asynchronous; another setup attempt may have completed while
+    // PBKDF2 was running. Never replace an administrator created in that window.
+    if ((stateRef.current.users || []).length > 0) {
+      return { ok: false, error: 'Administrator setup was completed in another request. Please sign in.' };
+    }
     const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash } };
     stateRef.current = nextState;
     setState(nextState);
