@@ -34,13 +34,16 @@ const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 export const isCurrentPasswordHash = (value: string): boolean => isPasswordHash(value);
 
 /**
- * Verify passwords using Web Crypto where available. If the browser's
- * WebCrypto implementation rejects or mismatches the derivation, fall back to
- * the project's deterministic pure-JS verifier. This is important for private
- * browsing / embedded preview environments where crypto.subtle can behave
- * differently even though the stored PBKDF2 format is valid.
+ * Verify passwords using Web Crypto where available. A completed derivation
+ * that does not match is a normal invalid-credential result. Use the
+ * deterministic pure-JS verifier only when WebCrypto is unavailable or throws,
+ * preserving compatibility with embedded environments that lack subtle crypto.
  */
-export const verifyPasswordAsync = async (plain: string, storedHash: string): Promise<boolean> => {
+export const verifyPasswordAsyncWithFallback = async (
+  plain: string,
+  storedHash: string,
+  fallbackVerifier: (plain: string, storedHash: string) => boolean = verifyPassword,
+): Promise<boolean> => {
   if (isLegacyPasswordHash(storedHash)) return verifyLegacyPassword(plain, storedHash);
   if (!isCurrentPasswordHash(storedHash)) return false;
 
@@ -62,17 +65,22 @@ export const verifyPasswordAsync = async (plain: string, storedHash: string): Pr
           key,
           PBKDF2_KEY_BYTES * 8,
         );
-        if (constantTimeEqual(expected, new Uint8Array(bits))) return true;
+        // A completed WebCrypto derivation that does not match is a normal
+        // invalid-credential result. Do not repeat 600k iterations synchronously.
+        return constantTimeEqual(expected, new Uint8Array(bits));
       }
     }
   } catch {
-    // Fall through to the deterministic verifier below.
+    // Fall through only when WebCrypto is unavailable or throws.
   }
 
   // Deterministic fallback uses the exact same PBKDF2 parameters and stored
   // format, so it does not weaken authentication or add a bypass.
-  return verifyPassword(plain, storedHash);
+  return fallbackVerifier(plain, storedHash);
 };
+
+export const verifyPasswordAsync = (plain: string, storedHash: string): Promise<boolean> =>
+  verifyPasswordAsyncWithFallback(plain, storedHash);
 
 /**
  * Verify a stored PIN/password and prepare a PBKDF2 replacement only after
