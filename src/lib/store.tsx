@@ -1121,7 +1121,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const latestAdmin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
     if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
-      || (!storedPinHash && (!latestAdmin || !adminSnapshot || latestAdmin.password !== adminSnapshot.password))) {
+      || !latestAdmin || !adminSnapshot || latestAdmin.password !== adminSnapshot.password) {
       return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
     }
     if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
