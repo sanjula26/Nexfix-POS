@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminById, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
 import type { POSState } from '../src/lib/types.ts';
 
 function stateWithPin(adminPinHash: string): POSState {
@@ -101,3 +101,18 @@ test('sensitive-admin freshness snapshot invalidates on admin credential or shar
 });
 
 // Keep snapshot credentials as separate references; never serialize legacy plain-text values.
+
+test('sensitive re-auth selects the currently signed-in active admin, not the first admin in the list', () => {
+  const state = {
+    settings: { adminPinHash: 'shared-pin-hash' },
+    users: [
+      { id: 'admin-first', role: 'admin', active: true, password: 'first-admin-password' },
+      { id: 'admin-current', role: 'admin', active: true, password: 'current-admin-password' },
+      { id: 'cashier-1', role: 'cashier', active: true, password: 'cashier-password' },
+    ],
+  } as unknown as POSState;
+
+  assert.equal(findActiveAdminById(state, 'admin-current')?.password, 'current-admin-password');
+  assert.equal(findActiveAdminById(state, 'cashier-1'), null);
+  assert.equal(findActiveAdminById({ ...state, users: state.users.map(user => user.id === 'admin-current' ? { ...user, active: false } : user) } as POSState, 'admin-current'), null);
+});
