@@ -99,3 +99,5 @@ test('sensitive-admin freshness snapshot invalidates on admin credential or shar
   } as POSState;
   assert.equal(adminCredentialSnapshotMatches(adminDeactivated, snapshot), false);
 });
+
+// Keep snapshot credentials as separate references; never serialize legacy plain-text values.
