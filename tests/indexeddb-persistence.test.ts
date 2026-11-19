@@ -58,7 +58,7 @@ function validTestState(billCounter = 0): POSState {
       taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
       adminPinHash: '', whatsappReceipts: false,
     },
-    permissions: { admin: {}, cashier: {} },
+    permissions: { admin: { 'page:dashboard': true }, cashier: { 'page:pos': true } },
     counters: { bill: billCounter, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
   };
 }
