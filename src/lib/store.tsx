@@ -639,7 +639,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     if (passwordOk || elevatedOk || adminPinOk) {
       clearAuthThrottle(unlockScope);
-      if (elevatedOk || adminPinOk) clearAuthThrottle('admin');
+      if (elevatedOk || adminPinOk || (current.role === 'admin' && passwordOk)) clearAuthThrottle('admin');
       loginAtRef.current = Date.now();
       pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
       return true;
