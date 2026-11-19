@@ -34,11 +34,10 @@ const constantTimeEqual = (a: Uint8Array, b: Uint8Array): boolean => {
 export const isCurrentPasswordHash = (value: string): boolean => isPasswordHash(value);
 
 /**
- * Verify passwords using Web Crypto where available. If the browser's
- * WebCrypto implementation rejects or mismatches the derivation, fall back to
- * the project's deterministic pure-JS verifier. This is important for private
- * browsing / embedded preview environments where crypto.subtle can behave
- * differently even though the stored PBKDF2 format is valid.
+ * Verify passwords using Web Crypto where available. A completed derivation
+ * that does not match is a normal invalid-credential result. Use the
+ * deterministic pure-JS verifier only when WebCrypto is unavailable or throws,
+ * preserving compatibility with embedded environments that lack subtle crypto.
  */
 export const verifyPasswordAsyncWithFallback = async (
   plain: string,
