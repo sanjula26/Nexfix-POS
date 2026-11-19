@@ -21,8 +21,12 @@ function validState(): Record<string, unknown> {
     sessions: [] as unknown[],
     units: [] as unknown[],
     repairs: [] as unknown[],
-    settings: {},
-    permissions: {},
+    settings: {
+      shopName: 'Test Shop', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
+      adminPinHash: '', whatsappReceipts: false,
+    },
+    permissions: { admin: { 'page:dashboard': true }, cashier: { 'page:pos': true } },
     counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
   };
 }
