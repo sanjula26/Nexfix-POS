@@ -31,7 +31,7 @@ test('admin credential attempts share a persisted backoff across reload-like rea
 test('backoff grows exponentially and is capped at five minutes', () => {
   const storage = createStorage();
   let state = { failures: 0, lockedUntil: 0 };
-  for (let i = 0; i < 9; i++) state = recordAuthThrottleFailure('bounded', 10_000, storage);
+  for (let i = 0; i < 10; i++) state = recordAuthThrottleFailure('bounded', 10_000, storage);
   assert.equal(state.lockedUntil, 310_000);
   state = recordAuthThrottleFailure('bounded', 20_000, storage);
   assert.equal(state.lockedUntil, 320_000);
