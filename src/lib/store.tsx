@@ -594,12 +594,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
     if (!user || !pin || getAuthThrottleWaitMs('admin') > 0) return false;
+    const actorSnapshot = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!actorSnapshot) return false;
     const storedHash = stateRef.current.settings.adminPinHash || '';
     let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>>;
     try { pinVerification = await verifyPasswordWithLegacyUpgrade(pin, storedHash); }
     catch { return false; }
-    // Reject a result produced against a credential that changed while PBKDF2 was running.
-    if ((stateRef.current.settings.adminPinHash || '') !== storedHash) return false;
+    // Reject a result produced against a credential or account that changed while PBKDF2 was running.
+    const latestActor = stateRef.current.users.find(u => u.id === actorSnapshot.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedHash
+      || !latestActor || !latestActor.active || latestActor.role !== actorSnapshot.role || latestActor.password !== actorSnapshot.password) return false;
     if (!pinVerification.valid) {
       recordAuthThrottleFailure('admin');
       setState(s => ({
@@ -699,7 +703,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const resolveSensitiveAdmin = useCallback(async (credential: string): Promise<boolean> => {
     const resolver = sensitiveAdminResolverRef.current;
     const prompt = sensitiveAdminPrompt;
-    if (!resolver || !prompt || getAuthThrottleWaitMs('admin') > 0) return false;
+    if (!user || user.role !== 'admin' || !resolver || !prompt || getAuthThrottleWaitMs('admin') > 0) return false;
+    const actorSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    if (!actorSnapshot) return false;
     const secret = String(credential || '');
     if (!secret) return false;
     const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
@@ -727,7 +733,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + prompt.reason);
       return false;
     }
-    if (sensitiveAdminResolverRef.current !== resolver || !sensitiveAdminPrompt) return false;
+    const latestActor = stateRef.current.users.find(u => u.id === actorSnapshot.id);
+    if (sensitiveAdminResolverRef.current !== resolver || !sensitiveAdminPrompt
+      || !latestActor || latestActor.role !== 'admin' || !latestActor.active || latestActor.password !== actorSnapshot.password) return false;
     if (pinUpgradeHash && !commitAdminPinHashIfCurrent(storedPinHash, pinUpgradeHash)) return false;
     clearAuthThrottle('admin');
     sensitiveAuthAtRef.current = Date.now();
@@ -736,7 +744,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     sensitiveAdminResolverRef.current = null;
     setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, sensitiveAdminPrompt, commitAdminPinHashIfCurrent]);
+  }, [pushAudit, sensitiveAdminPrompt, commitAdminPinHashIfCurrent, user]);
 
   const cancelSensitiveAdmin = useCallback(() => {
     const resolver = sensitiveAdminResolverRef.current;
