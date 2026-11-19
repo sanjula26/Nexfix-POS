@@ -1,6 +1,6 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
-import { hasValidPOSStateShape } from './backupValidation';
+import { hasValidPOSStateShape } from './backupValidation.ts';
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
