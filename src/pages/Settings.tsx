@@ -363,6 +363,7 @@ export default function Settings() {
   const [pinNew, setPinNew] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
   const [pinMsg, setPinMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pinSaving, setPinSaving] = useState(false);
   const [showPins, setShowPins] = useState(false);
   const [securityRole, setSecurityRole] = useState<'admin' | 'cashier'>('admin');
   const [securityUserId, setSecurityUserId] = useState('');
@@ -664,13 +665,21 @@ export default function Settings() {
     setAccountNew(''); setAccountConfirm('');
   };
   const submitPin = async () => {
+    if (pinSaving) return;
+    setPinSaving(true);
     setPinMsg(null);
-    if (!(await confirmSensitiveAdmin('admin unlock password change'))) { setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' }); return; }
-    if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
-    const res = changeAdminPin(pinCur, pinNew);
-    if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
-    setPinMsg({ ok: true, text: 'Admin unlock PIN updated' });
-    setPinCur(''); setPinNew(''); setPinConfirm('');
+    try {
+      if (!(await confirmSensitiveAdmin('admin unlock password change'))) { setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' }); return; }
+      if (pinNew !== pinConfirm) { setPinMsg({ ok: false, text: 'New passwords do not match' }); return; }
+      const res = await changeAdminPin(pinCur, pinNew);
+      if (!res.ok) { setPinMsg({ ok: false, text: res.error || 'Failed to update password' }); return; }
+      setPinMsg({ ok: true, text: 'Admin unlock PIN updated' });
+      setPinCur(''); setPinNew(''); setPinConfirm('');
+    } catch {
+      setPinMsg({ ok: false, text: 'Could not update the admin unlock PIN. Please try again.' });
+    } finally {
+      setPinSaving(false);
+    }
   };
 
   const onImport = async (files: File[]) => {
@@ -1166,7 +1175,7 @@ export default function Settings() {
                 <Field label="Current admin unlock PIN" hint={state.settings.adminPinHash ? 'Enter the current admin unlock PIN. If you have never set one, use your administrator login password.' : 'No unlock PIN is set yet. Enter your current administrator login password here, then choose a new PIN.'}><div className="relative"><Lock size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input type={showPins ? 'text' : 'password'} className="input pl-9 pr-10" value={pinCur} onChange={e => { setPinCur(e.target.value); setPinMsg(null); }} placeholder={state.settings.adminPinHash ? 'Current admin unlock PIN' : 'Current administrator login password'} /><button type="button" onClick={() => setShowPins(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-ink">{showPins ? <EyeOff size={14} /> : <Eye size={14} />}</button></div></Field>
                 <div className="grid sm:grid-cols-2 gap-3.5"><Field label="New admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinNew} onChange={e => { setPinNew(e.target.value); setPinMsg(null); }} placeholder="Min 4 characters" /></Field><Field label="Confirm new admin unlock PIN"><input type={showPins ? 'text' : 'password'} className="input" value={pinConfirm} onChange={e => { setPinConfirm(e.target.value); setPinMsg(null); }} placeholder="Repeat it" onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} /></Field></div>
                 {pinMsg && <p className={`flex items-center gap-1.5 text-[13px] font-semibold ${pinMsg.ok ? 'text-emerald-500' : 'text-rose-500'}`}>{pinMsg.ok ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />} {pinMsg.text}</p>}
-                <button className="btn btn-primary" onClick={() => void submitPin()} disabled={!pinNew || !pinConfirm || !pinCur}><ShieldCheck size={15} /> Update admin unlock PIN</button>
+                <button className="btn btn-primary" onClick={() => void submitPin()} disabled={pinSaving || !pinNew || !pinConfirm || !pinCur}><ShieldCheck size={15} /> {pinSaving ? 'Updating…' : 'Update admin unlock PIN'}</button>
               </div>
             </div>
           </div>
