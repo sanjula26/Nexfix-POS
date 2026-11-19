@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
-import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
 import { runWithAsyncLock } from './authConcurrency';
 import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
@@ -714,11 +714,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const resolver = sensitiveAdminResolverRef.current;
     const prompt = sensitiveAdminPrompt;
     if (!user || user.role !== 'admin' || !resolver || !prompt || getAuthThrottleWaitMs('admin') > 0) return false;
-    const actorSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    const actorSnapshot = findActiveAdminById(stateRef.current, user.id);
     if (!actorSnapshot) return false;
     const secret = String(credential || '');
     if (!secret) return false;
-    const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
+    // Re-authenticate the account that owns this session, not whichever admin happens to be first.
+    const admin = actorSnapshot;
     let passwordOk = false;
     try { passwordOk = !!admin && (isHashed(admin.password) ? await verifyPasswordAsync(secret, admin.password) : secret === admin.password); }
     catch { passwordOk = false; }
