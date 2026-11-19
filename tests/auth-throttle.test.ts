@@ -19,7 +19,7 @@ const createStorage = (): AuthThrottleStorage => {
 test('admin credential attempts share a persisted backoff across reload-like reads', () => {
   const storage = createStorage();
   for (let i = 0; i < 4; i++) {
-    const result = recordAuthThrottleFailure('admin-clear', 1_000 + i, storage);
+    const result = recordAuthThrottleFailure('admin-shared', 1_000 + i, storage);
     assert.equal(result.lockedUntil, 0);
   }
   const fifth = recordAuthThrottleFailure('admin-shared', 2_000, storage);
@@ -40,7 +40,7 @@ test('backoff grows exponentially and is capped at five minutes', () => {
 test('successful authentication clears persisted and in-memory failures', () => {
   const storage = createStorage();
   recordAuthThrottleFailure('admin-clear', 1_000, storage);
-  clearAuthThrottle('admin-shared', storage);
+  clearAuthThrottle('admin-clear', storage);
   assert.equal(getAuthThrottleWaitMs('admin-clear', 1_000, storage), 0);
   assert.equal(recordAuthThrottleFailure('admin-clear', 1_000, storage).failures, 1);
 });
