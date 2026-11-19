@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
-import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
 import { runWithAsyncLock } from './authConcurrency';
 import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
@@ -1058,8 +1058,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: 'Incorrect cashier email or password' };
       }
     } else if (role === 'admin' && user.role === 'cashier') {
-      target = stateRef.current.users.find(u => u.role === 'admin' && u.active);
-      if (!target) return { ok: false, error: 'No active administrator account exists' };
+      const activeAdmins = stateRef.current.users.filter(u => u.role === 'admin' && u.active);
+      if (!activeAdmins.length) return { ok: false, error: 'No active administrator account exists' };
+      // A shared PIN unlocks the default active admin. If the credential is
+      // an admin's personal password, switch into the account that verified it.
+      target = activeAdmins[0];
       targetPasswordSnapshot = target.password;
       const storedPinHash = stateRef.current.settings.adminPinHash || '';
       adminPinHashSnapshot = storedPinHash;
@@ -1074,13 +1077,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       adminPinUpgradeHash = pinVerification.upgradedHash;
       let passwordOk = false;
       if (!pinOk) {
-        const adminPasswordSnapshot = target.password;
-        passwordOk = isHashed(adminPasswordSnapshot)
-          ? await verifyPasswordAsync(secret, adminPasswordSnapshot)
-          : verifyPassword(secret, adminPasswordSnapshot || '');
-        const latestAdmin = stateRef.current.users.find(u => u.id === target!.id);
-        if (passwordOk && (!latestAdmin || latestAdmin.role !== 'admin' || !latestAdmin.active || latestAdmin.password !== adminPasswordSnapshot)) {
-          return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+        const matchingAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
+          try {
+            return isHashed(candidate.password)
+              ? await verifyPasswordAsync(secret, candidate.password)
+              : verifyPassword(secret, candidate.password || '');
+          } catch {
+            return false;
+          }
+        });
+        if (matchingAdmin) {
+          const latestAdmin = findActiveAdminById(stateRef.current, matchingAdmin.id);
+          if (!latestAdmin || latestAdmin.password !== matchingAdmin.password) {
+            return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+          }
+          target = matchingAdmin;
+          targetPasswordSnapshot = matchingAdmin.password;
+          passwordOk = true;
         }
       }
       if (!pinOk && !passwordOk) {
