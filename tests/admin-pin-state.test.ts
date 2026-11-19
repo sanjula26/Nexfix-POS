@@ -93,3 +93,5 @@ test('sensitive-admin freshness fingerprint changes when any active admin creden
   } as POSState;
   assert.equal(getAdminCredentialFingerprint(cashierPasswordChanged), original);
 });
+
+// The sensitive-admin cache fingerprint intentionally excludes non-admin credentials.
