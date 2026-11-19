@@ -31,3 +31,29 @@ test('admin PIN compare-and-set preserves unrelated state while replacing the ha
   assert.equal(next?.settings.adminPinHash, 'replacement');
   assert.deepEqual(next?.products, current.products);
 });
+
+test('a delayed legacy PIN upgrade cannot overwrite a PIN changed while verification is pending', async () => {
+  const legacyHash = 'legacy-hash-verified-before-await';
+  const newPinHash = 'new-pbkdf2-hash-committed-during-await';
+  let state = stateWithPin(legacyHash);
+  let finishVerification!: (value: { valid: boolean; upgradedHash?: string }) => void;
+  const verification = new Promise<{ valid: boolean; upgradedHash?: string }>(resolve => {
+    finishVerification = resolve;
+  });
+
+  const delayedUpgrade = verification.then(result => {
+    if (!result.valid || !result.upgradedHash) return false;
+    const next = replaceAdminPinHashIfCurrent(state, legacyHash, result.upgradedHash);
+    if (!next) return false;
+    state = next;
+    return true;
+  });
+
+  const changed = replaceAdminPinHashIfCurrent(state, legacyHash, newPinHash);
+  assert.ok(changed);
+  state = changed!;
+  finishVerification({ valid: true, upgradedHash: 'stale-upgrade-derived-from-old-PIN' });
+
+  assert.equal(await delayedUpgrade, false);
+  assert.equal(state.settings.adminPinHash, newPinHash);
+});
