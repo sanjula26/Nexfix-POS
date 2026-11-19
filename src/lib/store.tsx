@@ -1065,8 +1065,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
     const adminPinHash = await hashPasswordAsync(next.trim());
+    const latestAdminAfterHash = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
     if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
-      || (!storedPinHash && (!latestAdmin || stateRef.current.users.find(u => u.id === user.id)?.password !== adminSnapshot?.password))) {
+      || !latestAdminAfterHash
+      || (!storedPinHash && (!adminSnapshot || latestAdminAfterHash.password !== adminSnapshot.password))) {
       return { ok: false, error: 'Administrator credentials changed while saving the new PIN. Please try again.' };
     }
     if (!commitAdminPinHashIfCurrent(storedPinHash, adminPinHash)) {
