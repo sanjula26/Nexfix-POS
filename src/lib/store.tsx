@@ -8,6 +8,7 @@ import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS
 import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
 import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
+import { runWithAsyncLock } from './authConcurrency';
 import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
@@ -1010,7 +1011,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let target: AppUser | undefined;
     let targetPasswordSnapshot = '';
     const secret = credential || '';
-    if (roleSwitchLockRef.current) return { ok: false, error: 'Please wait and try again' };
+    return runWithAsyncLock(roleSwitchLockRef, () => ({ ok: false, error: 'Please wait and try again' }), async () => {
     const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
     let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
     try {
@@ -1130,6 +1131,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }, ...st.audit].slice(0, 500),
     }));
     return { ok: true };
+    });
   }, [state.users, state.settings.adminPinHash, session, user]);
   const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
