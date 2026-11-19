@@ -81,3 +81,11 @@ test('different credential scopes keep independent failure counters', () => {
   assert.equal(getAuthThrottleWaitMs('scope-a', 1_001, storage), 14_999);
   assert.equal(getAuthThrottleWaitMs('scope-b', 1_001, storage), 0);
 });
+
+test('cashier idle-unlock failures do not consume the shared admin budget', async () => {
+  const { shouldCountAdminIdleUnlockFailure } = await import('../src/lib/authThrottle.ts');
+  assert.equal(shouldCountAdminIdleUnlockFailure('cashier', true), false);
+  assert.equal(shouldCountAdminIdleUnlockFailure('cashier', false), false);
+  assert.equal(shouldCountAdminIdleUnlockFailure('admin', true), true);
+  assert.equal(shouldCountAdminIdleUnlockFailure('admin', false), false);
+});
