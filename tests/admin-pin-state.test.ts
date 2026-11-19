@@ -6,7 +6,7 @@ import type { POSState } from '../src/lib/types.ts';
 function stateWithPin(adminPinHash: string): POSState {
   return {
     settings: { adminPinHash },
-  } as POSState;
+  } as unknown as POSState;
 }
 
 test('admin PIN compare-and-set accepts only the exact verified hash snapshot', () => {
@@ -26,7 +26,7 @@ test('admin PIN compare-and-set preserves unrelated state while replacing the ha
   const current = {
     ...stateWithPin('expected'),
     products: [{ id: 'product-1' }],
-  } as POSState;
+  } as unknown as POSState;
   const next = replaceAdminPinHashIfCurrent(current, 'expected', 'replacement');
   assert.equal(next?.settings.adminPinHash, 'replacement');
   assert.deepEqual(next?.products, current.products);
