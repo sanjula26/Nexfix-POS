@@ -75,7 +75,7 @@ export const recordAuthThrottleFailure = (
   const previous = readState(scope, target);
   const failures = previous.failures + 1;
   const lockSeconds = failures >= FAILURE_LIMIT
-    ? Math.min(MAX_LOCK_SECONDS, BASE_LOCK_SECONDS * (2 ** Math.min(failures - FAILURE_LIMIT, 4)))
+    ? Math.min(MAX_LOCK_SECONDS, BASE_LOCK_SECONDS * (2 ** Math.min(failures - FAILURE_LIMIT, 5)))
     : 0;
   const next = { failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 };
   writeState(scope, next, target);
