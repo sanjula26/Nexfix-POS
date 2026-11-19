@@ -19,13 +19,13 @@ const createStorage = (): AuthThrottleStorage => {
 test('admin credential attempts share a persisted backoff across reload-like reads', () => {
   const storage = createStorage();
   for (let i = 0; i < 4; i++) {
-    const result = recordAuthThrottleFailure('admin', 1_000 + i, storage);
+    const result = recordAuthThrottleFailure('admin-clear', 1_000 + i, storage);
     assert.equal(result.lockedUntil, 0);
   }
-  const fifth = recordAuthThrottleFailure('admin', 2_000, storage);
+  const fifth = recordAuthThrottleFailure('admin-shared', 2_000, storage);
   assert.equal(fifth.failures, 5);
   assert.equal(fifth.lockedUntil, 17_000);
-  assert.equal(getAuthThrottleWaitMs('admin', 2_001, storage), 14_999);
+  assert.equal(getAuthThrottleWaitMs('admin-shared', 2_001, storage), 14_999);
 });
 
 test('backoff grows exponentially and is capped at five minutes', () => {
@@ -39,17 +39,17 @@ test('backoff grows exponentially and is capped at five minutes', () => {
 
 test('successful authentication clears persisted and in-memory failures', () => {
   const storage = createStorage();
-  recordAuthThrottleFailure('admin', 1_000, storage);
-  clearAuthThrottle('admin', storage);
-  assert.equal(getAuthThrottleWaitMs('admin', 1_000, storage), 0);
-  assert.equal(recordAuthThrottleFailure('admin', 1_000, storage).failures, 1);
+  recordAuthThrottleFailure('admin-clear', 1_000, storage);
+  clearAuthThrottle('admin-shared', storage);
+  assert.equal(getAuthThrottleWaitMs('admin-clear', 1_000, storage), 0);
+  assert.equal(recordAuthThrottleFailure('admin-clear', 1_000, storage).failures, 1);
 });
 
 test('malformed persisted limiter data is ignored safely', () => {
   const storage = createStorage();
-  storage.setItem('nexfix_auth_throttle_v1:admin', JSON.stringify({ failures: -2, lockedUntil: 'later' }));
-  assert.equal(getAuthThrottleWaitMs('admin', 5_000, storage), 0);
-  assert.equal(recordAuthThrottleFailure('admin', 5_000, storage).failures, 1);
+  storage.setItem('nexfix_auth_throttle_v1:admin-malformed', JSON.stringify({ failures: -2, lockedUntil: 'later' }));
+  assert.equal(getAuthThrottleWaitMs('admin-malformed', 5_000, storage), 0);
+  assert.equal(recordAuthThrottleFailure('admin-malformed', 5_000, storage).failures, 1);
 });
 
 test('storage exceptions do not disable the in-memory limiter', () => {
