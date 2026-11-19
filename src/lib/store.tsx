@@ -6,7 +6,7 @@ import {
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
-import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
+import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
 import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
@@ -587,8 +587,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
     if (!user || !pin || getAuthThrottleWaitMs('admin') > 0) return false;
     const storedHash = stateRef.current.settings.adminPinHash || '';
-    const ok = await verifyPasswordAsync(pin, storedHash);
-    if (!ok) {
+    const pinVerification = await verifyPasswordWithLegacyUpgrade(pin, storedHash);
+    if (!pinVerification.valid) {
       recordAuthThrottleFailure('admin');
       setState(s => ({
         ...s,
@@ -601,9 +601,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
     clearAuthThrottle('admin');
-    if (isLegacyPasswordHash(storedHash)) {
-      const upgradedHash = await hashPasswordAsync(pin);
-      setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
+    if (pinVerification.upgradedHash) {
+      setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: pinVerification.upgradedHash! } }));
     }
     return true;
   }, [user]);
@@ -630,16 +629,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const storedPinHash = stateRef.current.settings.adminPinHash || '';
     let adminPinOk = false;
+    let adminPinUpgradeHash: string | undefined;
     if (!passwordOk && !elevatedOk && getAuthThrottleWaitMs('admin') === 0) {
       adminCredentialChecked = true;
-      try { adminPinOk = await verifyPasswordAsync(credential, storedPinHash); } catch { adminPinOk = false; }
+      try {
+        const pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
+        adminPinOk = pinVerification.valid;
+        adminPinUpgradeHash = pinVerification.upgradedHash;
+      } catch { adminPinOk = false; }
     }
     if (passwordOk || elevatedOk || adminPinOk) {
       clearAuthThrottle(unlockScope);
       if (elevatedOk || adminPinOk || (current.role === 'admin' && passwordOk)) clearAuthThrottle('admin');
-      if (adminPinOk && isLegacyPasswordHash(storedPinHash)) {
-        const upgradedHash = await hashPasswordAsync(credential);
-        setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
+      if (adminPinUpgradeHash) {
+        setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: adminPinUpgradeHash! } }));
       }
       loginAtRef.current = Date.now();
       pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
@@ -678,16 +681,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     catch { passwordOk = false; }
     const storedPinHash = stateRef.current.settings.adminPinHash || '';
     let pinOk = false;
-    try { pinOk = await verifyPasswordAsync(secret, storedPinHash); } catch { pinOk = false; }
+    let pinUpgradeHash: string | undefined;
+    try {
+      const pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash);
+      pinOk = pinVerification.valid;
+      pinUpgradeHash = pinVerification.upgradedHash;
+    } catch { pinOk = false; }
     if (!passwordOk && !pinOk) {
       recordAuthThrottleFailure('admin');
       pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
       return false;
     }
     clearAuthThrottle('admin');
-    if (pinOk && isLegacyPasswordHash(storedPinHash)) {
-      const upgradedHash = await hashPasswordAsync(secret);
-      setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
+    if (pinUpgradeHash) {
+      setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: pinUpgradeHash! } }));
     }
     sensitiveAuthAtRef.current = Date.now();
     pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
@@ -908,6 +915,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let adminPinVerified = false;
+    let adminPinUpgradeHash: string | undefined;
     if (role === 'cashier' && user.role === 'admin') {
       const mail = (email || '').trim().toLowerCase();
       if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
@@ -931,8 +939,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       target = state.users.find(u => u.role === 'admin' && u.active);
       if (!target) return { ok: false, error: 'No active administrator account exists' };
       const storedPinHash = stateRef.current.settings.adminPinHash || '';
-      const pinOk = await verifyPasswordAsync(secret, storedPinHash);
+      const pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash);
+      const pinOk = pinVerification.valid;
       adminPinVerified = pinOk;
+      adminPinUpgradeHash = pinVerification.upgradedHash;
       const passwordOk = isHashed(target.password)
         ? await verifyPasswordAsync(secret, target.password)
         : verifyPassword(secret, target.password || '');
@@ -954,10 +964,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
     if (role === 'admin' && user.role === 'cashier') {
       clearAuthThrottle('admin');
-      const pinHash = stateRef.current.settings.adminPinHash || '';
-      if (adminPinVerified && isLegacyPasswordHash(pinHash)) {
-        const upgradedHash = await hashPasswordAsync(secret);
-        setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
+      if (adminPinVerified && adminPinUpgradeHash) {
+        setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: adminPinUpgradeHash } }));
       }
     }
 
