@@ -732,6 +732,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const users = [...(stateRef.current.users || [])];
     const u = users.find(x => (x.email || '').trim().toLowerCase() === mail);
+    if (u?.role === 'admin' && getAuthThrottleWaitMs('admin', now) > 0) {
+      return { ok: false, error: 'Incorrect email or password' };
+    }
     if (!u) {
       const failures = guard.failures + 1;
       const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
@@ -751,6 +754,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       passwordOk = u.password === password;
     }
     if (!passwordOk || !u.active) {
+      if (u.role === 'admin') recordAuthThrottleFailure('admin', now);
       const failures = guard.failures + 1;
       const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
       const nextGuard = { failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 };
@@ -760,6 +764,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
+    if (u.role === 'admin') clearAuthThrottle('admin');
     if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
