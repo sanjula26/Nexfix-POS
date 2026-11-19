@@ -1,5 +1,6 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
+import { hasValidPOSStateShape } from './backupValidation';
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
@@ -65,7 +66,7 @@ export async function idbReadState(): Promise<POSState | undefined | null> {
       db.transaction(STORE_STATE, 'readonly').objectStore(STORE_STATE).get('main'),
     );
     if (!row) return undefined;
-    if (!row.value || typeof row.value !== 'object' || Array.isArray(row.value)) return null;
+    if (!hasValidPOSStateShape(row.value)) return null;
     return row.value;
   } catch {
     return null;
@@ -96,6 +97,7 @@ export async function idbHasPriorUseEvidence(): Promise<boolean | null> {
  * All readwrite transactions for this object store are serialized by IndexedDB.
  */
 export async function idbInitializeStateIfAbsent(state: POSState): Promise<POSState | null> {
+  if (!hasValidPOSStateShape(state)) return null;
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_STATE, 'readwrite');
@@ -104,9 +106,7 @@ export async function idbInitializeStateIfAbsent(state: POSState): Promise<POSSt
     const existing = await idbReq<{ key: string; value: unknown } | undefined>(store.get('main'));
     if (existing) {
       await completed;
-      return existing.value && typeof existing.value === 'object' && !Array.isArray(existing.value)
-        ? existing.value as POSState
-        : null;
+      return hasValidPOSStateShape(existing.value) ? existing.value : null;
     }
     store.add({ key: 'main', value: state, updatedAt: new Date().toISOString() });
     await completed;
