@@ -223,14 +223,11 @@ test('IndexedDB acknowledgement removes only acknowledged operations', async () 
 });
 
 test('restore checkpoint can recover the previous IndexedDB state after a failed replacement', async () => {
-  const original = { counters: { bill: 10 } } as unknown as POSState;
+  const original = validTestState(10);
   assert.equal(await idbSaveState(original), true);
   assert.equal(await idbSaveRestoreCheckpoint(original), true);
 
-  const changed = {
-    ...original,
-    counters: { ...original.counters, bill: original.counters.bill + 1 },
-  };
+  const changed = validTestState(11);
   assert.equal(await idbSaveState(changed), true);
   assert.equal((await idbLoadState())?.counters.bill, changed.counters.bill);
 
