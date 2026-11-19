@@ -67,6 +67,8 @@ test('PBKDF2 creation and verification remain secure when WebCrypto subtle is un
 
   try {
     const fallbackHash = await hashPasswordAsync('fallback-pin');
+    const secondFallbackHash = await hashPasswordAsync('fallback-pin');
+    assert.notEqual(secondFallbackHash, fallbackHash, 'fallback must generate a fresh random salt');
     assert.equal(isPasswordHash(fallbackHash), true);
     assert.equal(isLegacyPasswordHash(fallbackHash), false);
     const [saltText, derivedText] = fallbackHash.split(':');
