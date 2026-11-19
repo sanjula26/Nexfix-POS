@@ -909,12 +909,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
+    const currentUserSnapshot = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!currentUserSnapshot) return { ok: false, error: 'Your account is no longer active.' };
     const hashed = await hashPasswordAsync(next);
+    const latestUser = stateRef.current.users.find(u => u.id === currentUserSnapshot.id);
+    if (!latestUser || !latestUser.active || latestUser.role !== currentUserSnapshot.role || latestUser.password !== currentUserSnapshot.password) {
+      return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    }
+    stateRef.current = {
+      ...stateRef.current,
+      users: stateRef.current.users.map(u => u.id === latestUser.id ? { ...latestUser, password: hashed, mustChangePassword: false } : u),
+    };
     setState(s => ({
       ...s,
-      users: s.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u),
+      users: s.users.map(u => u.id === latestUser.id && u.password === currentUserSnapshot.password && u.active
+        ? { ...u, password: hashed, mustChangePassword: false }
+        : u),
     }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u) };
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
     return { ok: true };
   }, [user, pushAudit]);
@@ -924,11 +935,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
-    const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier'));
+    const adminSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier') && u.active);
+    if (!adminSnapshot) return { ok: false, error: 'Administrator account is no longer active.' };
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
     const hashed = await hashPasswordAsync(next);
-    setState(s => ({ ...s, users: s.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    const latestState = stateRef.current;
+    const latestAdmin = latestState.users.find(u => u.id === adminSnapshot.id);
+    const latestTarget = latestState.users.find(u => u.id === target.id);
+    if (!latestAdmin || latestAdmin.role !== 'admin' || !latestAdmin.active || latestAdmin.password !== adminSnapshot.password
+      || !latestTarget || latestTarget.role !== target.role || !latestTarget.active || latestTarget.password !== target.password) {
+      return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    }
+    stateRef.current = {
+      ...latestState,
+      users: latestState.users.map(u => u.id === latestTarget.id ? { ...latestTarget, password: hashed, mustChangePassword: false } : u),
+    };
+    setState(s => ({
+      ...s,
+      users: s.users.map(u => u.id === latestTarget.id && u.role === target.role && u.active && u.password === target.password
+        ? { ...u, password: hashed, mustChangePassword: false }
+        : u),
+    }));
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
   }, [user, pushAudit]);
