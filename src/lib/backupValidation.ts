@@ -202,7 +202,7 @@ export function validateBackup(input: unknown): input is BackupEnvelope {
   return meta.app === 'Nexfix POS' && meta.version === 2 &&
     isValidIsoDate(meta.exportedAt) &&
     (meta.kind === 'manual' || meta.kind === 'auto') &&
-    hasValidStateShape(value.state);
+    hasValidPOSStateShape(value.state);
 }
 
 export function parseBackup(raw: string): BackupEnvelope | null {
