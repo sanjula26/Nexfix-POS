@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { hashPin, isLegacyPasswordHash, isPasswordHash } from '../src/lib/utils.ts';
-import { hashPasswordAsync, verifyPasswordAsync } from '../src/lib/passwordAsync.ts';
+import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from '../src/lib/passwordAsync.ts';
 
 test('legacy admin PIN hashes remain readable during migration', async () => {
   const legacyHash = hashPin('2468');
@@ -28,4 +28,25 @@ test('PBKDF2 PIN hashes use a fresh salt for each write', async () => {
   assert.notEqual(first, second);
   assert.equal(await verifyPasswordAsync('same-pin', first), true);
   assert.equal(await verifyPasswordAsync('same-pin', second), true);
+});
+
+test('legacy PIN upgrades only after a successful verification', async () => {
+  const legacyHash = hashPin('1357');
+  const failed = await verifyPasswordWithLegacyUpgrade('0000', legacyHash);
+  assert.equal(failed.valid, false);
+  assert.equal(failed.upgradedHash, undefined);
+
+  const passed = await verifyPasswordWithLegacyUpgrade('1357', legacyHash);
+  assert.equal(passed.valid, true);
+  assert.ok(passed.upgradedHash);
+  assert.equal(isPasswordHash(passed.upgradedHash!), true);
+  assert.equal(await verifyPasswordAsync('1357', passed.upgradedHash!), true);
+  assert.notEqual(passed.upgradedHash, legacyHash);
+});
+
+test('current PBKDF2 PIN verification does not need a replacement hash', async () => {
+  const currentHash = await hashPasswordAsync('8642');
+  const result = await verifyPasswordWithLegacyUpgrade('8642', currentHash);
+  assert.equal(result.valid, true);
+  assert.equal(result.upgradedHash, undefined);
 });
