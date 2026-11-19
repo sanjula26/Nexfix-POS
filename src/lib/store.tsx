@@ -642,7 +642,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         catch { verified = false; }
         if (!verified) continue;
         const latestAdmin = stateRef.current.users.find(u => u.id === admin.id);
-        if (!latestAdmin || !latestAdmin.active || latestAdmin.password !== admin.password) return false;
+        if (!latestAdmin || latestAdmin.role !== 'admin' || !latestAdmin.active || latestAdmin.password !== admin.password) return false;
         elevatedOk = true;
         elevatedAdminSnapshot = admin;
         break;
@@ -708,7 +708,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     catch { passwordOk = false; }
     if (passwordOk) {
       const latestAdmin = admin && stateRef.current.users.find(u => u.id === admin.id);
-      if (!latestAdmin || !latestAdmin.active || latestAdmin.password !== admin.password) return false;
+      if (!latestAdmin || latestAdmin.role !== 'admin' || !latestAdmin.active || latestAdmin.password !== admin.password) return false;
     }
     let pinOk = false;
     let pinUpgradeHash: string | undefined;
