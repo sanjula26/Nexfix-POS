@@ -50,3 +50,31 @@ test('current PBKDF2 PIN verification does not need a replacement hash', async (
   assert.equal(result.valid, true);
   assert.equal(result.upgradedHash, undefined);
 });
+
+
+test('PBKDF2 creation and verification remain secure when WebCrypto subtle is unavailable', async () => {
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const nativeCrypto = globalThis.crypto;
+  assert.ok(cryptoDescriptor?.configurable, 'test runtime must allow isolated WebCrypto fallback simulation');
+
+  Object.defineProperty(globalThis, 'crypto', {
+    configurable: true,
+    value: {
+      getRandomValues: nativeCrypto.getRandomValues.bind(nativeCrypto),
+      subtle: undefined,
+    },
+  });
+
+  try {
+    const fallbackHash = await hashPasswordAsync('fallback-pin');
+    assert.equal(isPasswordHash(fallbackHash), true);
+    assert.equal(isLegacyPasswordHash(fallbackHash), false);
+    const [saltText, derivedText] = fallbackHash.split(':');
+    assert.equal(atob(saltText).length, 16);
+    assert.equal(atob(derivedText).length, 32);
+    assert.equal(await verifyPasswordAsync('fallback-pin', fallbackHash), true);
+    assert.equal(await verifyPasswordAsync('wrong-pin', fallbackHash), false);
+  } finally {
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+  }
+});
