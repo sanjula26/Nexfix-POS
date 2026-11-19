@@ -80,7 +80,6 @@ function hasValidSettings(value: unknown): boolean {
 
 function hasValidPermissions(value: unknown): boolean {
   if (!hasPlainObjectShape(value)) return false;
-  const roleMaps = ['admin', 'cashier', 'manager', 'technician'];
   return ['admin', 'cashier'].every((role) => hasPlainObjectShape(value[role])
     && Object.values(value[role] as Record<string, unknown>).every((flag) => typeof flag === 'boolean'))
     && ['manager', 'technician'].every((role) => value[role] === undefined
