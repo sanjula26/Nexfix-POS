@@ -49,6 +49,52 @@ async function clearAuthoritativeStateRow(): Promise<void> {
   await clearStore('app_state');
 }
 
+function validTestState(billCounter = 0): POSState {
+  return {
+    products: [], customers: [], suppliers: [], sales: [], purchases: [], expenses: [], exchanges: [],
+    users: [], audit: [], held: [], sessions: [], units: [], repairs: [],
+    settings: {
+      shopName: 'Test Shop', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
+      adminPinHash: '', whatsappReceipts: false,
+    },
+    permissions: { admin: {}, cashier: {} },
+    counters: { bill: billCounter, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
+  };
+}
+
+async function writeMainStateRow(value: unknown): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('nexfix_pos_db', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
+  });
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('app_state', 'readwrite');
+    tx.objectStore('app_state').put({ key: 'main', value });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Could not write test state row'));
+    tx.onabort = () => reject(tx.error || new Error('Test state row write aborted'));
+  });
+  db.close();
+}
+
+async function readMainStateRow(): Promise<unknown> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('nexfix_pos_db', 1);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
+  });
+  const value = await new Promise<unknown>((resolve, reject) => {
+    const tx = db.transaction('app_state', 'readonly');
+    const request = tx.objectStore('app_state').get('main');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Could not read test state row'));
+  });
+  db.close();
+  return value;
+}
+
 test('IndexedDB read-only state probe distinguishes an empty store from a read failure', async () => {
   await clearAuthoritativeStateRow();
   await idbClearQueue();
@@ -59,14 +105,8 @@ test('IndexedDB read-only state probe distinguishes an empty store from a read f
 
 test('concurrent first-run initialization never overwrites a state created by another window', async () => {
   await clearAuthoritativeStateRow();
-  const firstCandidate = {
-    counters: { bill: 111 },
-    marker: 'first-window',
-  } as unknown as POSState;
-  const secondCandidate = {
-    counters: { bill: 222 },
-    marker: 'second-window',
-  } as unknown as POSState;
+  const firstCandidate = validTestState(111);
+  const secondCandidate = validTestState(222);
   const [firstResult, secondResult] = await Promise.all([
     idbInitializeStateIfAbsent(firstCandidate),
     idbInitializeStateIfAbsent(secondCandidate),
@@ -105,21 +145,29 @@ test('IndexedDB prior-use probe detects queue, restore checkpoint and backup met
 });
 
 test('IndexedDB read-only state probe rejects a malformed authoritative row', async () => {
-  const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('nexfix_pos_db', 1);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error('Could not open test IndexedDB'));
-  });
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('app_state', 'readwrite');
-    tx.objectStore('app_state').put({ key: 'main' });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error('Could not write malformed test row'));
-    tx.onabort = () => reject(tx.error || new Error('Malformed test row write aborted'));
-  });
-  db.close();
+  await writeMainStateRow(undefined);
   assert.equal(await idbReadState(), null);
   await clearAuthoritativeStateRow();
+});
+
+test('IndexedDB read and concurrent initialization reject malformed state without rewriting it', async () => {
+  const valid = validTestState(77);
+  const malformedStates: unknown[] = [
+    {},
+    { ...valid, products: [{ id: 'product-without-required-fields' }] },
+    { ...valid, settings: {} },
+    { ...valid, permissions: {} },
+  ];
+
+  for (const malformed of malformedStates) {
+    await writeMainStateRow(malformed);
+    const before = await readMainStateRow();
+    assert.equal(await idbReadState(), null, 'malformed persisted state must fail closed');
+    assert.equal(await idbInitializeStateIfAbsent(validTestState(999)), null,
+      'concurrent initializer must reject an already-present malformed row');
+    assert.deepEqual(await readMainStateRow(), before, 'invalid row must not be overwritten or normalized');
+    await clearAuthoritativeStateRow();
+  }
 });
 
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
