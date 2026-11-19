@@ -20,21 +20,24 @@ const resolveStorage = (storage?: AuthThrottleStorage | null): AuthThrottleStora
   }
 };
 
-const validState = (value: unknown): AuthThrottleState | null => {
+const validState = (value: unknown, now: number): AuthThrottleState | null => {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Partial<AuthThrottleState>;
   if (!Number.isSafeInteger(candidate.failures) || (candidate.failures ?? -1) < 0) return null;
   if (!Number.isSafeInteger(candidate.lockedUntil) || (candidate.lockedUntil ?? -1) < 0) return null;
-  return { failures: candidate.failures!, lockedUntil: candidate.lockedUntil! };
+  return {
+    failures: Math.min(candidate.failures!, FAILURE_LIMIT + 5),
+    lockedUntil: Math.min(candidate.lockedUntil!, now + MAX_LOCK_SECONDS * 1000),
+  };
 };
 
-const readState = (scope: string, storage: AuthThrottleStorage | null): AuthThrottleState => {
+const readState = (scope: string, storage: AuthThrottleStorage | null, now: number): AuthThrottleState => {
   const memory = memoryState.get(scope) ?? { failures: 0, lockedUntil: 0 };
   if (!storage) return memory;
   try {
     const raw = storage.getItem(STORAGE_PREFIX + scope);
     if (!raw) return memory;
-    const parsed = validState(JSON.parse(raw));
+    const parsed = validState(JSON.parse(raw), now);
     if (!parsed) return memory;
     return {
       failures: Math.max(memory.failures, parsed.failures),
@@ -61,7 +64,7 @@ export const getAuthThrottleWaitMs = (
   now = Date.now(),
   storage?: AuthThrottleStorage | null,
 ): number => {
-  const state = readState(scope, resolveStorage(storage));
+  const state = readState(scope, resolveStorage(storage), now);
   return Math.max(0, state.lockedUntil - now);
 };
 
@@ -72,8 +75,8 @@ export const recordAuthThrottleFailure = (
   storage?: AuthThrottleStorage | null,
 ): AuthThrottleState => {
   const target = resolveStorage(storage);
-  const previous = readState(scope, target);
-  const failures = previous.failures + 1;
+  const previous = readState(scope, target, now);
+  const failures = Math.min(previous.failures + 1, FAILURE_LIMIT + 5);
   const lockSeconds = failures >= FAILURE_LIMIT
     ? Math.min(MAX_LOCK_SECONDS, BASE_LOCK_SECONDS * (2 ** Math.min(failures - FAILURE_LIMIT, 5)))
     : 0;
