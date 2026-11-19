@@ -157,6 +157,7 @@ test('IndexedDB read and concurrent initialization reject malformed state withou
     { ...valid, products: [{ id: 'product-without-required-fields' }] },
     { ...valid, settings: {} },
     { ...valid, permissions: {} },
+    { ...valid, permissions: { admin: {}, cashier: {} } },
   ];
 
   for (const malformed of malformedStates) {
