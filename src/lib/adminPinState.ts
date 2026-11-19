@@ -73,9 +73,14 @@ export async function findActiveAdminByCredential(
   state: Pick<POSState, 'users'>,
   verify: (admin: POSState['users'][number]) => Promise<boolean>,
 ): Promise<POSState['users'][number] | null> {
+  let match: POSState['users'][number] | null = null;
   for (const admin of state.users) {
     if (admin.role !== 'admin' || !admin.active) continue;
-    if (await verify(admin)) return admin;
+    if (!await verify(admin)) continue;
+    // A shared password cannot identify which account the cashier intends.
+    // Reject ambiguous matches instead of silently switching to the first.
+    if (match) return null;
+    match = admin;
   }
-  return null;
+  return match;
 }
