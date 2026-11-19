@@ -111,3 +111,34 @@ test('a completed WebCrypto mismatch rejects without running the synchronous PBK
     if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
   }
 });
+
+
+test('WebCrypto errors use the deterministic fallback verifier', async () => {
+  const storedHash = await hashPasswordAsync('correct-pin');
+  const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const nativeCrypto = globalThis.crypto;
+  assert.ok(cryptoDescriptor?.configurable, 'test runtime must allow isolated WebCrypto failure simulation');
+
+  let fallbackCalls = 0;
+  Object.defineProperty(globalThis, 'crypto', {
+    configurable: true,
+    value: {
+      getRandomValues: nativeCrypto.getRandomValues.bind(nativeCrypto),
+      subtle: {
+        importKey: async () => ({}),
+        deriveBits: async () => { throw new Error('simulated WebCrypto failure'); },
+      },
+    },
+  });
+
+  try {
+    const valid = await verifyPasswordAsyncWithFallback('correct-pin', storedHash, () => {
+      fallbackCalls += 1;
+      return true;
+    });
+    assert.equal(valid, true);
+    assert.equal(fallbackCalls, 1, 'fallback should run exactly once after a WebCrypto exception');
+  } finally {
+    if (cryptoDescriptor) Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+  }
+});
