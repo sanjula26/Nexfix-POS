@@ -792,12 +792,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let passwordOk = false;
-    if (isHashed(u.password)) {
-      passwordOk = await verifyPasswordAsync(password, u.password);
-    } else {
-      passwordOk = u.password === password;
-    }
-    if (!passwordOk || !u.active) {
+    try {
+      passwordOk = isHashed(u.password)
+        ? await verifyPasswordAsync(password, u.password)
+        : u.password === password;
+    } catch { passwordOk = false; }
+    const verifiedUser = stateRef.current.users.find(x => x.id === u.id);
+    if (!passwordOk || !verifiedUser || !verifiedUser.active || verifiedUser.role !== u.role || verifiedUser.password !== u.password) {
       if (u.role === 'admin') recordAuthThrottleFailure('admin', now);
       const failures = guard.failures + 1;
       const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
@@ -809,30 +810,40 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
     if (u.role === 'admin') clearAuthThrottle('admin');
-    if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
-    const needsUpgrade = !isPasswordHash(u.password);
-    const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
-    const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
+    if (expectedRole && verifiedUser.role !== expectedRole) return { ok: false, error: `This account is registered as ${verifiedUser.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
+    const needsUpgrade = !isPasswordHash(verifiedUser.password);
+    const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : verifiedUser.password;
+    const latestUserAfterHash = stateRef.current.users.find(x => x.id === verifiedUser.id);
+    if (!latestUserAfterHash || !latestUserAfterHash.active || latestUserAfterHash.role !== verifiedUser.role || latestUserAfterHash.password !== verifiedUser.password) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
+    }
+    const nextUser = needsUpgrade ? { ...latestUserAfterHash, password: upgradedPassword } : latestUserAfterHash;
     if (needsUpgrade) {
-      const nextUsers = users.map(x => x.id === u.id ? nextUser : x);
-      stateRef.current = { ...stateRef.current, users: nextUsers };
+      stateRef.current = {
+        ...stateRef.current,
+        users: stateRef.current.users.map(x => x.id === nextUser.id ? nextUser : x),
+      };
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
     const upgradedAdminPin = pinWasUnset ? await hashPasswordAsync(password) : stateRef.current.settings.adminPinHash;
     const latestState = stateRef.current;
+    const latestSignedInUser = latestState.users.find(x => x.id === nextUser.id);
+    if (!latestSignedInUser || !latestSignedInUser.active || latestSignedInUser.role !== nextUser.role || latestSignedInUser.password !== nextUser.password) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
+    }
     const initializeAdminPin = pinWasUnset && !(latestState.settings.adminPinHash || '');
     const nextState = {
       ...latestState,
-      users: needsUpgrade ? latestState.users.map(x => x.id === u!.id ? nextUser : x) : latestState.users,
+      users: latestState.users,
       settings: initializeAdminPin ? { ...latestState.settings, adminPinHash: upgradedAdminPin } : latestState.settings,
-      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(latestState.audit || [])].slice(0, 500),
+      audit: [{ id: uid(), time: new Date().toISOString(), user: latestSignedInUser.email, action: 'LOGIN', entity: 'Auth', details: `${latestSignedInUser.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(latestState.audit || [])].slice(0, 500),
     };
     stateRef.current = nextState;
     setState(s => ({
       ...s,
-      users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
+      users: needsUpgrade ? s.users.map(x => x.id === latestSignedInUser.id && x.password === verifiedUser.password ? nextUser : x) : s.users,
       settings: initializeAdminPin && !(s.settings.adminPinHash || '') ? { ...s.settings, adminPinHash: upgradedAdminPin } : s.settings,
-      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
+      audit: [{ id: uid(), time: new Date().toISOString(), user: latestSignedInUser.email, action: 'LOGIN', entity: 'Auth', details: `${latestSignedInUser.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
     const sess = { userId: nextUser.id, remember };
