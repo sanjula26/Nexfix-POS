@@ -26,6 +26,7 @@ test('admin credential attempts share a persisted backoff across reload-like rea
   assert.equal(fifth.failures, 5);
   assert.equal(fifth.lockedUntil, 17_000);
   assert.equal(getAuthThrottleWaitMs('admin-shared', 2_001, storage), 14_999);
+  assert.equal(JSON.parse(storage.getItem('nexfix_auth_throttle_v1:admin-shared') || '{}').failures, 5);
 });
 
 test('backoff grows exponentially and is capped at five minutes', () => {
@@ -60,4 +61,23 @@ test('storage exceptions do not disable the in-memory limiter', () => {
   };
   for (let i = 0; i < 5; i++) recordAuthThrottleFailure('private', 10_000, storage);
   assert.equal(getAuthThrottleWaitMs('private', 10_001, storage), 14_999);
+});
+
+test('untrusted persisted counters and timestamps cannot create an indefinite lockout', () => {
+  const storage = createStorage();
+  storage.setItem('nexfix_auth_throttle_v1:future', JSON.stringify({
+    failures: Number.MAX_SAFE_INTEGER,
+    lockedUntil: Number.MAX_SAFE_INTEGER,
+  }));
+  assert.equal(getAuthThrottleWaitMs('future', 1_000, storage), 300_000);
+  const state = recordAuthThrottleFailure('future', 1_000, storage);
+  assert.equal(state.failures, 10);
+  assert.equal(state.lockedUntil, 301_000);
+});
+
+test('different credential scopes keep independent failure counters', () => {
+  const storage = createStorage();
+  for (let i = 0; i < 5; i++) recordAuthThrottleFailure('scope-a', 1_000, storage);
+  assert.equal(getAuthThrottleWaitMs('scope-a', 1_001, storage), 14_999);
+  assert.equal(getAuthThrottleWaitMs('scope-b', 1_001, storage), 0);
 });
