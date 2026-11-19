@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getAdminCredentialFingerprint, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
 import type { POSState } from '../src/lib/types.ts';
 
 function stateWithPin(adminPinHash: string): POSState {
@@ -58,7 +58,7 @@ test('a delayed legacy PIN upgrade cannot overwrite a PIN changed while verifica
   assert.equal(state.settings.adminPinHash, newPinHash);
 });
 
-test('sensitive-admin freshness fingerprint changes when any active admin credential or shared PIN changes', () => {
+test('sensitive-admin freshness snapshot invalidates on admin credential or shared PIN changes', () => {
   const base = {
     settings: { adminPinHash: 'pin-hash-a' },
     users: [
@@ -67,31 +67,35 @@ test('sensitive-admin freshness fingerprint changes when any active admin creden
       { id: 'admin-a', role: 'admin', active: true, password: 'password-a' },
     ],
   } as unknown as POSState;
-  const original = getAdminCredentialFingerprint(base);
+  const snapshot = captureAdminCredentialSnapshot(base);
 
   const reordered = {
     ...base,
     users: [...base.users].reverse(),
   } as POSState;
-  assert.equal(getAdminCredentialFingerprint(reordered), original);
+  assert.equal(adminCredentialSnapshotMatches(reordered, snapshot), true);
 
   const adminPasswordChanged = {
     ...base,
     users: base.users.map(user => user.id === 'admin-a' ? { ...user, password: 'new-admin-password' } : user),
   } as POSState;
-  assert.notEqual(getAdminCredentialFingerprint(adminPasswordChanged), original);
+  assert.equal(adminCredentialSnapshotMatches(adminPasswordChanged, snapshot), false);
 
   const pinChanged = {
     ...base,
     settings: { ...base.settings, adminPinHash: 'pin-hash-b' },
   } as POSState;
-  assert.notEqual(getAdminCredentialFingerprint(pinChanged), original);
+  assert.equal(adminCredentialSnapshotMatches(pinChanged, snapshot), false);
 
   const cashierPasswordChanged = {
     ...base,
     users: base.users.map(user => user.id === 'cashier-1' ? { ...user, password: 'new-cashier-password' } : user),
   } as POSState;
-  assert.equal(getAdminCredentialFingerprint(cashierPasswordChanged), original);
-});
+  assert.equal(adminCredentialSnapshotMatches(cashierPasswordChanged, snapshot), true);
 
-// The sensitive-admin cache fingerprint intentionally excludes non-admin credentials.
+  const adminDeactivated = {
+    ...base,
+    users: base.users.map(user => user.id === 'admin-b' ? { ...user, active: false } : user),
+  } as POSState;
+  assert.equal(adminCredentialSnapshotMatches(adminDeactivated, snapshot), false);
+});

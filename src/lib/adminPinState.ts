@@ -18,20 +18,38 @@ export function replaceAdminPinHashIfCurrent(
   };
 }
 
+export type AdminCredentialSnapshot = {
+  admins: Array<{ id: string; password: string }>;
+  adminPinHash: string;
+};
+
 /**
- * Fingerprint every active administrator credential plus the shared admin PIN.
- * A cached sensitive-action re-authentication is valid only while this exact
- * credential set and the authenticated operator remain unchanged.
+ * Capture references to active administrator credentials and the shared PIN.
+ * Keep credential values as separate references rather than concatenating
+ * them into a fingerprint string (legacy accounts may still have plain text).
  */
-export function getAdminCredentialFingerprint(
+export function captureAdminCredentialSnapshot(
   state: Pick<POSState, 'users' | 'settings'>,
-): string {
+): AdminCredentialSnapshot {
   const admins = state.users
     .filter(user => user.role === 'admin' && user.active)
-    .map(user => [user.id, user.password] as [string, string])
-    .sort((left, right) => left[0].localeCompare(right[0]));
-  return JSON.stringify({
+    .map(user => ({ id: user.id, password: user.password }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  return {
     admins,
     adminPinHash: state.settings.adminPinHash || '',
-  });
+  };
+}
+
+export function adminCredentialSnapshotMatches(
+  state: Pick<POSState, 'users' | 'settings'>,
+  snapshot: AdminCredentialSnapshot,
+): boolean {
+  const current = captureAdminCredentialSnapshot(state);
+  return current.adminPinHash === snapshot.adminPinHash
+    && current.admins.length === snapshot.admins.length
+    && current.admins.every((admin, index) =>
+      admin.id === snapshot.admins[index].id
+      && admin.password === snapshot.admins[index].password
+    );
 }
