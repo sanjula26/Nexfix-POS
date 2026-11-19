@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminById, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent } from '../src/lib/adminPinState.ts';
 import type { POSState } from '../src/lib/types.ts';
 
 function stateWithPin(adminPinHash: string): POSState {
@@ -115,4 +115,22 @@ test('sensitive re-auth selects the currently signed-in active admin, not the fi
   assert.equal(findActiveAdminById(state, 'admin-current')?.password, 'current-admin-password');
   assert.equal(findActiveAdminById(state, 'cashier-1'), null);
   assert.equal(findActiveAdminById({ ...state, users: state.users.map(user => user.id === 'admin-current' ? { ...user, active: false } : user) } as POSState, 'admin-current'), null);
+});
+
+
+test('cashier admin unlock identifies the active admin whose password was verified', async () => {
+  const state = {
+    settings: { adminPinHash: 'shared-pin-hash' },
+    users: [
+      { id: 'admin-first', role: 'admin', active: true, password: 'first-admin-password' },
+      { id: 'admin-second', role: 'admin', active: true, password: 'second-admin-password' },
+      { id: 'cashier-1', role: 'cashier', active: true, password: 'cashier-password' },
+      { id: 'admin-inactive', role: 'admin', active: false, password: 'inactive-admin-password' },
+    ],
+  } as unknown as POSState;
+
+  const matched = await findActiveAdminByCredential(state, async admin => admin.password === 'second-admin-password');
+  assert.equal(matched?.id, 'admin-second');
+  const noMatch = await findActiveAdminByCredential(state, async admin => admin.password === 'not-a-password');
+  assert.equal(noMatch, null);
 });
