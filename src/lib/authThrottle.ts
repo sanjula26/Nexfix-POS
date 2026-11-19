@@ -96,3 +96,7 @@ export const clearAuthThrottle = (scope: string, storage?: AuthThrottleStorage |
     // Clearing the persistent copy is best-effort; memory state is already cleared.
   }
 };
+
+/** Idle-unlock failures from a cashier are already scoped to that cashier; do not let them exhaust the shared admin budget. */
+export const shouldCountAdminIdleUnlockFailure = (currentRole: string, adminCredentialChecked: boolean): boolean =>
+  currentRole === 'admin' && adminCredentialChecked;
