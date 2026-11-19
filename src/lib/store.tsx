@@ -645,7 +645,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return true;
     }
     recordAuthThrottleFailure(unlockScope);
-    if (adminCredentialChecked) recordAuthThrottleFailure('admin');
+    if (shouldCountAdminIdleUnlockFailure(current.role, adminCredentialChecked)) recordAuthThrottleFailure('admin');
     pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
     return false;
   }, [pushAudit, user]);
