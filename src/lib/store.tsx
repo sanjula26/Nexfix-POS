@@ -1077,6 +1077,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       adminPinUpgradeHash = pinVerification.upgradedHash;
       let passwordOk = false;
       if (!pinOk) {
+        const adminCredentialSnapshot = captureAdminCredentialSnapshot(stateRef.current);
         const matchingAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
           try {
             return isHashed(candidate.password)
@@ -1086,6 +1087,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             return false;
           }
         });
+        // Reject if an admin was added, removed, deactivated or had credentials
+        // changed while we checked the full set for an unambiguous match.
+        if (!adminCredentialSnapshotMatches(stateRef.current, adminCredentialSnapshot)) {
+          return { ok: false, error: 'Administrator accounts changed during verification. Please try again.' };
+        }
         if (matchingAdmin) {
           const latestAdmin = findActiveAdminById(stateRef.current, matchingAdmin.id);
           if (!latestAdmin || latestAdmin.password !== matchingAdmin.password) {
