@@ -156,8 +156,20 @@ test('IndexedDB read and concurrent initialization reject malformed state withou
     {},
     { ...valid, products: [{ id: 'product-without-required-fields' }] },
     { ...valid, settings: {} },
+    { ...valid, settings: { ...valid.settings, taxDefault: 'not-a-number' } },
     { ...valid, permissions: {} },
     { ...valid, permissions: { admin: {}, cashier: {} } },
+    { ...valid, permissions: { admin: { 'page:dashboard': true }, cashier: { 'page:pos': 'yes' } } },
+    { ...valid, counters: { ...valid.counters, bill: -1 } },
+    {
+      ...valid,
+      sales: [{
+        id: 'sale-with-malformed-line', billNo: 'NFX-TEST', date: '2026-11-19T00:00:00.000Z',
+        cashierId: 'cashier-1', cashierName: 'Cashier', customerName: 'Walk-in',
+        items: [{ productId: 'product-1' }], subtotal: 0, discount: 0, tax: 0, total: 0,
+        payment: 'cash', amountPaid: 0, change: 0, profit: 0, status: 'completed',
+      }],
+    },
   ];
 
   for (const malformed of malformedStates) {
