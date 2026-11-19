@@ -949,6 +949,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let adminPinVerified = false;
+    let adminPinHashSnapshot = '';
     let adminPinUpgradeHash: string | undefined;
     if (role === 'cashier' && user.role === 'admin') {
       const mail = (email || '').trim().toLowerCase();
@@ -973,7 +974,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       target = state.users.find(u => u.role === 'admin' && u.active);
       if (!target) return { ok: false, error: 'No active administrator account exists' };
       const storedPinHash = stateRef.current.settings.adminPinHash || '';
-      const pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash);
+      adminPinHashSnapshot = storedPinHash;
+      let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>>;
+      try { pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash); }
+      catch { return { ok: false, error: 'Administrator credential verification failed. Please try again.' }; }
       const pinOk = pinVerification.valid;
       if (pinOk && (stateRef.current.settings.adminPinHash || '') !== storedPinHash) {
         return { ok: false, error: 'Administrator PIN changed during verification. Please try again.' };
@@ -1009,7 +1013,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
     if (role === 'admin' && user.role === 'cashier') {
       clearAuthThrottle('admin');
-      if (adminPinVerified && adminPinUpgradeHash && !commitAdminPinHashIfCurrent(stateRef.current.settings.adminPinHash || '', adminPinUpgradeHash)) {
+      if (adminPinVerified && adminPinUpgradeHash && !commitAdminPinHashIfCurrent(adminPinHashSnapshot, adminPinUpgradeHash)) {
         return { ok: false, error: 'Administrator PIN changed during verification. Please try again.' };
       }
     }
