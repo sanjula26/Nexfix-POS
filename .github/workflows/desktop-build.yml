@@ -185,6 +185,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # Install tools before any private upload credentials enter the environment.
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          aws --version
           npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4
           node -e "require('tus-js-client')"
 
@@ -200,8 +202,6 @@ jobs:
           foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET')) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) { throw "$name secret is empty." }
           }
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
-          aws --version
 
           $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $version = $env:BUILD_VERSION
