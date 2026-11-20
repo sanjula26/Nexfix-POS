@@ -49,11 +49,12 @@ test('development navigation is limited to the configured origin', () => {
   assert.equal(isAllowedNavigation('http://user@localhost:5173/'), false);
 });
 
-test('Electron keeps the renderer sandboxed and isolated', () => {
+test('Electron keeps the renderer sandboxed, isolated and DevTools-disabled in packaged builds', () => {
   assert.match(
     mainSource,
-    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true\}/,
+    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true[^}]*devTools:isDev\}/,
   );
+  assert.match(mainSource, /const isDev = !app\.isPackaged;/);
 });
 
 test('privileged clipboard, external-open and exit IPC handlers reject untrusted frames', () => {
