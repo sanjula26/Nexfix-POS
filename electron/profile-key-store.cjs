@@ -8,6 +8,7 @@ const {
   PROFILE_CRYPTO_VERSION,
   createProfileKeyMaterial,
   wrapDataKeyWithPassphrase,
+  wrapDataKeyWithOS,
   unwrapDataKeyWithPassphrase,
   unwrapDataKeyWithRecoveryKey,
 } = require('./profile-crypto.cjs');
@@ -245,6 +246,29 @@ async function resetProfileLockPassphraseWithRecoveryKey(profileDirectory, profi
   }
 }
 
+
+async function rebindProfileDeviceKeyWithRecoveryKey(profileDirectory, profileId, recoveryKey, safeStorage) {
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  const dataKey = unwrapDataKeyWithRecoveryKey(current.recoveryWrappedKey, recoveryKey, profileId);
+  try {
+    const nextEnvelope = {
+      ...current,
+      osWrappedKey: await wrapDataKeyWithOS(dataKey, profileId, safeStorage),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+    const verificationKey = await require('./profile-crypto.cjs').unwrapDataKeyWithOS(
+      saved.osWrappedKey, profileId, safeStorage,
+    );
+    const valid = verificationKey.equals(dataKey);
+    verificationKey.fill(0);
+    if (!valid) throw new Error('New Windows device key wrapper failed verification.');
+    return saved;
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
 module.exports = {
   KEY_ENVELOPE_FILE,
   KEY_ENVELOPE_FORMAT,
@@ -255,4 +279,5 @@ module.exports = {
   readProfileKeyEnvelope,
   changeProfileLockPassphrase,
   resetProfileLockPassphraseWithRecoveryKey,
+  rebindProfileDeviceKeyWithRecoveryKey,
 };
