@@ -19,7 +19,7 @@ A person working at Branch A should see and operate on Branch A's operational re
 - Device binding protects several write RPCs, but does not by itself restrict direct SELECT queries.
 - A single cloud identity can be used on multiple terminals. Since Supabase RLS sees auth.uid(), not a trustworthy terminal identity from the renderer, a device row alone is insufficient to express "this authenticated person is only Branch A" when the same cloud account owns multiple device bindings.
 
-## 3. Data classification proposal (requires owner confirmation before policy changes)
+## 3. Approved data classification baseline (2026-11-21; remaining rows still require owner decisions)
 
 | Data | Proposed visibility | Reason / caution |
 |---|---|---|
@@ -31,13 +31,15 @@ A person working at Branch A should see and operate on Branch A's operational re
 | Expenses and day sessions/cashier balances | Assigned branch only | Branch cash and expense privacy |
 | Repairs, repair parts, warranty claims | Assigned branch only after adding reliable branch attribution | Existing repair records need a safe historical backfill rule |
 | Stock transfers | Source/destination branch participants; owner/admin all | Do not expose unrelated branches' transfer documents |
-| Customers and customer balances/credit | Decision required; currently shop-level | A customer may buy/settle at multiple branches; hiding balances can cause duplicate or incorrect credit collection |
+| Customer contact profiles and customer master data | Owner/Admin only across the shop; branch staff get only an explicitly branch-linked customer projection | `customers` has no branch key and currently exposes shop-wide contact data; do not give branch staff direct table reads |
 | Suppliers and supplier balances | Decision required; currently shop-level in parts of the model | Suppliers may serve multiple branches |
 | Quotations, kits, promotions, price lists | Decision required | May be shared commercial master data or branch-owned work |
 | Shop settings, users, audit log, backup/restore | Owner/admin only unless narrowly delegated | High-impact or sensitive shop-level information |
 | Owner Web consolidated reports | Owner/admin only | Branch users receive assigned-branch views only |
 
-Do not silently change customer-credit semantics: the existing roadmap explicitly describes credit as shop-level. If customer balances remain shared, branch staff may see a shared balance without seeing another branch's detailed invoices; the UI must explain the distinction and the settlement RPC must validate the true shop-wide outstanding amount.
+The owner approved a branch-private customer/credit model on 2026-11-21: Owner/Admin may see all customer contact profiles, invoices, settlements and the shop-wide credit balance. Branch staff may see only customer contact profiles explicitly linked to their assigned branch(es), invoices belonging to those branch(es), and the outstanding/settlement details for those invoices. They must not see another branch's customer contact profile, invoice history, settlement history, or the global `customers.credit_balance`. A branch user's FIFO settlement is restricted to invoices in their authorized branch set; only Owner/Admin may allocate across all branches. Do not expose a global customer balance as a shortcut.
+
+This approved policy is not yet implemented. The `customers` table has no `branch_id`; a customer may have sales in several branches. The current `CustomerCreditPayment` ledger is embedded in the shop-wide POS state snapshot (with a collection `branchId` and invoice allocations), not stored as a normalized branch-secure settlement ledger. Design a canonical customer identity plus explicit customer-to-branch visibility relation/projection, and a normalized or equivalently secure invoice-allocation ledger. Avoid duplicating customers or corrupting existing balances. Keep the current shop-wide customer RPC and direct customer-table access Owner/Admin-only until branch-safe RPCs and snapshot replacement are proven. Existing invoice `customer_name` is a denormalized snapshot on each sale; branch-scoped invoice access may show that invoice's own customer label, but must not expose other-branch customer records.
 
 ## 4. Identity and authorization model
 
