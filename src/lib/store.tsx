@@ -613,19 +613,36 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const unlockSession = useCallback(async (credential: string): Promise<boolean> => {
     if (!user || !credential) return false;
-    const attempt = await runLocalAuthAttempt(async () => {
-      const current = stateRef.current.users.find(u => u.id === user.id);
-      if (!current || !current.active || current.mustChangePassword) return false;
+    const currentUser = stateRef.current.users.find(u => u.id === user.id);
+    if (!currentUser || !currentUser.active || currentUser.mustChangePassword) return false;
 
-      let passwordOk = false;
+    // A cashier's own password unlocks only that cashier session and must not
+    // clear the shared administrator-credential lockout history.
+    if (currentUser.role === 'cashier') {
+      let cashierPasswordOk = false;
       try {
-        passwordOk = isHashed(current.password)
-          ? await verifyPasswordAsync(credential, current.password)
-          : credential === current.password;
-      } catch { passwordOk = false; }
+        cashierPasswordOk = isHashed(currentUser.password)
+          ? await verifyPasswordAsync(credential, currentUser.password)
+          : credential === currentUser.password;
+      } catch { cashierPasswordOk = false; }
+      if (cashierPasswordOk) {
+        loginAtRef.current = Date.now();
+        pushAudit('UNLOCK', 'Auth', 'Cashier session unlocked after idle lock');
+        return true;
+      }
+    }
 
-      // An unattended terminal can be recovered by the current account or by
-      // an active administrator credential, without destroying the current cart.
+    const attempt = await runLocalAuthAttempt(async () => {
+      let passwordOk = false;
+      if (currentUser.role === 'admin') {
+        try {
+          passwordOk = isHashed(currentUser.password)
+            ? await verifyPasswordAsync(credential, currentUser.password)
+            : credential === currentUser.password;
+        } catch { passwordOk = false; }
+      }
+
+      // An unattended terminal can also be recovered by an active administrator credential.
       let elevatedOk = false;
       for (const admin of stateRef.current.users.filter(u => u.role === 'admin' && u.active)) {
         try {
