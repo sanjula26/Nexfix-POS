@@ -62,9 +62,12 @@ function getDB(): Promise<IDBDatabase> {
 export async function idbReadState(): Promise<POSState | undefined | null> {
   try {
     const db = await getDB();
-    const row = await idbReq<{ key: string; value: POSState } | undefined>(
-      db.transaction(STORE_STATE, 'readonly').objectStore(STORE_STATE).get('main'),
+    const tx = db.transaction(STORE_STATE, 'readonly');
+    const completed = idbTransactionComplete(tx, 'Authoritative POS state read failed');
+    const rowRequest = idbReq<{ key: string; value: POSState } | undefined>(
+      tx.objectStore(STORE_STATE).get('main'),
     );
+    const [row] = await Promise.all([rowRequest, completed.then(() => undefined)]);
     if (!row) return undefined;
     if (!hasValidPOSStateShape(row.value)) return null;
     return row.value;
