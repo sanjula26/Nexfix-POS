@@ -168,6 +168,19 @@ export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.le
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
-export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
+export async function idbGetMeta(): Promise<BackupMeta> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readonly');
+    const completed = idbTransactionComplete(tx, 'Backup metadata read failed');
+    const rowRequest = idbReq<{ key: string; value: BackupMeta } | undefined>(
+      tx.objectStore(STORE_META).get('backup'),
+    );
+    const [row] = await Promise.all([rowRequest, completed.then(() => undefined)]);
+    return { ...DEFAULT_META, ...(row?.value || {}) };
+  } catch {
+    return { ...DEFAULT_META };
+  }
+}
 export async function idbSetMeta(patch:Partial<BackupMeta>):Promise<BackupMeta>{const current=await idbGetMeta();const next={...current,...patch};try{const db=await getDB();const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:'backup',value:next});await idbTransactionComplete(tx,'Backup metadata write failed');}catch{/* metadata is best-effort */}return next;}
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
