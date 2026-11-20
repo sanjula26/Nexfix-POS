@@ -8,6 +8,9 @@ const {
   parseRecoveryKey,
   encryptProfilePayload,
   decryptProfilePayload,
+  wrapDataKeyWithPassphrase,
+  unwrapDataKeyWithPassphrase,
+  validateLockPassphrase,
   wrapDataKeyWithRecoveryKey,
   unwrapDataKeyWithRecoveryKey,
   wrapDataKeyWithOS,
@@ -135,4 +138,31 @@ test('new profile key material has independent OS and recovery wrappers', async 
   assert.notEqual(material.envelope.osWrappedKey.ciphertext, material.envelope.recoveryWrappedKey.ciphertext);
   assert.deepEqual(unwrapDataKeyWithRecoveryKey(material.envelope.recoveryWrappedKey, material.recoveryKey, PROFILE_A), material.dataKey);
   assert.deepEqual(await unwrapDataKeyWithOS(material.envelope.osWrappedKey, PROFILE_A, fakeSafeStorage()), material.dataKey);
+});
+
+
+test('owner-changeable folder lock passphrase wraps and unwraps the existing profile DEK', async () => {
+  const dataKey = crypto.randomBytes(32);
+  const envelope = await wrapDataKeyWithPassphrase(dataKey, 'ShopSecure2026!', PROFILE_A);
+  assert.equal(envelope.provider, 'scrypt-passphrase');
+  assert.deepEqual(await unwrapDataKeyWithPassphrase(envelope, 'ShopSecure2026!', PROFILE_A), dataKey);
+  await assert.rejects(() => unwrapDataKeyWithPassphrase(envelope, 'WrongPassword2026!', PROFILE_A), /authentication failed/);
+  await assert.rejects(() => unwrapDataKeyWithPassphrase(envelope, 'ShopSecure2026!', PROFILE_B), /does not match/);
+});
+
+test('changing the folder lock passphrase re-wraps the same DEK without re-encrypting POS records', async () => {
+  const dataKey = crypto.randomBytes(32);
+  const oldEnvelope = await wrapDataKeyWithPassphrase(dataKey, 'OldSecure2026!', PROFILE_A);
+  const unlocked = await unwrapDataKeyWithPassphrase(oldEnvelope, 'OldSecure2026!', PROFILE_A);
+  const newEnvelope = await wrapDataKeyWithPassphrase(unlocked, 'NewSecure2026!', PROFILE_A);
+  assert.deepEqual(await unwrapDataKeyWithPassphrase(newEnvelope, 'NewSecure2026!', PROFILE_A), dataKey);
+  await assert.rejects(() => unwrapDataKeyWithPassphrase(newEnvelope, 'OldSecure2026!', PROFILE_A), /authentication failed/);
+});
+
+test('folder lock passphrase rejects weak values and unsupported KDF parameters', async () => {
+  assert.throws(() => validateLockPassphrase('short1'), /12–1024/);
+  assert.throws(() => validateLockPassphrase('onlyletterswithoutdigits'), /12–1024/);
+  const dataKey = crypto.randomBytes(32);
+  const envelope = await wrapDataKeyWithPassphrase(dataKey, 'ShopSecure2026!', PROFILE_A);
+  await assert.rejects(() => unwrapDataKeyWithPassphrase({ ...envelope, kdf: { ...envelope.kdf, N: 1024 } }, 'ShopSecure2026!', PROFILE_A), /invalid or belongs/);
 });
