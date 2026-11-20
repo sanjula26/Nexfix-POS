@@ -291,6 +291,78 @@ async function createProfileKeyMaterial(profileId, safeStorage) {
   }
 }
 
+
+const PASSPHRASE_SCRYPT = Object.freeze({ N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+const PASSPHRASE_SALT_BYTES = 16;
+
+function validateLockPassphrase(passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.length < 12 || passphrase.length > 1024 ||
+      !/[A-Za-z]/.test(passphrase) || !/[0-9]/.test(passphrase)) {
+    throw new Error('Folder lock passphrase must be 12–1024 characters and include letters and numbers.');
+  }
+}
+
+function derivePassphraseKey(passphrase, salt, options = PASSPHRASE_SCRYPT) {
+  validateLockPassphrase(passphrase);
+  if (!Buffer.isBuffer(salt) || salt.length !== PASSPHRASE_SALT_BYTES) {
+    throw new Error('Folder lock passphrase salt is invalid.');
+  }
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(passphrase, salt, DATA_KEY_BYTES, options, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+
+async function wrapDataKeyWithPassphrase(dataKey, passphrase, profileId) {
+  assertKey(dataKey);
+  assertProfileId(profileId);
+  validateLockPassphrase(passphrase);
+  const salt = crypto.randomBytes(PASSPHRASE_SALT_BYTES);
+  const wrappingKey = await derivePassphraseKey(passphrase, salt);
+  try {
+    const aad = Buffer.from(PROFILE_CRYPTO_FORMAT + ':passphrase-wrap:' + profileId.toLowerCase(), 'utf8');
+    return {
+      format: PROFILE_CRYPTO_FORMAT,
+      version: PROFILE_CRYPTO_VERSION,
+      provider: 'scrypt-passphrase',
+      profileId: profileId.toLowerCase(),
+      kdf: { name: 'scrypt', N: PASSPHRASE_SCRYPT.N, r: PASSPHRASE_SCRYPT.r, p: PASSPHRASE_SCRYPT.p },
+      salt: salt.toString('base64'),
+      ...encryptWithKey(wrappingKey, dataKey, aad),
+    };
+  } finally {
+    wrappingKey.fill(0);
+  }
+}
+
+async function unwrapDataKeyWithPassphrase(envelope, passphrase, expectedProfileId) {
+  assertProfileId(expectedProfileId);
+  validateLockPassphrase(passphrase);
+  if (!envelope || envelope.format !== PROFILE_CRYPTO_FORMAT ||
+      envelope.version !== PROFILE_CRYPTO_VERSION ||
+      envelope.provider !== 'scrypt-passphrase' ||
+      envelope.profileId !== expectedProfileId.toLowerCase() ||
+      !envelope.kdf || envelope.kdf.name !== 'scrypt' ||
+      envelope.kdf.N !== PASSPHRASE_SCRYPT.N ||
+      envelope.kdf.r !== PASSPHRASE_SCRYPT.r ||
+      envelope.kdf.p !== PASSPHRASE_SCRYPT.p) {
+    throw new Error('Folder lock passphrase envelope is invalid or belongs to another profile.');
+  }
+  const salt = decodeBase64(envelope.salt, 'Folder lock passphrase salt');
+  if (salt.length !== PASSPHRASE_SALT_BYTES) throw new Error('Folder lock passphrase salt has an invalid length.');
+  const wrappingKey = await derivePassphraseKey(passphrase, salt);
+  try {
+    const aad = Buffer.from(PROFILE_CRYPTO_FORMAT + ':passphrase-wrap:' + expectedProfileId.toLowerCase(), 'utf8');
+    const dataKey = decryptWithKey(wrappingKey, envelope, aad);
+    assertKey(dataKey);
+    return dataKey;
+  } finally {
+    wrappingKey.fill(0);
+  }
+}
+
 module.exports = {
   PROFILE_CRYPTO_FORMAT,
   PROFILE_CRYPTO_VERSION,
@@ -300,6 +372,9 @@ module.exports = {
   parseRecoveryKey,
   encryptProfilePayload,
   decryptProfilePayload,
+  wrapDataKeyWithPassphrase,
+  unwrapDataKeyWithPassphrase,
+  validateLockPassphrase,
   wrapDataKeyWithRecoveryKey,
   unwrapDataKeyWithRecoveryKey,
   wrapDataKeyWithOS,
