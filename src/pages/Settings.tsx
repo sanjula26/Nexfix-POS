@@ -667,7 +667,7 @@ export default function Settings() {
     setPinMsg(null);
     if (!(await confirmSensitiveAdmin('admin unlock password change'))) { setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' }); return; }
     if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
-    const res = changeAdminPin(pinCur, pinNew);
+    const res = await changeAdminPin(pinCur, pinNew);
     if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
     setPinMsg({ ok: true, text: 'Admin unlock PIN updated' });
     setPinCur(''); setPinNew(''); setPinConfirm('');
