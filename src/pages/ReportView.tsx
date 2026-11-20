@@ -58,6 +58,43 @@ export default function ReportView() {
         const items = groupedItems().sort((a,b)=>reportType==='item-wise-profits'?b.profit-a.profit:b.revenue-a.revenue);
         return { title: reportType === 'item-wise-profits' ? 'Item Wise Profit Report' : reportType === 'item-sales-date-range' ? 'Item Sales — Date Range Report' : 'Item Wise Sales Report', description: 'Product-level totals calculated from completed sale lines. Discounts recorded on each line are deducted from sales value.', columns: ['Item','Quantity Sold','Sales Value','Cost Value','Gross Profit'], rows: items.map(item=>({id:item.id,values:[item.name,item.qty,money(item.revenue),money(item.cost),money(item.profit)]})) };
       }
+      case 'cashier-wise-sales': {
+        const map = new Map<string, { name: string; bills: number; units: number; sales: number; profit: number }>();
+        sales.forEach(sale => {
+          const key = sale.cashierId || sale.cashierName || 'unknown';
+          const row = map.get(key) || { name: sale.cashierName || 'Unassigned cashier', bills: 0, units: 0, sales: 0, profit: 0 };
+          row.bills += 1;
+          row.units += sale.items.reduce((sum, item) => sum + item.qty, 0);
+          row.sales += sale.total;
+          row.profit += sale.profit;
+          map.set(key, row);
+        });
+        return { title: 'Cashier Performance Report', description: 'Completed sales grouped by the cashier recorded on each bill.', columns: ['Cashier', 'Bills', 'Units Sold', 'Sales Value', 'Recorded Profit'], rows: [...map.entries()].sort((a,b)=>b[1].sales-a[1].sales).map(([id,v])=>({id,values:[v.name,v.bills,v.units,money(v.sales),money(v.profit)]})) };
+      }
+      case 'payment-breakdown': {
+        const map = new Map<string, { transactions: number; amount: number }>();
+        sales.forEach(sale => {
+          const legs = sale.payments?.length ? sale.payments : [{ method: sale.payment, amount: sale.total }];
+          legs.forEach(leg => {
+            const row = map.get(leg.method) || { transactions: 0, amount: 0 };
+            row.transactions += 1;
+            row.amount += Number(leg.amount) || 0;
+            map.set(leg.method, row);
+          });
+        });
+        return { title: 'Payment Method Breakdown', description: 'Recorded tender amounts from completed bills. Split payments are separated by payment leg.', columns: ['Payment Method', 'Payment Legs', 'Recorded Amount'], rows: [...map.entries()].sort((a,b)=>b[1].amount-a[1].amount).map(([method,v])=>({id:method,values:[method.toUpperCase(),v.transactions,money(v.amount)]})) };
+      }
+      case 'sales-by-hour': {
+        const map = new Map<number, { bills: number; sales: number; units: number }>();
+        sales.forEach(sale => {
+          const hour = new Date(sale.date).getHours();
+          const row = map.get(hour) || { bills: 0, sales: 0, units: 0 };
+          row.bills += 1; row.sales += sale.total;
+          row.units += sale.items.reduce((sum,item)=>sum+item.qty,0);
+          map.set(hour,row);
+        });
+        return { title: 'Sales by Hour Report', description: 'Completed sales grouped by the local hour recorded on each bill.', columns: ['Hour', 'Bills', 'Units Sold', 'Sales Value'], rows: [...map.entries()].sort((a,b)=>a[0]-b[0]).map(([hour,v])=>({id:String(hour),values:[String(hour).padStart(2,'0')+':00 – '+String((hour+1)%24).padStart(2,'0')+':00',v.bills,v.units,money(v.sales)]})) };
+      }
       case 'date-wise-profits': {
         const map = new Map<string,{sales:number;profit:number;bills:number}>();
         sales.forEach(sale=>{const day=dkey(sale.date);const v=map.get(day)||{sales:0,profit:0,bills:0};v.sales+=sale.total;v.profit+=sale.profit;v.bills+=1;map.set(day,v);});
@@ -91,6 +128,23 @@ export default function ReportView() {
         purchases.forEach(purchase=>purchase.items.forEach(item=>{const v=map.get(item.productId)||{name:item.name,received:0,purchaseCost:0,sold:0,salesValue:0,stock:state.products.find(p=>p.id===item.productId)?.stock||0};v.received+=item.qty;v.purchaseCost+=item.qty*item.cost;map.set(item.productId,v);}));
         sales.forEach(sale=>sale.items.forEach(item=>{const v=map.get(item.productId)||{name:item.name,received:0,purchaseCost:0,sold:0,salesValue:0,stock:state.products.find(p=>p.id===item.productId)?.stock||0};v.sold+=item.qty;v.salesValue+=item.qty*item.price-(item.discount||0);map.set(item.productId,v);}));
         return {title:'GRN And Selling Report',description:'Compares received purchase quantities and completed sale quantities for the selected period, alongside current stock.',columns:['Item','Received Qty','Purchase Cost','Sold Qty','Sales Value','Current Stock'],rows:[...map.entries()].sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([id,v])=>({id,values:[v.name,v.received,money(v.purchaseCost),v.sold,money(v.salesValue),v.stock]}))};
+      }
+      case 'inventory-movements': {
+        const movements = (state.inventoryTransactions || []).filter(tx => inDateRange(tx.occurredAt, from, to)).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt));
+        return { title: 'Inventory Movement History', description: 'Recorded stock receipts, sales, returns, adjustments and other inventory movements. Quantities are signed: positive adds stock and negative removes stock.', columns: ['Date & Time','Product','Movement','Quantity','Reference','Processed By','Reason'], rows: movements.map(tx=>({id:tx.id,values:[dateText(tx.occurredAt)+' '+new Date(tx.occurredAt).toLocaleTimeString(),state.products.find(p=>p.id===tx.productId)?.name||'Unknown product',tx.type,tx.quantity,tx.referenceNo||tx.referenceId||'—',tx.by||'—',tx.reason||'—']})) };
+      }
+      case 'supplier-purchase-history': {
+        const map = new Map<string,{name:string;grns:number;units:number;value:number;payments:number}>();
+        purchases.forEach(purchase=>{
+          const key=purchase.supplierId||purchase.supplierName;
+          const row=map.get(key)||{name:purchase.supplierName,grns:0,units:0,value:0,payments:0};
+          row.grns+=1; row.units+=purchase.items.reduce((sum,item)=>sum+item.qty,0); row.value+=purchase.total; map.set(key,row);
+        });
+        (state.supplierPayments||[]).filter(payment=>inDateRange(payment.date,from,to)).forEach(payment=>{
+          const row=map.get(payment.supplierId);
+          if(row) row.payments+=payment.amount;
+        });
+        return { title:'Supplier Purchase Summary', description:'Received GRNs and supplier payments recorded within the selected period. Payment totals are not automatically allocated to individual invoices.', columns:['Supplier','Received GRNs','Units Received','Purchase Value','Payments Recorded'], rows:[...map.entries()].sort((a,b)=>b[1].value-a[1].value).map(([id,v])=>({id,values:[v.name,v.grns,v.units,money(v.value),money(v.payments)]})) };
       }
       case 'balance-overview': {
         const stockValue=state.products.filter(p=>p.active&&!p.isService).reduce((sum,p)=>sum+p.stock*p.cost,0);
