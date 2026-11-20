@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, session, ipcMain, clipboard, shell, safeStorage, dialog } = require('electron');
 const { writeBufferFully } = require('./write-buffer.cjs');
 const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncryptedUpdaterCredential, loadEncryptedUpdaterCredential, clearEncryptedUpdaterCredential } = require('./updater-credentials.cjs');
 const path = require('path');
@@ -6,6 +6,7 @@ const { createNavigationGuard } = require('./navigation-security.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { registerPOSProfileIpc } = require('./profile-ipc.cjs');
 
 // Supabase/Cloudflare can negotiate HTTP/3/QUIC on Windows. This POS has
 // repeatedly observed Chromium ERR_QUIC_PROTOCOL_ERROR on the updater path.
@@ -471,6 +472,20 @@ const isAllowedNavigation = createNavigationGuard({
   isDev,
   devUrl: DEV_URL,
   rendererPath: path.join(__dirname, '..', 'dist', 'index.html'),
+});
+
+// POS profile keys stay in the Electron main process. The renderer receives
+// only purpose-scoped encrypted-profile read/write operations over trusted IPC.
+const posProfileIpc = registerPOSProfileIpc({
+  ipcMain,
+  dialog,
+  BrowserWindow,
+  safeStorage,
+  isTrustedRenderer,
+  platform: process.platform,
+});
+app.on('will-quit', () => {
+  try { posProfileIpc.lock(); } catch { /* best-effort in-memory key clearing */ }
 });
 function createWindow(){
   const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
