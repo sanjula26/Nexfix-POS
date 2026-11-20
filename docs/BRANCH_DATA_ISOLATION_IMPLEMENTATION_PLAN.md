@@ -419,3 +419,38 @@ A future migration may require (names are provisional):
 - Exact mapping/grant table, RPC, RLS and session changes must be designed as a concrete migration with rollback and tests, then receive separate approval before schema creation/application. The owner's approval here confirms the individual-Cloud-account direction only.
 
 No application code, database schema, migration, RLS policy, Auth account, membership, branch grant, production setting, or R2 object was changed by recording this decision.
+### Source-grounded session isolation design — 2026-11-21
+
+Current source review confirms that `src/lib/supabase.ts` creates one shared Supabase client with the default project-scoped Auth storage key and one custom `authStorage` adapter. `src/lib/cloudAuth.ts` subscribes to that client and persists its sessions into the Cloud updater recovery record; `refreshDesktopUpdaterCredentialsInternal()` can issue `authorize_pos_updater_device` credentials. The shared client therefore must remain the updater/owner trust domain.
+
+Electron already encrypts Supabase Auth storage entries through `safeStorage` and stores them in a keyed map in the secure recovery file. `isCloudAuthStorageKey()` accepts namespaced `sb-...-auth-token` and PKCE verifier keys. Supabase JS supports an explicit `auth.storageKey` option (see [Supabase JS client initialization](https://supabase.com/docs/reference/javascript/initializing) and [AuthOptions storageKey type](https://github.com/supabase/auth-js/blob/master/src/lib/types.ts)).
+
+Proposed client split, subject to implementation review:
+
+1. Keep the existing exported `supabase` client and default storage key unchanged for the current Cloud Admin/updater flows. Do not rename or migrate its existing key as part of the staff rollout.
+2. Add a separately constructed staff-only client using the same publishable key and encrypted storage adapter but a unique key such as `sb-ocmzgamnehwbkuwkjdrr-staff-auth-token`. Confirm the generated PKCE verifier key also passes the Electron key validator. Use an explicit `storageKey`; never share the default key.
+3. The staff client must not be imported by `cloudAuth.ts` updater provisioning. It must not subscribe to `saveCloudUpdaterRecovery`, call `ensureCloudShop` as an owner bootstrap, call `register_pos_device`, call `authorize_pos_updater_device`, or call updater credential IPC.
+4. Give staff sign-in/out a separate lifecycle and UI status. Staff sign-out clears only the staff client's local session/storage key. It must not set the existing global `cloudAuthSignedOut` marker or sign out the updater client. Owner/Admin updater sign-out must not erase staff storage either.
+5. Do not let both Auth clients auto-consume the same callback URL. Use explicit staff invitation/reset callback routing with a flow correlation ID, then call `staffClient.auth.exchangeCodeForSession(code)` only on the staff client. Current Electron main code captures `code` and optional `sb_flow_id` in `pendingAuthCallback` and emits an event if a window exists, but source review found no consumer or pending-callback retrieval API. A closed-app callback can be retained without being delivered; fix and test callback handoff before using invite/magic-link flows. Do not assume the current callback bridge is already complete.
+6. Staff Cloud sign-in should be optional for local POS login. No staff Cloud session must block local login or permitted offline POS work; it must fail closed only for cloud operations that require authenticated staff authorization.
+
+Current Electron `safeStorage` persistence is OS-bound and the existing updater token is separately encrypted. The staff session can reuse the already namespaced Auth storage adapter without storing a password, but its storage key and sign-out lifecycle must be tested independently. Browser/dev mode uses localStorage, so test the separate key there too.
+
+### Provisioning/invitation design remains gated
+
+- Do not expose a renderer-side Supabase admin API or service-role key. Owner/Admin staff invitation and local-user pairing must run in a server-side Edge Function or tightly scoped server RPC, with active Owner/Admin membership checked from `auth.uid()`.
+- Invite acceptance must bind the Auth user to the pre-created staff mapping; email address alone is not a local POS employee identity proof. An invitation token must be single-use/expiring and bound to the intended shop and staff mapping.
+- Role and branch grants are assigned by Owner/Admin on the server, not taken from client metadata or invitation query parameters. The server validates that branch IDs belong to the same shop and are active.
+- Until the mapping/grant schema and authorization RPCs are separately approved and deployed, the staff client must not be used to unlock operational cloud reads/writes. A separate login UI alone is not branch isolation.
+
+### Additional account/session regression tests
+
+- Existing updater Admin signs in, provisions a device token, restarts app, and downloads private update while no staff account is signed in.
+- Staff signs in/out repeatedly on the same Windows profile; updater Admin session, updater recovery record, device token, R2 update check and local POS login remain unchanged.
+- Switching local cashier/admin does not switch or overwrite the staff Auth identity. Signing out the updater account does not clear the staff Auth session; signing out staff does not clear updater credentials.
+- Two staff accounts on one device cannot inherit each other's persisted Auth session or branch cache. A staff account on another Windows profile/device cannot reuse the first device's secure storage or device grant.
+- Test fresh install, upgrade from current shared-session build, browser/dev storage, safeStorage unavailable, corrupt storage, app restart, refresh-token rotation, expired/revoked Auth user, revoked shop membership, revoked staff mapping and revoked branch grant.
+- Exercise invitation callback when app is open, app is closed, app is already running, callback is replayed, flow ID mismatches, code expires, and callback URL is malformed. A callback must never authenticate the updater client accidentally.
+- Run all tests with the existing Admin updater session in place; assert staff sign-in never calls updater-token issuance or mutates `cloudUpdaterDeviceToken`.
+
+These are design/test specifications only. No staff Auth client, invitation flow, IPC, schema, migration, Edge Function, Auth user or branch grant was implemented in this documentation update.
