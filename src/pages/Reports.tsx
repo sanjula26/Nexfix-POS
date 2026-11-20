@@ -270,7 +270,7 @@ export default function Reports() {
         </div>
         <div className="space-y-5">
           {reportGroups.map(group => {
-            const available = group.items.filter(item => item.adminOnly ? user?.role === 'admin' : can(item.permission || 'page:reports'));
+            const available = group.items.filter(item => ('adminOnly' in item && item.adminOnly) ? user?.role === 'admin' : can(item.permission || 'page:reports'));
             if (!available.length) return null;
             return (
               <section key={group.title}>
