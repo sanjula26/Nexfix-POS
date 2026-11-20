@@ -180,6 +180,14 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
+      - name: Prepare private release upload tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Install tools before any private upload credentials enter the environment.
+          npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4
+          node -e "require('tus-js-client')"
+
       - name: Publish Windows release to private Cloudflare R2
         shell: pwsh
         env:
@@ -261,7 +269,6 @@ jobs:
           # Keep each private release chunk safely below that limit and reconstruct
           # the original installer only inside the authorized update gateway.
           $chunkBytes = 40 * 1024 * 1024
-          npm install --no-save --no-package-lock tus-js-client@4
 
           @'
           const fs = require('fs');
