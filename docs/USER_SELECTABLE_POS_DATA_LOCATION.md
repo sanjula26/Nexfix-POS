@@ -488,3 +488,8 @@ A source review of the current main-branch Drive implementation found an importa
 - electron/preload.cjs has no profile storage/crypto IPC methods. The existing trusted-renderer check requires the top-level frame and allowed navigation, which is a useful base, but every new profile IPC endpoint still needs operation-specific payload validation and must never return the DEK.
 - The current renderer IndexedDB remains the authoritative state store, with app_state, sync_queue and meta. persistState waits for the IndexedDB transaction and raises a storage-error event, but no encryption or selected-folder mirror is present yet.
 - This is a hard production gate: do not add a folder picker alone. The app must first have a fail-closed bootstrap state machine and a real encrypted persistence backend, otherwise the user can select a folder while the running POS continues saving elsewhere or seeds an empty shop.
+
+
+### Real Windows ACL test finding
+
+- The first physical Windows NTFS test failed before ACL verification because the runner's Windows PowerShell did not auto-load Microsoft.PowerShell.Security for Get-Acl (CouldNotAutoloadMatchingModule). This is a real runtime integration issue, not a test-only assertion. The ACL scripts now explicitly import Microsoft.PowerShell.Security with ErrorAction Stop before using Get-Acl/Set-Acl. The Windows QA run must be repeated; do not claim ACL hardening works until the real test passes.
