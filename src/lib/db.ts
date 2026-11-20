@@ -143,6 +143,28 @@ export interface LegacyPOSProfileSnapshot {
   hasAnyBusinessData: boolean;
 }
 
+const LEGACY_QUEUE_TYPES = new Set<QueueOp['type']>([
+  'state_write', 'backup', 'custom', 'sale_create', 'return_create',
+  'sale_reversal_request', 'sale_reversal_approve', 'sale_reversal_reject',
+  'purchase_receive', 'repair_delivery', 'branch_stock_adjustment',
+  'inventory_units_add', 'inventory_unit_delete',
+]);
+
+function isLegacyQueueOp(value: unknown): value is QueueOp {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== 'string' || !item.id.trim() ||
+      typeof item.ts !== 'string' || !Number.isFinite(Date.parse(item.ts)) ||
+      typeof item.type !== 'string' || !LEGACY_QUEUE_TYPES.has(item.type as QueueOp['type'])) {
+    return false;
+  }
+  if (item.note !== undefined && typeof item.note !== 'string') return false;
+  if (item.payload !== undefined && typeof item.payload !== 'string') return false;
+  if (item.type === 'custom') return typeof item.note === 'string';
+  if (item.type === 'state_write' || item.type === 'backup') return true;
+  return typeof item.payload === 'string';
+}
+
 export type LegacyPOSProfileSnapshotResult =
   | { status: 'missing_database' }
   | { status: 'missing_state'; snapshot: LegacyPOSProfileSnapshot }
@@ -219,10 +241,8 @@ export async function idbReadLegacyProfileSnapshot(factory: IDBFactory = indexed
     if (checkpointRow && !validState(checkpointRow.value)) {
       return { status: 'invalid_state', reason: 'The saved POS restore checkpoint is incomplete or has an unsupported shape.' };
     }
-    if (!Array.isArray(queueRows) || queueRows.some(item =>
-      !item || typeof item !== 'object' || typeof item.id !== 'string' ||
-      typeof item.ts !== 'string' || typeof item.type !== 'string')) {
-      return { status: 'invalid_state', reason: 'The saved offline sync queue contains an invalid entry.' };
+    if (!Array.isArray(queueRows) || queueRows.some(item => !isLegacyQueueOp(item))) {
+      return { status: 'invalid_state', reason: 'The saved offline sync queue contains an invalid or unsupported entry.' };
     }
     if (metaRow && (!metaRow.value || typeof metaRow.value !== 'object' ||
       !Number.isFinite(metaRow.value.autoBackupHours) || !Number.isFinite(metaRow.value.backupCount))) {
