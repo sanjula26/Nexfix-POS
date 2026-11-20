@@ -52,6 +52,17 @@ Keep local POS users/roles separate from Supabase Auth identities. Do not treat 
 - **RPC and snapshot gates:** `get_owner_credit_customers(p_shop_id)` and direct `customers` table access must be Owner/Admin-only. Branch customer lookup and branch invoice outstanding must use narrow server-authorized RPCs. The full shop-wide `pos_state_snapshots` payload must never be downloaded by branch-only users.
 - **Rollout:** existing historical customer/invoice/payment data must be reconciled using synthetic Branch A/B fixtures first. Unknown or ambiguous customer/branch links fail closed to Owner/Admin until safely resolved. This requires a reviewed schema/RLS/sync change; do not apply it to production as part of a documentation update.
 
+### Customer and credit negative/positive tests required
+
+- Branch A cannot SELECT or search customer contact profiles linked only to Branch B, including by direct table query, guessed customer UUID, search RPC, Owner Web route, CSV export or detail endpoint.
+- Branch A can retrieve only customer projections explicitly linked to Branch A and can see the customer-name snapshot on Branch A invoices only.
+- Branch A cannot read Branch B invoices, invoice payment details, settlement headers, allocations or credit history, even when it supplies Branch B sale/payment/customer IDs.
+- Branch A's outstanding-credit aggregate contains only Branch A invoices and never returns the global `customers.credit_balance` or a cross-branch total.
+- Branch A FIFO allocation can touch only invoices in its authorized branch set; attempts to allocate to Branch B must fail atomically. Owner/Admin shop-wide FIFO may allocate across branches.
+- A settlement collected at Branch A cannot silently change an allocation on a Branch B invoice. Concurrent Branch A/Branch B settlement attempts must preserve idempotency, correct invoice due, tender legs and day-end totals.
+- Owner/Admin can read full customer profiles, shop-wide balance, all invoices and complete settlement/allocation history; direct calls to `get_owner_credit_customers` by a branch-only identity are denied.
+- Ambiguous historical customer/branch links fail closed to Owner/Admin until reconciled; no automatic customer duplication or balance split is allowed.
+
 Unknown or unclassified data must not be exposed to branch-only users by default.
 
 ## Database enforcement
@@ -90,7 +101,7 @@ Unknown or unclassified data must not be exposed to branch-only users by default
 
 ## Migration and rollout sequence
 1. Inventory every table, view, RPC, trigger, edge function, and sync path that reads or mutates shop/branch data.
-2. Decide the unresolved shared-data policy (customers/credit, suppliers/costs, quotations, warranty) with the shop owner.
+2. Apply the owner-approved customer/credit visibility model recorded above. Obtain separate owner decisions for suppliers/costs, quotations and warranty sharing before changing those policies.
 3. Implement schema and helper functions in a disposable local/staging database with representative synthetic Branch A/B data.
 4. Add policies/RPC checks and run direct PostgREST + RPC negative tests under real authenticated test identities.
 5. Implement client branch scoping, IndexedDB partitioning, offline replay checks, and snapshot restrictions.
@@ -166,7 +177,7 @@ Owner Web is read-only, but read-only does not mean owner-only. The current UI a
 ### Required correction before branch staff cloud accounts are enabled
 1. Make Owner Web explicitly owner/admin-only at the server boundary, or define a narrowly scoped branch-report role with explicit grants. Do not trust the UI role check alone.
 2. Add branch grant validation to branch-specific reports and keep all-branch aggregates/stock valuation behind an explicit owner/admin privilege.
-3. Decide whether customer credit, phone/email, and shop-wide customer balances are owner-only or shared by branch before exposing them to staff.
+3. Enforce the confirmed rule: Owner/Admin-only shop-wide customer contacts, global credit balance and full settlement history; branch staff receive only explicitly branch-linked customer profiles and invoices/settlements within their assigned branch set.
 4. Test direct authenticated RPC calls for Branch A, Branch B, manager, cashier, technician, revoked member and owner/admin; include NULL/all-branch arguments and cross-branch IDs.
 5. Keep the full POS snapshot read path unavailable to branch-only users until a branch-safe sync protocol exists.
 
@@ -184,7 +195,7 @@ The current Owner Web `App.tsx` data calls were enumerated from source. These ar
 | `get_owner_branch_daily_sales` | Selected branch or NULL for all | SECURITY INVOKER; active shop membership; any active branch / NULL all | Owner/admin-only for NULL; branch grant for specific branch |
 | `get_owner_branch_stock_valuation` | Selected branch or NULL for all | SECURITY INVOKER; active shop membership; any active branch / NULL all; exposes unit cost and potential profit | Owner/admin-only for all-branch and cost-sensitive output; branch grant for branch-specific output |
 | `sale_items`, `sale_payments` | Fetched only after parent invoice is loaded | Parent `sales` row + `private.is_shop_member(shop_id)` | Parent access must be branch-authorized before child access |
-| `get_owner_credit_customers` | No branch parameter | SECURITY INVOKER; active shop membership; shop-wide customer contact and credit/open-invoice balances | Owner-only or an explicitly approved shared-credit policy; cannot be safely branch-filtered today |
+| `get_owner_credit_customers` | No branch parameter | SECURITY INVOKER; currently active shop membership only; returns shop-wide contact and credit/open-invoice balances | Replace with Owner/Admin-only authorization; retain this RPC for consolidated Owner/Admin reconciliation only |
 | `day_sessions` | Shop + selected branch filter | SELECT `private.is_shop_member(shop_id)` | Branch-level read policy; verify cashier identity and branch ownership on inserts/updates |
 | `expenses` | Shop + selected branch filter | SELECT `private.is_shop_member(shop_id)` | Branch-level read policy; existing insert/update/delete are admin-only but not branch-scoped |
 | `profiles` | Profile details for visible cloud members | Self or shop-admin read | Keep minimal profile disclosure; do not mistake this for local POS cashier directory |
@@ -192,7 +203,7 @@ The current Owner Web `App.tsx` data calls were enumerated from source. These ar
 ### Additional verified policy details
 - `sales` SELECT and `branches` SELECT are shop-member policies. `sale_items` and `sale_payments` traverse to the parent sale but still use shop-member scope.
 - `day_sessions` SELECT and `expenses` SELECT are also shop-member policies. Their application-side branch filters do not enforce isolation.
-- `customers` SELECT is shop-member; `get_owner_credit_customers` returns phone/email and credit data across the shop. Customer/credit branch policy remains an owner decision.
+- `customers` SELECT is currently shop-member; `get_owner_credit_customers` returns phone/email and credit data across the shop. The owner has now approved Owner/Admin-only global customer/credit visibility plus branch-scoped customer projections and invoice balances; current policies do not enforce that decision.
 - `owner_daily_sales` SELECT is shop-member. `pos_state_snapshots` SELECT is legacy membership-based; current production row count was zero when checked.
 - These policy results were read from production `pg_policies`; no user data rows were queried or changed.
 
@@ -222,7 +233,7 @@ A filename/content review of the current `main` migration history was used to se
 - The existing owner reporting RPCs also need explicit owner/admin or branch-grant enforcement; a client-side branch selector is not authorization.
 
 ### Implementation consequence
-Do not start by adding a UI branch filter or by reusing `pos_device_branches` as if it were a staff membership table. The next safe database design step is to specify the member-grant identity, grant lifecycle/revocation, owner/admin all-branch privilege and same-cloud-user/multiple-device semantics, then test it on a complete isolated staging schema. The shared customer/credit, supplier/cost, quotation and warranty decisions remain separate owner decisions. No migration, RLS policy, grant, production data or environment was changed by this cross-check.
+Do not start by adding a UI branch filter or by reusing `pos_device_branches` as if it were a staff membership table. The next safe database design step is to specify the member-grant identity, grant lifecycle/revocation, owner/admin all-branch privilege and same-cloud-user/multiple-device semantics, then test it on a complete isolated staging schema. Customer/credit visibility is now owner-approved and recorded above; supplier/cost, quotation and warranty sharing remain separate owner decisions. No migration, RLS policy, grant, production data or environment was changed by this cross-check.
 
 
 
@@ -231,14 +242,14 @@ Do not start by adding a UI branch filter or by reusing `pos_device_branches` as
 The current `main` migration source was inspected for the Owner Web reporting functions. These are additional, concrete cases where a branch selector is not an authorization boundary.
 
 - `20261009094114_owner_web_branch_reporting.sql` defines `get_owner_branch_daily_sales(p_shop_id, p_from, p_to, p_branch_id default null)` and `get_owner_branch_stock_valuation(p_shop_id, p_branch_id default null)` as `SECURITY INVOKER`. Both check active shop membership and validate that a supplied branch belongs to the shop and is active. Neither checks that the caller is an owner/admin or has an explicit grant to the requested branch. When `p_branch_id` is null, the function intentionally returns all branches in the shop. With shop-member RLS still in place, a branch-only member can potentially request another branch or omit the filter.
-- `20261009095808_owner_web_operational_read_views.sql` defines `get_owner_credit_customers(p_shop_id)` as `SECURITY INVOKER`, checks only active shop membership, has no branch argument, and aggregates customer credit against completed sales across the shop. It is therefore explicitly shop-wide and must not be exposed to branch-only users until the owner decides whether customer/credit data is shared or branch-private and the server-side scope is implemented.
+- `20261009095808_owner_web_operational_read_views.sql` defines `get_owner_credit_customers(p_shop_id)` as `SECURITY INVOKER`, checks only active shop membership, has no branch argument, and aggregates customer contact and credit against completed sales across the shop. The owner has approved Owner/Admin-only access to this global result; enforce that inside the RPC and keep it unavailable to branch-only users.
 - The branch model migration comments that `owner_daily_sales` remains a shop-level aggregate for Owner Web Phase 1 compatibility; its member SELECT policy is also shop-scoped. It cannot be treated as a branch-private report source without a separate branch-aware aggregate and authorization contract.
 - The device-to-branch assignment table's own SELECT policy is shop-member based. That can reveal device-to-branch mapping to shop members; review whether that mapping itself is confidential, but do not confuse this with granting the member access to operational records.
 
 ### Required follow-up before enabling branch-only Owner Web access
 
 1. Put an explicit owner/admin-or-member-branch-grant check inside each Owner Web RPC. A supplied `p_branch_id` must be checked against the caller's grant; null/all-branch mode must require explicit owner/admin privilege.
-2. Either keep customer credit and the legacy shop-wide aggregate behind an owner/admin-only boundary, or obtain an explicit product decision and implement branch attribution/reconciliation before granting branch-only access.
+2. Keep customer credit and the legacy shop-wide aggregate behind an Owner/Admin-only boundary; implement the approved branch-scoped customer projection and invoice-allocation reconciliation before enabling branch staff access.
 3. Test each RPC directly under Branch A and Branch B cloud identities, including omitted/null branch arguments, forged foreign branch IDs, inactive grants, revoked membership, and owner all-branch access.
 4. Review all underlying table RLS policies and view/function grants as well; `SECURITY INVOKER` alone does not make a shop-member policy branch-aware.
 
@@ -316,4 +327,4 @@ These are source-level authorization findings, not live exploit tests. No SQL, p
 
 - Main now classifies root `@tailwindcss/vite` and `tailwindcss` as development-only dependencies and carries an npm-generated lockfile. The production-only security audit passed on the merged commit; Electron runtime is updated to 44.11.4.
 - The full development/build-tool audit remains separate: 19 findings (14 high, 5 moderate), tracked in Issue #267. Do not force-downgrade Vite/electron-builder or suppress advisories to clear the report.
-- This plan remains documentation only. No production branch authorization, RLS policy, grants, snapshot policy, customer-sharing rule, or SQL migration has been changed. The implementation risks described above still require isolated staging tests and owner decisions for branchless customer/repair/warranty/quotation data.
+- This plan remains documentation only. No production branch authorization, RLS policy, grants, snapshot policy, customer-sharing rule, or SQL migration has been changed. The approved customer/credit policy still requires implementation and isolated staging tests; supplier, repair, warranty and quotation visibility still need separate design/owner decisions.
