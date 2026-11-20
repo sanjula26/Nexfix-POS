@@ -475,3 +475,22 @@ Read-only metadata/catalog inspection of the operational Supabase project found 
 - Owner/Admin staff provisioning must create/revoke Auth identity + operational membership + mapping + branch grants atomically or fail closed, with an audit record. Legacy updater membership/device rows remain independently controlled.
 
 Read-only checks used catalog metadata, table privileges, RLS policy definitions and function source; no business row contents were queried and no SQL/DDL was executed. No schema, policy, Auth account, membership, device, branch grant or production data was changed.
+### Owner Web and cloud employee directory compatibility — 2026-11-21
+
+Source review of `apps/owner-web/src/App.tsx` confirms:
+
+- Owner Web authenticates with its own Supabase client and uses active `shop_memberships` rows to resolve the current shop; it does not infer shop authority from URL or cached shop ID.
+- The Employees page is currently a read-only cloud membership directory. It reads active `shop_memberships` and then joins `profiles` fields (`email`, `full_name`, `role`, `active`) for display. It does not invite/create Auth users, bind them to local POS users, or manage branch grants.
+- The UI deliberately labels `profiles.role` as “POS profile role” and `shop_memberships.role` as “Cloud membership role”. This confirms those are distinct fields; the former is display/profile data and must not be used as a cloud permission source.
+- Owner Web's one-shop-per-account guard and existing broad shop-scoped reporting/RPC model are not sufficient to expose branch-only staff access. Do not give a staff identity Owner Web access or expose the Owner Web employee directory until role guards and branch RLS/RPC/sync scope are implemented and tested.
+
+Provisioning gap: there is currently no dedicated staff invitation/provisioning Edge Function in the operational project's deployed function list; existing functions are `phone-sales`, `desktop-download-chunks`, `desktop-updates`, and `google-backup-proxy`. Owner Web employee management is read-only, so a secure Owner/Admin-only invitation + local-user pairing workflow must be implemented server-side before onboarding staff accounts. Never expose service-role credentials to Owner Web or the POS renderer.
+
+### Provisioning acceptance tests
+
+- Owner/Admin can invite a staff account, bind it to one existing local POS employee and grant one or more active branches through a server-side flow.
+- Cashier/Manager cannot call invite, mapping, role-change or branch-grant operations, including by direct RPC invocation.
+- Duplicate email, already-linked Auth user, inactive local POS user, wrong-shop branch, expired/replayed invitation and revoked membership fail closed without leaking another shop's user details.
+- Owner Web's read-only Employees list displays only the current shop's active cloud members; it does not imply that every listed account has operational branch access.
+
+No Owner Web code, Edge Function, schema, Auth account or branch grant was changed; this is a source-grounded implementation gap and test plan.
