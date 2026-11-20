@@ -472,3 +472,10 @@ A source review of the current main-branch Drive implementation found an importa
 - The shopProof remains a reusable proof in some GET query parameters, and the build API key is also passed in GET parameters. Move authenticated metadata/status operations to POST or short-lived request-bound proofs in a separately reviewed Apps Script contract change.
 - Keep the new POS Data Recovery Key completely separate from this existing Drive Backup Recovery Key. Do not reuse either key or put the new POS Recovery Key in plaintext next to a Drive backup.
 
+
+
+### Optional Windows volume protection
+
+- Recommend BitLocker / Windows Device Encryption as a complementary layer for lost/stolen PC or offline disk removal. It protects the whole volume while powered off; it does not replace POS profile encryption once the user has signed into Windows.
+- Windows 11 Home may support automatic Device Encryption on eligible devices; the manual BitLocker Drive Encryption UI is documented for Pro, Enterprise and Education editions. Do not assume every shop PC supports the same mode.
+- NexFix must not silently enable BitLocker or modify volume protectors. Show an optional security recommendation and let the owner configure it in Windows. Back up the BitLocker recovery key separately; it is not the POS Data Recovery Key or Google Drive Backup Recovery Key.
