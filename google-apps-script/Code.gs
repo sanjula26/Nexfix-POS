@@ -1421,13 +1421,12 @@ function doGet(e) {
       var metadataShopId = normalizeShopId(p.shopId);
       validateRequestId(p.requestId);
       var metadataProof = validateShopProof(p.shopProof);
-      var metadataRecoveryKey = validateRecoveryKey(p.recoveryKey);
       var metadata = {};
       try { metadata = JSON.parse(String(p.metadata || '{}')); } catch (parseError) {
         throw new Error('Shop metadata is invalid JSON');
       }
       var existingMetadataFolder = findShopBackupFolder(metadataShopId);
-      if (existingMetadataFolder) assertRecoveryKeyMatchesExisting(existingMetadataFolder, metadataRecoveryKey);
+      // The proof authorizes metadata changes; never transmit the raw Recovery Key in a GET query.
       var metadataFolder = authorizeShopAccess(metadataShopId, metadataProof, true);
       var metadataName = sanitizeDriveName(metadata.shopName || 'Shop');
       metadataFolder = getShopBackupFolder(metadataShopId, metadataName, true);
@@ -1439,10 +1438,8 @@ function doGet(e) {
         Object.assign({}, metadata, {
           shopId: metadataShopId,
           shopPartition: shopPartitionKey(metadataShopId),
-          recoveryKey: metadataRecoveryKey,
           kind: metadata.kind === 'auto' ? 'auto' : 'manual'
         }),
-        metadataRecoveryKey
       );
       if (metadataWarnings.length) throw new Error('Google Drive shop metadata update was incomplete: ' + metadataWarnings.join(' | '));
       return json(ok({
