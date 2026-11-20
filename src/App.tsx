@@ -32,6 +32,7 @@ const TodaySalesLinks = lazy(() => import('./pages/TodaySalesLinks'));
 const Exchanges = lazy(() => import('./pages/Exchanges'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Reports = lazy(() => import('./pages/Reports'));
+const ReportView = lazy(() => import('./pages/ReportView'));
 const SalesmanCommission = lazy(() => import('./pages/SalesmanCommission'));
 const LowStockSuggestions = lazy(() => import('./pages/LowStockSuggestions'));
 const PriceTags = lazy(() => import('./pages/PriceTags'));
@@ -334,6 +335,7 @@ function AppRoutes() {
           <Route path="/exchanges" element={<PermissionProtected permission="page:exchanges"><Exchanges /></PermissionProtected>} />
           <Route path="/expenses" element={<PermissionProtected permission="page:expenses"><Expenses /></PermissionProtected>} />
           <Route path="/reports" element={<PermissionProtected permission="page:reports"><Reports /></PermissionProtected>} />
+          <Route path="/reports/view/:reportType" element={<PermissionProtected permission="page:reports"><ReportView /></PermissionProtected>} />
           <Route path="/salesman-commission" element={<PermissionProtected permission="page:reports"><SalesmanCommission /></PermissionProtected>} />
           <Route path="/low-stock" element={<PermissionProtected permission="page:reports"><LowStockSuggestions /></PermissionProtected>} />
           <Route path="/price-tags" element={<PermissionProtected permission="page:pricetags"><PriceTags /></PermissionProtected>} />
