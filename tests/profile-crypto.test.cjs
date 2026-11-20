@@ -73,7 +73,7 @@ test('POS data recovery key is random, 256-bit and strictly validated', () => {
   const second = createRecoveryKey();
   assert.equal(parseRecoveryKey(first).length, 32);
   assert.notEqual(first, second);
-  assert.throws(() => parseRecoveryKey('weak-password'), /base64url/);
+  assert.throws(() => parseRecoveryKey('weak-password'), /invalid length or encoding/);
 });
 
 test('recovery-wrapped data key unlocks on a replacement Windows profile', () => {
