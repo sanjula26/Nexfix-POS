@@ -253,7 +253,8 @@ h1,h2,h3,.font-display { font-family:var(--font-display); }
 
 /* Report PDF / print layout. Only the active report page is printed. */
 @media print {
-  @page { size: A4 portrait; margin: 12mm; }
+  .report-print { page: report-print-page; }
+  @page report-print-page { size: A4 portrait; margin: 12mm; }
   html, body, #root { background: #fff !important; color: #111 !important; }
   body * { visibility: hidden !important; }
   .report-print, .report-print * { visibility: visible !important; }
