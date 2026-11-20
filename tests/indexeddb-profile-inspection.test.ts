@@ -15,7 +15,7 @@ async function createDatabase(factory: IDBFactory, storeNames: string[]): Promis
   return new Promise((resolve, reject) => {
     const request = factory.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
-      for (const name of storeNames) request.result.createObjectStore(name, { keyPath: 'key' });
+      for (const name of storeNames) request.result.createObjectStore(name, { keyPath: name === 'sync_queue' ? 'id' : 'key' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Test database could not be created.'));
