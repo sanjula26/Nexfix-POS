@@ -15,7 +15,7 @@ const {
   rebindProfileDeviceKeyWithRecoveryKey,
   rebindProfileDeviceKeyWithPassphrase,
 } = require('./profile-key-store.cjs');
-const { unwrapDataKeyWithPassphrase, unwrapDataKeyWithRecoveryKey } = require('./profile-crypto.cjs');
+const { unwrapDataKeyWithPassphrase, unwrapDataKeyWithRecoveryKey, validateLockPassphrase } = require('./profile-crypto.cjs');
 const { EncryptedProfileStorage } = require('./profile-storage.cjs');
 const { applyWindowsProfileAcl, isValidWindowsSid } = require('./profile-acl.cjs');
 
@@ -116,6 +116,7 @@ class POSProfileSession {
   async create({ storageRoot, directoryName, label, passphrase }) {
     if (this.active) throw new Error('Lock the currently open POS profile before creating another profile.');
     this.assertSafeStorage();
+    validateLockPassphrase(passphrase);
     const profileId = crypto.randomUUID();
     const created = createManagedProfileDirectory(storageRoot, directoryName, {
       profileId,
