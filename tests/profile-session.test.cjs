@@ -144,3 +144,44 @@ test('refuses an invalid storage root and requires a profile unlock for every da
   assert.throws(() => session.read('sync_queue'), /No POS profile is unlocked/);
   assert.throws(() => session.write('cookies', '{}'), /No POS profile is unlocked/);
 });
+
+test('validates the lock password before creating any new profile folder', async (t) => {
+  const root = temporaryRoot(t);
+  const session = new POSProfileSession({ safeStorage: safeStorage('windows:'), platform: 'linux' });
+  await assert.rejects(session.create({
+    storageRoot: root,
+    directoryName: 'Should Not Exist',
+    label: 'NexFix Shop',
+    passphrase: 'weak',
+  }), /passphrase|password/i);
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
+test('applies the current Windows account ACL when a profile is created and unlocked', async (t) => {
+  const root = temporaryRoot(t);
+  const calls = [];
+  const session = new POSProfileSession({
+    safeStorage: safeStorage('windows:'),
+    platform: 'win32',
+    resolveUserSid: async () => 'S-1-5-21-100-200-300-1001',
+    applyAcl: async (directory, sid, options) => {
+      calls.push({ directory, sid, options });
+      return { ok: true, checkedEntries: 2 };
+    },
+  });
+  const created = await session.create({
+    storageRoot: root,
+    directoryName: 'Secured POS',
+    label: 'NexFix Secured Shop',
+    passphrase: PASSWORD,
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sid, 'S-1-5-21-100-200-300-1001');
+  assert.equal(calls[0].directory, created.profile.directory);
+  session.lock();
+
+  await session.unlockWithPassphrase(created.profile.directory, PASSWORD);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].directory, created.profile.directory);
+  session.lock();
+});
