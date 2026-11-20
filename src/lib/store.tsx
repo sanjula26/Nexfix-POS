@@ -751,7 +751,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let passwordOk = false;
-    if (isHashed(u.password)) {
+    if (u.role === 'admin') {
+      const guarded = await runLocalAuthAttempt(async () => {
+        if (!u.active) return false;
+        return isHashed(u.password)
+          ? await verifyPasswordAsync(password, u.password)
+          : u.password === password;
+      });
+      if (!guarded.allowed) {
+        return { ok: false, error: `Too many failed administrator sign-in attempts. Try again in ${Math.ceil(guarded.retryAfterMs / 1000)} seconds.` };
+      }
+      passwordOk = guarded.success;
+    } else if (isHashed(u.password)) {
       passwordOk = await verifyPasswordAsync(password, u.password);
       if (!passwordOk) {
         try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
