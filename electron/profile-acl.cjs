@@ -135,7 +135,6 @@ $ErrorActionPreference = 'Stop'
 $target = $env:NEXFIX_PROFILE_ACL_PATH
 $userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
 $required = @($userSid, 'S-1-5-18')
-$forbidden = @('S-1-1-0', 'S-1-5-32-545', 'S-1-5-11', 'S-1-5-32-544')
 $items = @((Get-Item -LiteralPath $target -Force)) + @(Get-ChildItem -LiteralPath $target -Force -Recurse -ErrorAction Stop)
 $issues = New-Object System.Collections.Generic.List[string]
 $fullControl = [int][System.Security.AccessControl.FileSystemRights]::FullControl
@@ -225,6 +224,11 @@ async function applyWindowsProfileAcl(profileDirectory, userSid, options = {}) {
       timeout: 60000,
       maxBuffer: 4 * 1024 * 1024,
       shell: false,
+      env: {
+        ...process.env,
+        NEXFIX_PROFILE_ACL_PATH: canonical,
+        NEXFIX_PROFILE_ACL_USER_SID: userSid,
+      },
     });
   }
 
