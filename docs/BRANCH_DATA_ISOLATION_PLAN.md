@@ -31,7 +31,7 @@ A person working at Branch A should see and operate on Branch A's operational re
 | Expenses and day sessions/cashier balances | Assigned branch only | Branch cash and expense privacy |
 | Repairs, repair parts, warranty claims | Assigned branch only after adding reliable branch attribution | Existing repair records need a safe historical backfill rule |
 | Stock transfers | Source/destination branch participants; owner/admin all | Do not expose unrelated branches' transfer documents |
-| Customer contact profiles and customer master data | Owner/Admin only across the shop; branch staff get only an explicitly branch-linked customer projection | `customers` has no branch key and currently exposes shop-wide contact data; do not give branch staff direct table reads |
+| Customer contact profiles and customer master data | Owner/Admin shop-wide; branch staff only explicitly branch-linked profiles | `customers` has no branch key and currently exposes shop-wide contact data; use a branch-safe projection, not direct shop-member reads |
 | Suppliers and supplier balances | Decision required; currently shop-level in parts of the model | Suppliers may serve multiple branches |
 | Quotations, kits, promotions, price lists | Decision required | May be shared commercial master data or branch-owned work |
 | Shop settings, users, audit log, backup/restore | Owner/admin only unless narrowly delegated | High-impact or sensitive shop-level information |
