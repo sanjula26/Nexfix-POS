@@ -14,6 +14,7 @@ import {
   idbHasPriorUseEvidence,
   idbInitializeStateIfAbsent,
   idbSetMeta,
+  idbGetMeta,
   idbSaveRestoreCheckpoint,
   idbSaveState,
 } from '../src/lib/db.ts';
@@ -307,6 +308,35 @@ test('IndexedDB state read failures return null instead of being treated as an e
     assert.equal(await reopenedDb.idbLoadState(), null);
   } finally {
     IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
+
+test('backup metadata read falls back when its request succeeds but transaction aborts', async () => {
+  await idbSetMeta({ autoBackupHours: 12, backupCount: 7 });
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  const originalGet = IDBObjectStore.prototype.get;
+  let activeMetaRead: IDBTransaction | null = null;
+
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const tx = originalTransaction.apply(this, args);
+    if (args[0] === 'meta' && args[1] === 'readonly') activeMetaRead = tx;
+    return tx;
+  } as IDBDatabase['transaction'];
+  IDBObjectStore.prototype.get = function (...args: Parameters<IDBObjectStore['get']>) {
+    const request = originalGet.apply(this, args);
+    if (this.name === 'meta' && args[0] === 'backup') {
+      request.addEventListener('success', () => activeMetaRead?.abort(), { once: true });
+    }
+    return request;
+  } as IDBObjectStore['get'];
+
+  try {
+    assert.deepEqual(await idbGetMeta(), { autoBackupHours: 6, backupCount: 0 },
+      'an aborted metadata read must not return a value from an incomplete transaction');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    IDBObjectStore.prototype.get = originalGet;
   }
 });
 
