@@ -183,7 +183,7 @@ function replaceProfileKeyEnvelope(profileDirectory, currentEnvelope, nextEnvelo
   let descriptor = null;
   try {
     descriptor = fs.openSync(temporary, 'wx', 0o600);
-    fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\\n', 'utf8');
+    fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\n', 'utf8');
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
