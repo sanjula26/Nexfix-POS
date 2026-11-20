@@ -101,6 +101,8 @@ test('ACL hardening runs commands without a shell and verifies every profile ent
   assert.equal(result.checkedEntries, 4);
   assert.equal(calls.length, 7);
   assert.ok(calls.every(call => call.options.shell === false));
+  assert.equal(calls[4].options.env.NEXFIX_PROFILE_ACL_PATH, PROFILE_PATH);
+  assert.equal(calls[4].options.env.NEXFIX_PROFILE_ACL_USER_SID, USER_SID);
 });
 
 test('ACL hardening fails closed if any Windows ACL command fails', async () => {
