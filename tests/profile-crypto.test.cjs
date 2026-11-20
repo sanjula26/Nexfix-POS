@@ -94,7 +94,7 @@ test('recovery-wrapped data key unlocks on a replacement Windows profile', () =>
   const envelope = wrapDataKeyWithRecoveryKey(dataKey, recoveryKey, PROFILE_A);
   assert.deepEqual(unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_A), dataKey);
   assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, createRecoveryKey(), PROFILE_A), /authentication failed/);
-  assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_B), /does not match/);
+  assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_B), /invalid or belongs to another profile/);
 });
 
 test('OS-protected key envelope round-trips and never stores the raw data key', async () => {
