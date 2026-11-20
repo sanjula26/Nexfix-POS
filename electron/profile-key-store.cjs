@@ -11,6 +11,7 @@ const {
   wrapDataKeyWithOS,
   unwrapDataKeyWithPassphrase,
   unwrapDataKeyWithRecoveryKey,
+  unwrapDataKeyWithOS,
 } = require('./profile-crypto.cjs');
 
 const KEY_ENVELOPE_FILE = 'nexfix-key-envelope.json';
@@ -257,7 +258,7 @@ async function rebindProfileDeviceKeyWithRecoveryKey(profileDirectory, profileId
       updatedAt: new Date().toISOString(),
     };
     const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
-    const verificationKey = await require('./profile-crypto.cjs').unwrapDataKeyWithOS(
+    const verificationKey = await unwrapDataKeyWithOS(
       saved.osWrappedKey, profileId, safeStorage,
     );
     const valid = verificationKey.equals(dataKey);
