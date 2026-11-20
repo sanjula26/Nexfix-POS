@@ -203,3 +203,18 @@ test('local admin authentication guard IPC is limited to the trusted renderer an
   assert.ok(preloadSource.includes("beginLocalAuthAttempt: () => ipcRenderer.invoke('local-auth:begin')"));
   assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
 });
+
+
+test('async administrator authentication callers await verification before granting access', () => {
+  const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
+  const posSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'POS.tsx'), 'utf8');
+  const layoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AppLayout.tsx'), 'utf8');
+  const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Settings.tsx'), 'utf8');
+
+  assert.match(mobileSalesSource, /const submitPin = async \(\) =>/);
+  assert.match(mobileSalesSource, /await verifyAdminPin\(value, 'Today sales'\)/);
+  assert.match(posSource, /ok = await verifyAdminPin\(gatePin, 'price override'\)/);
+  assert.match(layoutSource, /if \(await unlockSession\(unlockCredential\)\)/);
+  assert.match(layoutSource, /await resolveSensitiveAdmin\(sensitiveCredential\)/);
+  assert.match(settingsSource, /await changeAdminPin\(pinCur, pinNew\)/);
+});
