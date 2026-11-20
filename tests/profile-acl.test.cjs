@@ -34,7 +34,10 @@ test('Windows ACL command plan grants the current user and SYSTEM before removin
   assert.match(commands[4].args.at(-1), /RemoveAccessRuleSpecific/);
   assert.match(commands[4].args.at(-1), /Set-Acl/);
   assert.equal(commands.at(-1).name, 'verify-canonical-acls');
-  for (const command of commands) assert.equal(command.executable, 'icacls.exe');
+  for (const command of commands) {
+    if (command.name === 'remove-unapproved-access-entries') assert.equal(command.executable, 'powershell.exe');
+    else assert.equal(command.executable, 'icacls.exe');
+  }
 });
 
 test('Windows profile path must be local, absolute and not a drive root', () => {
