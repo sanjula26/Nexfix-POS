@@ -36,6 +36,7 @@ test('Windows ACL command plan grants the current user and SYSTEM before removin
   assert.ok(commands[3].args.includes('/remove:d'));
   assert.equal(commands[4].name, 'remove-unapproved-access-entries');
   assert.equal(commands[4].executable, 'powershell.exe');
+  assert.match(commands[4].args.at(-1), /Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity/);
   assert.match(commands[4].args.at(-1), /Import-Module Microsoft.PowerShell.Security -Force/);
   assert.match(commands[4].args.at(-1), /RemoveAccessRuleSpecific/);
   assert.match(commands[4].args.at(-1), /Set-Acl/);
@@ -134,6 +135,7 @@ test('ACL hardening fails closed if any Windows ACL command fails', async () => 
 
 test('ACL verification rejects unapproved explicit SIDs and all deny entries', () => {
   const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
+  assert.match(POWERSHELL_ACL_VERIFY, /Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity/);
   assert.match(POWERSHELL_ACL_VERIFY, /Import-Module Microsoft.PowerShell.Security -Force/);
   assert.match(POWERSHELL_ACL_VERIFY, /unapproved access ACE remains/);
   assert.match(POWERSHELL_ACL_VERIFY, /access-deny ACE remains/);
