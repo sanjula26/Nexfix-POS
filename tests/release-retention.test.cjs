@@ -130,15 +130,17 @@ test('private upload tools are prepared before R2 and Supabase credentials are e
   const prepareStart = releaseWorkflow.indexOf('- name: Prepare private release upload tools');
   const r2Start = releaseWorkflow.indexOf('- name: Publish Windows release to private Cloudflare R2');
   const supabaseStart = releaseWorkflow.indexOf('- name: Publish legacy compatibility chunks to private Supabase Storage');
-  const releaseMetadataStart = releaseWorkflow.indexOf('- name: Publish private release metadata', supabaseStart);
+  const verifyStart = releaseWorkflow.indexOf('- name: Verify private Windows release', supabaseStart);
   assert.ok(prepareStart >= 0 && prepareStart < r2Start, 'upload tools must be installed before R2 credentials are exposed');
   assert.ok(r2Start >= 0 && supabaseStart > r2Start, 'R2 upload must precede Supabase compatibility upload');
-  assert.ok(releaseMetadataStart > supabaseStart, 'Supabase upload step must have a bounded end');
+  assert.ok(verifyStart > supabaseStart, 'Supabase upload step must have a bounded end');
   const r2Step = releaseWorkflow.slice(r2Start, supabaseStart);
-  const supabaseStep = releaseWorkflow.slice(supabaseStart, releaseMetadataStart);
+  const supabaseStep = releaseWorkflow.slice(supabaseStart, verifyStart);
   for (const step of [r2Step, supabaseStep]) {
     assert.doesNotMatch(step, /choco install|npm install|npm ci|npm exec|npx /i);
   }
-  assert.match(releaseWorkflow.slice(prepareStart, r2Start), /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
+  const prepareStep = releaseWorkflow.slice(prepareStart, r2Start);
+  assert.match(prepareStep, /choco install awscli/);
+  assert.match(prepareStep, /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
   assert.match(releaseWorkflow.slice(prepareStart, r2Start), /choco install awscli/);
 });
