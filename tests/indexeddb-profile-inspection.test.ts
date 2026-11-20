@@ -154,3 +154,28 @@ test('legacy profile snapshot flags queue-only data when the state row is missin
     assert.equal(result.snapshot.hasAnyBusinessData, true);
   }
 });
+
+
+test('legacy profile snapshot rejects unknown or incomplete offline queue records', async () => {
+  const factory = createIsolatedFactory();
+  const db = await createDatabase(factory, ['app_state', 'sync_queue', 'meta']);
+  const tx = db.transaction('sync_queue', 'readwrite');
+  tx.objectStore('sync_queue').put({
+    id: 'pending-invalid',
+    ts: '2026-11-20T08:00:00.000Z',
+    type: 'unknown_operation',
+    payload: '{}',
+  });
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Test transaction failed.'));
+    tx.onabort = () => reject(tx.error || new Error('Test transaction aborted.'));
+  });
+  db.close();
+
+  const result = await idbReadLegacyProfileSnapshot(factory);
+  assert.equal(result.status, 'invalid_state');
+  if (result.status === 'invalid_state') {
+    assert.match(result.reason, /offline sync queue contains an invalid or unsupported entry/);
+  }
+});
