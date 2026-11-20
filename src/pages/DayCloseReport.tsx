@@ -96,7 +96,7 @@ export default function DayCloseReport() {
   };
 
   return (
-    <div className="space-y-5 print:space-y-3">
+    <div className="report-print space-y-5 print:space-y-3">
       <PageHeading
         chip="Reports"
         title="Day Close Report"
