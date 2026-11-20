@@ -1,6 +1,6 @@
 # NexFix POS data location, recovery and performance architecture
 
-Status: design refinement based on source review; implementation not yet started.
+Status: design refinement plus tested profile-discovery and manifest-creation foundations; runtime storage integration remains incomplete.
 Baseline: `main` at `81fa1507425d4446dae1ec34d689c09971e0cf47`.
 Branch: `feature/user-selectable-pos-data-location`.
 
@@ -396,7 +396,7 @@ This section refines the security UX requirement from the shop owner. It is a pr
 
 ### Implementation boundary
 
-The current branch contains AES-256-GCM crypto primitives, a Windows ACL helper, profile manifest/discovery helpers and a non-seeding IndexedDB inspection function. These are not yet wired into the running POS, Settings UI, profile startup, encrypted IndexedDB stores, per-device key registry or Google Drive backup/restore. No existing customer data is encrypted or folder-locked by these foundations. The above is the required next integration scope.
+The current branch contains AES-256-GCM crypto primitives, a Windows ACL helper, profile manifest/discovery helpers, an exclusive managed-profile directory/manifest creation helper with read-back verification, and a non-seeding IndexedDB inspection function. The directory helper refuses to reuse an existing folder and uses exclusive creation plus fsync for the manifest. These foundations are not yet wired into the running POS, Settings UI, profile startup, encrypted IndexedDB stores, per-device key registry or Google Drive backup/restore. No existing customer data is encrypted or folder-locked by these foundations. The above is the required next integration scope.
 
 ## Deep security architecture review — 2026-11-20
 
