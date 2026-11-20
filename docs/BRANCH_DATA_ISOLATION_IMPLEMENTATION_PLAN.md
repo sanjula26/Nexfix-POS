@@ -11,7 +11,7 @@ The UI is a usability layer, not the security boundary. PostgreSQL RLS and serve
 | Actor | Branch visibility | Mutation scope |
 |---|---|---|
 | Shop owner / explicitly privileged cloud admin | All active branches in the authorized shop | All branches, with audited privileged actions |
-| Manager | Only explicitly assigned branch(es), unless separately granted cross-branch permission | Assigned branches only |
+| Manager | Only explicitly assigned branch(es); no cross-branch access by virtue of the Manager role | Assigned branches only |
 | Cashier | Assigned branch only | Permitted cashier operations in assigned branch |
 | Technician | Assigned branch only | Permitted repair/workflow operations in assigned branch |
 | Unassigned / revoked cloud member or device | No branch operational data | No branch operational mutations |
