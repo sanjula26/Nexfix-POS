@@ -132,11 +132,14 @@ class POSProfileSession {
       const envelope = readProfileKeyEnvelope(created.directory, profileId);
       dataKey = await unwrapDataKeyWithPassphrase(envelope.passphraseWrappedKey, passphrase, profileId);
       await this.secureDirectory(created.directory);
+      const storage = new EncryptedProfileStorage(created.directory, profileId, dataKey);
+      dataKey.fill(0);
+      dataKey = null;
       this.active = {
         directory: created.directory,
         profileId,
         label: created.manifest.label,
-        storage: new EncryptedProfileStorage(created.directory, profileId, dataKey),
+        storage,
       };
       return {
         ok: true,
@@ -160,11 +163,13 @@ class POSProfileSession {
     try {
       await rebindProfileDeviceKeyWithPassphrase(directory, manifest.profileId, passphrase, this.safeStorage);
       await this.secureDirectory(directory);
+      const storage = new EncryptedProfileStorage(directory, manifest.profileId, dataKey);
+      dataKey.fill(0);
       this.active = {
         directory: fs.realpathSync(directory),
         profileId: manifest.profileId,
         label: manifest.label,
-        storage: new EncryptedProfileStorage(directory, manifest.profileId, dataKey),
+        storage,
       };
       return { ok: true, profile: this.getStatus().profile };
     } catch (error) {
