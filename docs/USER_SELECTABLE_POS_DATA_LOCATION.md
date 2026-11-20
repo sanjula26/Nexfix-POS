@@ -147,6 +147,30 @@ Record dataset sizes and timings on a test copy: cold start, IndexedDB load, sta
 
 Set explicit targets only after P0 baseline. Compare p50/p95 cold start, product search, invoice paging, sale commit and state-save times before/after on the same hardware and dataset. A speed change is accepted only if it does not regress durability, backup/restore, offline sync, shop/branch isolation or security.
 
+
+## Initial POS performance source review — 2026-11-20
+
+This is static source inspection on `main` at `81fa1507425d4446dae1ec34d689c09971e0cf47`; it is not a runtime benchmark.
+
+- `src/pages/POS.tsx` (around lines 198–260): product search/suggestions repeatedly filter the full product array; favorites scan all sales and then repeatedly find products for sale lines; bundle suggestions scan the full product catalog. This can become noticeable as products and sales grow.
+- `src/pages/Inventory.tsx` (around lines 134–163, 203, 229–230): inventory filtering/sorting and stock summaries scan the full product list; IMEI/serial duplicate checks build sets from all units; cost history scans all received purchases and GRNs. These are candidates for indexed lookups and memoized/derived indexes.
+- `src/pages/SalesHistory.tsx` (around lines 30–48, 150): the page derives cashier choices and sorts/filters the full sales history before rendering only a limited slice. Pagination at render time does not avoid the initial full-history scan/sort.
+- `src/pages/Dashboard.tsx` (around lines 27–54): dashboard metrics repeatedly scan sales, expenses, products, repairs and units. Aggregates should be cached by data revision or computed from indexed summaries rather than recomputed across all history.
+- `src/pages/Customers.tsx` (around lines 22–30, 97–120): customer lists and selected-customer purchase/ledger views scan sales history. A customer/date index and bounded history queries would scale better.
+- `src/pages/Repairs.tsx` (around lines 38–54): available parts and repair status counts scan products/jobs; status counts currently filter the jobs array once per status.
+- `src/lib/store.tsx`: product/customer/supplier mutations frequently map/filter whole arrays, and the state persistence layer writes the full POS state. This compounds the cost of a large in-memory state.
+
+### Safe optimization order
+
+1. Add a reproducible non-production benchmark harness before changing algorithms.
+2. Build memoized ID maps and normalized search indexes from existing state, with revision-based invalidation and regression tests.
+3. Replace repeated full-array scans in POS/Inventory/Repairs/Dashboard with shared selectors and precomputed counts where correctness is preserved.
+4. Add real pagination/query boundaries to Sales History and Customer History; a UI slice after sorting the full array is not sufficient.
+5. Introduce virtualized rendering only where measured DOM/render cost is material.
+6. Migrate persistence to incremental IndexedDB domain records only after the benchmark and backup/restore/offline-sync test fixtures are ready.
+
+Do not apply speculative micro-optimizations or change sale/stock transaction ordering merely to improve a benchmark. Sale commit durability and correctness take priority over raw speed.
+
 ## UI requirements
 
 Desktop Settings / startup should expose:
