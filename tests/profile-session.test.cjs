@@ -185,3 +185,13 @@ test('applies the current Windows account ACL when a profile is created and unlo
   assert.equal(calls[1].directory, created.profile.directory);
   session.lock();
 });
+
+
+test('recovery unlock clears the temporary data-key buffer after encrypted storage takes ownership', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'electron', 'profile-session.cjs'), 'utf8');
+  const recoveryUnlock = source.slice(
+    source.indexOf('async unlockWithRecoveryKey'),
+    source.indexOf('\n  lock()'),
+  );
+  assert.match(recoveryUnlock, /new EncryptedProfileStorage\(directory, manifest\.profileId, dataKey\);\s*dataKey\.fill\(0\);/);
+});
