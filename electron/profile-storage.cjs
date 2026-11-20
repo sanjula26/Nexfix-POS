@@ -64,7 +64,9 @@ class EncryptedProfileStorage {
     const filePath = path.join(this.profileDirectory, PROFILE_DATA_FILES[purpose]);
     if (!fs.existsSync(filePath)) return null;
     const envelope = parseEnvelopeFile(filePath, this.profileId, purpose);
-    return decryptProfilePayload(this.dataKey, this.profileId, purpose, envelope).toString('utf8');
+    const plaintext = decryptProfilePayload(this.dataKey, this.profileId, purpose, envelope);
+    try { return plaintext.toString('utf8'); }
+    finally { plaintext.fill(0); }
   }
 
   write(purpose, serializedPayload) {
