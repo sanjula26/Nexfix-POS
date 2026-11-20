@@ -126,7 +126,7 @@ function persistNewProfileKeyEnvelope(profileDirectory, envelope) {
     // do not support hard links. It never overwrites an existing key envelope.
     descriptor = fs.openSync(destination, 'wx', 0o600);
     created = true;
-    fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\\n', 'utf8');
+    fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\n', 'utf8');
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
