@@ -446,3 +446,29 @@ The current branch contains AES-256-GCM crypto primitives, a Windows ACL helper,
 ### Confirmed implementation boundary
 
 This review changes design requirements only. The live POS IndexedDB path, key lifecycle, IPC, Settings UI, Windows ACL application and Google Drive profile backup/restore remain unintegrated. Do not claim live data encryption, full folder lock or portable recovery until those are implemented and tested on Windows.
+
+
+## Existing Google Drive Recovery Key transport audit — 2026-11-20
+
+A source review of the current main-branch Drive implementation found an important legacy-key exposure that must be handled as a separate compatibility migration:
+
+- src/lib/backupCrypto.ts currently stores the existing Google Drive Backup Recovery Key in renderer localStorage (shop-scoped key map) and Settings.tsx displays the key in a read-only input with a copy action. The key is therefore not currently protected by Electron safeStorage.
+- src/lib/driveSync.ts sends the existing Recovery Key in the POST body for encrypted backupState uploads. This is how the current Apps Script creates/updates RECOVERY_KEY.txt for disaster recovery.
+- google-apps-script/Code.gs writes the raw existing Google Drive Backup Recovery Key into RECOVERY_KEY.txt in the same shop folder as the encrypted backup. Anyone who obtains both the backup and this plaintext file can decrypt the backup. This was existing behavior, not introduced by the profile crypto branch.
+- The previous updateShopMetadata GET also sent the raw Recovery Key in a URL query parameter. This is an avoidable transport exposure because URLs can be retained in logs/history/diagnostics.
+
+### Narrow compatibility fix in this feature branch
+
+- Removed url.searchParams.set('recoveryKey', recoveryKey) from src/lib/driveSync.ts metadata GET.
+- Changed google-apps-script/Code.gs updateShopMetadata handler to authorize using the existing shopProof, without requiring or transmitting p.recoveryKey, and to skip rewriting RECOVERY_KEY.txt during metadata-only updates.
+- The encrypted backupState POST contract still carries the existing Recovery Key for now so the currently deployed Drive backup/restore workflow and existing RECOVERY_KEY.txt file behavior are not silently broken.
+- Added tests/google-drive-recovery-key-transport.test.cjs to prevent raw Recovery Key reintroduction into the metadata GET and to assert the legacy backup POST contract remains in place.
+- This fix is source-only until the updated Apps Script is deployed. No production Apps Script deployment or Drive file was changed by this branch.
+
+### Remaining high-priority migration
+
+- The raw legacy RECOVERY_KEY.txt in Drive remains a confidentiality weakness. Do not delete or rewrite it automatically: existing backups may become unrecoverable. A future version should add a separately encrypted recovery-kit file protected by an independent owner-held passphrase, verify an offline recovery copy, then offer a clearly confirmed migration/removal of the old plaintext file.
+- Move the legacy Drive Recovery Key out of renderer localStorage into main-process OS secure storage. This requires moving encryption/decryption or a narrow key operation behind trusted IPC; do not simply return the key to the renderer for every backup operation.
+- The shopProof remains a reusable proof in some GET query parameters, and the build API key is also passed in GET parameters. Move authenticated metadata/status operations to POST or short-lived request-bound proofs in a separately reviewed Apps Script contract change.
+- Keep the new POS Data Recovery Key completely separate from this existing Drive Backup Recovery Key. Do not reuse either key or put the new POS Recovery Key in plaintext next to a Drive backup.
+
