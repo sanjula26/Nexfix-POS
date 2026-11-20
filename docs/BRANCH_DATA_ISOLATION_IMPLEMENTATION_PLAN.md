@@ -379,3 +379,43 @@ The connected Supabase project list and table/migration metadata were rechecked 
 - Therefore this staging project cannot validate the customer/credit or complete branch-isolation migration. Do not copy production customer/sales data into it or treat the five-table fixture as a full-schema staging environment.
 - No SQL was executed, no schema/data was changed, and no migration was applied. A full-schema synthetic test environment is still required before implementation; creating or expanding that schema requires separate approval.
 
+
+## Owner decision — individual Cloud identity per staff member — 2026-11-21
+
+The owner approved proceeding with a separate authenticated Cloud account for each staff member. This is an approved product/security direction, not approval to create or apply a database schema or production migration.
+
+### Intended identity boundary
+
+- Each employee has an individual Supabase Auth identity and active shop_memberships row. Cloud role is authoritative for server permissions; the local POS role label is not a cloud authorization claim.
+- Owner/Admin provisions or invites staff accounts. Staff cannot self-enroll into the shop, grant themselves branches, change their role, or promote themselves to Owner/Admin.
+- A trusted server-side mapping links the Cloud Auth identity to the intended local POS employee record. A renderer-supplied local user ID or email is not proof of identity.
+- Each staff identity receives explicit active branch grants. The effective branch scope is the intersection of the staff member's grants and the registered device's verified branch binding. A Manager receives only explicitly assigned branches; the Manager role never grants all-branch access.
+- Owner/Admin all-branch access is checked server-side using the active Cloud membership role admin (or a future separately verified owner entitlement). Do not reuse private.is_shop_admin, which includes Manager.
+- Revoking the Auth user, shop membership, staff mapping, branch grant, or device authorization must fail closed on the next server request and must not be bypassed by cached state or offline replay.
+
+### Keep updater authentication separate
+
+- The existing Cloud Admin/updater session and per-device updater credential are a separate trust domain from the staff operational-data identity.
+- Do not use the existing signInToCloud() / shared Supabase Auth client as the staff-login mechanism without a separately reviewed session design. The current client persists a Cloud session and provisions/refreshes the private updater credential; a staff sign-in must not overwrite the updater owner's session or grant an employee access to private release authorization.
+- Preferred design: a dedicated staff Auth client/session lifecycle with its own secure persistence, bound to the local POS user after Owner/Admin-controlled pairing. The staff session must not call updater-token issuance, register_pos_device as an updater owner, or owner bootstrap flows.
+- Keep local POS login and offline operation intact. If staff Cloud authorization is unavailable or revoked, cloud reads/writes fail closed while permitted local/offline workflows continue under their existing local permission rules; queued commands retain immutable actor, shop, branch, device and idempotency provenance and are revalidated on replay.
+- Audit attribution for cloud writes uses the authenticated staff auth.uid(), never a client-supplied employee ID.
+
+### Candidate server data contract — design only
+
+A future migration may require (names are provisional):
+1. An explicit staff identity mapping from (shop_id, auth_user_id) to the local POS employee identifier, with active/revoked state and unique constraints.
+2. A member-to-branch grant relation with (shop_id, auth_user_id, branch_id, active, created_by, created_at), constrained to the same shop and active branches.
+3. Owner/Admin-only provisioning/invitation and grant-management RPCs or Edge Functions. Service-role credentials must remain server-side; never ship them to the renderer.
+4. Narrow branch-scoped read/write RPCs and RLS predicates that derive the actor from auth.uid(), validate active membership + mapping + branch grant + registered device binding, and check every parent/child relation.
+5. Revocation and audit records; no long-lived bearer token or renderer-supplied device_id/local_user_id can replace server-side identity checks.
+
+### Rollout and compatibility gates
+
+- Do not enable individual staff Cloud accounts against the current shared shop-wide snapshot/customer sync. Replace full-shop snapshot download and normalized shop-wide customer sync with Owner/Admin global sync plus branch-authorized projections first.
+- Preserve current updater Admin credentials and existing one-time Windows updater authorization. Staff Cloud login must not repeatedly prompt for or mutate updater credentials.
+- Test separate Owner/Admin, Branch A Manager, Branch A Cashier, Branch B staff, unassigned staff, revoked staff and two devices; include direct table/RPC calls, null/all-branch Owner Web requests, offline queue replay, account switching, app restart and updater regression.
+- The connected staging project is not a full operational schema. Use a complete synthetic Branch A/B fixture before production rollout; never copy production customer or sales records into staging.
+- Exact mapping/grant table, RPC, RLS and session changes must be designed as a concrete migration with rollback and tests, then receive separate approval before schema creation/application. The owner's approval here confirms the individual-Cloud-account direction only.
+
+No application code, database schema, migration, RLS policy, Auth account, membership, branch grant, production setting, or R2 object was changed by recording this decision.
