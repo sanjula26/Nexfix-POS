@@ -74,9 +74,9 @@ function hasValidSettings(value: unknown): boolean {
     && (value.openingFloat === undefined || value.openingFloat === null
       || typeof value.openingFloat === 'number' && Number.isFinite(value.openingFloat))
     && (value.whatsappReceipts === undefined || value.whatsappReceipts === null || typeof value.whatsappReceipts === 'boolean')
-    && (value.categories === undefined || hasArray(value.categories) && value.categories.every((item) => typeof item === 'string'))
-    && (value.brands === undefined || hasArray(value.brands) && value.brands.every((item) => typeof item === 'string'))
-    && (value.promotions === undefined || hasArray(value.promotions));
+    && (value.categories === undefined || value.categories === null || hasArray(value.categories) && value.categories.every((item) => typeof item === 'string'))
+    && (value.brands === undefined || value.brands === null || hasArray(value.brands) && value.brands.every((item) => typeof item === 'string'))
+    && (value.promotions === undefined || value.promotions === null || hasArray(value.promotions));
 }
 
 function hasValidPermissions(value: unknown): boolean {
