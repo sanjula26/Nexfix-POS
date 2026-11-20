@@ -616,9 +616,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const currentUser = stateRef.current.users.find(u => u.id === user.id);
     if (!currentUser || !currentUser.active || currentUser.mustChangePassword) return false;
 
-    // A cashier's own password unlocks only that cashier session and must not
+    // A non-admin user's own password unlocks only that account and must not
     // clear the shared administrator-credential lockout history.
-    if (currentUser.role === 'cashier') {
+    if (currentUser.role !== 'admin') {
       let cashierPasswordOk = false;
       try {
         cashierPasswordOk = isHashed(currentUser.password)
@@ -627,7 +627,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } catch { cashierPasswordOk = false; }
       if (cashierPasswordOk) {
         loginAtRef.current = Date.now();
-        pushAudit('UNLOCK', 'Auth', 'Cashier session unlocked after idle lock');
+        pushAudit('UNLOCK', 'Auth', 'User session unlocked after idle lock');
         return true;
       }
     }
