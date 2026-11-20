@@ -1,11 +1,16 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const test = require('node:test');
 const {
   buildWindowsAclCommands,
   normalizeProfileDirectory,
   applyWindowsProfileAcl,
+  verifyWindowsProfileAcl,
   isValidWindowsSid,
 } = require('../electron/profile-acl.cjs');
 
@@ -137,4 +142,43 @@ test('ACL verification checks that the selected Windows user remains the owner',
   const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
   assert.match(POWERSHELL_ACL_VERIFY, /profile owner is not the selected Windows user/);
   assert.match(POWERSHELL_ACL_VERIFY, /\$ownerSid -ne \$userSid/);
+});
+
+test('real Windows NTFS ACL hardening removes an explicit other-user grant on a disposable folder', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const whoami = execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+  });
+  const sidMatches = whoami.match(/S-1-(?:\d+-){1,14}\d+/g) || [];
+  assert.equal(sidMatches.length, 1, 'whoami must return exactly one current-user SID');
+  const currentSid = sidMatches[0];
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-profile-acl-'));
+  try {
+    const nested = path.join(root, 'nested');
+    fs.mkdirSync(nested);
+    const file = path.join(nested, 'sample.dat');
+    fs.writeFileSync(file, 'disposable ACL test only');
+    execFileSync('icacls.exe', [file, '/grant', '*S-1-5-32-545:R'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: false,
+    });
+
+    const result = await applyWindowsProfileAcl(root, currentSid);
+    assert.equal(result.ok, true);
+    assert.ok(result.checkedEntries >= 3);
+    const verification = await verifyWindowsProfileAcl(root, currentSid);
+    assert.ok(verification.checkedEntries >= 3);
+    const aclDump = execFileSync('icacls.exe', [root, '/T'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: false,
+    });
+    assert.doesNotMatch(aclDump, /BUILTIN\\Users|S-1-5-32-545/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
