@@ -129,3 +129,9 @@ test('ACL verification rejects unapproved explicit SIDs and all deny entries', (
   assert.match(POWERSHELL_ACL_VERIFY, /access-deny ACE remains/);
   assert.match(POWERSHELL_ACL_VERIFY, /required/);
 });
+
+test('ACL verification checks that the selected Windows user remains the owner', () => {
+  const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
+  assert.match(POWERSHELL_ACL_VERIFY, /profile owner is not the selected Windows user/);
+  assert.match(POWERSHELL_ACL_VERIFY, /\$ownerSid -ne \$userSid/);
+});
