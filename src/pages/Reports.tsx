@@ -11,6 +11,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { usePOS } from '../lib/store';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { Badge, Avatar, EmptyState } from '../components/ui';
 import DatePicker from '../components/DatePicker';
 import { fmtRs, fmtNum, dkey, downloadFile, periodRange, inRange, PeriodKey } from '../lib/utils';
@@ -237,16 +238,16 @@ export default function Reports() {
   ];
 
   return (
-    <div>
+    <div className="report-print">
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
           <Badge tone="violet" className="uppercase mb-2"><BarChart3 size={11} /> Analytics</Badge>
           <h1 className="text-[26px] sm:text-3xl font-extrabold text-ink tracking-tight">Reports &amp; Analytics</h1>
           <p className="text-sm text-sub mt-1">Sales, profit, inventory insights with date picker</p>
         </div>
-        <button className="btn btn-outline-emerald bg-surface" onClick={exportCsv}>
+        <div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-outline-emerald bg-surface" onClick={exportCsv}>
           <Download size={15} /> Export CSV
-        </button>
+        </button></div>
       </div>
 
       <section className="card p-5 mb-6" aria-label="Report Center">
