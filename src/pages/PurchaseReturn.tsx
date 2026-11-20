@@ -4,6 +4,7 @@ import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Modal, PageHeading, SearchInput } from '../components/ui';
 import { fmtRs, fmtDate, dkey, downloadFile } from '../lib/utils';
 import type { Purchase, PurchaseReturn } from '../lib/types';
+import ReportPrintButton from '../components/ReportPrintButton';
 
 interface ReturnLine { itemIdx: number; productId: string; name: string; maxQty: number; qty: number; cost: number; unitIds: string[]; }
 
@@ -113,10 +114,10 @@ export default function PurchaseReturn() {
   };
 
   return (
-    <div>
+    <div className="report-print">
       <PageHeading chip="Procurement" chipTone="rose" title="Purchase Return / Debit Note"
         sub="Return items to supplier and deduct stock"
-        actions={can('act:export') ? <button className="btn btn-soft !py-1.5 !px-3 !text-xs" onClick={exportCSV}><Download size={13}/> Export</button> : undefined}
+        actions={<div className="flex flex-wrap gap-2"><ReportPrintButton />{can('act:export') && <button className="btn btn-soft !py-1.5 !px-3 !text-xs" onClick={exportCSV}><Download size={13}/> Export</button>}</div>}
       />
 
       {done && (
