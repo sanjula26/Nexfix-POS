@@ -93,6 +93,11 @@ function buildWindowsAclCommands(profileDirectory, userSid) {
       args: [target, '/remove:d', ...broad, '/T'],
     },
     {
+      name: 'remove-unapproved-access-entries',
+      executable: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', POWERSHELL_RESTRICT_ACL],
+    },
+    {
       name: 'set-profile-owner',
       executable: 'icacls.exe',
       args: [target, '/setowner', '*' + userSid, '/T'],
@@ -104,6 +109,26 @@ function buildWindowsAclCommands(profileDirectory, userSid) {
     },
   ];
 }
+
+const POWERSHELL_RESTRICT_ACL = String.raw`
+$ErrorActionPreference = 'Stop'
+$target = $env:NEXFIX_PROFILE_ACL_PATH
+$userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
+$allowed = @($userSid, 'S-1-5-18')
+$items = @((Get-Item -LiteralPath $target -Force)) + @(Get-ChildItem -LiteralPath $target -Force -Recurse -ErrorAction Stop)
+foreach ($item in $items) {
+  $acl = Get-Acl -LiteralPath $item.FullName
+  foreach ($rule in @($acl.Access)) {
+    $sid = $rule.IdentityReference.Value
+    try { $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}
+    if (($allowed -notcontains $sid) -or $rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
+      [void]$acl.RemoveAccessRuleSpecific($rule)
+    }
+  }
+  Set-Acl -LiteralPath $item.FullName -AclObject $acl
+}
+[pscustomobject]@{ ok = $true; changed = $items.Count } | ConvertTo-Json -Compress
+`;
 
 const POWERSHELL_ACL_VERIFY = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -125,9 +150,12 @@ foreach ($item in $items) {
     $found = @($entries | Where-Object { $_.Sid -eq $sid -and $_.Type -eq 'Allow' -and (($_.Rights -band $fullControl) -eq $fullControl) }).Count -gt 0
     if (-not $found) { $issues.Add($item.FullName + ': missing full-control allow for ' + $sid) }
   }
-  foreach ($sid in $forbidden) {
-    if (@($entries | Where-Object { $_.Sid -eq $sid }).Count -gt 0) {
-      $issues.Add($item.FullName + ': broad access ACE remains for ' + $sid)
+  foreach ($entry in $entries) {
+    if ($required -notcontains $entry.Sid) {
+      $issues.Add($item.FullName + ': unapproved access ACE remains for ' + $entry.Sid)
+    }
+    if ($entry.Type -ne 'Allow') {
+      $issues.Add($item.FullName + ': access-deny ACE remains for ' + $entry.Sid)
     }
   }
 }
@@ -219,6 +247,8 @@ module.exports = {
   normalizeProfileDirectory,
   assertNoReparsePoints,
   buildWindowsAclCommands,
+  POWERSHELL_RESTRICT_ACL,
+  POWERSHELL_ACL_VERIFY,
   verifyWindowsProfileAcl,
   applyWindowsProfileAcl,
 };
