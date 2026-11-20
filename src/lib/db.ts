@@ -137,12 +137,33 @@ export async function idbLoadState(): Promise<POSState | null> {
 }
 export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()});await idbTransactionComplete(tx,'State save failed');return true;}catch{return false;}}
 export async function idbSaveRestoreCheckpoint(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});await idbTransactionComplete(tx,'Restore checkpoint failed');return true;}catch{return false;}}
-export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
+export async function idbLoadRestoreCheckpoint(): Promise<POSState | null> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_STATE, 'readonly');
+    const completed = idbTransactionComplete(tx, 'Restore checkpoint read failed');
+    const rowRequest = idbReq<{ key: string; value: POSState } | undefined>(
+      tx.objectStore(STORE_STATE).get('restore_checkpoint'),
+    );
+    const [row] = await Promise.all([rowRequest, completed.then(() => undefined)]);
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
 export async function idbClearRestoreCheckpoint():Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
 
 type QueueInput={type:QueueOp['type'];id?:string;ts?:string;note?:string;payload?:string};
 export async function idbEnqueue(op:QueueInput):Promise<boolean>{try{const db=await getDB();const entry={id:op.id||(crypto.randomUUID?.()||String(Date.now())),ts:op.ts||new Date().toISOString(),...op} as QueueOp;const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).put(entry);await idbTransactionComplete(tx,'Offline queue write failed');return true;}catch{return false;}}
-export async function idbListQueue():Promise<QueueOp[]>{if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
+export async function idbListQueue(): Promise<QueueOp[]> {
+  if (!idbAvailable()) return [];
+  const db = await getDB();
+  const tx = db.transaction(STORE_QUEUE, 'readonly');
+  const completed = idbTransactionComplete(tx, 'Offline queue read failed');
+  const allRequest = idbReq<QueueOp[]>(tx.objectStore(STORE_QUEUE).getAll());
+  const [all] = await Promise.all([allRequest, completed.then(() => undefined)]);
+  return (all || []).sort((a, b) => a.ts.localeCompare(b.ts));
+}
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
