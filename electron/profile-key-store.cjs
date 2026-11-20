@@ -119,25 +119,27 @@ function persistNewProfileKeyEnvelope(profileDirectory, envelope) {
   if (!checked.valid) throw new Error(checked.reason);
 
   const destination = path.join(profileDirectory, KEY_ENVELOPE_FILE);
-  const temporary = path.join(profileDirectory, '.' + KEY_ENVELOPE_FILE + '.' + crypto.randomBytes(12).toString('hex') + '.tmp');
   let descriptor = null;
+  let created = false;
   try {
-    descriptor = fs.openSync(temporary, 'wx', 0o600);
+    // Exclusive creation works on NTFS and removable local filesystems that
+    // do not support hard links. It never overwrites an existing key envelope.
+    descriptor = fs.openSync(destination, 'wx', 0o600);
+    created = true;
     fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\\n', 'utf8');
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = null;
-
-    // A hard-link promotion is atomic and fails if the destination already
-    // exists, so an existing key envelope can never be silently overwritten.
-    fs.linkSync(temporary, destination);
-    fs.unlinkSync(temporary);
     return readProfileKeyEnvelope(profileDirectory, envelope.profileId);
   } catch (error) {
     if (descriptor !== null) {
       try { fs.closeSync(descriptor); } catch { /* best effort */ }
     }
-    try { fs.rmSync(temporary, { force: true }); } catch { /* best effort */ }
+    // Remove only the incomplete file created by this invocation. If the
+    // process crashes, a partial envelope is rejected at next startup.
+    if (created) {
+      try { fs.rmSync(destination, { force: true }); } catch { /* fail closed */ }
+    }
     throw error;
   }
 }
