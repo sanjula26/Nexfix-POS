@@ -26,7 +26,7 @@ const emptyState = (): GuardState => ({ version: 1, failures: 0, lockedUntil: 0,
 
 const lockDuration = (failures: number): number => failures < MAX_FAILURES
   ? 0
-  : Math.min(MAX_LOCK_MS, BASE_LOCK_MS * (2 ** Math.min(failures - MAX_FAILURES, 4)));
+  : Math.min(MAX_LOCK_MS, BASE_LOCK_MS * (2 ** Math.min(failures - MAX_FAILURES, 5)));
 
 const recordFailure = (state: GuardState, now: number): GuardState => {
   const failures = state.failures + 1;
