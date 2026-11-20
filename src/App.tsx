@@ -24,6 +24,7 @@ const GRN = lazy(() => import('./pages/GRN'));
 const GRNReport = lazy(() => import('./pages/GRNReport'));
 const Purchases = lazy(() => import('./pages/Purchases'));
 const PurchaseReturn = lazy(() => import('./pages/PurchaseReturn'));
+const PurchaseReturnReport = lazy(() => import('./pages/PurchaseReturnReport'));
 const CSVImport = lazy(() => import('./pages/CSVImport'));
 const SalesHistory = lazy(() => import('./pages/SalesHistory'));
 const MobileTodaySales = lazy(() => import('./pages/MobileTodaySales'));
@@ -327,6 +328,7 @@ function AppRoutes() {
           <Route path="/grn" element={<PermissionProtected permission="page:purchases"><GRN /></PermissionProtected>} />
           <Route path="/grn-report" element={<PermissionProtected permission="page:purchases"><GRNReport /></PermissionProtected>} />
           <Route path="/purchase-return" element={<PermissionProtected permission="page:purchases"><PurchaseReturn /></PermissionProtected>} />
+          <Route path="/purchase-return-report" element={<PermissionProtected permission="page:purchases"><PurchaseReturnReport /></PermissionProtected>} />
           <Route path="/csv-import" element={<PermissionProtected adminOnly><CSVImport /></PermissionProtected>} />
           <Route path="/sales" element={<PermissionProtected permission="page:sales"><SalesHistory /></PermissionProtected>} />
           <Route path="/exchanges" element={<PermissionProtected permission="page:exchanges"><Exchanges /></PermissionProtected>} />
