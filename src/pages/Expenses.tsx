@@ -72,7 +72,7 @@ export default function Expenses() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5 items-start">
         <div className="card overflow-hidden">
-          <div className="p-4 border-b border-line flex flex-wrap gap-3">
+          <div className="p-4 border-b border-line flex flex-wrap gap-3 no-print">
             <SearchInput value={search} onChange={setSearch} placeholder="Search expenses..." className="flex-1 min-w-[200px]" />
             <select className="input w-40" value={cat} onChange={e => setCat(e.target.value)}>
               <option value="all">All categories</option>
