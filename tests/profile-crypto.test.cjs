@@ -94,7 +94,7 @@ test('recovery-wrapped data key unlocks on a replacement Windows profile', () =>
   const envelope = wrapDataKeyWithRecoveryKey(dataKey, recoveryKey, PROFILE_A);
   assert.deepEqual(unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_A), dataKey);
   assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, createRecoveryKey(), PROFILE_A), /authentication failed/);
-  assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_B), /invalid or belongs to another profile/);
+  assert.throws(() => unwrapDataKeyWithRecoveryKey(envelope, recoveryKey, PROFILE_B), /does not match/);
 });
 
 test('OS-protected key envelope round-trips and never stores the raw data key', async () => {
@@ -147,7 +147,7 @@ test('owner-changeable folder lock passphrase wraps and unwraps the existing pro
   assert.equal(envelope.provider, 'scrypt-passphrase');
   assert.deepEqual(await unwrapDataKeyWithPassphrase(envelope, 'ShopSecure2026!', PROFILE_A), dataKey);
   await assert.rejects(() => unwrapDataKeyWithPassphrase(envelope, 'WrongPassword2026!', PROFILE_A), /authentication failed/);
-  await assert.rejects(() => unwrapDataKeyWithPassphrase(envelope, 'ShopSecure2026!', PROFILE_B), /does not match/);
+  await assert.rejects(() => unwrapDataKeyWithPassphrase(envelope, 'ShopSecure2026!', PROFILE_B), /invalid or belongs to another profile/);
 });
 
 test('changing the folder lock passphrase re-wraps the same DEK without re-encrypting POS records', async () => {
