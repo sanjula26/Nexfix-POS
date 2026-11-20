@@ -173,3 +173,18 @@ Deployed function definitions and execute grants were inspected read-only:
 - public.get_owner_credit_customers(shop_id) is executable by authenticated, not anon and checks only active shop membership; it returns shop-wide customer credit balances and open-invoice balances.
 
 These functions use an empty search_path and authenticated-only execute grants, which are positive controls, but their authorization scope is shop-wide rather than branch/owner-only. The UI branch selector is not a security boundary. The isolation rollout must add explicit owner/admin authorization for all-branch and financial reports, and branch grant checks for branch-specific reports. No function, grant, data or schema was changed during this inspection.
+
+## 13. Owner decision — individual Cloud identity per staff member (2026-11-21)
+
+The owner approved proceeding with one individual authenticated Cloud account per staff member. This confirms the identity direction only; it does not authorize creating or applying new database schemas or production migrations.
+
+- Owner/Admin invites and provisions each employee's Supabase Auth identity and shop membership. Staff cannot self-register into the shop, grant branches, change roles, or self-promote.
+- A trusted server-side mapping associates the Cloud Auth identity with the intended local POS employee. Local POS IDs, role labels, email strings, branch selectors and renderer-supplied device IDs are not authentication proof.
+- Each employee receives explicit active branch grants. Effective scope is the intersection of the employee's grants and the registered device's verified branch binding. Manager role does not grant all branches.
+- Keep the existing Cloud Admin/updater identity and persistent updater device token separate from staff operational-data sessions. Staff sign-in must not overwrite the updater session, issue updater credentials, or expose private release authorization.
+- Prefer a dedicated staff Auth client/session lifecycle with OS secure persistence, plus Owner/Admin-controlled pairing to the local POS employee. Preserve local POS login and permitted offline operation.
+- Server-side cloud writes are attributed to auth.uid(). Revocation of Auth identity, membership, mapping, branch grant or device authorization must fail closed on the next server request and offline replay.
+- Candidate mapping/grant tables and invitation/grant-management RPCs remain design-only. Keep service-role credentials server-side. Exact migration, rollback and Branch A/B tests must be reviewed and separately approved before schema creation/application.
+- Do not enable staff Cloud access until shop-wide snapshot/customer sync has been replaced by Owner/Admin global sync and branch-authorized projections, and a complete synthetic Branch A/B staging schema passes direct table/RPC, offline replay, account-switch and updater regression tests.
+
+See the Implementation Plan for the detailed proposed identity/session contract and rollout gates.
