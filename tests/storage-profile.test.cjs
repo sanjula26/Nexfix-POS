@@ -9,6 +9,7 @@ const test = require('node:test');
 const {
   PROFILE_MANIFEST_FILE,
   createProfileManifest,
+  createManagedProfileDirectory,
   validateProfileManifest,
   readProfileManifest,
   classifyProfileCandidates,
