@@ -16,6 +16,26 @@ const BROAD_ACCESS_SIDS = Object.freeze([
 const MAX_PROFILE_ENTRIES = 100000;
 const MAX_PROFILE_DEPTH = 64;
 
+
+function buildWindowsPowerShellEnv(baseEnv = process.env) {
+  const env = { ...baseEnv };
+  const modulePathKey = Object.keys(env).find((key) => key.toLowerCase() === 'psmodulepath');
+  if (modulePathKey && typeof env[modulePathKey] === 'string') {
+    env[modulePathKey] = env[modulePathKey]
+      .split(';')
+      .filter((entry) => {
+        const normalized = entry.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        // Windows PowerShell 5.1 cannot safely import Security.types.ps1xml
+        // from PowerShell 7 module paths inherited from a PS7 parent process.
+        if (/\/documents\/powershell\/modules$/.test(normalized)) return false;
+        if (/\/program files(?: \(x86\))?\/powershell(?:\/7)?\/modules$/.test(normalized)) return false;
+        return true;
+      })
+      .join(';');
+  }
+  return env;
+}
+
 function isValidWindowsSid(value) {
   return typeof value === 'string' && /^S-1-(?:\d+-){1,14}\d+$/.test(value);
 }
@@ -112,8 +132,7 @@ function buildWindowsAclCommands(profileDirectory, userSid) {
 
 const POWERSHELL_RESTRICT_ACL = String.raw`
 $ErrorActionPreference = 'Stop'
-Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity -ErrorAction SilentlyContinue
-Import-Module Microsoft.PowerShell.Security -Force -ErrorAction Stop
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $target = $env:NEXFIX_PROFILE_ACL_PATH
 $userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
 $allowed = @($userSid, 'S-1-5-18')
@@ -134,8 +153,7 @@ foreach ($item in $items) {
 
 const POWERSHELL_ACL_VERIFY = String.raw`
 $ErrorActionPreference = 'Stop'
-Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity -ErrorAction SilentlyContinue
-Import-Module Microsoft.PowerShell.Security -Force -ErrorAction Stop
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $target = $env:NEXFIX_PROFILE_ACL_PATH
 $userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
 $required = @($userSid, 'S-1-5-18')
@@ -231,11 +249,11 @@ async function applyWindowsProfileAcl(profileDirectory, userSid, options = {}) {
       timeout: 60000,
       maxBuffer: 4 * 1024 * 1024,
       shell: false,
-      env: {
+      env: buildWindowsPowerShellEnv({
         ...process.env,
         NEXFIX_PROFILE_ACL_PATH: canonical,
         NEXFIX_PROFILE_ACL_USER_SID: userSid,
-      },
+      }),
     });
   }
 
@@ -258,6 +276,7 @@ module.exports = {
   normalizeProfileDirectory,
   assertNoReparsePoints,
   buildWindowsAclCommands,
+  buildWindowsPowerShellEnv,
   POWERSHELL_RESTRICT_ACL,
   POWERSHELL_ACL_VERIFY,
   verifyWindowsProfileAcl,
