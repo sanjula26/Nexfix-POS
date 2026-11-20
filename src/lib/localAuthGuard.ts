@@ -58,7 +58,9 @@ export const createLocalAuthGuard = (
         pending: value.pending ? { id: value.pending.id, startedAt: value.pending.startedAt } : null,
       };
     } catch {
-      return { version: 1, failures: MAX_FAILURES, lockedUntil: now() + MAX_LOCK_MS, pending: null };
+      const locked = { version: 1 as const, failures: MAX_FAILURES, lockedUntil: now() + MAX_LOCK_MS, pending: null };
+      try { storage.setItem(STORAGE_KEY, JSON.stringify(locked)); } catch { /* remain fail-closed if storage is unavailable */ }
+      return locked;
     }
   };
   const write = (state: GuardState) => storage.setItem(STORAGE_KEY, JSON.stringify(state));
