@@ -60,6 +60,8 @@ test('reads a bounded manifest from a profile folder', (t) => {
 
   fs.writeFileSync(path.join(directory, PROFILE_MANIFEST_FILE), '{invalid');
   assert.throws(() => readProfileManifest(directory), /invalid JSON/);
+  fs.writeFileSync(path.join(directory, PROFILE_MANIFEST_FILE), ' '.repeat(16 * 1024 + 1));
+  assert.throws(() => readProfileManifest(directory), /size limit/);
 });
 
 test('classifies same profile IDs as duplicate copies and different IDs as separate profiles', () => {
@@ -120,4 +122,13 @@ test('rejects a symlinked legacy IndexedDB directory', (t) => {
   const outside = temporaryDirectory(t, 'nexfix-legacy-outside-');
   fs.symlinkSync(outside, path.join(sessionData, 'IndexedDB'), 'dir');
   assert.throws(() => getLegacyImportAllowlist(sessionData), /symbolic link/);
+});
+
+test('rejects a symlinked profile manifest', (t) => {
+  if (process.platform === 'win32') return;
+  const directory = temporaryDirectory(t);
+  const outside = path.join(directory, 'outside.json');
+  fs.writeFileSync(outside, JSON.stringify(makeManifest()));
+  fs.symlinkSync(outside, path.join(directory, PROFILE_MANIFEST_FILE));
+  assert.throws(() => readProfileManifest(directory), /symbolic link/);
 });

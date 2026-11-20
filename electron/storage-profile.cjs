@@ -84,7 +84,7 @@ function createProfileManifest(input) {
     manifestVersion: PROFILE_MANIFEST_VERSION,
     profileId: input?.profileId,
     label: input?.label,
-    dataSchemaVersion: input?.dataSchemaVersion || 1,
+    dataSchemaVersion: input?.dataSchemaVersion ?? 1,
     createdAt: input?.createdAt || now,
     updatedAt: input?.updatedAt || now,
     ...(input?.shopIdentityFingerprint
@@ -102,6 +102,8 @@ function createProfileManifest(input) {
 
 function readProfileManifest(profileDirectory) {
   const manifestPath = path.join(profileDirectory, PROFILE_MANIFEST_FILE);
+  const linkStat = fs.lstatSync(manifestPath);
+  if (linkStat.isSymbolicLink()) throw new Error('Profile manifest cannot be a symbolic link.');
   const stat = fs.statSync(manifestPath);
   if (!stat.isFile() || stat.size > MAX_MANIFEST_BYTES) {
     throw new Error('Profile manifest is not a regular file or exceeds the size limit.');
