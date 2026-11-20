@@ -37,10 +37,20 @@ Keep local POS users/roles separate from Supabase Auth identities. Do not treat 
 | GRN / purchases and purchase items | Branch-private by default | Supplier master can be shared only if explicitly approved |
 | Stock transfers | Visible only to assigned source/destination branches; owner sees all | RPC checks both ends and the caller's permission for each end |
 | Repairs and warranty history | Branch-private by default | Repairs currently lacks a durable branch key; do not expose as branch-private until safely backfilled |
-| Customers, credit balances, credit settlements, quotations | UNDECIDED | Existing roadmap treats some customer/credit data as shop-level. Do not silently split balances or history; obtain owner decision before migration |
-| Suppliers, price lists, shop settings | UNDECIDED / shop-level candidate | Confirm whether supplier and cost information should be hidden between branches |
+| Customer contact profiles / customer master | Owner/Admin shop-wide; branch staff only explicitly branch-linked profiles | No direct branch key exists; use a branch-safe projection/RPC, not shop-member SELECT on `customers` |
+| Suppliers, price lists, quotations, shop settings | UNDECIDED / shop-level candidate | Confirm whether supplier, cost, quotation and price information should be hidden between branches |
 | POS full-state snapshots | Admin-only until replaced | Never allow branch staff to download a shop-wide snapshot |
 | Google Drive backups | Shop-scoped and admin-only | Restore must not merge another shop/branch dataset |
+
+## Approved customer and credit visibility model — owner confirmed 2026-11-21
+
+- **Owner/Admin:** full shop-wide customer contact profiles, all branch invoices, complete settlement history, and the canonical shop-wide customer credit balance.
+- **Manager/Cashier/Technician/Inventory Manager and other branch staff:** only customer profiles explicitly linked to their assigned branch(es); only invoices whose `sales.branch_id` is in that assigned set; and only the invoice outstanding/settlement details for those invoices. An invoice in the staff member's own branch may show its own stored `customer_name` snapshot. It must not reveal another branch's customer profile, contact details, invoice or settlement history.
+- **Balances:** the existing `customers.credit_balance` is shop-wide and must be Owner/Admin-only. Branch staff receive a server-computed outstanding total for invoices in their authorized branch set only. Do not return the shop-wide balance, even as a hidden field.
+- **FIFO settlement:** branch staff may settle and FIFO-allocate only within their authorized branch set. A payment collected by a branch-only user must not allocate to an invoice outside that set. Owner/Admin may settle and allocate across the whole shop. Preserve payment tender legs, invoice allocations, idempotency, audit attribution, offline conflict handling and day-end totals.
+- **Data-model gap:** `customers` currently has no `branch_id`; one canonical customer can have sales at multiple branches. `CustomerCreditPayment` currently lives inside the shop-wide POS snapshot and records a collection `branchId` plus invoice allocations; it is not a normalized server-side ledger with independently enforceable invoice-branch visibility. Design a canonical customer identity with explicit customer-to-branch visibility (or an equivalent secure branch-scoped projection) and a normalized/equivalently protected payment/allocation ledger. Do not duplicate customers, silently split `credit_balance`, or break historical FIFO allocations.
+- **RPC and snapshot gates:** `get_owner_credit_customers(p_shop_id)` and direct `customers` table access must be Owner/Admin-only. Branch customer lookup and branch invoice outstanding must use narrow server-authorized RPCs. The full shop-wide `pos_state_snapshots` payload must never be downloaded by branch-only users.
+- **Rollout:** existing historical customer/invoice/payment data must be reconciled using synthetic Branch A/B fixtures first. Unknown or ambiguous customer/branch links fail closed to Owner/Admin until safely resolved. This requires a reviewed schema/RLS/sync change; do not apply it to production as part of a documentation update.
 
 Unknown or unclassified data must not be exposed to branch-only users by default.
 
