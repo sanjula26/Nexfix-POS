@@ -144,6 +144,29 @@ test('IndexedDB prior-use probe detects queue, restore checkpoint and backup met
   assert.equal(await idbHasPriorUseEvidence(), false);
 });
 
+test('IndexedDB read accepts legacy state fields that migrate() supplies after hydration', async () => {
+  const legacy = validTestState(80) as unknown as Record<string, unknown>;
+  legacy.customers = [{
+    id: 'customer-legacy',
+    name: 'Legacy customer',
+    phone: '',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    creditBalance: 0,
+  }];
+  delete legacy.suppliers;
+  delete legacy.units;
+  delete legacy.repairs;
+  delete (legacy.settings as Record<string, unknown>).adminPinHash;
+  delete (legacy.settings as Record<string, unknown>).openingFloat;
+  delete (legacy.settings as Record<string, unknown>).whatsappReceipts;
+  legacy.permissions = {};
+  legacy.counters = {};
+
+  await writeMainStateRow(legacy);
+  assert.deepEqual(await idbReadState(), legacy);
+  await clearAuthoritativeStateRow();
+});
+
 test('IndexedDB read-only state probe rejects a malformed authoritative row', async () => {
   await writeMainStateRow(undefined);
   assert.equal(await idbReadState(), null);
