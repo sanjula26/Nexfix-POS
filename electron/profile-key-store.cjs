@@ -270,6 +270,28 @@ async function rebindProfileDeviceKeyWithRecoveryKey(profileDirectory, profileId
   }
 }
 
+
+async function rebindProfileDeviceKeyWithPassphrase(profileDirectory, profileId, passphrase, safeStorage) {
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  if (!current.passphraseWrappedKey) throw new Error('This POS profile has no folder-lock passphrase wrapper.');
+  const dataKey = await unwrapDataKeyWithPassphrase(current.passphraseWrappedKey, passphrase, profileId);
+  try {
+    const nextEnvelope = {
+      ...current,
+      osWrappedKey: await wrapDataKeyWithOS(dataKey, profileId, safeStorage),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+    const verificationKey = await unwrapDataKeyWithOS(saved.osWrappedKey, profileId, safeStorage);
+    const valid = verificationKey.equals(dataKey);
+    verificationKey.fill(0);
+    if (!valid) throw new Error('New Windows device key wrapper failed verification.');
+    return saved;
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
 module.exports = {
   KEY_ENVELOPE_FILE,
   KEY_ENVELOPE_FORMAT,
@@ -281,4 +303,5 @@ module.exports = {
   changeProfileLockPassphrase,
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
+  rebindProfileDeviceKeyWithPassphrase,
 };
