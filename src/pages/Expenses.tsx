@@ -3,6 +3,7 @@ import { Plus, Trash2, Wallet, TrendingDown, PieChart } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState, PageHeading } from '../components/ui';
 import { fmtRs, fmtDateTime, periodRange, inRange } from '../lib/utils';
+import ReportPrintButton from '../components/ReportPrintButton';
 
 const CATS = ['Rent', 'Electricity', 'Water', 'Internet', 'Salary', 'Transport', 'Packing', 'Marketing', 'Bank charges', 'Other'];
 const PAYMENT_METHODS = ['cash', 'bank', 'card'] as const;
@@ -56,12 +57,12 @@ export default function Expenses() {
   };
 
   return (
-    <div>
+    <div className="report-print">
       <PageHeading
         chip="Finance" chipTone="amber"
         title="Expenses"
         sub={`This month: ${fmtRs(monthTotal)} · Today: ${fmtRs(todayTotal)}`}
-        actions={<button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={15} /> Add Expense</button>}
+        actions={<div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={15} /> Add Expense</button></div>}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
