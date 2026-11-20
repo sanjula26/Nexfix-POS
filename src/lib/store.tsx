@@ -273,6 +273,7 @@ function migrate(s: POSState): POSState {
     settings: {
       ...s.settings,
       adminPinHash,
+      openingFloat: s.settings?.openingFloat ?? 0,
       whatsappReceipts: s.settings?.whatsappReceipts ?? false,
       categories: s.settings?.categories?.length ? s.settings.categories : [...DEFAULT_CATEGORIES],
       brands: s.settings?.brands?.length ? s.settings.brands : [...DEFAULT_BRANDS],
