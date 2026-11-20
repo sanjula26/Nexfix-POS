@@ -350,6 +350,25 @@ These are source-level authorization findings, not live exploit tests. No SQL, p
 - This plan remains documentation only. No production branch authorization, RLS policy, grants, snapshot policy, customer-sharing rule, or SQL migration has been changed. The approved customer/credit policy still requires implementation and isolated staging tests; supplier, repair, warranty and quotation visibility still need separate design/owner decisions.
 
 
+## Live cloud identity boundary recheck — 2026-11-21 (aggregate-only SQL)
+
+A read-only aggregate query against the operational Supabase project returned:
+
+- 6 active registered devices.
+- 1 distinct active `auth.users` identity across those devices.
+- 3 device-to-branch bindings across 2 active branches.
+- 1 active `shop_memberships` row / 1 distinct active shop user.
+
+No user IDs, device IDs, customer details, sales details or other row contents were returned by this aggregate query.
+
+**Security consequence:** RLS based only on `auth.uid()` cannot distinguish the six terminals or the local POS employees using that single cloud identity. A device ID supplied by renderer code is forgeable and cannot be treated as an authenticated employee or terminal credential. A device-only branch binding can constrain a physical terminal only if the server receives a non-forgeable device proof; it still does not implement the confirmed per-Manager/per-staff assignment model.
+
+Before implementation, choose a trusted actor model:
+- Preferred: each cloud staff identity is individually authenticated and mapped to the local POS user, with explicit member-to-branch grants; or
+- An alternative server-issued, short-lived, non-forgeable staff/device authorization token tied to a local POS user and branch grant, validated by every read/write RPC. Direct table reads must remain unavailable where the token cannot be checked.
+
+Do not trust local `user.id`, role labels, `device_id`, branch selector state, or user metadata as proof. Keep the existing updater cloud account separate from local POS login until a reviewed identity-binding flow exists. This is a design blocker, not a claim that current users have been isolated.
+
 ## Supabase environment readiness recheck — 2026-11-21 (metadata only)
 
 The connected Supabase project list and table/migration metadata were rechecked read-only:
