@@ -220,42 +220,38 @@ function createManagedProfileDirectory(storageRoot, directoryName, manifestInput
   }
   const rootRealPath = fs.realpathSync(storageRoot);
   const profileDirectory = path.join(rootRealPath, directoryName);
-  if (fs.existsSync(profileDirectory)) {
-    throw new Error('A folder with this POS profile name already exists. Choose another name or inspect the existing profile.');
-  }
-
   const manifest = createProfileManifest(manifestInput);
-  const stagingName = '.nexfix-profile-' + require('node:crypto').randomBytes(16).toString('hex') + '.staging';
-  const stagingDirectory = path.join(rootRealPath, stagingName);
+
+  // mkdir is an exclusive reservation: if another profile already exists at
+  // this name, creation stops without replacing or modifying any existing data.
+  fs.mkdirSync(profileDirectory, { recursive: false, mode: 0o700 });
   let fileDescriptor = null;
+  let manifestCreated = false;
   try {
-    fs.mkdirSync(stagingDirectory, { recursive: false, mode: 0o700 });
-    const manifestPath = path.join(stagingDirectory, PROFILE_MANIFEST_FILE);
+    const manifestPath = path.join(profileDirectory, PROFILE_MANIFEST_FILE);
     fileDescriptor = fs.openSync(manifestPath, 'wx', 0o600);
+    manifestCreated = true;
     fs.writeFileSync(fileDescriptor, JSON.stringify(manifest, null, 2) + '\\n', 'utf8');
     fs.fsyncSync(fileDescriptor);
     fs.closeSync(fileDescriptor);
     fileDescriptor = null;
 
-    const verified = readProfileManifest(stagingDirectory);
+    const verified = readProfileManifest(profileDirectory);
     if (verified.profileId !== manifest.profileId ||
         verified.manifestVersion !== manifest.manifestVersion) {
       throw new Error('The newly created POS profile manifest failed read-back verification.');
     }
-
-    // The staging directory is on the same volume as the destination so the
-    // final rename is atomic. Existing profile folders are never overwritten.
-    if (fs.existsSync(profileDirectory)) {
-      throw new Error('The destination POS profile folder appeared during creation; nothing was overwritten.');
-    }
-    fs.renameSync(stagingDirectory, profileDirectory);
-    const finalManifest = readProfileManifest(profileDirectory);
-    return { directory: fs.realpathSync(profileDirectory), manifest: finalManifest };
+    return { directory: fs.realpathSync(profileDirectory), manifest: verified };
   } catch (error) {
     if (fileDescriptor !== null) {
       try { fs.closeSync(fileDescriptor); } catch { /* best effort */ }
     }
-    try { fs.rmSync(stagingDirectory, { recursive: true, force: true }); } catch { /* leave recovery evidence if cleanup fails */ }
+    // Roll back only the folder created by this call. If cleanup fails, leave
+    // the invalid folder visible for explicit recovery; never auto-adopt it.
+    try {
+      if (manifestCreated) fs.rmSync(path.join(profileDirectory, PROFILE_MANIFEST_FILE), { force: true });
+      fs.rmdirSync(profileDirectory);
+    } catch { /* fail closed; caller receives the original creation error */ }
     throw error;
   }
 }
