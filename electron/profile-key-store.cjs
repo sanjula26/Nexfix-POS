@@ -64,7 +64,10 @@ function validateProfileKeyEnvelope(value, expectedProfileId) {
     return { valid: false, reason: 'OS-protected profile key wrapper is invalid.' };
   }
   const recovery = value.recoveryWrappedKey;
-  if (!recovery || recovery.format !== PROFILE_CRYPTO_FORMAT ||
+  const recoveryKeys = new Set(['format', 'version', 'algorithm', 'profileId', 'iv', 'ciphertext', 'tag']);
+  if (!recovery || typeof recovery !== 'object' || Array.isArray(recovery) ||
+      Object.keys(recovery).some(key => !recoveryKeys.has(key)) ||
+      recovery.format !== PROFILE_CRYPTO_FORMAT ||
       recovery.version !== PROFILE_CRYPTO_VERSION || recovery.algorithm !== 'AES-256-GCM' ||
       recovery.profileId !== value.profileId ||
       !isCanonicalBase64(recovery.iv, 12) || Buffer.from(recovery.iv, 'base64').length !== 12 ||
