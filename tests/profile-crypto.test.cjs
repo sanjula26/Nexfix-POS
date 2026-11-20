@@ -61,6 +61,13 @@ test('profile payload refuses invalid key sizes, revisions, purposes and oversiz
   assert.throws(() => encryptProfilePayload(Buffer.alloc(32), PROFILE_A, '../unsafe', 1, 'data'), /purpose/);
 });
 
+test('profile encryption rejects objects that were not explicitly serialized', () => {
+  assert.throws(
+    () => encryptProfilePayload(crypto.randomBytes(32), PROFILE_A, 'pos-state', 1, { sales: [] }),
+    /Buffer or an explicitly serialized string/,
+  );
+});
+
 test('POS data recovery key is random, 256-bit and strictly validated', () => {
   const first = createRecoveryKey();
   const second = createRecoveryKey();

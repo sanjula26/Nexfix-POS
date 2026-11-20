@@ -68,7 +68,10 @@ function buildAad(profileId, purpose, revision) {
 
 function encryptWithKey(key, plaintext, aad) {
   assertKey(key);
-  const input = Buffer.isBuffer(plaintext) ? plaintext : Buffer.from(String(plaintext), 'utf8');
+  if (!Buffer.isBuffer(plaintext) && typeof plaintext !== 'string') {
+    throw new Error('Profile data payload must be a Buffer or an explicitly serialized string.');
+  }
+  const input = Buffer.isBuffer(plaintext) ? plaintext : Buffer.from(plaintext, 'utf8');
   if (input.length > MAX_PAYLOAD_BYTES) throw new Error('Profile data payload exceeds the supported size limit.');
   const iv = crypto.randomBytes(GCM_IV_BYTES);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: GCM_TAG_BYTES });
