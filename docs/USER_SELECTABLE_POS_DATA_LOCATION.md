@@ -348,3 +348,49 @@ Protect a copied or stolen profile folder from offline reading, restrict ordinar
 - Added `tests/profile-crypto.test.cjs`: 12 tests for encryption round-trip, tamper detection, profile/purpose isolation, key validation, recovery-key validation, reinstall recovery, OS wrapper, unsafe fallback rejection, async safeStorage, independent key wrappers, explicit serialization requirements and strict base64 encoding checks.
 - Added the profile crypto and profile/IndexedDB inspection tests to the `test:domain` command so the desktop QA workflow can run them.
 - These are tested cryptographic primitives, not yet integrated into the actual IndexedDB read/write path, Electron startup unlock, profile key file lifecycle, Windows ACL application or UI. Production data remains unchanged and is not yet encrypted at rest by this implementation.
+
+
+## Owner-controlled folder lock, portable recovery and Drive backup — 2026-11-20
+
+This section refines the security UX requirement from the shop owner. It is a product requirement for the managed profile workflow, not a claim that the current helper modules already provide it.
+
+### POS Settings: Folder Lock controls
+
+- When the owner selects a local NTFS storage folder, NexFix must offer an in-app **Lock this folder** action and display the exact active folder/profile identity.
+- The lock should have two distinct controls: (1) a changeable owner-chosen unlock passphrase/PIN, verified before changing or disabling the lock; and (2) the cryptographic POS Data Recovery Key used for disaster recovery. Do not use the POS local ADMIN password, Windows password, cloud password or Google Drive backup Recovery Key as the encryption key.
+- The owner may change the passphrase while the profile is unlocked and after re-authentication. Changing a passphrase must re-wrap the existing DEK and verify the new wrapper before retiring the old wrapper; it must not re-encrypt or rewrite all business records unnecessarily.
+- Disabling the folder lock requires owner re-authentication and an explicit warning. It may remove the additional passphrase gate and/or restore normal inherited NTFS permissions only after confirmation; it must not silently decrypt the business database. Encryption-at-rest remains enabled unless the owner runs a separately designed, verified decrypt/export operation.
+- Apply and verify NTFS ACLs from the Electron main process. If ACL application partially fails, preserve the explicit current-user and SYSTEM access grants, report that the folder is not fully locked, and provide a safe repair/unlock path. Never claim success based only on a button state.
+- A lock passphrase is a user knowledge factor; a recovery key is a high-entropy backup factor. Do not store either plaintext in the selected folder, localStorage, logs, crash reports, Notion or GitHub.
+
+### Device-specific keys versus portable profile recovery
+
+- On each Windows installation/device, generate a fresh random device wrapping key and protect it using that device's Windows DPAPI/safeStorage identity. This supports normal auto-unlock on that installation only.
+- Keep one profile DEK for the encrypted profile and wrap it independently for each authorized device, plus a separate profile-level POS Data Recovery Key wrapper. A new Windows installation must never depend on the old DPAPI wrapper.
+- The POS Data Recovery Key is profile-specific and portable: show it once, allow the owner to copy/print/export it securely, require confirmation that it has been stored outside the selected data folder, and never regenerate/replace it without an authenticated rotation flow.
+- After Windows reinstall or a drive-letter/path change, the owner selects the preserved profile folder. Identify it by its validated profile UUID and authenticated encrypted manifest/check record, not by drive letter or folder name. Ask for the POS Data Recovery Key when the old device wrapper is unavailable, verify a known encrypted record, then create a new device wrapper for the new Windows installation.
+- If the owner forgets the changeable passphrase, recovery must be possible through the separate POS Data Recovery Key. If both the passphrase and recovery key are lost and no still-valid device wrapper remains, the data cannot be recovered. Do not create an empty replacement shop in this case.
+- When a profile is copied to another PC, require explicit owner authorization and recovery-key unlock; do not assume a copied folder is trusted or automatically authorize a new device. Maintain one active writer per profile and detect duplicate profile UUID copies.
+
+### Google Drive backup and restore
+
+- Google Drive backup must include the encrypted POS data snapshot, profile UUID/format metadata, integrity checksums, and the encrypted key-envelope material required for a future restore. Backups must be restorable after Windows reinstall without the original PC's DPAPI identity.
+- Never upload the raw POS Data Recovery Key or plaintext DEK next to the encrypted backup. The backup may include the recovery-key-wrapped DEK envelope (ciphertext only); the owner must supply the separate POS Data Recovery Key during restore. If the owner explicitly wants a recovery-key copy stored in Drive, require a separate user-controlled secret vault/export protected by a different strong secret, never put it beside the encrypted backup as plaintext.
+- Keep the existing Google Drive backup Recovery Key and POS Data Recovery Key as separate key domains. Existing backup encryption and shop authorization semantics must remain intact; do not silently change or overwrite existing `RECOVERY_KEY.txt` behavior.
+- Restore sequence: verify Drive shop authorization and backup integrity; select the correct profile; obtain the POS Data Recovery Key; unwrap the DEK; authenticate/decrypt into a staging profile; verify shop identity, schema, records and pending operations; then atomically activate. Keep the old profile and restore checkpoint untouched until post-restore verification succeeds.
+- Support automatic and manual backup to the owner's authorized Drive location, but do not let a scheduled backup upload plaintext recovery secrets. Show separate statuses for local save, encrypted profile lock, cloud sync and last successful Drive backup.
+
+### Required acceptance tests before production enablement
+
+- Lock/unlock/change passphrase/disable lock from POS Settings with owner re-authentication; verify wrong passphrase and tampered wrappers fail closed.
+- Copy the entire selected folder to another PC: without recovery key, business data remains unreadable; with the correct recovery key, authorized recovery succeeds.
+- Reinstall Windows while preserving the data partition; change the drive letter; select the same profile; recover the same shop data and pending offline operations.
+- Generate a new device wrapper after recovery; confirm the old DPAPI wrapper is not required and the profile UUID remains unchanged.
+- Verify raw DEK, passphrase and POS Data Recovery Key never appear in profile files, browser storage, logs, IPC responses or Drive backup contents.
+- Drive restore on a different Windows installation succeeds with the POS Data Recovery Key and existing Drive authorization flow; wrong shop ID, wrong key, corrupt ciphertext and interrupted restore all fail safely.
+- Test ACL behavior on real Windows NTFS with a second unprivileged Windows account, current user, SYSTEM and administrator. Explicitly document that administrators and malware in the authorized user session remain outside the folder-lock guarantee.
+- Test key rotation, recovery-key replacement, backup retention and rollback with disposable test profiles before touching live shop data.
+
+### Implementation boundary
+
+The current branch contains AES-256-GCM crypto primitives, a Windows ACL helper, profile manifest/discovery helpers and a non-seeding IndexedDB inspection function. These are not yet wired into the running POS, Settings UI, profile startup, encrypted IndexedDB stores, per-device key registry or Google Drive backup/restore. No existing customer data is encrypted or folder-locked by these foundations. The above is the required next integration scope.
