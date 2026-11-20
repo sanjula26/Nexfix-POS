@@ -83,7 +83,8 @@ class EncryptedProfileStorage {
       const existing = parseEnvelopeFile(destination, this.profileId, purpose);
       // Authenticate the existing payload before replacing it. Never overwrite
       // a corrupt or tampered file with a newer snapshot.
-      decryptProfilePayload(this.dataKey, this.profileId, purpose, existing);
+      const previousPlaintext = decryptProfilePayload(this.dataKey, this.profileId, purpose, existing);
+      previousPlaintext.fill(0);
       revision = existing.revision + 1;
       if (!Number.isSafeInteger(revision)) throw new Error('POS profile data revision limit reached.');
     }
@@ -98,6 +99,11 @@ class EncryptedProfileStorage {
       fs.closeSync(descriptor);
       descriptor = null;
       fs.renameSync(temporary, destination);
+      const persistedEnvelope = parseEnvelopeFile(destination, this.profileId, purpose);
+      const readBack = decryptProfilePayload(this.dataKey, this.profileId, purpose, persistedEnvelope);
+      const matches = readBack.equals(plaintext);
+      readBack.fill(0);
+      if (!matches) throw new Error('Encrypted POS profile data failed read-back verification.');
       if (process.platform !== 'win32') {
         let directoryDescriptor = null;
         try {
