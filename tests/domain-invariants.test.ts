@@ -458,3 +458,39 @@ test('updater authorization recovery does not match unrelated or partial status 
   assert.equal(isUpdaterAuthorizationError('HTTP 1401 Internal Error'), false);
   assert.equal(isUpdaterAuthorizationError('network timeout'), false);
 });
+
+
+import { buildDailySalesSummary } from '../src/lib/reporting.ts';
+
+test('daily sales report assigns partial and exchange refunds to their recorded dates', () => {
+  const sales = [
+    {
+      id: 'sale-1', date: '2026-11-20T12:00:00', status: 'completed',
+      total: 1000, profit: 300, items: [{ qty: 2 }],
+      refunds: [{ id: 'refund-1', date: '2026-11-21T12:00:00', amount: 200 }],
+    },
+    {
+      id: 'sale-legacy-refunded', date: '2026-11-20T13:00:00', status: 'refunded',
+      total: 400, profit: 100, items: [], refunds: [],
+    },
+  ];
+  const exchanges = [{ id: 'exchange-1', date: '2026-11-22T12:00:00', refund: 50 }];
+
+  assert.deepEqual(buildDailySalesSummary(sales as never, exchanges as never, '2026-11-20', '2026-11-22'), [
+    { day: '2026-11-20', bills: 1, units: 2, grossSales: 1400, refunds: 400, netSales: 1000, recordedProfit: 300 },
+    { day: '2026-11-21', bills: 0, units: 0, grossSales: 0, refunds: 200, netSales: -200, recordedProfit: 0 },
+    { day: '2026-11-22', bills: 0, units: 0, grossSales: 0, refunds: 50, netSales: -50, recordedProfit: 0 },
+  ]);
+});
+
+test('daily sales report includes refund events in the refund date range even when the original bill is outside it', () => {
+  const sales = [{
+    id: 'sale-old', date: '2026-11-10T12:00:00', status: 'completed',
+    total: 800, profit: 200, items: [{ qty: 1 }],
+    refunds: [{ id: 'refund-later', date: '2026-11-20T12:00:00', amount: 150 }],
+  }];
+
+  assert.deepEqual(buildDailySalesSummary(sales as never, [] as never, '2026-11-20', '2026-11-20'), [
+    { day: '2026-11-20', bills: 0, units: 0, grossSales: 0, refunds: 150, netSales: -150, recordedProfit: 0 },
+  ]);
+});
