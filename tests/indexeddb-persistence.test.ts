@@ -311,6 +311,35 @@ test('IndexedDB state read failures return null instead of being treated as an e
 });
 
 
+test('IndexedDB state read rejects a transaction that aborts after its request succeeds', async () => {
+  await writeMainStateRow(validTestState(42));
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  const originalGet = IDBObjectStore.prototype.get;
+  let activeStateRead: IDBTransaction | null = null;
+
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const tx = originalTransaction.apply(this, args);
+    if (args[0] === 'app_state' && args[1] === 'readonly') activeStateRead = tx;
+    return tx;
+  } as IDBDatabase['transaction'];
+  IDBObjectStore.prototype.get = function (...args: Parameters<IDBObjectStore['get']>) {
+    const request = originalGet.apply(this, args);
+    if (this.name === 'app_state' && args[0] === 'main') {
+      request.addEventListener('success', () => activeStateRead?.abort(), { once: true });
+    }
+    return request;
+  } as IDBObjectStore['get'];
+
+  try {
+    assert.equal(await idbReadState(), null,
+      'a successful request followed by transaction abort must fail closed');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    IDBObjectStore.prototype.get = originalGet;
+  }
+});
+
+
 test('IndexedDB state write failures return false instead of reporting a durable save', async () => {
   const reopenedDb = await import(`../src/lib/db.ts?state-write-failure=${Date.now()}`);
   const originalTransaction = IDBDatabase.prototype.transaction;
