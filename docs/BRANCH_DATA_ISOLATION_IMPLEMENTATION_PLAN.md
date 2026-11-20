@@ -43,6 +43,9 @@ Keep local POS users/roles separate from Supabase Auth identities. Do not treat 
 Unknown or unclassified data must not be exposed to branch-only users by default.
 
 ## Database enforcement
+
+**Existing role-helper caveat (source-verified 2026-11-20):** `private.is_shop_admin(shop_id)` currently treats both `admin` and `manager` membership roles as true (the canonical helper was moved from `public` to `private`; its source predicate is `role in ('admin','manager')`). It is used by existing write policies and device-management paths. Do not reuse this helper as the all-branches privilege. The new branch authorization design must distinguish (1) role capabilities, (2) assigned-branch scope for Managers, and (3) explicit all-branch Owner/Admin entitlement. Preserve legitimate Manager actions only within their assigned branch(es), and audit every existing helper use before replacing policies.
+
 1. Introduce a small private authorization helper with SECURITY DEFINER, a fixed empty search_path, fully qualified object references, strict auth.uid() checks, active shop membership, active branch, active member grant, and active device binding.
 2. Revoke helper execution from PUBLIC and anon; grant only the minimum required role(s). Review function owner and RLS recursion behavior.
 3. Apply SELECT, INSERT, UPDATE, and DELETE RLS policies separately to every branch-owned table. USING and WITH CHECK must both enforce scope.
