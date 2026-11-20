@@ -333,6 +333,15 @@ Protect a copied or stolen profile folder from offline reading, restrict ordinar
 - Backup/restore and profile encryption use separate keys; recovery from both paths is tested.
 - Windows installer and portable build tests cover fresh install, update, Windows reinstall, user account change, drive letter change, offline use and rollback.
 
+### Windows folder ACL implementation slice — 2026-11-20
+
+- Added `electron/profile-acl.cjs` with a Windows-only NTFS ACL hardening operation.
+- It validates local absolute profile paths, rejects drive roots/network/device paths, scans for symlinks/junctions before and after ACL changes, grants explicit Full Control to the current Windows user SID and SYSTEM first, removes inherited permissions and broad Everyone/Users/Authenticated Users/Administrators ACEs, sets the current user as owner, runs `icacls /verify`, and performs a PowerShell SID-level ACL inspection for every profile entry.
+- Commands use `execFile` with `shell:false`; invalid SID/path, reparse point, command failure or ACL verification failure stops the operation.
+- Added `tests/profile-acl.test.cjs` with 7 tests for command order, path safety, SID injection rejection, non-Windows refusal, junction rejection, no-shell execution/verification and failure handling.
+- Added this ACL test to `test:domain`.
+- This helper is not yet called by profile creation or folder selection. No actual Windows folder ACL has been changed; Linux hosted tests can test the plan and injected command behavior only. Real NTFS verification on Windows remains required.
+
 ### Implementation status — 2026-11-20
 
 - Added `electron/profile-crypto.cjs`: AES-256-GCM profile payload encryption, authenticated profile/purpose/revision binding, DPAPI/safeStorage DEK wrapping, independent 256-bit POS Data Recovery Key wrapping, and async/sync safeStorage adapter compatibility.
