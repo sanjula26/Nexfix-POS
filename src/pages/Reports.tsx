@@ -233,7 +233,7 @@ export default function Reports() {
       { label: 'Supplier Payments', detail: 'Review supplier payment records', path: '/supplier-payments', permission: 'page:suppliers', icon: HandCoins },
     ]},
     { title: 'More Reports', description: 'Purchasing and other business records', items: [
-      { label: 'Supplier Returns', detail: 'Review and create supplier returns', path: '/purchase-return', permission: 'page:purchases', icon: RotateCcw },
+      { label: 'Supplier Returns', detail: 'Review and create supplier returns', path: '/purchase-return-report', permission: 'page:purchases', icon: RotateCcw },
     ]},
   ];
 
@@ -250,7 +250,7 @@ export default function Reports() {
         </button></div>
       </div>
 
-      <section className="card p-5 mb-6" aria-label="Report Center">
+      <section className="card p-5 mb-6 no-print" aria-label="Report Center">
         <div className="flex flex-wrap items-end justify-between gap-2 mb-5">
           <div><h2 className="text-lg font-extrabold text-ink">Report Center</h2><p className="text-sm text-sub mt-1">Choose a section to open the report or business records you need.</p></div>
           <Badge tone="blue">{reportGroups.reduce((n, group) => n + group.items.filter(item => can(item.permission)).length, 0)} available views</Badge>
