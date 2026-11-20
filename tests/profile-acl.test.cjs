@@ -133,6 +133,26 @@ test('ACL hardening fails closed if any Windows ACL command fails', async () => 
   assert.equal(calls, 2);
 });
 
+
+test('PowerShell 5.1 environment excludes incompatible PowerShell 7 module paths', () => {
+  const { buildWindowsPowerShellEnv } = require('../electron/profile-acl.cjs');
+  const env = buildWindowsPowerShellEnv({
+    PATH: 'C:\\Windows\\System32',
+    PSModulePath: [
+      'C:\\Users\\Runner\\Documents\\WindowsPowerShell\\Modules',
+      'C:\\Users\\Runner\\Documents\\PowerShell\\Modules',
+      'C:\\Program Files\\PowerShell\\7\\Modules',
+      'C:\\Program Files\\PowerShell\\Modules',
+      'C:\\Program Files\\WindowsPowerShell\\Modules',
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+    ].join(';'),
+  });
+  assert.match(env.PSModulePath, /WindowsPowerShell/);
+  assert.doesNotMatch(env.PSModulePath, /Documents\\PowerShell\\Modules/i);
+  assert.doesNotMatch(env.PSModulePath, /Program Files\\PowerShell(?:\\7)?\\Modules/i);
+  assert.equal(env.PATH, 'C:\\Windows\\System32');
+});
+
 test('ACL verification rejects unapproved explicit SIDs and all deny entries', () => {
   const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
   assert.match(POWERSHELL_ACL_VERIFY, /Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity/);
