@@ -519,28 +519,20 @@ export default function AppLayout() {
     }
   }, [unlockLockedUntil, unlockSecondsLeft]);
 
-  const handleUnlock = () => {
+  const handleUnlock = async () => {
     if (unlockBusy || !unlockCredential || unlockSecondsLeft > 0) return;
     setUnlockBusy(true);
     setUnlockError('');
     try {
-      if (unlockSession(unlockCredential)) {
+      if (await unlockSession(unlockCredential)) {
         setSessionLocked(false);
         setUnlockCredential('');
         setUnlockAttempts(0);
         setUnlockLockedUntil(0);
         lastActivityRef.current = Date.now();
       } else {
-        const nextAttempts = unlockAttempts + 1;
         setUnlockCredential('');
-        if (nextAttempts >= 3) {
-          setUnlockAttempts(0);
-          setUnlockLockedUntil(Date.now() + 30_000);
-          setUnlockError('Too many failed unlock attempts. Try again in 30 seconds.');
-        } else {
-          setUnlockAttempts(nextAttempts);
-          setUnlockError('Incorrect password or admin unlock password.');
-        }
+        setUnlockError('Incorrect password, admin unlock PIN, or authentication temporarily locked.');
       }
     } finally { setUnlockBusy(false); }
   };
@@ -654,7 +646,7 @@ export default function AppLayout() {
           setSensitiveBusy(true);
           setSensitiveError('');
           try {
-            const accepted = resolveSensitiveAdmin(sensitiveCredential);
+            const accepted = await resolveSensitiveAdmin(sensitiveCredential);
             if (!accepted) {
               setSensitiveCredential('');
               setSensitiveError('Incorrect administrator password or PIN.');
