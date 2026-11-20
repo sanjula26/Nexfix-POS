@@ -345,7 +345,8 @@ Protect a copied or stolen profile folder from offline reading, restrict ordinar
 ### Implementation status — 2026-11-20
 
 - Added `electron/profile-crypto.cjs`: AES-256-GCM profile payload encryption, authenticated profile/purpose/revision binding, DPAPI/safeStorage DEK wrapping, independent 256-bit POS Data Recovery Key wrapping, and async/sync safeStorage adapter compatibility.
-- Added `tests/profile-crypto.test.cjs`: 12 tests for encryption round-trip, tamper detection, profile/purpose isolation, key validation, recovery-key validation, reinstall recovery, OS wrapper, unsafe fallback rejection, async safeStorage, independent key wrappers, explicit serialization requirements and strict base64 encoding checks.
+- Added an owner-changeable folder-lock passphrase wrapper using Node.js scrypt (fixed KDF parameters, per-envelope random salt, AES-256-GCM authentication). Changing the passphrase re-wraps the same DEK; it does not require re-encrypting all POS records. The passphrase wrapper is a tested primitive only; it is not yet connected to the POS Settings UI or key-envelope lifecycle.
+- Added `tests/profile-crypto.test.cjs`: 15 tests for encryption round-trip, tamper detection, profile/purpose isolation, key validation, recovery-key validation, reinstall recovery, OS wrapper, unsafe fallback rejection, async safeStorage, independent key wrappers, explicit serialization requirements and strict base64 encoding checks.
 - Added the profile crypto and profile/IndexedDB inspection tests to the `test:domain` command so the desktop QA workflow can run them.
 - These are tested cryptographic primitives, not yet integrated into the actual IndexedDB read/write path, Electron startup unlock, profile key file lifecycle, Windows ACL application or UI. Production data remains unchanged and is not yet encrypted at rest by this implementation.
 
