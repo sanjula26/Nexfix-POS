@@ -29,6 +29,10 @@ test('Windows ACL command plan grants the current user and SYSTEM before removin
   assert.ok(commands[2].args.includes('*S-1-1-0'));
   assert.ok(commands[2].args.includes('*S-1-5-32-545'));
   assert.ok(commands[3].args.includes('/remove:d'));
+  assert.equal(commands[4].name, 'remove-unapproved-access-entries');
+  assert.equal(commands[4].executable, 'powershell.exe');
+  assert.match(commands[4].args.at(-1), /RemoveAccessRuleSpecific/);
+  assert.match(commands[4].args.at(-1), /Set-Acl/);
   assert.equal(commands.at(-1).name, 'verify-canonical-acls');
   for (const command of commands) assert.equal(command.executable, 'icacls.exe');
 });
@@ -95,7 +99,7 @@ test('ACL hardening runs commands without a shell and verifies every profile ent
   });
   assert.equal(result.ok, true);
   assert.equal(result.checkedEntries, 4);
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
   assert.ok(calls.every(call => call.options.shell === false));
 });
 
@@ -115,4 +119,11 @@ test('ACL hardening fails closed if any Windows ACL command fails', async () => 
     /icacls failed/,
   );
   assert.equal(calls, 2);
+});
+
+test('ACL verification rejects unapproved explicit SIDs and all deny entries', () => {
+  const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
+  assert.match(POWERSHELL_ACL_VERIFY, /unapproved access ACE remains/);
+  assert.match(POWERSHELL_ACL_VERIFY, /access-deny ACE remains/);
+  assert.match(POWERSHELL_ACL_VERIFY, /required/);
 });
