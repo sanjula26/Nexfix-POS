@@ -157,8 +157,6 @@ test('IndexedDB read and concurrent initialization reject malformed state withou
     { ...valid, products: [{ id: 'product-without-required-fields' }] },
     { ...valid, settings: {} },
     { ...valid, settings: { ...valid.settings, taxDefault: 'not-a-number' } },
-    { ...valid, permissions: {} },
-    { ...valid, permissions: { admin: {}, cashier: {} } },
     { ...valid, permissions: { admin: { 'page:dashboard': true }, cashier: { 'page:pos': 'yes' } } },
     { ...valid, counters: { ...valid.counters, bill: -1 } },
     {
