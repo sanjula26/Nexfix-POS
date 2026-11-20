@@ -5,6 +5,7 @@ import { usePOS } from '../lib/store';
 import { EmptyState, PageHeading, SearchInput } from '../components/ui';
 import { dkey, downloadFile, fmtDate, fmtRs } from '../lib/utils';
 import ReportPrintButton from '../components/ReportPrintButton';
+import { buildDailySalesSummary } from '../lib/reporting';
 
 type Cell = string | number;
 type ReportRow = { id: string; values: Cell[] };
@@ -43,14 +44,16 @@ export default function ReportView() {
 
     switch (reportType) {
       case 'date-wise-sales': {
-        const map = new Map<string, { bills: number; units: number; sales: number; profit: number }>();
-        sales.forEach(sale => {
-          const day = dkey(sale.date); const row = map.get(day) || { bills: 0, units: 0, sales: 0, profit: 0 };
-          row.bills += 1; row.units += sale.items.reduce((sum, item) => sum + item.qty, 0);
-          row.sales += sale.total - (sale.refunds || []).reduce((sum, refund) => sum + refund.amount, 0); row.profit += sale.profit;
-          map.set(day, row);
-        });
-        return { title: 'Date Wise Sales Report', description: 'Daily sales totals from completed bills in the selected date range.', columns: ['Date','Bills','Units Sold','Net Sales','Recorded Profit'], rows: [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([day,v])=>({id:day,values:[dateText(day),v.bills,v.units,money(v.sales),money(v.profit)]})) };
+        const daily = buildDailySalesSummary(state.sales, state.exchanges || [], from, to);
+        return {
+          title: 'Date Wise Sales Report',
+          description: 'Gross bills and refunds are assigned to their recorded dates. Recorded profit is the POS value before refund cost adjustments.',
+          columns: ['Date', 'Bills', 'Units Sold', 'Gross Sales', 'Refunds', 'Net Sales', 'Recorded Profit'],
+          rows: daily.map(row => ({
+            id: row.day,
+            values: [dateText(row.day), row.bills, row.units, money(row.grossSales), money(row.refunds), money(row.netSales), money(row.recordedProfit)],
+          })),
+        };
       }
       case 'item-wise-sales':
       case 'item-sales-date-range':
@@ -157,7 +160,7 @@ export default function ReportView() {
       default:
         return {title:'Report not found',description:'Choose a report from the Report Center.',columns:['Status'],rows:[]};
     }
-  }, [from,to,reportType,state.customers,state.inventoryTransactions,state.products,state.purchases,state.sales,state.supplierPayments,state.suppliers,state.units,today]);
+  }, [from,to,reportType,state.customers,state.exchanges,state.inventoryTransactions,state.products,state.purchases,state.sales,state.supplierPayments,state.suppliers,state.units,today]);
 
   const filtered = useMemo(() => {
     const q=search.trim().toLowerCase();
