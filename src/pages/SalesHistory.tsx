@@ -72,7 +72,7 @@ export default function SalesHistory() {
       />
 
       {range === 'custom' && (
-        <div className="card mb-4 p-4 flex flex-wrap items-center gap-2">
+        <div className="card mb-4 p-4 flex flex-wrap items-center gap-2 no-print">
           <span className="text-xs font-semibold text-sub">Custom date</span>
           <input type="date" className="input w-40" value={customFrom} onChange={e => setCustomFrom(e.target.value)} aria-label="Sales from date" />
           <span className="text-xs text-faint">to</span>
