@@ -454,3 +454,24 @@ Current Electron `safeStorage` persistence is OS-bound and the existing updater 
 - Run all tests with the existing Admin updater session in place; assert staff sign-in never calls updater-token issuance or mutates `cloudUpdaterDeviceToken`.
 
 These are design/test specifications only. No staff Auth client, invitation flow, IPC, schema, migration, Edge Function, Auth user or branch grant was implemented in this documentation update.
+### Additional live-schema identity finding — dual membership namespaces and profile role — 2026-11-21
+
+Read-only metadata/catalog inspection of the operational Supabase project found two separate membership namespaces. Do not conflate them:
+
+- Operational data authorization uses `public.shops` + `public.shop_memberships` (`shop_id uuid`, `user_id uuid`, `role`, `active`). Its role check allows `admin`, `manager`, `cashier`, `technician`, and `inventory_manager`.
+- The legacy updater/device namespace uses `public.pos_shops` + `public.pos_shop_members` (`shop_id text`, `user_id uuid`, `role` constrained to `owner`, `admin`, `member`). `public.pos_devices` references `pos_shops`, and its SELECT policy checks `pos_shop_members`; `pos_device_branches` belongs to the operational `shops` namespace.
+- `private.register_pos_device_impl()` validates the caller's operational `shop_memberships` row, then mirrors it into `pos_shop_members`. It maps both operational `admin` and `manager` to legacy `admin`, and all other roles to `member`. It then registers the device. `private.authorize_pos_updater_device()` separately requires operational membership role exactly `admin` and also writes legacy `pos_shop_members` role `admin`.
+- Therefore the staff operational-data identity must never call `register_pos_device`, `authorize_pos_updater_device`, or updater provisioning code. In particular, a Manager must not be copied into the legacy updater namespace as an Admin by the staff login flow. Keep `pos_devices`/updater credentials in the existing owner/Admin trust domain.
+- `public.profiles` is a separate Auth-user profile (`id` FK to `auth.users`) with a `role` check for admin/manager/cashier/technician, while operational `shop_memberships.role` is shop-specific and additionally includes inventory_manager. Use `shop_memberships.role` as the authoritative cloud authorization role; do not authorize from `profiles.role`, local POS role labels or `user_metadata`.
+- The `profiles` table allows authenticated UPDATE at table/role/active/name column privilege level, but has a `protect_profile_privilege_fields` trigger. Its current trigger allows changing `profiles.role`, `active` and `commission_pct` if the caller has an active `shop_memberships` row with role admin OR manager. It does not bind the target profile to the same shop. This is a review item: a Manager can alter profile privilege fields under the current trigger rule, although the inspected core sale RPC uses `shop_memberships.role` for permission checks rather than `profiles.role`. Do not use profile role as a branch or shop entitlement; separately review and test this trigger's target-shop scope before using profile fields for staff authorization.
+- `handle_new_user()` creates a profile with role `cashier` from new Auth users; this is a display/operational profile default, not proof of shop membership or branch assignment. Provisioning must separately create an active `shop_memberships` row and explicit branch grant under Owner/Admin authority.
+
+### Additional tests required for the dual-membership model
+
+- Staff login must not create or mutate `pos_shops`, `pos_shop_members`, `pos_devices`, updater token hashes or the encrypted native updater token.
+- A Manager's `shop_memberships.role='manager'` must never be interpreted as Owner/Admin by any staff authorization, Owner Web, RLS helper, invitation function or branch grant flow. The legacy mapping of Manager to `pos_shop_members.role='admin'` must remain confined to the legacy device-registration compatibility path and must not be reused for staff data access.
+- Staff `profiles.role` and `user_metadata` tampering must not change operational permissions; only active `shop_memberships.role` plus explicit server-side staff/branch grants determine authorization.
+- Profile privilege updates by Manager must be tested against target profiles across different shops. A Manager must not gain a cross-shop role-management path.
+- Owner/Admin staff provisioning must create/revoke Auth identity + operational membership + mapping + branch grants atomically or fail closed, with an audit record. Legacy updater membership/device rows remain independently controlled.
+
+Read-only checks used catalog metadata, table privileges, RLS policy definitions and function source; no business row contents were queried and no SQL/DDL was executed. No schema, policy, Auth account, membership, device, branch grant or production data was changed.
