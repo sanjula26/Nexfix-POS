@@ -11,6 +11,7 @@ const {
   normalizeProfileDirectory,
   applyWindowsProfileAcl,
   verifyWindowsProfileAcl,
+  buildWindowsPowerShellEnv,
   isValidWindowsSid,
 } = require('../electron/profile-acl.cjs');
 
@@ -36,8 +37,8 @@ test('Windows ACL command plan grants the current user and SYSTEM before removin
   assert.ok(commands[3].args.includes('/remove:d'));
   assert.equal(commands[4].name, 'remove-unapproved-access-entries');
   assert.equal(commands[4].executable, 'powershell.exe');
-  assert.match(commands[4].args.at(-1), /Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity/);
-  assert.match(commands[4].args.at(-1), /Import-Module Microsoft.PowerShell.Security -Force/);
+  assert.match(commands[4].args.at(-1), /Import-Module Microsoft.PowerShell.Security -ErrorAction Stop/);
+  assert.doesNotMatch(commands[4].args.at(-1), /Remove-TypeData/);
   assert.match(commands[4].args.at(-1), /RemoveAccessRuleSpecific/);
   assert.match(commands[4].args.at(-1), /Set-Acl/);
   assert.equal(commands.at(-1).name, 'verify-canonical-acls');
@@ -113,6 +114,7 @@ test('ACL hardening runs commands without a shell and verifies every profile ent
   assert.ok(calls.every(call => call.options.shell === false));
   assert.equal(calls[4].options.env.NEXFIX_PROFILE_ACL_PATH, PROFILE_PATH);
   assert.equal(calls[4].options.env.NEXFIX_PROFILE_ACL_USER_SID, USER_SID);
+  assert.equal(calls[0].options.env, process.env);
 });
 
 test('ACL hardening fails closed if any Windows ACL command fails', async () => {
@@ -153,10 +155,28 @@ test('PowerShell 5.1 environment excludes incompatible PowerShell 7 module paths
   assert.equal(env.PATH, 'C:\\Windows\\System32');
 });
 
+
+test('ACL verification uses the sanitized Windows PowerShell environment', async () => {
+  let seen;
+  await verifyWindowsProfileAcl(PROFILE_PATH, USER_SID, {
+    runCommand: async (_executable, _args, options) => {
+      seen = options.env;
+      return { stdout: JSON.stringify({ ok: true, checked: 1, issues: [] }) };
+    },
+  });
+  assert.equal(seen.NEXFIX_PROFILE_ACL_PATH, PROFILE_PATH);
+  assert.equal(seen.NEXFIX_PROFILE_ACL_USER_SID, USER_SID);
+  assert.equal(seen.PSModulePath, buildWindowsPowerShellEnv({
+    ...process.env,
+    NEXFIX_PROFILE_ACL_PATH: PROFILE_PATH,
+    NEXFIX_PROFILE_ACL_USER_SID: USER_SID,
+  }).PSModulePath);
+});
+
 test('ACL verification rejects unapproved explicit SIDs and all deny entries', () => {
   const { POWERSHELL_ACL_VERIFY } = require('../electron/profile-acl.cjs');
-  assert.match(POWERSHELL_ACL_VERIFY, /Remove-TypeData -TypeName System.Security.AccessControl.ObjectSecurity/);
-  assert.match(POWERSHELL_ACL_VERIFY, /Import-Module Microsoft.PowerShell.Security -Force/);
+  assert.match(POWERSHELL_ACL_VERIFY, /Import-Module Microsoft.PowerShell.Security -ErrorAction Stop/);
+  assert.doesNotMatch(POWERSHELL_ACL_VERIFY, /Remove-TypeData/);
   assert.match(POWERSHELL_ACL_VERIFY, /unapproved access ACE remains/);
   assert.match(POWERSHELL_ACL_VERIFY, /access-deny ACE remains/);
   assert.match(POWERSHELL_ACL_VERIFY, /required/);
