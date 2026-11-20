@@ -213,3 +213,10 @@ Fresh read-only production `pg_policies` inspection confirms `private.is_shop_ad
 PostgreSQL permissive policies combine with OR. Adding a new branch-scoped policy will not restrict an existing broad Manager-inclusive policy. The migration must replace/narrow every broad policy and audit RPCs/views/Owner Web while preserving Owner/Admin all-branch access. Do not globally change `private.is_shop_admin` without auditing every caller.
 
 This confirms production currently does not enforce the owner's approved Manager assigned-branch-only policy. No RLS policy/function/schema/data was changed; this is a high-priority implementation blocker.
+## 17. Confirmed current shop-wide SELECT RLS exposure — 2026-11-21
+
+Read-only `pg_policies` inspection confirms many SELECT policies use only `private.is_shop_member(shop_id)` and do not check branch grants. Shop members currently receive broad reads of sales/items/payments, purchases/GRNs and child rows, returns, expenses, day sessions, inventory units, repairs/parts, warranty claims, quotations/items, customers, suppliers, audit log, branches, branch stock/adjustments, stock transfers/lines, device-branch bindings, products/catalog/kits, counters and shop-level daily sales aggregates.
+
+These are permissive SELECT policies; adding branch-scoped SELECT policies beside them will not restrict the existing policies. Replace them with explicit Owner/Admin all-branch reads and staff branch-authorized predicates or narrow RPC projections. For entities without durable branch provenance (including repairs and customer profiles), design safe branch mapping/projection before exposing them to staff. Do not infer branch access from client-selected branch ID.
+
+This confirms the approved branch privacy model is not currently enforced by production SELECT RLS. No policy, schema, function or data was changed.
