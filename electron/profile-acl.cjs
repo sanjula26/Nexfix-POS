@@ -208,11 +208,11 @@ async function verifyWindowsProfileAcl(profileDirectory, userSid, options = {}) 
     timeout: 60000,
     maxBuffer: 4 * 1024 * 1024,
     shell: false,
-    env: {
+    env: buildWindowsPowerShellEnv({
       ...process.env,
       NEXFIX_PROFILE_ACL_PATH: profileDirectory,
       NEXFIX_PROFILE_ACL_USER_SID: userSid,
-    },
+    }),
   });
   let parsed;
   try {
@@ -249,11 +249,13 @@ async function applyWindowsProfileAcl(profileDirectory, userSid, options = {}) {
       timeout: 60000,
       maxBuffer: 4 * 1024 * 1024,
       shell: false,
-      env: buildWindowsPowerShellEnv({
-        ...process.env,
-        NEXFIX_PROFILE_ACL_PATH: canonical,
-        NEXFIX_PROFILE_ACL_USER_SID: userSid,
-      }),
+      env: command.executable === 'powershell.exe'
+        ? buildWindowsPowerShellEnv({
+            ...process.env,
+            NEXFIX_PROFILE_ACL_PATH: canonical,
+            NEXFIX_PROFILE_ACL_USER_SID: userSid,
+          })
+        : process.env,
     });
   }
 
