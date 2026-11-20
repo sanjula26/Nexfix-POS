@@ -112,7 +112,7 @@ function buildWindowsAclCommands(profileDirectory, userSid) {
 
 const POWERSHELL_RESTRICT_ACL = String.raw`
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+Import-Module Microsoft.PowerShell.Security -Force -ErrorAction Stop
 $target = $env:NEXFIX_PROFILE_ACL_PATH
 $userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
 $allowed = @($userSid, 'S-1-5-18')
@@ -133,7 +133,7 @@ foreach ($item in $items) {
 
 const POWERSHELL_ACL_VERIFY = String.raw`
 $ErrorActionPreference = 'Stop'
-Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+Import-Module Microsoft.PowerShell.Security -Force -ErrorAction Stop
 $target = $env:NEXFIX_PROFILE_ACL_PATH
 $userSid = $env:NEXFIX_PROFILE_ACL_USER_SID
 $required = @($userSid, 'S-1-5-18')
