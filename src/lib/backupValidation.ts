@@ -16,6 +16,7 @@ function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
 }
 
 function hasArray(value: unknown): value is unknown[] { return Array.isArray(value); }
+function hasArrayOrMissing(value: unknown): boolean { return value === undefined || value === null || Array.isArray(value); }
 
 function hasUniqueStringIds(value: unknown[]): boolean {
   const ids = new Set<string>();
@@ -27,13 +28,10 @@ function hasUniqueStringIds(value: unknown[]): boolean {
 }
 
 function hasValidCounters(value: Record<string, unknown>): boolean {
-  const keys = ['bill', 'po', 'ex', 'job', 'quote', 'claim'];
-  if (value.grn !== undefined) keys.push('grn');
-  if (value.dn !== undefined) keys.push('dn');
-  return keys.every((key) => {
-    const n = value[key];
-    return typeof n === 'number' && Number.isInteger(n) && n >= 0;
-  });
+  // migrate() supplies zero for counters omitted by older POS versions.
+  const keys = ['bill', 'po', 'ex', 'job', 'quote', 'claim', 'grn', 'dn'];
+  return keys.every((key) => value[key] === undefined || value[key] === null
+    || typeof value[key] === 'number' && Number.isInteger(value[key]) && value[key] >= 0);
 }
 
 function hasStringFields(value: Record<string, unknown>, keys: string[]): boolean {
@@ -68,11 +66,14 @@ function hasValidPurchaseItem(value: unknown): boolean {
 
 function hasValidSettings(value: unknown): boolean {
   if (!hasPlainObjectShape(value)) return false;
+  // These fields are explicitly defaulted by migrate() for older local shops.
   return hasStringFields(value, [
-    'shopName', 'tagline', 'address', 'phone', 'email', 'receiptFooter', 'adminPinHash',
-  ]) && hasNumberFields(value, [
-    'taxDefault', 'lowStockDefault', 'exchangeDays', 'openingFloat',
-  ]) && typeof value.whatsappReceipts === 'boolean'
+    'shopName', 'tagline', 'address', 'phone', 'email', 'receiptFooter',
+  ]) && (value.adminPinHash === undefined || value.adminPinHash === null || typeof value.adminPinHash === 'string')
+    && hasNumberFields(value, ['taxDefault', 'lowStockDefault', 'exchangeDays'])
+    && (value.openingFloat === undefined || value.openingFloat === null
+      || typeof value.openingFloat === 'number' && Number.isFinite(value.openingFloat))
+    && (value.whatsappReceipts === undefined || value.whatsappReceipts === null || typeof value.whatsappReceipts === 'boolean')
     && (value.categories === undefined || hasArray(value.categories) && value.categories.every((item) => typeof item === 'string'))
     && (value.brands === undefined || hasArray(value.brands) && value.brands.every((item) => typeof item === 'string'))
     && (value.promotions === undefined || hasArray(value.promotions));
@@ -80,22 +81,28 @@ function hasValidSettings(value: unknown): boolean {
 
 function hasValidPermissions(value: unknown): boolean {
   if (!hasPlainObjectShape(value)) return false;
-  return ['admin', 'cashier'].every((role) => hasPlainObjectShape(value[role])
-    && Object.keys(value[role] as Record<string, unknown>).length > 0
-    && Object.values(value[role] as Record<string, unknown>).every((flag) => typeof flag === 'boolean'))
-    && ['manager', 'technician'].every((role) => value[role] === undefined
-      || hasPlainObjectShape(value[role])
-        && Object.values(value[role] as Record<string, unknown>).every((flag) => typeof flag === 'boolean'));
+  // migrate() merges default role maps into missing or empty legacy maps.
+  return ['admin', 'cashier', 'manager', 'technician'].every((role) => {
+    const permissions = value[role];
+    return permissions === undefined || permissions === null
+      || hasPlainObjectShape(permissions)
+        && Object.values(permissions).every((flag) => typeof flag === 'boolean');
+  });
 }
 
 /** Strictly validate persisted POS records before hydration or restore. */
 export function hasValidPOSStateShape(value: unknown): value is POSState {
   if (!hasPlainObjectShape(value)) return false;
   const state = value as Record<string, unknown>;
-  const requiredArrays = ['products', 'customers', 'suppliers', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions', 'units', 'repairs'];
+  const requiredArrays = ['products', 'sales', 'purchases', 'expenses', 'exchanges', 'users', 'audit', 'held', 'sessions'];
+  // migrate() creates these collections when absent in older local databases.
   if (!requiredArrays.every((key) => hasArray(state[key]))) return false;
-  if (!hasValidSettings(state.settings) || !hasValidPermissions(state.permissions)) return false;
-  if (!hasPlainObjectShape(state.counters) || !hasValidCounters(state.counters)) return false;
+  if (!hasArrayOrMissing(state.customers) || !hasArrayOrMissing(state.suppliers)
+    || !hasArrayOrMissing(state.units) || !hasArrayOrMissing(state.repairs)) return false;
+  if (!hasValidSettings(state.settings)
+    || state.permissions !== undefined && state.permissions !== null && !hasValidPermissions(state.permissions)) return false;
+  if (state.counters !== undefined && state.counters !== null
+    && (!hasPlainObjectShape(state.counters) || !hasValidCounters(state.counters))) return false;
   if ('kitItems' in state && !hasArray(state.kitItems)) return false;
   if ('quotations' in state && !hasArray(state.quotations)) return false;
   if ('warrantyClaims' in state && !hasArray(state.warrantyClaims)) return false;
