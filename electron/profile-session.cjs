@@ -187,11 +187,13 @@ class POSProfileSession {
     try {
       await rebindProfileDeviceKeyWithRecoveryKey(directory, manifest.profileId, recoveryKey, this.safeStorage);
       await this.secureDirectory(directory);
+      const storage = new EncryptedProfileStorage(directory, manifest.profileId, dataKey);
+      dataKey.fill(0);
       this.active = {
         directory: fs.realpathSync(directory),
         profileId: manifest.profileId,
         label: manifest.label,
-        storage: new EncryptedProfileStorage(directory, manifest.profileId, dataKey),
+        storage,
       };
       return { ok: true, profile: this.getStatus().profile };
     } catch (error) {
