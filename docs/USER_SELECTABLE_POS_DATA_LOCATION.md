@@ -493,3 +493,9 @@ A source review of the current main-branch Drive implementation found an importa
 ### Real Windows ACL test finding
 
 - The first physical Windows NTFS test failed before ACL verification because the runner's Windows PowerShell did not auto-load Microsoft.PowerShell.Security for Get-Acl (CouldNotAutoloadMatchingModule). This is a real runtime integration issue, not a test-only assertion. The ACL scripts now explicitly import Microsoft.PowerShell.Security with ErrorAction Stop before using Get-Acl/Set-Acl. The Windows QA run must be repeated; do not claim ACL hardening works until the real test passes.
+
+
+### PowerShell module-path root cause and correction
+
+- Windows QA logs showed the duplicate ObjectSecurity type-data error matches a known PowerShell interoperability issue: Windows PowerShell 5.1 was launched from a parent environment that included PowerShell 7 module paths in PSModulePath. Microsoft PowerShell issue reports show that PS7 Security.types.ps1xml entries conflict with Windows PowerShell's Microsoft.PowerShell.Security module.
+- Removed the unsafe Remove-TypeData workaround. The ACL helper now builds a child-only environment for powershell.exe, filtering PowerShell 7 user/program module paths while retaining WindowsPowerShell 5.1 module paths, then imports Microsoft.PowerShell.Security normally. A unit test covers the environment filter. Real Windows QA must confirm this fix before ACL helper is accepted.
