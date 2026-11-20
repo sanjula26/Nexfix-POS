@@ -311,6 +311,63 @@ test('IndexedDB state read failures return null instead of being treated as an e
 });
 
 
+test('restore checkpoint read rejects a transaction that aborts after its request succeeds', async () => {
+  await idbSaveRestoreCheckpoint(validTestState(43));
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  const originalGet = IDBObjectStore.prototype.get;
+  let activeCheckpointRead: IDBTransaction | null = null;
+
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const tx = originalTransaction.apply(this, args);
+    if (args[0] === 'app_state' && args[1] === 'readonly') activeCheckpointRead = tx;
+    return tx;
+  } as IDBDatabase['transaction'];
+  IDBObjectStore.prototype.get = function (...args: Parameters<IDBObjectStore['get']>) {
+    const request = originalGet.apply(this, args);
+    if (this.name === 'app_state' && args[0] === 'restore_checkpoint') {
+      request.addEventListener('success', () => activeCheckpointRead?.abort(), { once: true });
+    }
+    return request;
+  } as IDBObjectStore['get'];
+
+  try {
+    assert.equal(await idbLoadRestoreCheckpoint(), null,
+      'an aborted checkpoint read must not be treated as a valid rollback point');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    IDBObjectStore.prototype.get = originalGet;
+  }
+});
+
+
+test('offline queue read rejects a transaction that aborts after its request succeeds', async () => {
+  await idbEnqueue({ type: 'state_write_offline', note: 'transaction-abort-test' });
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  const originalGetAll = IDBObjectStore.prototype.getAll;
+  let activeQueueRead: IDBTransaction | null = null;
+
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const tx = originalTransaction.apply(this, args);
+    if (args[0] === 'sync_queue' && args[1] === 'readonly') activeQueueRead = tx;
+    return tx;
+  } as IDBDatabase['transaction'];
+  IDBObjectStore.prototype.getAll = function (...args: Parameters<IDBObjectStore['getAll']>) {
+    const request = originalGetAll.apply(this, args);
+    if (this.name === 'sync_queue') {
+      request.addEventListener('success', () => activeQueueRead?.abort(), { once: true });
+    }
+    return request;
+  } as IDBObjectStore['getAll'];
+
+  try {
+    await assert.rejects(idbListQueue(), /Offline queue read failed|aborted/i);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    IDBObjectStore.prototype.getAll = originalGetAll;
+  }
+});
+
+
 test('IndexedDB state read rejects a transaction that aborts after its request succeeds', async () => {
   await writeMainStateRow(validTestState(42));
   const originalTransaction = IDBDatabase.prototype.transaction;
