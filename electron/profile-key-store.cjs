@@ -8,6 +8,8 @@ const {
   PROFILE_CRYPTO_VERSION,
   createProfileKeyMaterial,
   wrapDataKeyWithPassphrase,
+  unwrapDataKeyWithPassphrase,
+  unwrapDataKeyWithRecoveryKey,
 } = require('./profile-crypto.cjs');
 
 const KEY_ENVELOPE_FILE = 'nexfix-key-envelope.json';
@@ -160,6 +162,89 @@ function readProfileKeyEnvelope(profileDirectory, expectedProfileId) {
   return checked.envelope;
 }
 
+
+function replaceProfileKeyEnvelope(profileDirectory, currentEnvelope, nextEnvelope) {
+  const destination = path.join(profileDirectory, KEY_ENVELOPE_FILE);
+  const stat = fs.lstatSync(destination);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('POS profile key envelope must be a regular file.');
+  }
+  const currentRaw = fs.readFileSync(destination);
+  const currentHash = crypto.createHash('sha256').update(currentRaw).digest('hex');
+  const currentCheck = validateProfileKeyEnvelope(JSON.parse(currentRaw.toString('utf8')), currentEnvelope.profileId);
+  if (!currentCheck.valid ||
+      JSON.stringify(currentCheck.envelope) !== JSON.stringify(currentEnvelope)) {
+    throw new Error('POS profile key envelope changed before the lock update. Reload it and try again.');
+  }
+
+  const checked = validateProfileKeyEnvelope(nextEnvelope, currentEnvelope.profileId);
+  if (!checked.valid) throw new Error(checked.reason);
+  const temporary = path.join(profileDirectory, '.' + KEY_ENVELOPE_FILE + '.' + crypto.randomBytes(12).toString('hex') + '.tmp');
+  let descriptor = null;
+  try {
+    descriptor = fs.openSync(temporary, 'wx', 0o600);
+    fs.writeFileSync(descriptor, JSON.stringify(checked.envelope, null, 2) + '\\n', 'utf8');
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+
+    const currentAgain = fs.readFileSync(destination);
+    const currentAgainHash = crypto.createHash('sha256').update(currentAgain).digest('hex');
+    if (currentAgainHash !== currentHash) {
+      throw new Error('POS profile key envelope changed during the lock update. No update was applied.');
+    }
+    fs.renameSync(temporary, destination);
+    return readProfileKeyEnvelope(profileDirectory, currentEnvelope.profileId);
+  } catch (error) {
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor); } catch { /* best effort */ }
+    }
+    try { fs.rmSync(temporary, { force: true }); } catch { /* best effort */ }
+    throw error;
+  }
+}
+
+async function changeProfileLockPassphrase(profileDirectory, profileId, currentPassphrase, nextPassphrase) {
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  if (!current.passphraseWrappedKey) throw new Error('This POS profile does not have a folder-lock passphrase.');
+  const dataKey = await unwrapDataKeyWithPassphrase(current.passphraseWrappedKey, currentPassphrase, profileId);
+  try {
+    const nextEnvelope = {
+      ...current,
+      passphraseWrappedKey: await wrapDataKeyWithPassphrase(dataKey, nextPassphrase, profileId),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+    const verificationKey = await unwrapDataKeyWithPassphrase(saved.passphraseWrappedKey, nextPassphrase, profileId);
+    const valid = verificationKey.equals(dataKey);
+    verificationKey.fill(0);
+    if (!valid) throw new Error('Changed POS folder-lock passphrase failed verification.');
+    return saved;
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
+async function resetProfileLockPassphraseWithRecoveryKey(profileDirectory, profileId, recoveryKey, nextPassphrase) {
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  const dataKey = unwrapDataKeyWithRecoveryKey(current.recoveryWrappedKey, recoveryKey, profileId);
+  try {
+    const nextEnvelope = {
+      ...current,
+      passphraseWrappedKey: await wrapDataKeyWithPassphrase(dataKey, nextPassphrase, profileId),
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+    const verificationKey = await unwrapDataKeyWithPassphrase(saved.passphraseWrappedKey, nextPassphrase, profileId);
+    const valid = verificationKey.equals(dataKey);
+    verificationKey.fill(0);
+    if (!valid) throw new Error('Recovered POS folder-lock passphrase failed verification.');
+    return saved;
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
 module.exports = {
   KEY_ENVELOPE_FILE,
   KEY_ENVELOPE_FORMAT,
@@ -168,4 +253,6 @@ module.exports = {
   createInitialProfileKeyEnvelope,
   persistNewProfileKeyEnvelope,
   readProfileKeyEnvelope,
+  changeProfileLockPassphrase,
+  resetProfileLockPassphraseWithRecoveryKey,
 };
