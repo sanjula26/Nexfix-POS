@@ -231,7 +231,7 @@ function createManagedProfileDirectory(storageRoot, directoryName, manifestInput
     const manifestPath = path.join(profileDirectory, PROFILE_MANIFEST_FILE);
     fileDescriptor = fs.openSync(manifestPath, 'wx', 0o600);
     manifestCreated = true;
-    fs.writeFileSync(fileDescriptor, JSON.stringify(manifest, null, 2) + '\\n', 'utf8');
+    fs.writeFileSync(fileDescriptor, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
     fs.fsyncSync(fileDescriptor);
     fs.closeSync(fileDescriptor);
     fileDescriptor = null;
