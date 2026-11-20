@@ -11,6 +11,8 @@ const {
   persistNewProfileKeyEnvelope,
   readProfileKeyEnvelope,
   validateProfileKeyEnvelope,
+  changeProfileLockPassphrase,
+  resetProfileLockPassphraseWithRecoveryKey,
 } = require('../electron/profile-key-store.cjs');
 const {
   unwrapDataKeyWithRecoveryKey,
@@ -92,4 +94,44 @@ test('rejects tampered envelopes, wrong profile IDs and symlinked key files', as
     fs.symlinkSync(outside, path.join(directory, KEY_ENVELOPE_FILE));
     assert.throws(() => readProfileKeyEnvelope(directory, PROFILE_ID), /symbolic link/);
   }
+});
+
+test('changes the folder-lock passphrase without changing the profile data key', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const before = unwrapDataKeyWithRecoveryKey(created.envelope.recoveryWrappedKey, created.recoveryKey, PROFILE_ID);
+
+  await assert.rejects(
+    changeProfileLockPassphrase(directory, PROFILE_ID, 'Wrong-Owner-Lock-2026', 'Nexfix-New-Lock-2026'),
+    /authentication failed/,
+  );
+  const updated = await changeProfileLockPassphrase(directory, PROFILE_ID, PASSPHRASE, 'Nexfix-New-Lock-2026');
+  assert.equal(updated.updatedAt > created.envelope.updatedAt, true);
+  await assert.rejects(
+    unwrapDataKeyWithPassphrase(updated.passphraseWrappedKey, PASSPHRASE, PROFILE_ID),
+    /authentication failed/,
+  );
+  const after = await unwrapDataKeyWithPassphrase(updated.passphraseWrappedKey, 'Nexfix-New-Lock-2026', PROFILE_ID);
+  assert.deepEqual(after, before);
+  before.fill(0);
+  after.fill(0);
+});
+
+test('resets a forgotten folder-lock passphrase with the portable recovery key', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const updated = await resetProfileLockPassphraseWithRecoveryKey(
+    directory, PROFILE_ID, created.recoveryKey, 'Nexfix-Recovered-Lock-2026',
+  );
+  const recovered = await unwrapDataKeyWithPassphrase(
+    updated.passphraseWrappedKey, 'Nexfix-Recovered-Lock-2026', PROFILE_ID,
+  );
+  const original = unwrapDataKeyWithRecoveryKey(
+    updated.recoveryWrappedKey, created.recoveryKey, PROFILE_ID,
+  );
+  assert.deepEqual(recovered, original);
+  recovered.fill(0);
+  original.fill(0);
 });
