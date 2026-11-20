@@ -479,3 +479,12 @@ A source review of the current main-branch Drive implementation found an importa
 - Recommend BitLocker / Windows Device Encryption as a complementary layer for lost/stolen PC or offline disk removal. It protects the whole volume while powered off; it does not replace POS profile encryption once the user has signed into Windows.
 - Windows 11 Home may support automatic Device Encryption on eligible devices; the manual BitLocker Drive Encryption UI is documented for Pro, Enterprise and Education editions. Do not assume every shop PC supports the same mode.
 - NexFix must not silently enable BitLocker or modify volume protectors. Show an optional security recommendation and let the owner configure it in Windows. Back up the BitLocker recovery key separately; it is not the POS Data Recovery Key or Google Drive Backup Recovery Key.
+
+
+### Runtime boot-path audit
+
+- The new idbInspectExistingState() helper is currently only a non-seeding inspection primitive. The live store.tsx boot path still calls idbLoadState(), whose missing-row path can create and persist buildSeed(), and it still has a legacy localStorage state reader. The helper is not yet wired into startup. Therefore the branch does not yet guarantee that a missing/corrupt selected profile cannot fall through to an empty seeded shop.
+- electron/main.cjs still calls setupAutoUpdater(); createWindow() directly inside app.whenReady(); there is no pre-window storage-profile bootstrap, folder picker, profile unlock gate or key-envelope load.
+- electron/preload.cjs has no profile storage/crypto IPC methods. The existing trusted-renderer check requires the top-level frame and allowed navigation, which is a useful base, but every new profile IPC endpoint still needs operation-specific payload validation and must never return the DEK.
+- The current renderer IndexedDB remains the authoritative state store, with app_state, sync_queue and meta. persistState waits for the IndexedDB transaction and raises a storage-error event, but no encryption or selected-folder mirror is present yet.
+- This is a hard production gate: do not add a folder picker alone. The app must first have a fail-closed bootstrap state machine and a real encrypted persistence backend, otherwise the user can select a folder while the running POS continues saving elsewhere or seeds an empty shop.
