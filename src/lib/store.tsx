@@ -644,16 +644,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       // An unattended terminal can also be recovered by an active administrator credential.
       let elevatedOk = false;
-      for (const admin of stateRef.current.users.filter(u => u.role === 'admin' && u.active)) {
-        try {
-          const valid = isHashed(admin.password)
-            ? await verifyPasswordAsync(credential, admin.password)
-            : credential === admin.password;
-          if (valid) { elevatedOk = true; break; }
-        } catch { /* continue checking active administrators */ }
+      if (!passwordOk) {
+        for (const admin of stateRef.current.users.filter(u => u.role === 'admin' && u.active)) {
+          try {
+            const valid = isHashed(admin.password)
+              ? await verifyPasswordAsync(credential, admin.password)
+              : credential === admin.password;
+            if (valid) { elevatedOk = true; break; }
+          } catch { /* continue checking active administrators */ }
+        }
       }
       const pinHash = stateRef.current.settings.adminPinHash || '';
-      const adminPinOk = !!pinHash && await verifyPasswordAsync(credential, pinHash);
+      const adminPinOk = !passwordOk && !elevatedOk && !!pinHash && await verifyPasswordAsync(credential, pinHash);
       return passwordOk || elevatedOk || adminPinOk;
     });
 
@@ -699,7 +701,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } catch { passwordOk = false; }
       const pinHash = stateRef.current.settings.adminPinHash || '';
       let pinOk = false;
-      try { pinOk = !!secret && !!pinHash && await verifyPasswordAsync(secret, pinHash); } catch { pinOk = false; }
+      if (!passwordOk) {
+        try { pinOk = !!secret && !!pinHash && await verifyPasswordAsync(secret, pinHash); } catch { pinOk = false; }
+      }
       return passwordOk || pinOk;
     });
     if (!attempt.success) {
@@ -958,10 +962,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const guardedAdminUnlock = await runLocalAuthAttempt(async () => {
         const pinHash = stateRef.current.settings.adminPinHash || '';
         const pinOk = !!pinHash && await verifyPasswordAsync(secret, pinHash);
-        const passwordOk = isHashed(target!.password)
+        if (pinOk) return true;
+        return isHashed(target!.password)
           ? await verifyPasswordAsync(secret, target!.password)
           : secret === (target!.password || '');
-        return pinOk || passwordOk;
       });
       if (!guardedAdminUnlock.allowed) {
         return { ok: false, error: `Too many failed administrator unlock attempts. Try again in ${Math.ceil(guardedAdminUnlock.retryAfterMs / 1000)} seconds.` };
