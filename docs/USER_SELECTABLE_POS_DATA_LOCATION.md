@@ -397,3 +397,52 @@ This section refines the security UX requirement from the shop owner. It is a pr
 ### Implementation boundary
 
 The current branch contains AES-256-GCM crypto primitives, a Windows ACL helper, profile manifest/discovery helpers and a non-seeding IndexedDB inspection function. These are not yet wired into the running POS, Settings UI, profile startup, encrypted IndexedDB stores, per-device key registry or Google Drive backup/restore. No existing customer data is encrypted or folder-locked by these foundations. The above is the required next integration scope.
+
+## Deep security architecture review — 2026-11-20
+
+### Encryption boundary and Electron storage paths
+
+- Encrypt POS business records at the application layer **before any renderer-side IndexedDB write**. Electron safeStorage protects small key material on the local OS; it is not a substitute for encrypting the POS database itself.
+- Keep the DEK in the Electron main process only. Renderer IPC must expose narrow typed operations for approved profile/store/purpose combinations; never expose the raw DEK, generic arbitrary decrypt, ipcRenderer, filesystem or shell access. Validate event.senderFrame, top-level frame, expected app origin, active profile ID, payload schema and strict size limits on every privileged request.
+- Encrypt every persisted IndexedDB store, not just app_state: sync_queue contains sale/return/GRN/repair/stock operation payloads, and meta can contain operational metadata. The existing src/lib/db.ts currently writes those records as plaintext structured values. Migration must atomically stage encrypted rows, verify decrypt/read-back and preserve queue ordering/idempotency before switching the active format.
+- Keep Electron sessionData and userData separate from the selected business-data folder. Electron documents that sessionData contains localStorage, cookies, disk cache and network state; moving the entire directory into the shop folder could copy cloud sessions, updater credentials and browser secrets with the business data. Store only the managed encrypted POS profile in the selected folder; keep OS-protected updater/cloud credentials in the app's secure local area and require cloud re-authentication after a Windows reinstall.
+- Audit all localStorage/sessionStorage keys before migration. In particular, existing Google Drive Recovery Key material currently has localStorage keys; do not copy these keys into a new profile folder or legacy import. Migrate secrets deliberately to main-process OS secure storage while preserving backward-compatible Drive restore behavior.
+
+### Folder-lock semantics
+
+- NTFS ACLs can restrict **other Windows accounts**, but an ACL cannot stop the same authorized Windows account from browsing its own folder in Explorer. The real guarantee against copying the folder is that the business files are encrypted and the key is not stored in plaintext beside them. Folder names and metadata should avoid exposing shop/customer information.
+- The current ACL helper has been tightened to remove explicit ACEs for any SID other than the selected Windows user and SYSTEM, remove deny ACEs, set the selected user as owner and verify the owner plus all entries. It remains unintegrated and requires physical Windows NTFS tests. A local administrator can still take ownership or change permissions.
+- Never report “folder cannot be opened” as a security guarantee for the same Windows account. The correct UI promise is: **copied or browsed profile files remain unreadable without the unlock/recovery key**. A separate Windows account should be denied by ACL where NTFS supports it.
+
+### Key hierarchy and recovery
+
+- Use one random 256-bit profile DEK for POS profile data. Keep independent wrappers for: (1) current Windows user/device via DPAPI-backed Electron safeStorage; (2) the owner-changeable passphrase via scrypt-derived KEK; and (3) the portable POS Data Recovery Key. Changing the passphrase re-wraps the same DEK only.
+- The Windows wrapper is installation/account-specific and is not the reinstall recovery path. On a replacement Windows installation, the owner selects the preserved profile folder, supplies the POS Data Recovery Key, the app authenticates/decrypts a known check record, then creates a fresh local DPAPI wrapper. Drive letter and folder path are not identity; the authenticated profile UUID is.
+- Keep the POS Data Recovery Key exportable as a one-time recovery kit (copy/print/save to an owner-chosen offline location). Do not log it or store it in the profile folder, localStorage, Notion, GitHub or as plaintext in Drive.
+- Google Drive backups should contain encrypted profile data and the recovery-wrapped DEK envelope, never the raw DEK or raw POS Data Recovery Key. To satisfy a Drive-held recovery copy without placing plaintext secrets beside backups, add a separately encrypted recovery-kit object wrapped by an independent user-held secret or a deliberately designed, separately reviewed key escrow. The owner must understand that losing both the offline recovery key and any independent recovery secret makes the profile unrecoverable. Do not silently make the existing Drive Backup Recovery Key and POS Data Recovery Key the same key.
+- Preserve the current Drive backup encryption format and existing RECOVERY_KEY.txt / shop authorization semantics during migration. Existing backups must remain restorable. A new profile-aware backup format needs an explicit version, profile UUID, schema version, wrapped DEK envelopes, ciphertext, SHA-256 integrity metadata, creation time and shop scope. Restore must verify all of these before decrypting into a staging profile and atomically activating.
+- Use resumable Drive upload for large encrypted backup objects and interrupted connections; the Google Drive API recommends resumable upload for files over 5 MB and network interruption. Verify uploaded object identity/size and a locally computed SHA-256 before marking backup successful.
+
+### Cryptographic and runtime checks
+
+- Passphrase KDF now uses scrypt N=2^15, r=8, p=3 with a 16-byte random salt; OWASP lists this as one of its minimum scrypt configurations. Local Node 22.16.0 benchmark median was about 297 ms on this development container; benchmark on low-end Windows PCs before deciding whether to raise it further.
+- AES-256-GCM uses 96-bit random IVs and authenticated metadata. Enforce a per-key encryption-operation ceiling and rotate the DEK before the applicable GCM usage limit; do not reuse IVs with the same derived key. Consider purpose-separated HKDF subkeys for state, queue and metadata to isolate nonce domains.
+- Handle Electron async safeStorage shouldReEncrypt responses and temporary unavailability. The current helper reads result but does not yet perform re-encryption when shouldReEncrypt is true; add this to the device-key lifecycle before production. Prefer the async API and remove the sync fallback when the project upgrades to Electron 46+, where the synchronous API is removed.
+- The current helper uses the OS safeStorage wrapper directly around the DEK. It does not yet implement a separate application-generated device key registry, device revocation, idle lock, or UI lock lifecycle.
+
+### Research references
+
+- Electron safeStorage and async API behavior: https://www.electronjs.org/docs/latest/api/safe-storage
+- Electron app sessionData contents: https://www.electronjs.org/docs/latest/api/app
+- Electron security checklist and IPC sender validation: https://www.electronjs.org/docs/latest/tutorial/security
+- OWASP Cryptographic Storage: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+- OWASP Password Storage: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- OWASP Secrets Management and backup/restore: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+- Microsoft DPAPI: https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
+- Microsoft icacls: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/icacls
+- Google Drive resumable uploads: https://developers.google.com/workspace/drive/api/guides/manage-uploads
+- NIST SP 800-57 Part 1 Rev. 5 key recovery: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-57pt1r5.pdf
+
+### Confirmed implementation boundary
+
+This review changes design requirements only. The live POS IndexedDB path, key lifecycle, IPC, Settings UI, Windows ACL application and Google Drive profile backup/restore remain unintegrated. Do not claim live data encryption, full folder lock or portable recovery until those are implemented and tested on Windows.
