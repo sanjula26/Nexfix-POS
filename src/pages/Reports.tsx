@@ -36,7 +36,7 @@ type CompareMode = 'none' | 'previous' | 'custom' | 'lastmonth' | 'lastyear';
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 export default function Reports() {
-  const { state, can } = usePOS();
+  const { state, can, user } = usePOS();
   const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodKey>('week');
   const [custom, setCustom] = useState({ from: dkey(new Date(Date.now() - 6 * 86400000)), to: dkey(new Date()) });
@@ -217,23 +217,35 @@ export default function Reports() {
   const customCompareError = compareMode === 'custom' && compareFrom && compareTo && compareFrom > compareTo;
 
   const reportGroups = [
-    { title: 'Sales Reports', description: 'Bills, returns and sales activity', items: [
-      { label: 'Sales History', detail: 'Search and review completed bills', path: '/sales', permission: 'page:sales', icon: ReceiptText },
-      { label: 'Returns & Exchanges', detail: 'Review exchange transactions', path: '/exchanges', permission: 'page:exchanges', icon: GitCompareArrows },
+    { title: 'Sales Reports', description: 'Sales by date, product, invoice and customer returns', items: [
+      { label: 'Date Wise Sales', detail: 'Daily sales totals for a selected date range', path: '/reports/view/date-wise-sales', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Item Wise Sales', detail: 'Quantity, sales value and cost by product', path: '/reports/view/item-wise-sales', permission: 'page:reports', icon: PackageCheck },
+      { label: 'Day End Reports', detail: 'Cashier sign-offs and tender breakdown', path: '/day-close-report', permission: 'page:reports', adminOnly: true, icon: ReceiptText },
+      { label: 'Invoice Wise Sales', detail: 'Search bills, view invoices and reprint receipts', path: '/sales', permission: 'page:sales', icon: ReceiptText },
+      { label: 'Returns', detail: 'Review customer exchanges and return history', path: '/exchanges', permission: 'page:exchanges', icon: RotateCcw },
     ]},
-    { title: 'Stock Reports', description: 'Inventory, receiving and stock alerts', items: [
-      { label: 'Stock Balance', detail: 'View products and current quantities', path: '/inventory', permission: 'page:inventory', icon: Boxes },
-      { label: 'Low Stock Items', detail: 'Find products that need replenishment', path: '/low-stock', permission: 'page:reports', icon: AlertTriangle },
-      { label: 'GRN Report', detail: 'Search received notes and supplier records', path: '/grn-report', permission: 'page:purchases', icon: PackageCheck },
-      { label: 'Tracked Units', detail: 'Find IMEI, serial and unit records', path: '/units', permission: 'page:units', icon: Smartphone },
+    { title: 'Stock Reports', description: 'Current stock, expiry, receiving and product movement', items: [
+      { label: 'Stock Balance', detail: 'Current products, quantities and stock values', path: '/inventory', permission: 'page:inventory', icon: Boxes },
+      { label: 'Item Wise Stock', detail: 'Stock quantity and value for each product', path: '/reports/view/item-wise-stock', permission: 'page:reports', icon: PackageCheck },
+      { label: 'Expired Items', detail: 'Tracked units whose recorded expiry date has passed', path: '/reports/view/expired-items', permission: 'page:reports', icon: AlertTriangle },
+      { label: 'Low Stock Items', detail: 'Products at or below their reorder level', path: '/low-stock', permission: 'page:reports', icon: AlertTriangle },
+      { label: 'GRN Reports', detail: 'Received and pending goods-received records', path: '/grn-report', permission: 'page:purchases', icon: ClipboardList },
+      { label: 'GRN And Selling Reports', detail: 'Compare received quantities, sold quantities and current stock', path: '/reports/view/grn-selling', permission: 'page:reports', icon: GitCompareArrows },
     ]},
-    { title: 'Profit & Finance', description: 'Profit, expenses and supplier payments', items: [
-      { label: 'Sales & Profit Analytics', detail: 'Current date-wise sales and profit dashboard', path: '#analytics', permission: 'page:reports', icon: TrendingUp, current: true },
-      { label: 'Expenses', detail: 'Review recorded business expenses', path: '/expenses', permission: 'page:expenses', icon: CreditCard },
-      { label: 'Supplier Payments', detail: 'Review supplier payment records', path: '/supplier-payments', permission: 'page:suppliers', icon: HandCoins },
+    { title: 'Profit Reports', description: 'Gross profit based on recorded sale line costs and prices', items: [
+      { label: 'Item Wise Profits', detail: 'Gross profit grouped by product', path: '/reports/view/item-wise-profits', permission: 'page:reports', icon: TrendingUp },
+      { label: 'Date Wise Profits', detail: 'Recorded profit grouped by sale date', path: '/reports/view/date-wise-profits', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Balance Sheet Overview', detail: 'Limited POS balance snapshot — not a full accounting statement', path: '/reports/view/balance-overview', permission: 'page:reports', icon: Landmark },
     ]},
-    { title: 'More Reports', description: 'Purchasing and other business records', items: [
-      { label: 'Supplier Returns', detail: 'Review and create supplier returns', path: '/purchase-return-report', permission: 'page:purchases', icon: RotateCcw },
+    { title: 'More Reports', description: 'Customers, categories, expenses and supplier activity', items: [
+      { label: 'Member Wise Sales', detail: 'Sales grouped by customer or walk-in member', path: '/reports/view/member-wise-sales', permission: 'page:reports', icon: Users },
+      { label: 'Category Wise Sales', detail: 'Sales totals grouped by product category', path: '/reports/view/category-wise-sales', permission: 'page:reports', icon: Boxes },
+      { label: 'Expenses Report', detail: 'Review expenses, categories and payment methods', path: '/expenses', permission: 'page:expenses', icon: CreditCard },
+      { label: 'Item Tracking', detail: 'Find IMEI, serial number and tracked unit status', path: '/units', permission: 'page:units', icon: Smartphone },
+      { label: 'Item Sales (Date Range)', detail: 'Product sales between selected dates', path: '/reports/view/item-sales-date-range', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Supplier Wise Sales', detail: 'Sales and gross profit grouped by product supplier', path: '/reports/view/supplier-wise-sales', permission: 'page:reports', icon: HandCoins },
+      { label: 'Supplier Returns', detail: 'Debit notes and goods returned to suppliers', path: '/purchase-return-report', permission: 'page:purchases', icon: RotateCcw },
+      { label: 'Supplier Payments', detail: 'Supplier payments and outstanding balances', path: '/supplier-payments', permission: 'page:suppliers', icon: Wallet },
     ]},
   ];
 
@@ -257,7 +269,7 @@ export default function Reports() {
         </div>
         <div className="space-y-5">
           {reportGroups.map(group => {
-            const available = group.items.filter(item => can(item.permission));
+            const available = group.items.filter(item => item.adminOnly ? user?.role === 'admin' : can(item.permission || 'page:reports'));
             if (!available.length) return null;
             return (
               <section key={group.title}>
