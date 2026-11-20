@@ -82,6 +82,9 @@ test('rejects tampered envelopes, wrong profile IDs and symlinked key files', as
     tampered.recoveryWrappedKey, created.recoveryKey, PROFILE_ID,
   ), /authentication failed/);
   assert.equal(validateProfileKeyEnvelope(created.envelope, '4d6b9d1f-4f21-4a21-9b4a-3d3c7f0e1a22').valid, false);
+  const withSecret = structuredClone(created.envelope);
+  withSecret.recoveryWrappedKey.rawRecoveryKey = created.recoveryKey;
+  assert.equal(validateProfileKeyEnvelope(withSecret, PROFILE_ID).valid, false);
 
   if (process.platform !== 'win32') {
     const outside = path.join(directory, 'outside.json');
