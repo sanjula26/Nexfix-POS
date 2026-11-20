@@ -55,6 +55,10 @@ test('completion requires the active attempt id and a boolean result', () => {
 
 test('repeated lockouts are capped at five minutes', () => {
   let state = {};
-  for (let i = 1; i <= 10; i++) state = failAttempt(state, 1000 + i, 'cap-' + i);
-  assert.equal(state.lockedUntil - 1010, 300_000);
+  let time = 1000;
+  for (let i = 1; i <= 10; i++) {
+    if (state.lockedUntil > time) time = state.lockedUntil;
+    state = failAttempt(state, time, 'cap-' + i);
+  }
+  assert.equal(state.lockedUntil - time, 300_000);
 });
