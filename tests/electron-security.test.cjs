@@ -187,3 +187,18 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+
+test('local admin authentication guard IPC is limited to the trusted renderer and validates completion payloads', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  for (const channel of ['local-auth:begin', 'local-auth:complete']) {
+    const marker = `ipcMain.handle('${channel}'`;
+    const start = mainSource.indexOf(marker);
+    assert.notEqual(start, -1, `Missing IPC handler: ${channel}`);
+    assert.match(mainSource.slice(start, start + 700), /isTrustedRenderer\\(event\\)/);
+  }
+  assert.match(mainSource, /typeof payload\\?\\.attemptId !== 'string'/);
+  assert.match(mainSource, /typeof payload\\?\\.success !== 'boolean'/);
+  assert.match(preloadSource, /beginLocalAuthAttempt: \\(\\) => ipcRenderer\\.invoke\\('local-auth:begin'\\)/);
+  assert.match(preloadSource, /completeLocalAuthAttempt: \\(payload\\) => ipcRenderer\\.invoke\\('local-auth:complete', payload\\)/);
+});
