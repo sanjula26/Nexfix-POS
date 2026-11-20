@@ -16,6 +16,8 @@ The UI is a usability layer, not the security boundary. PostgreSQL RLS and serve
 | Technician | Assigned branch only | Permitted repair/workflow operations in assigned branch |
 | Unassigned / revoked cloud member or device | No branch operational data | No branch operational mutations |
 
+**Current Owner/Admin identity mapping:** the `shop_memberships.role` constraint currently allows `admin`, `manager`, `cashier`, `technician`, and `inventory_manager`; it has no separate `owner` role. Until a distinct server-verifiable owner entitlement is designed, all-branch access must be limited to the active cloud membership with `role = 'admin'`. The local POS `admin` role is not sufficient and must never be treated as a Supabase all-branch grant.
+
 Keep local POS users/roles separate from Supabase Auth identities. Do not treat a shared cloud login as proof that each employee has a distinct identity.
 
 ## Identity and device binding
