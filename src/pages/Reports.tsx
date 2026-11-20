@@ -4,7 +4,7 @@ import {
   BarChart3, CalendarDays, Download, Banknote, TrendingUp, Trophy,
   ReceiptText, Wallet, CreditCard, Banknote as Bank, Smartphone, Landmark, HandCoins,
   ArrowRight, ArrowDownRight, ArrowUpRight, Minus, GitCompareArrows, CalendarX2,
-  PackageCheck, Boxes, AlertTriangle, RotateCcw,
+  PackageCheck, Boxes, AlertTriangle, RotateCcw, ClipboardList, Users,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
