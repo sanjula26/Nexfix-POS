@@ -751,7 +751,7 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
         url.searchParams.set('shopId', shopId);
         url.searchParams.set('requestId', makeRequestId());
         url.searchParams.set('shopProof', shopProof);
-        url.searchParams.set('recoveryKey', recoveryKey);
+        // Do not put the raw Recovery Key in a GET URL; it can leak through URL logs/history.
         url.searchParams.set('metadata', JSON.stringify(metadata));
         url.searchParams.set('apiKey', BACKUP_API_KEY);
 
