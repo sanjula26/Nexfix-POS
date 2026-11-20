@@ -235,6 +235,7 @@ export default function Reports() {
     { title: 'Profit Reports', description: 'Gross profit based on recorded sale line costs and prices', items: [
       { label: 'Item Wise Profits', detail: 'Gross profit grouped by product', path: '/reports/view/item-wise-profits', permission: 'page:reports', icon: TrendingUp },
       { label: 'Date Wise Profits', detail: 'Recorded profit grouped by sale date', path: '/reports/view/date-wise-profits', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Sales & Profit Analytics', detail: 'Charts and trends for the selected reporting period', path: '#analytics', permission: 'page:reports', icon: TrendingUp, current: true },
       { label: 'Balance Sheet Overview', detail: 'Limited POS balance snapshot — not a full accounting statement', path: '/reports/view/balance-overview', permission: 'page:reports', icon: Landmark },
     ]},
     { title: 'More Reports', description: 'Customers, categories, expenses and supplier activity', items: [
@@ -280,7 +281,7 @@ export default function Reports() {
                     const Icon = item.icon;
                     return (
                       <button key={item.label} type="button"
-                        onClick={() => item.current ? document.getElementById('reports-analytics')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : navigate(item.path)}
+                        onClick={() => ('current' in item && item.current) ? document.getElementById('reports-analytics')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : navigate(item.path)}
                         className="group flex items-center gap-3 rounded-xl border border-line bg-raised/60 p-4 text-left transition-all hover:border-violet-500/50 hover:bg-violet-500/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
                         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600"><Icon size={20} /></span>
                         <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-ink">{item.label}</span><span className="mt-1 block text-xs leading-relaxed text-sub">{item.detail}</span></span>
