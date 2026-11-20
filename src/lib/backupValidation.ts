@@ -126,7 +126,10 @@ export function hasValidPOSStateShape(value: unknown): value is POSState {
     ['products', (r) => hasStringFields(r, ['name', 'sku', 'barcode', 'category', 'brand'])
       && hasNumberFields(r, ['cost', 'price', 'stock', 'reorderLevel'])
       && typeof r.trackImei === 'boolean' && typeof r.active === 'boolean' && isValidIsoDate(r.createdAt)],
-    ['customers', (r) => hasStringFields(r, ['name', 'phone']) && hasNumberFields(r, ['creditBalance', 'loyaltyPoints']) && isValidIsoDate(r.createdAt)],
+    ['customers', (r) => hasStringFields(r, ['name', 'phone']) && hasNumberFields(r, ['creditBalance'])
+      && (r.loyaltyPoints === undefined || r.loyaltyPoints === null
+        || typeof r.loyaltyPoints === 'number' && Number.isFinite(r.loyaltyPoints))
+      && isValidIsoDate(r.createdAt)],
     ['suppliers', (r) => hasStringFields(r, ['name', 'phone']) && isValidIsoDate(r.createdAt)],
     ['sales', (r) => hasStringFields(r, ['billNo', 'cashierId', 'cashierName', 'customerName'])
       && isValidIsoDate(r.date) && hasArray(r.items) && r.items.every(hasValidSaleItem)
