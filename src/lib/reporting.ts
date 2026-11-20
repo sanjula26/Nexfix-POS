@@ -1,5 +1,5 @@
 import type { Exchange, Sale } from './types';
-import { dkey } from './utils';
+import { dkey } from './utils.ts';
 
 export interface DailySalesSummary {
   day: string;
