@@ -113,3 +113,34 @@ test('public repository Windows QA never uploads downloadable EXE artifacts', ()
   assert.doesNotMatch(qaWorkflow, /secrets\.|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(qaWorkflow, /aws s3api (?:put-object|delete-object)|storage\/v1\/object\/upload/);
 });
+
+
+test('Windows packaging step receives no private storage credentials or unused backup transport key', () => {
+  const packagingStart = releaseWorkflow.indexOf('- name: Build Windows installer and portable app');
+  const packagingEnd = releaseWorkflow.indexOf('      - name: Verify Windows artifacts', packagingStart);
+  assert.ok(packagingStart >= 0, 'production workflow must contain the Windows packaging step');
+  assert.ok(packagingEnd > packagingStart, 'packaging step must end before artifact verification');
+  const packagingStep = releaseWorkflow.slice(packagingStart, packagingEnd);
+  assert.match(packagingStep, /EP_GH_IGNORE_TIME/);
+  assert.doesNotMatch(packagingStep, /SUPABASE_SERVICE_ROLE_KEY|VITE_GOOGLE_BACKUP_API_KEY/);
+});
+
+
+test('private upload tools are prepared before R2 and Supabase credentials are exposed', () => {
+  const prepareStart = releaseWorkflow.indexOf('- name: Prepare private release upload tools');
+  const r2Start = releaseWorkflow.indexOf('- name: Publish Windows release to private Cloudflare R2');
+  const supabaseStart = releaseWorkflow.indexOf('- name: Publish legacy compatibility chunks to private Supabase Storage');
+  const verifyStart = releaseWorkflow.indexOf('- name: Verify private Windows release', supabaseStart);
+  assert.ok(prepareStart >= 0 && prepareStart < r2Start, 'upload tools must be installed before R2 credentials are exposed');
+  assert.ok(r2Start >= 0 && supabaseStart > r2Start, 'R2 upload must precede Supabase compatibility upload');
+  assert.ok(verifyStart > supabaseStart, 'Supabase upload step must have a bounded end');
+  const r2Step = releaseWorkflow.slice(r2Start, supabaseStart);
+  const supabaseStep = releaseWorkflow.slice(supabaseStart, verifyStart);
+  for (const step of [r2Step, supabaseStep]) {
+    assert.doesNotMatch(step, /choco install|npm install|npm ci|npm exec|npx /i);
+  }
+  const prepareStep = releaseWorkflow.slice(prepareStart, r2Start);
+  assert.match(prepareStep, /choco install awscli/);
+  assert.match(prepareStep, /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
+  assert.match(releaseWorkflow.slice(prepareStart, r2Start), /choco install awscli/);
+});

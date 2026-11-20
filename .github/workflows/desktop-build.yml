@@ -144,13 +144,12 @@ jobs:
           "BUILD_VERSION=$buildVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
           Write-Host "Automatic release version: $buildVersion"
       - name: Build Windows installer and portable app
+        # Keep private storage credentials out of the packaging process. The
+        # renderer build already receives its explicitly allowlisted VITE_ values,
+        # and the later upload step receives the service-role key separately.
         env:
-          VITE_GOOGLE_BACKUP_API_KEY: ${{ secrets.VITE_GOOGLE_BACKUP_API_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EP_GH_IGNORE_TIME: "true"
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) { throw "VITE_GOOGLE_BACKUP_API_KEY secret is empty." }
-          if ([string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)) { throw "SUPABASE_SERVICE_ROLE_KEY secret is empty." }
           $package = Get-Content package.json -Raw | ConvertFrom-Json
           $package.version = $env:BUILD_VERSION
           $package | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
@@ -181,6 +180,16 @@ jobs:
           $lines | Set-Content -Path release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
+      - name: Prepare private release upload tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Install tools before any private upload credentials enter the environment.
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          aws --version
+          npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4
+          node -e "require('tus-js-client')"
+
       - name: Publish Windows release to private Cloudflare R2
         shell: pwsh
         env:
@@ -193,8 +202,6 @@ jobs:
           foreach ($name in @('R2_ACCOUNT_ID','R2_ACCESS_KEY_ID','R2_SECRET_ACCESS_KEY','R2_BUCKET')) {
             if ([string]::IsNullOrWhiteSpace((Get-Item "Env:$name").Value)) { throw "$name secret is empty." }
           }
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
-          aws --version
 
           $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
           $version = $env:BUILD_VERSION
@@ -262,7 +269,6 @@ jobs:
           # Keep each private release chunk safely below that limit and reconstruct
           # the original installer only inside the authorized update gateway.
           $chunkBytes = 40 * 1024 * 1024
-          npm install --no-save --no-package-lock tus-js-client@4
 
           @'
           const fs = require('fs');
