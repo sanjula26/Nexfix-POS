@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createLocalAuthGuard } from '../src/lib/localAuthGuard.ts';
-import { hashPin, isLegacyPasswordHash, isPasswordHash } from '../src/lib/utils.ts';
-import { hashPasswordAsync, verifyPasswordAsync } from '../src/lib/passwordAsync.ts';
+import { hashPin, hashPassword, verifyPassword, isLegacyPasswordHash, isPasswordHash } from '../src/lib/utils.ts';
 
 function createHarness() {
   let raw: string | null = null;
@@ -78,10 +77,10 @@ test('corrupt browser guard state fails closed instead of resetting attempts', (
 test('legacy admin PIN hashes verify for migration and new PIN hashes use salted PBKDF2', async () => {
   const legacy = hashPin('old-admin-pin-123');
   assert.equal(isLegacyPasswordHash(legacy), true);
-  assert.equal(await verifyPasswordAsync('old-admin-pin-123', legacy), true);
-  const migrated = await hashPasswordAsync('new-admin-pin-123');
+  assert.equal(verifyPassword('old-admin-pin-123', legacy), true);
+  const migrated = hashPassword('new-admin-pin-123');
   assert.equal(isPasswordHash(migrated), true);
   assert.equal(isLegacyPasswordHash(migrated), false);
-  assert.equal(await verifyPasswordAsync('new-admin-pin-123', migrated), true);
-  assert.equal(await verifyPasswordAsync('wrong-admin-pin', migrated), false);
+  assert.equal(verifyPassword('new-admin-pin-123', migrated), true);
+  assert.equal(verifyPassword('wrong-admin-pin', migrated), false);
 });
