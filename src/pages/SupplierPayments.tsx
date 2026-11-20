@@ -78,7 +78,7 @@ export default function SupplierPayments() {
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Payments recorded</div><div className="num text-xl font-extrabold text-emerald-600 mt-1">{fmtRs(totalPaid)}</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Suppliers</div><div className="num text-xl font-extrabold text-ink mt-1">{state.suppliers.length}</div></div>
       </div>
-      <div className="card p-4 mb-5">
+      <div className="card p-4 mb-5 no-print">
         <div className="grid md:grid-cols-2 gap-4">
           <Field label="Supplier"><SearchableSelect value={supplierId} options={state.suppliers} onChange={v => { setSupplierId(v); setPurchaseId(''); setError(''); }} placeholder="Search supplier by name or phone…" ariaLabel="Payment supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{s.phone}</div></>} /></Field>
           <Field label="Amount (Rs.)" hint={supplier ? (purchaseId && selectedPurchase ? `Purchase outstanding: ${fmtRs(selectedPurchaseOutstanding)}` : `Outstanding: ${fmtRs(outstanding)}`) : undefined}><input className="input num" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></Field>
