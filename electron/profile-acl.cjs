@@ -140,6 +140,9 @@ $issues = New-Object System.Collections.Generic.List[string]
 $fullControl = [int][System.Security.AccessControl.FileSystemRights]::FullControl
 foreach ($item in $items) {
   $acl = Get-Acl -LiteralPath $item.FullName
+  $ownerSid = $acl.Owner
+  try { $ownerSid = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}
+  if ($ownerSid -ne $userSid) { $issues.Add($item.FullName + ': profile owner is not the selected Windows user') }
   $entries = @($acl.Access | ForEach-Object {
     $sid = $_.IdentityReference.Value
     try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}
