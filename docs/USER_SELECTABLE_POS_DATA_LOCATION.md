@@ -499,3 +499,23 @@ A source review of the current main-branch Drive implementation found an importa
 
 - Windows QA logs showed the duplicate ObjectSecurity type-data error matches a known PowerShell interoperability issue: Windows PowerShell 5.1 was launched from a parent environment that included PowerShell 7 module paths in PSModulePath. Microsoft PowerShell issue reports show that PS7 Security.types.ps1xml entries conflict with Windows PowerShell's Microsoft.PowerShell.Security module.
 - Removed the unsafe Remove-TypeData workaround. The ACL helper now builds a child-only environment for powershell.exe, filtering PowerShell 7 user/program module paths while retaining WindowsPowerShell 5.1 module paths, then imports Microsoft.PowerShell.Security normally. A unit test covers the environment filter. Real Windows QA must confirm this fix before ACL helper is accepted.
+
+
+## Main-process profile session and trusted IPC — 2026-11-20
+
+Added a stateful Electron-main session manager and a narrow preload bridge:
+
+- `electron/profile-session.cjs` owns the active `EncryptedProfileStorage` instance and its in-memory DEK. It supports bounded discovery of profile folders, creation, passphrase unlock, portable recovery-key unlock, lock, passphrase change/reset, and purpose-scoped app-state/sync-queue/meta/restore-checkpoint reads and writes.
+- The session enforces one active writable profile per app process. It validates the lock passphrase before reserving a new directory, reads the profile UUID from the on-disk manifest, and refreshes the installation-specific DPAPI wrapper after successful passphrase or recovery-key unlock.
+- On Windows, profile creation and each successful unlock resolve the current user SID using `whoami.exe` with `shell:false`, then apply and verify the existing NTFS ACL helper. Other platforms do not attempt Windows ACL changes.
+- `electron/profile-ipc.cjs` registers trusted-main-frame-only IPC handlers for choosing a storage root, scanning discovered profiles, creating, unlocking/recovering, locking, reading/writing the four supported data purposes, and changing/resetting the passphrase. It only permits unlocking a profile that was returned by the current renderer's explicit folder scan or created in the current process.
+- `electron/main.cjs` registers these handlers and clears the in-memory profile key on Electron `will-quit`. `electron/preload.cjs` exposes only the scoped methods; the raw DEK and filesystem encryption implementation are not exposed.
+- Added `tests/profile-session.test.cjs` and `tests/profile-ipc.test.cjs` for encrypted file round trips, wrong password, portable recovery, passphrase rotation/reset, Windows-device wrapper rebinding, profile discovery, single active session, trusted-renderer enforcement and path allowlisting.
+
+### Important integration boundary
+
+This is now connected to Electron main/preload IPC, but **not yet connected to the React POS boot/persistence path or Settings UI**. The current `src/lib/store.tsx` still hydrates from IndexedDB/localStorage and its 120 ms debounce writes plaintext POS state to IndexedDB. Existing IndexedDB sync queue and metadata are also not yet redirected to encrypted profile files. Do not use this IPC API as proof that live shop data is already encrypted.
+
+The next migration must add a fail-closed first-run/profile-selection gate before `POSProvider` calls `loadState()` or `idbLoadState()`; import the existing shop state and offline queue into encrypted profile files; verify the encrypted read-back; and only then disable plaintext IndexedDB writes for desktop profiles. Preserve browser/dev behavior separately. Do not delete the old IndexedDB database until encrypted state, queue, metadata, restore checkpoint, Google Drive backup and a tested rollback are all verified.
+
+No actual customer data was migrated, no real shop folder was selected, no ACL was changed outside disposable Windows test folders, and no production release or merge occurred.
