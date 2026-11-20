@@ -203,12 +203,70 @@ function getLegacyImportAllowlist(sessionDataDirectory) {
   return allowed;
 }
 
+
+function createManagedProfileDirectory(storageRoot, directoryName, manifestInput) {
+  if (typeof storageRoot !== 'string' || !storageRoot.trim()) {
+    throw new Error('A local POS storage root is required.');
+  }
+  if (typeof directoryName !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(directoryName) ||
+      directoryName === '.' || directoryName === '..') {
+    throw new Error('The POS profile folder name contains unsupported characters.');
+  }
+
+  const rootStat = fs.lstatSync(storageRoot);
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new Error('The selected POS storage root must be a real local folder.');
+  }
+  const rootRealPath = fs.realpathSync(storageRoot);
+  const profileDirectory = path.join(rootRealPath, directoryName);
+  if (fs.existsSync(profileDirectory)) {
+    throw new Error('A folder with this POS profile name already exists. Choose another name or inspect the existing profile.');
+  }
+
+  const manifest = createProfileManifest(manifestInput);
+  const stagingName = '.nexfix-profile-' + require('node:crypto').randomBytes(16).toString('hex') + '.staging';
+  const stagingDirectory = path.join(rootRealPath, stagingName);
+  let fileDescriptor = null;
+  try {
+    fs.mkdirSync(stagingDirectory, { recursive: false, mode: 0o700 });
+    const manifestPath = path.join(stagingDirectory, PROFILE_MANIFEST_FILE);
+    fileDescriptor = fs.openSync(manifestPath, 'wx', 0o600);
+    fs.writeFileSync(fileDescriptor, JSON.stringify(manifest, null, 2) + '\\n', 'utf8');
+    fs.fsyncSync(fileDescriptor);
+    fs.closeSync(fileDescriptor);
+    fileDescriptor = null;
+
+    const verified = readProfileManifest(stagingDirectory);
+    if (verified.profileId !== manifest.profileId ||
+        verified.manifestVersion !== manifest.manifestVersion) {
+      throw new Error('The newly created POS profile manifest failed read-back verification.');
+    }
+
+    // The staging directory is on the same volume as the destination so the
+    // final rename is atomic. Existing profile folders are never overwritten.
+    if (fs.existsSync(profileDirectory)) {
+      throw new Error('The destination POS profile folder appeared during creation; nothing was overwritten.');
+    }
+    fs.renameSync(stagingDirectory, profileDirectory);
+    const finalManifest = readProfileManifest(profileDirectory);
+    return { directory: fs.realpathSync(profileDirectory), manifest: finalManifest };
+  } catch (error) {
+    if (fileDescriptor !== null) {
+      try { fs.closeSync(fileDescriptor); } catch { /* best effort */ }
+    }
+    try { fs.rmSync(stagingDirectory, { recursive: true, force: true }); } catch { /* leave recovery evidence if cleanup fails */ }
+    throw error;
+  }
+}
+
 module.exports = {
   PROFILE_MANIFEST_FILE,
   PROFILE_FORMAT,
   PROFILE_MANIFEST_VERSION,
   LEGACY_IMPORT_DIRECTORIES,
   createProfileManifest,
+  createManagedProfileDirectory,
   validateProfileManifest,
   readProfileManifest,
   classifyProfileCandidates,
