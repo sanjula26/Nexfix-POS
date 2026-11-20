@@ -584,7 +584,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user?.email]);
 
-  const upgradeLegacyAdminPin = async (secret: string) => {
+  const upgradeLegacyAdminPin = useCallback(async (secret: string) => {
     const storedHash = stateRef.current.settings.adminPinHash || '';
     if (!isLegacyPasswordHash(storedHash)) return;
     if (!(await verifyPasswordAsync(secret, storedHash))) return;
@@ -594,7 +594,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       settings: { ...stateRef.current.settings, adminPinHash: upgradedHash },
     };
     setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
-  };
+  }, []);
 
   const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
     if (!user) return false;
@@ -609,7 +609,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? `Failed admin verification${reason ? ` for ${reason}` : ''} (${user.name || 'unknown'})`
       : `Admin verification temporarily locked${reason ? ` for ${reason}` : ''}`);
     return false;
-  }, [pushAudit, user]);
+  }, [pushAudit, user, upgradeLegacyAdminPin]);
 
   const unlockSession = useCallback(async (credential: string): Promise<boolean> => {
     if (!user || !credential) return false;
@@ -650,7 +650,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       ? 'Failed idle-lock unlock attempt'
       : 'Idle-lock authentication temporarily locked');
     return false;
-  }, [pushAudit, user]);
+  }, [pushAudit, user, upgradeLegacyAdminPin]);
   const sensitiveAuthAtRef = useRef(0);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
     if (user?.role !== 'admin') {
@@ -698,7 +698,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     sensitiveAdminResolverRef.current = null;
     setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, sensitiveAdminPrompt]);
+  }, [pushAudit, sensitiveAdminPrompt, upgradeLegacyAdminPin]);
 
   const cancelSensitiveAdmin = useCallback(() => {
     const resolver = sensitiveAdminResolverRef.current;
@@ -810,7 +810,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
     return { ok: true };
-  }, []);
+  }, [upgradeLegacyAdminPin]);
 
   const createInitialAdmin = useCallback(async (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => {
     const cleanName = name.trim();
@@ -985,7 +985,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }, ...st.audit].slice(0, 500),
     }));
     return { ok: true };
-  }, [state.users, state.settings.adminPinHash, session, user]);
+  }, [state.users, state.settings.adminPinHash, session, user, upgradeLegacyAdminPin]);
   const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
