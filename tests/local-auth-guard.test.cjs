@@ -51,3 +51,10 @@ test('completion requires the active attempt id and a boolean result', () => {
   assert.deepEqual(completeLocalAuthAttempt(first.state, 'other', true, 101).result, { ok: false });
   assert.deepEqual(completeLocalAuthAttempt(first.state, 'active', 'true', 101).result, { ok: false });
 });
+
+
+test('repeated lockouts are capped at five minutes', () => {
+  let state = {};
+  for (let i = 1; i <= 10; i++) state = failAttempt(state, 1000 + i, 'cap-' + i);
+  assert.equal(state.lockedUntil - 1010, 300_000);
+});
