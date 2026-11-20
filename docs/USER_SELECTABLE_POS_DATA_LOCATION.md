@@ -171,6 +171,52 @@ This is static source inspection on `main` at `81fa1507425d4446dae1ec34d689c0997
 
 Do not apply speculative micro-optimizations or change sale/stock transaction ordering merely to improve a benchmark. Sale commit durability and correctness take priority over raw speed.
 
+## Automatic saving to the selected data location — explicit requirement — 2026-11-20
+
+The selected profile is the live authoritative local POS storage location. The owner must not need to press a Save button for normal POS work. All supported changes are automatically persisted to the currently active profile.
+
+### Current behavior confirmed in main (source review)
+
+- `src/lib/db.ts` exposes `idbSaveState`, which waits for the IndexedDB transaction's `complete` event before returning success.
+- `src/lib/store.tsx` schedules a debounced state persistence 120 ms after React state changes and writes the full state to IndexedDB. A successful IndexedDB write is authoritative; localStorage is not intended to hold a second full copy.
+- When the IndexedDB write fails, the store emits `nexfix:storage-error` and deliberately skips enqueueing a stale offline snapshot. This is a useful safety behavior to preserve.
+- The current debounce is not proof that every last in-memory change survives an immediate process kill or power loss. The app needs an explicit dirty/write-in-flight lifecycle and stronger durability handling around critical operations and shutdown.
+
+### Required automatic-save behavior
+
+1. On startup, resolve the active profile before loading POS state. Do not render a fresh seeded shop if an existing profile is missing, disconnected, corrupt or not yet verified.
+2. Every POS mutation (sale, return, stock, product, customer, supplier, GRN, unit/IMEI/serial, repair, warranty, quotation, exchange, expenses, settings, user/role changes and durable audit/sync markers) must be persisted automatically to the active profile. No per-record Save button is required for routine operations.
+3. Critical business actions must resolve only after their required IndexedDB transaction(s) have completed. For sales, stock and other multi-record operations, commit related records and idempotency/sync markers atomically where the schema supports it. A React state update or a debounce timer firing is not proof of durable save.
+4. For ordinary edits, debounce/coalesce safe batches to reduce write amplification, but show an unsaved/dirty state while a write is pending. Critical commits must flush or use their own durable transaction and must not wait behind a long debounce.
+5. Track a monotonic local revision, last durable revision/time, pending write count and last storage error. On a write failure, retain the dirty revision, show a persistent visible warning, block unsafe follow-up actions where necessary, and retry only with bounded backoff when storage becomes writable. Never clear the error just because a later unrelated React render occurs.
+6. On app close/restart, flush pending writes and wait for completion where Electron lifecycle permits. Do not rely on browser `beforeunload` alone for asynchronous IndexedDB durability. Add an explicit Electron shutdown handshake: renderer reports flush status; main process waits with a bounded timeout and does not silently claim success if flush failed. Handle OS kill/power loss with transaction durability and startup recovery; no software can guarantee the last uncommitted in-memory keystroke after sudden power loss.
+7. When the selected drive is missing, read-only or full, stop claiming local save success. Keep the source profile untouched, show the exact active path and error, and offer safe reconnect/recovery. Do not silently switch to a new empty folder or write into another drive behind the user's back.
+8. Auto-save is local durability, not the same as Google Drive backup or cloud sync. Keep separate indicators/timestamps for local saved, cloud sync pending/synced, and external backup last successful. Never imply that local auto-save protects against disk failure or Windows formatting.
+9. After a profile move or Windows reinstall reconnect, all future automatic writes must go to the selected active profile. The app must display the active folder and profile identity so the owner can confirm where data is being saved.
+
+### User-visible status
+
+- `Saved on this PC` with last durable save time.
+- `Saving…` while a revision is pending.
+- `Save failed — check drive/storage` with actionable reason and active path.
+- Separate `Cloud sync pending/synced` and `Google Drive backup` status.
+- Storage location and profile health shown in Settings.
+
+### Required tests
+
+- Change each important business domain and verify the durable IndexedDB value after reload/restart.
+- Immediate close while debounce is pending; verify shutdown handshake flushes or clearly reports failure.
+- Disk full, QuotaExceededError, missing drive, read-only folder, permission denial and database blocked/abort.
+- Multiple rapid updates coalesce without losing the newest revision.
+- Sale commit + cloud commit + local persist failure: verify idempotency marker remains and no duplicate bill can be created on retry.
+- Crash/restart with pending offline queue; verify queue and business state reconcile without data loss/duplication.
+- Profile switch/migration: verify subsequent auto-saves go only to the selected profile.
+- Verify cloud backup status is never confused with local auto-save status.
+
+### Status
+
+This section is an explicit product requirement and architecture plan. Current source already has a 120 ms debounced IndexedDB auto-persist path, but it does not yet prove all shutdown/crash/drive-failure cases. No code change, test run or runtime durability claim is made by this documentation update.
+
 ## UI requirements
 
 Desktop Settings / startup should expose:
