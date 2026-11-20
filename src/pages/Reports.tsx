@@ -220,6 +220,9 @@ export default function Reports() {
     { title: 'Sales Reports', description: 'Sales by date, product, invoice and customer returns', items: [
       { label: 'Date Wise Sales', detail: 'Daily sales totals for a selected date range', path: '/reports/view/date-wise-sales', permission: 'page:reports', icon: CalendarDays },
       { label: 'Item Wise Sales', detail: 'Quantity, sales value and cost by product', path: '/reports/view/item-wise-sales', permission: 'page:reports', icon: PackageCheck },
+      { label: 'Cashier Performance', detail: 'Bills, units, sales and recorded profit by cashier', path: '/reports/view/cashier-wise-sales', permission: 'page:reports', icon: Users },
+      { label: 'Payment Breakdown', detail: 'Cash, card, bank, mobile and credit payment totals', path: '/reports/view/payment-breakdown', permission: 'page:reports', icon: Wallet },
+      { label: 'Sales by Hour', detail: 'Find the busiest hours using completed bills', path: '/reports/view/sales-by-hour', permission: 'page:reports', icon: CalendarDays },
       { label: 'Day End Reports', detail: 'Cashier sign-offs and tender breakdown', path: '/day-close-report', permission: 'page:reports', adminOnly: true, icon: ReceiptText },
       { label: 'Invoice Wise Sales', detail: 'Search bills, view invoices and reprint receipts', path: '/sales', permission: 'page:sales', icon: ReceiptText },
       { label: 'Returns', detail: 'Review customer exchanges and return history', path: '/exchanges', permission: 'page:exchanges', icon: RotateCcw },
@@ -231,6 +234,7 @@ export default function Reports() {
       { label: 'Low Stock Items', detail: 'Products at or below their reorder level', path: '/low-stock', permission: 'page:reports', icon: AlertTriangle },
       { label: 'GRN Reports', detail: 'Received and pending goods-received records', path: '/grn-report', permission: 'page:purchases', icon: ClipboardList },
       { label: 'GRN And Selling Reports', detail: 'Compare received quantities, sold quantities and current stock', path: '/reports/view/grn-selling', permission: 'page:reports', icon: GitCompareArrows },
+      { label: 'Stock Movement History', detail: 'Receipts, sales, returns and manual stock adjustments', path: '/reports/view/inventory-movements', permission: 'page:inventory', icon: ClipboardList },
     ]},
     { title: 'Profit Reports', description: 'Gross profit based on recorded sale line costs and prices', items: [
       { label: 'Item Wise Profits', detail: 'Gross profit grouped by product', path: '/reports/view/item-wise-profits', permission: 'page:reports', icon: TrendingUp },
@@ -245,6 +249,7 @@ export default function Reports() {
       { label: 'Item Tracking', detail: 'Find IMEI, serial number and tracked unit status', path: '/units', permission: 'page:units', icon: Smartphone },
       { label: 'Item Sales (Date Range)', detail: 'Product sales between selected dates', path: '/reports/view/item-sales-date-range', permission: 'page:reports', icon: CalendarDays },
       { label: 'Supplier Wise Sales', detail: 'Sales and gross profit grouped by product supplier', path: '/reports/view/supplier-wise-sales', permission: 'page:reports', icon: HandCoins },
+      { label: 'Supplier Purchase History', detail: 'Received GRNs, purchased quantities and recorded payments', path: '/reports/view/supplier-purchase-history', permission: 'page:purchases', icon: HandCoins },
       { label: 'Supplier Returns', detail: 'Debit notes and goods returned to suppliers', path: '/purchase-return-report', permission: 'page:purchases', icon: RotateCcw },
       { label: 'Supplier Payments', detail: 'Supplier payments and outstanding balances', path: '/supplier-payments', permission: 'page:suppliers', icon: Wallet },
     ]},
