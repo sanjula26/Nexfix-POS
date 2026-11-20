@@ -34,6 +34,18 @@ function encodeBase64Url(buffer) {
   return buffer.toString('base64url');
 }
 
+function decodeBase64(value, label) {
+  if (typeof value !== 'string' ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new Error(label + ' is not valid canonical base64 data.');
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.toString('base64') !== value) {
+    throw new Error(label + ' is not valid canonical base64 data.');
+  }
+  return decoded;
+}
+
 function decodeBase64Url(value, expectedBytes, label) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) {
     throw new Error(label + ' is not valid base64url data.');
@@ -88,9 +100,9 @@ function encryptWithKey(key, plaintext, aad) {
 function decryptWithKey(key, envelope, aad) {
   assertKey(key);
   if (!envelope || typeof envelope !== 'object') throw new Error('Encrypted profile data is missing.');
-  const iv = Buffer.from(String(envelope.iv || ''), 'base64');
-  const ciphertext = Buffer.from(String(envelope.ciphertext || ''), 'base64');
-  const tag = Buffer.from(String(envelope.tag || ''), 'base64');
+  const iv = decodeBase64(envelope.iv, 'Profile data nonce');
+  const ciphertext = decodeBase64(envelope.ciphertext, 'Profile ciphertext');
+  const tag = decodeBase64(envelope.tag, 'Profile authentication tag');
   if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES ||
       ciphertext.length > MAX_PAYLOAD_BYTES) {
     throw new Error('Encrypted profile data has an invalid size or format.');
@@ -237,7 +249,7 @@ async function unwrapDataKeyWithOS(envelope, expectedProfileId, safeStorage) {
       typeof envelope.ciphertext !== 'string') {
     throw new Error('OS-protected profile key envelope is invalid or belongs to another profile.');
   }
-  const encrypted = Buffer.from(envelope.ciphertext, 'base64');
+  const encrypted = decodeBase64(envelope.ciphertext, 'OS-protected profile key');
   if (encrypted.length < 16) throw new Error('OS-protected profile key is truncated.');
   let payload;
   try {

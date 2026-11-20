@@ -48,6 +48,15 @@ test('profile payload authentication rejects ciphertext, tag, IV and metadata ta
   assert.throws(() => decryptProfilePayload(dataKey, PROFILE_A, 'pos-state', { ...envelope, revision: 9 }), /authentication failed/);
 });
 
+test('profile payload rejects non-canonical base64 encodings before decrypting', () => {
+  const dataKey = crypto.randomBytes(32);
+  const envelope = encryptProfilePayload(dataKey, PROFILE_A, 'pos-state', 1, Buffer.from('shop data'));
+  assert.throws(
+    () => decryptProfilePayload(dataKey, PROFILE_A, 'pos-state', { ...envelope, ciphertext: '!!!!' + envelope.ciphertext }),
+    /canonical base64/,
+  );
+});
+
 test('profile payload cannot be replayed across profile IDs or data purposes', () => {
   const dataKey = crypto.randomBytes(32);
   const envelope = encryptProfilePayload(dataKey, PROFILE_A, 'pos-state', 1, Buffer.from('shop data'));
