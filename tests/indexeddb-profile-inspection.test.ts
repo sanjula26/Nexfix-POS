@@ -119,7 +119,11 @@ test('legacy profile snapshot reads state, restore checkpoint, offline queue and
     assert.deepEqual(result.snapshot.meta, meta);
     assert.equal(result.snapshot.hasAnyBusinessData, true);
   }
-  const reopened = await factory.open(DB_NAME);
+  const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open(DB_NAME);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Test database could not be reopened.'));
+  });
   const readBack = await new Promise<unknown>((resolve, reject) => {
     const request = reopened.transaction('sync_queue', 'readonly').objectStore('sync_queue').get('queue-1');
     request.onsuccess = () => resolve(request.result);
