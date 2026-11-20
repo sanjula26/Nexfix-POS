@@ -12,7 +12,7 @@ const PROFILE_DATA_FILES = Object.freeze({
   meta: 'profile-meta.nxf',
   restore_checkpoint: 'restore-checkpoint.nxf',
 });
-const MAX_ENCRYPTED_FILE_BYTES = 300 * 1024 * 1024;
+const MAX_ENCRYPTED_FILE_BYTES = 350 * 1024 * 1024;
 
 function assertPurpose(purpose) {
   if (!Object.prototype.hasOwnProperty.call(PROFILE_DATA_FILES, purpose)) {
