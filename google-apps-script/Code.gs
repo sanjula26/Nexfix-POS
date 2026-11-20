@@ -1425,7 +1425,6 @@ function doGet(e) {
       try { metadata = JSON.parse(String(p.metadata || '{}')); } catch (parseError) {
         throw new Error('Shop metadata is invalid JSON');
       }
-      var existingMetadataFolder = findShopBackupFolder(metadataShopId);
       // The proof authorizes metadata changes; never transmit the raw Recovery Key in a GET query.
       var metadataFolder = authorizeShopAccess(metadataShopId, metadataProof, true);
       var metadataName = sanitizeDriveName(metadata.shopName || 'Shop');
@@ -1440,6 +1439,7 @@ function doGet(e) {
           shopPartition: shopPartitionKey(metadataShopId),
           kind: metadata.kind === 'auto' ? 'auto' : 'manual'
         }),
+        ''
       );
       if (metadataWarnings.length) throw new Error('Google Drive shop metadata update was incomplete: ' + metadataWarnings.join(' | '));
       return json(ok({
