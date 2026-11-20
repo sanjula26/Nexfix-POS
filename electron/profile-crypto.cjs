@@ -292,7 +292,7 @@ async function createProfileKeyMaterial(profileId, safeStorage) {
 }
 
 
-const PASSPHRASE_SCRYPT = Object.freeze({ N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+const PASSPHRASE_SCRYPT = Object.freeze({ N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 });
 const PASSPHRASE_SALT_BYTES = 16;
 
 function validateLockPassphrase(passphrase) {
