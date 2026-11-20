@@ -5,6 +5,7 @@ import { Badge, EmptyState, Field, Modal, PageHeading, SearchInput } from '../co
 import { fmtDate, fmtRs } from '../lib/utils';
 import { getSupplierOutstanding, type SupplierPaymentMethod } from '../lib/supplierPayments';
 import SearchableSelect from '../components/SearchableSelect';
+import ReportPrintButton from '../components/ReportPrintButton';
 
 const METHODS: Array<{ value: SupplierPaymentMethod; label: string; icon: typeof Banknote }> = [
   { value: 'cash', label: 'Cash', icon: Banknote },
@@ -70,8 +71,8 @@ export default function SupplierPayments() {
   };
 
   return (
-    <div>
-      <PageHeading chip="Payables" chipTone="violet" title="Supplier Payments" sub={`${payments.length} payments recorded · ${fmtRs(totalOutstanding)} outstanding`} actions={<button className="btn btn-primary" onClick={() => { setSupplierId(''); setAmount(''); setError(''); }}><Plus size={15} /> New Payment</button>} />
+    <div className="report-print">
+      <PageHeading chip="Payables" chipTone="violet" title="Supplier Payments" sub={`${payments.length} payments recorded · ${fmtRs(totalOutstanding)} outstanding`} actions={<div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-primary" onClick={() => { setSupplierId(''); setAmount(''); setError(''); }}><Plus size={15} /> New Payment</button></div>} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Supplier outstanding</div><div className="num text-xl font-extrabold text-amber-600 mt-1">{fmtRs(totalOutstanding)}</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Payments recorded</div><div className="num text-xl font-extrabold text-emerald-600 mt-1">{fmtRs(totalPaid)}</div></div>
