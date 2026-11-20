@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, CalendarDays, Download, Banknote, TrendingUp, Trophy,
   ReceiptText, Wallet, CreditCard, Banknote as Bank, Smartphone, Landmark, HandCoins,
   ArrowRight, ArrowDownRight, ArrowUpRight, Minus, GitCompareArrows, CalendarX2,
+  PackageCheck, Boxes, AlertTriangle, RotateCcw,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -33,7 +35,8 @@ type CompareMode = 'none' | 'previous' | 'custom' | 'lastmonth' | 'lastyear';
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 export default function Reports() {
-  const { state } = usePOS();
+  const { state, can } = usePOS();
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodKey>('week');
   const [custom, setCustom] = useState({ from: dkey(new Date(Date.now() - 6 * 86400000)), to: dkey(new Date()) });
   const [compareMode, setCompareMode] = useState<CompareMode>('previous');
@@ -212,6 +215,27 @@ export default function Reports() {
   const customRangeError = period === 'custom' && custom.from > custom.to;
   const customCompareError = compareMode === 'custom' && compareFrom && compareTo && compareFrom > compareTo;
 
+  const reportGroups = [
+    { title: 'Sales Reports', description: 'Bills, returns and sales activity', items: [
+      { label: 'Sales History', detail: 'Search and review completed bills', path: '/sales', permission: 'page:sales', icon: ReceiptText },
+      { label: 'Returns & Exchanges', detail: 'Review exchange transactions', path: '/exchanges', permission: 'page:exchanges', icon: GitCompareArrows },
+    ]},
+    { title: 'Stock Reports', description: 'Inventory, receiving and stock alerts', items: [
+      { label: 'Stock Balance', detail: 'View products and current quantities', path: '/inventory', permission: 'page:inventory', icon: Boxes },
+      { label: 'Low Stock Items', detail: 'Find products that need replenishment', path: '/low-stock', permission: 'page:reports', icon: AlertTriangle },
+      { label: 'GRN Report', detail: 'Search received notes and supplier records', path: '/grn-report', permission: 'page:purchases', icon: PackageCheck },
+      { label: 'Tracked Units', detail: 'Find IMEI, serial and unit records', path: '/units', permission: 'page:units', icon: Smartphone },
+    ]},
+    { title: 'Profit & Finance', description: 'Profit, expenses and supplier payments', items: [
+      { label: 'Sales & Profit Analytics', detail: 'Current date-wise sales and profit dashboard', path: '#analytics', permission: 'page:reports', icon: TrendingUp, current: true },
+      { label: 'Expenses', detail: 'Review recorded business expenses', path: '/expenses', permission: 'page:expenses', icon: CreditCard },
+      { label: 'Supplier Payments', detail: 'Review supplier payment records', path: '/supplier-payments', permission: 'page:suppliers', icon: HandCoins },
+    ]},
+    { title: 'More Reports', description: 'Purchasing and other business records', items: [
+      { label: 'Supplier Returns', detail: 'Review and create supplier returns', path: '/purchase-return', permission: 'page:purchases', icon: RotateCcw },
+    ]},
+  ];
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
@@ -224,6 +248,39 @@ export default function Reports() {
           <Download size={15} /> Export CSV
         </button>
       </div>
+
+      <section className="card p-5 mb-6" aria-label="Report Center">
+        <div className="flex flex-wrap items-end justify-between gap-2 mb-5">
+          <div><h2 className="text-lg font-extrabold text-ink">Report Center</h2><p className="text-sm text-sub mt-1">Choose a section to open the report or business records you need.</p></div>
+          <Badge tone="blue">{reportGroups.reduce((n, group) => n + group.items.filter(item => can(item.permission)).length, 0)} available views</Badge>
+        </div>
+        <div className="space-y-5">
+          {reportGroups.map(group => {
+            const available = group.items.filter(item => can(item.permission));
+            if (!available.length) return null;
+            return (
+              <section key={group.title}>
+                <div className="flex items-center gap-3 mb-3"><div className="h-px flex-1 bg-line" /><div className="text-xs font-extrabold uppercase tracking-wider text-sub">{group.title}</div><div className="h-px flex-1 bg-line" /></div>
+                <p className="text-xs text-faint mb-3 text-center">{group.description}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {available.map(item => {
+                    const Icon = item.icon;
+                    return (
+                      <button key={item.label} type="button"
+                        onClick={() => item.current ? document.getElementById('reports-analytics')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : navigate(item.path)}
+                        className="group flex items-center gap-3 rounded-xl border border-line bg-raised/60 p-4 text-left transition-all hover:border-violet-500/50 hover:bg-violet-500/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600"><Icon size={20} /></span>
+                        <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-ink">{item.label}</span><span className="mt-1 block text-xs leading-relaxed text-sub">{item.detail}</span></span>
+                        <ArrowRight size={16} className="shrink-0 text-faint transition-transform group-hover:translate-x-1" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </section>
 
       {/* ============ machine performance ============ */}
       <div className={machineRows.length > 0 ? 'card p-5 mb-6' : 'card px-5 py-3 mb-6'}>
@@ -260,6 +317,7 @@ export default function Reports() {
         )}
       </div>
 
+      <div id="reports-analytics" className="scroll-mt-4" />
       {/* ============ date filter + compare panel ============ */}
       <div className="card p-5 mb-6">
         {/* primary quick tabs */}
