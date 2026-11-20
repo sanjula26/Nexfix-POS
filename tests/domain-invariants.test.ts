@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { buildDailySalesSummary } from '../src/lib/reporting.ts';
 import type { POSState } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
@@ -460,7 +461,6 @@ test('updater authorization recovery does not match unrelated or partial status 
 });
 
 
-import { buildDailySalesSummary } from '../src/lib/reporting.ts';
 
 test('daily sales report assigns partial and exchange refunds to their recorded dates', () => {
   const sales = [
