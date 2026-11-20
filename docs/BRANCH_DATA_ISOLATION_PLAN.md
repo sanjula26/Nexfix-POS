@@ -206,3 +206,10 @@ Read-only operational Supabase metadata/catalog review found two membership name
 New Auth users receive a default `profiles.role='cashier'` via `handle_new_user()`. That profile does not create a shop membership or branch grant. Staff provisioning must separately create an active operational membership and explicit branch grants under Owner/Admin authority.
 
 All findings are read-only source/catalog review; no schema, RLS, Auth users, memberships, device rows, branch grants or production data changed.
+## 16. Confirmed current Manager RLS gap — 2026-11-21
+
+Fresh read-only production `pg_policies` inspection confirms `private.is_shop_admin(shop_id)` is used by many RLS policies and its definition includes both `admin` and `manager`. Current Manager-inclusive policies grant shop-wide `ALL` on branch stock, branches, device-branch bindings, stock transfers and transfer lines, and manager write/delete rights across products, catalog, purchases/GRNs, inventory units, expenses, repairs, warranties, quotations, sales/items/payments, suppliers and other operational tables. Membership/profile read policies also use the same helper.
+
+PostgreSQL permissive policies combine with OR. Adding a new branch-scoped policy will not restrict an existing broad Manager-inclusive policy. The migration must replace/narrow every broad policy and audit RPCs/views/Owner Web while preserving Owner/Admin all-branch access. Do not globally change `private.is_shop_admin` without auditing every caller.
+
+This confirms production currently does not enforce the owner's approved Manager assigned-branch-only policy. No RLS policy/function/schema/data was changed; this is a high-priority implementation blocker.
