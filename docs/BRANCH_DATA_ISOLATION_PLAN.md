@@ -188,3 +188,10 @@ The owner approved proceeding with one individual authenticated Cloud account pe
 - Do not enable staff Cloud access until shop-wide snapshot/customer sync has been replaced by Owner/Admin global sync and branch-authorized projections, and a complete synthetic Branch A/B staging schema passes direct table/RPC, offline replay, account-switch and updater regression tests.
 
 See the Implementation Plan for the detailed proposed identity/session contract and rollout gates.
+## 14. Individual staff Cloud session separation — source review (2026-11-21)
+
+Current `src/lib/supabase.ts` creates one shared Auth client/storage key. `src/lib/cloudAuth.ts` attaches updater recovery persistence and can provision the private updater device credential. Staff operational-data identity must therefore use a distinct Auth client with its own explicit `auth.storageKey`, reusing only the existing OS-encrypted namespaced storage adapter; the current Admin/updater client and storage key remain unchanged. Supabase JS documents the `storageKey` option: https://supabase.com/docs/reference/javascript/initializing.
+
+Electron's secure storage key validator already accepts namespaced Supabase Auth token and PKCE verifier keys. However, the current Electron callback bridge has no renderer consumer or pending-callback retrieval API. Staff invite/magic-link callback routing must be explicitly implemented and tested before invitation-based onboarding; do not let two clients auto-consume one callback.
+
+Staff sign-in/out must not set the updater client's global sign-out marker, write the updater recovery record, register a POS device as updater Admin, or call `authorize_pos_updater_device`. Staff session login alone does not grant cloud operational data access: server-side staff mapping, explicit branch grants, RLS/RPC authorization and branch-safe sync must be deployed and tested first. This session design is documentation-only; no code or schema changed.
