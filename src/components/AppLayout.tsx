@@ -531,8 +531,16 @@ export default function AppLayout() {
         setUnlockLockedUntil(0);
         lastActivityRef.current = Date.now();
       } else {
+        const nextAttempts = unlockAttempts + 1;
         setUnlockCredential('');
-        setUnlockError('Incorrect password, admin unlock PIN, or authentication temporarily locked.');
+        if (nextAttempts >= 3) {
+          setUnlockAttempts(0);
+          setUnlockLockedUntil(Date.now() + 30_000);
+          setUnlockError('Too many failed unlock attempts. Try again in 30 seconds.');
+        } else {
+          setUnlockAttempts(nextAttempts);
+          setUnlockError('Incorrect password, admin unlock PIN, or authentication temporarily locked.');
+        }
       }
     } finally { setUnlockBusy(false); }
   };
