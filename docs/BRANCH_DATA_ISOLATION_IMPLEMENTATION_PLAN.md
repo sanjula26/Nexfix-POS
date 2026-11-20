@@ -494,3 +494,18 @@ Provisioning gap: there is currently no dedicated staff invitation/provisioning 
 - Owner Web's read-only Employees list displays only the current shop's active cloud members; it does not imply that every listed account has operational branch access.
 
 No Owner Web code, Edge Function, schema, Auth account or branch grant was changed; this is a source-grounded implementation gap and test plan.
+### Confirmed current RLS gap — Manager is still shop-wide in existing policies — 2026-11-21
+
+Fresh read-only `pg_policies` inspection confirms the current `private.is_shop_admin(shop_id)` helper is used in permissive RLS policies for both Admin and Manager. The helper definition includes `m.role IN ('admin','manager')`. Therefore the approved Manager assigned-branch-only model is not yet enforced by production RLS.
+
+Examples of existing Manager-inclusive policies include:
+
+- `ALL` branch-management policies on `branch_stock`, `branches`, `pos_device_branches`, `stock_transfers` and `stock_transfer_lines`.
+- Manager write/delete policies on `products`, `categories`, `brands`, `purchases`/`purchase_items`, `inventory_units`, `expenses`, `repairs`/`repair_parts`, `warranty_claims`, `quotations`/`quotation_items`, `sales`/`sale_items`/`sale_payments`, `suppliers`, `customers` deletion and `day_sessions` update/insert paths.
+- `shop_memberships` read policy and `profiles` read policy also use `private.is_shop_admin`, so Managers currently receive broad shop-level membership/profile visibility.
+
+These policies are permissive; PostgreSQL combines permissive policies with OR. Adding a narrow branch policy beside an existing Manager-inclusive shop-wide policy will not restrict access. A safe migration must replace or narrow each broad policy (and audit all RPCs/views/Owner Web paths) while retaining explicit Owner/Admin all-branch access. Never change the shared `private.is_shop_admin` helper globally as a shortcut without reviewing every caller, because existing functions may intentionally rely on its Manager behavior.
+
+Required negative tests must directly authenticate a Branch A Manager and prove that guessed Branch B row IDs and direct PostgREST/RPC calls fail across the tables above, while Owner/Admin can still access both branches and Manager can manage assigned-branch operations. Include cross-branch transfer source/destination checks and parent-child row checks.
+
+This is a confirmed production security gap relative to the newly approved policy, not a completed fix. No policy, function, schema or production data was changed in this audit.
