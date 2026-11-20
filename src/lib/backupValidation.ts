@@ -16,7 +16,7 @@ function hasPlainObjectShape(value: unknown): value is Record<string, unknown> {
 }
 
 function hasArray(value: unknown): value is unknown[] { return Array.isArray(value); }
-function hasArrayOrMissing(value: unknown): boolean { return value === undefined || value === null || Array.isArray(value); }
+function hasArrayOrMissing(value: unknown): boolean { return value === undefined || Array.isArray(value); }
 
 function hasUniqueStringIds(value: unknown[]): boolean {
   const ids = new Set<string>();
