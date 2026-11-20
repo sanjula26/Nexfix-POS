@@ -55,6 +55,85 @@ function getDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+
+export type ExistingPOSStateInspection =
+  | { status: 'missing_database' }
+  | { status: 'missing_state' }
+  | { status: 'present'; state: POSState; updatedAt?: string }
+  | { status: 'invalid_database' | 'invalid_state'; reason: string }
+  | { status: 'unavailable'; reason: string };
+
+/**
+ * Inspect an existing POS database without creating it, seeding it, or changing
+ * its schema. Profile recovery must use this before the normal boot path, because
+ * an absent state row can mean an incomplete/old profile rather than a new shop.
+ */
+export async function idbInspectExistingState(factory: IDBFactory = indexedDB): Promise<ExistingPOSStateInspection> {
+  if (!factory || typeof factory.databases !== 'function') {
+    return { status: 'unavailable', reason: 'This runtime cannot safely enumerate existing IndexedDB databases.' };
+  }
+
+  let db: IDBDatabase | null = null;
+  try {
+    const existingDatabases = await factory.databases();
+    if (!existingDatabases.some(info => info.name === DB_NAME)) {
+      return { status: 'missing_database' };
+    }
+
+    db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = factory.open(DB_NAME);
+      let unexpectedUpgrade = false;
+      request.onupgradeneeded = () => {
+        // The database disappeared between enumeration and open. Abort rather
+        // than creating a new, apparently valid empty POS database.
+        unexpectedUpgrade = true;
+        try { request.transaction?.abort(); } catch { /* request error handles this */ }
+      };
+      request.onsuccess = () => {
+        if (unexpectedUpgrade) {
+          request.result.close();
+          reject(new Error('The IndexedDB database changed during profile inspection.'));
+          return;
+        }
+        resolve(request.result);
+      };
+      request.onerror = () => reject(request.error || new Error('Existing POS database could not be opened.'));
+      request.onblocked = () => reject(new Error('Existing POS database is blocked by another open connection.'));
+    });
+
+    if (!db.objectStoreNames.contains(STORE_STATE)) {
+      return { status: 'invalid_database', reason: 'The existing database does not contain the POS state store.' };
+    }
+
+    const tx = db.transaction(STORE_STATE, 'readonly');
+    const rowRequest = idbReq<{ key: string; value: POSState; updatedAt?: string } | undefined>(
+      tx.objectStore(STORE_STATE).get('main'),
+    );
+    const txComplete = idbTransactionComplete(tx, 'Existing POS state inspection failed');
+    const row = await rowRequest;
+    await txComplete;
+
+    if (!row) return { status: 'missing_state' };
+    const state = row.value;
+    if (!state || typeof state !== 'object' || !Array.isArray(state.products) ||
+        !Array.isArray(state.users) || !Array.isArray(state.sales)) {
+      return { status: 'invalid_state', reason: 'The saved POS state is incomplete or has an unsupported shape.' };
+    }
+    return {
+      status: 'present',
+      state,
+      ...(typeof row.updatedAt === 'string' ? { updatedAt: row.updatedAt } : {}),
+    };
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      reason: error instanceof Error ? error.message : 'Existing POS database inspection failed.',
+    };
+  } finally {
+    try { db?.close(); } catch { /* best-effort close */ }
+  }
+}
+
 export async function idbLoadState():Promise<POSState|null>{
   try {
     const db=await getDB();
