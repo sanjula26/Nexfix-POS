@@ -157,7 +157,7 @@ export default function ReportView() {
       default:
         return {title:'Report not found',description:'Choose a report from the Report Center.',columns:['Status'],rows:[]};
     }
-  }, [from,to,reportType,state.customers,state.products,state.purchases,state.sales,state.supplierPayments,state.suppliers,state.units,today]);
+  }, [from,to,reportType,state.customers,state.inventoryTransactions,state.products,state.purchases,state.sales,state.supplierPayments,state.suppliers,state.units,today]);
 
   const filtered = useMemo(() => {
     const q=search.trim().toLowerCase();
