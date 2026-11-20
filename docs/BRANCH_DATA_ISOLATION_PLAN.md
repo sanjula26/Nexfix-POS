@@ -195,3 +195,14 @@ Current `src/lib/supabase.ts` creates one shared Auth client/storage key. `src/l
 Electron's secure storage key validator already accepts namespaced Supabase Auth token and PKCE verifier keys. However, the current Electron callback bridge has no renderer consumer or pending-callback retrieval API. Staff invite/magic-link callback routing must be explicitly implemented and tested before invitation-based onboarding; do not let two clients auto-consume one callback.
 
 Staff sign-in/out must not set the updater client's global sign-out marker, write the updater recovery record, register a POS device as updater Admin, or call `authorize_pos_updater_device`. Staff session login alone does not grant cloud operational data access: server-side staff mapping, explicit branch grants, RLS/RPC authorization and branch-safe sync must be deployed and tested first. This session design is documentation-only; no code or schema changed.
+## 15. Dual Cloud membership and profile-role boundary — 2026-11-21
+
+Read-only operational Supabase metadata/catalog review found two membership namespaces: `shops` + `shop_memberships` is the operational authorization source; `pos_shops` + `pos_shop_members` is the legacy updater/device namespace. `pos_devices` references the latter, while `pos_device_branches` references operational `shops`.
+
+`register_pos_device_impl()` mirrors an operational Manager into legacy `pos_shop_members.role='admin'` (and Admin to admin) for device registration. `authorize_pos_updater_device()` separately requires operational `shop_memberships.role='admin'`. A staff Cloud session must never call either updater/device registration path; never treat legacy `pos_shop_members.role` as the staff operational role.
+
+`profiles.role` is global per Auth user and has a different role check from shop-specific `shop_memberships.role`. The current profile privilege trigger permits Admin OR Manager to change `profiles.role`, `active` and `commission_pct` without binding the target profile to the same shop. The inspected sale RPC uses `shop_memberships.role` for its permission check, not `profiles.role`; nevertheless, profile role must not be used for authorization, and the trigger's cross-shop target scope needs separate review.
+
+New Auth users receive a default `profiles.role='cashier'` via `handle_new_user()`. That profile does not create a shop membership or branch grant. Staff provisioning must separately create an active operational membership and explicit branch grants under Owner/Admin authority.
+
+All findings are read-only source/catalog review; no schema, RLS, Auth users, memberships, device rows, branch grants or production data changed.
