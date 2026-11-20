@@ -789,10 +789,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       stateRef.current = { ...stateRef.current, users: nextUsers };
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
+    if (nextUser.role === 'admin') await upgradeLegacyAdminPin(password);
+    const initialPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: await hashPasswordAsync(password) } : s.settings,
+      settings: pinWasUnset ? { ...s.settings, adminPinHash: initialPinHash } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
