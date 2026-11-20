@@ -519,3 +519,9 @@ This is now connected to Electron main/preload IPC, but **not yet connected to t
 The next migration must add a fail-closed first-run/profile-selection gate before `POSProvider` calls `loadState()` or `idbLoadState()`; import the existing shop state and offline queue into encrypted profile files; verify the encrypted read-back; and only then disable plaintext IndexedDB writes for desktop profiles. Preserve browser/dev behavior separately. Do not delete the old IndexedDB database until encrypted state, queue, metadata, restore checkpoint, Google Drive backup and a tested rollback are all verified.
 
 No actual customer data was migrated, no real shop folder was selected, no ACL was changed outside disposable Windows test folders, and no production release or merge occurred.
+
+## Migration snapshot validation boundary
+
+The current read-only IndexedDB snapshot helper is a preflight building block, not a migration or an encrypted-storage activation. It reads the existing `app_state/main`, `app_state/restore_checkpoint`, every `sync_queue` row and `meta/backup` in one readonly transaction. It rejects malformed state/checkpoint records, unsupported queue operation types, missing required queue payload/note fields and invalid backup metadata. It does not create a database, seed a shop, write a migration marker, delete legacy rows or alter the schema.
+
+This snapshot does not yet inspect legacy localStorage POS state, the Google Drive backup key records, browser Local Storage secrets or other Chromium storage. Those require a separate explicit allowlist and secret-exclusion audit before profile adoption. Until the startup gate, encrypted live persistence adapters and backup/restore round-trip are implemented, the legacy IndexedDB remains authoritative and unencrypted in the existing app.
