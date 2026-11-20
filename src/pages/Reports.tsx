@@ -271,7 +271,7 @@ export default function Reports() {
       <section className="card p-5 mb-6 no-print" aria-label="Report Center">
         <div className="flex flex-wrap items-end justify-between gap-2 mb-5">
           <div><h2 className="text-lg font-extrabold text-ink">Report Center</h2><p className="text-sm text-sub mt-1">Choose a section to open the report or business records you need.</p></div>
-          <Badge tone="blue">{reportGroups.reduce((n, group) => n + group.items.filter(item => can(item.permission)).length, 0)} available views</Badge>
+          <Badge tone="blue">{reportGroups.reduce((n, group) => n + group.items.filter(item => ('adminOnly' in item && item.adminOnly) ? user?.role === 'admin' : can(item.permission || 'page:reports')).length, 0)} available views</Badge>
         </div>
         <div className="space-y-5">
           {reportGroups.map(group => {
