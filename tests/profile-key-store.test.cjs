@@ -13,6 +13,7 @@ const {
   validateProfileKeyEnvelope,
   changeProfileLockPassphrase,
   resetProfileLockPassphraseWithRecoveryKey,
+  rebindProfileDeviceKeyWithRecoveryKey,
 } = require('../electron/profile-key-store.cjs');
 const {
   unwrapDataKeyWithRecoveryKey,
@@ -32,6 +33,20 @@ function makeSafeStorage() {
       const text = Buffer.from(value).toString('utf8');
       if (!text.startsWith('mock-dpapi:')) throw new Error('bad mock wrapper');
       return text.slice('mock-dpapi:'.length);
+    },
+  };
+}
+
+
+function makeDeviceSafeStorage(prefix) {
+  return {
+    getSelectedStorageBackend: () => 'dpapi',
+    isEncryptionAvailable: () => true,
+    encryptString: value => Buffer.from(prefix + value, 'utf8'),
+    decryptString: value => {
+      const text = Buffer.from(value).toString('utf8');
+      if (!text.startsWith(prefix)) throw new Error('wrong device wrapper');
+      return text.slice(prefix.length);
     },
   };
 }
@@ -134,4 +149,35 @@ test('resets a forgotten folder-lock passphrase with the portable recovery key',
   assert.deepEqual(recovered, original);
   recovered.fill(0);
   original.fill(0);
+});
+
+test('rebinds the device-specific wrapper after Windows reinstall using the recovery key', async (t) => {
+  const directory = temporaryDirectory(t);
+  const oldDevice = makeDeviceSafeStorage('old-windows-install:');
+  const newDevice = makeDeviceSafeStorage('new-windows-install:');
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, oldDevice, PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+
+  const before = readProfileKeyEnvelope(directory, PROFILE_ID);
+  await assert.rejects(
+    rebindProfileDeviceKeyWithRecoveryKey(directory, PROFILE_ID, 'invalid-recovery-key', newDevice),
+  );
+  assert.deepEqual(readProfileKeyEnvelope(directory, PROFILE_ID), before);
+
+  const rebound = await rebindProfileDeviceKeyWithRecoveryKey(
+    directory, PROFILE_ID, created.recoveryKey, newDevice,
+  );
+  assert.notEqual(rebound.osWrappedKey.ciphertext, before.osWrappedKey.ciphertext);
+  await assert.rejects(
+    unwrapDataKeyWithOS(rebound.osWrappedKey, PROFILE_ID, oldDevice),
+    /cannot unlock/,
+  );
+  const newDeviceKey = await unwrapDataKeyWithOS(rebound.osWrappedKey, PROFILE_ID, newDevice);
+  const recoveryKeyData = unwrapDataKeyWithRecoveryKey(rebound.recoveryWrappedKey, created.recoveryKey, PROFILE_ID);
+  const passphraseData = await unwrapDataKeyWithPassphrase(rebound.passphraseWrappedKey, PASSPHRASE, PROFILE_ID);
+  assert.deepEqual(newDeviceKey, recoveryKeyData);
+  assert.deepEqual(newDeviceKey, passphraseData);
+  newDeviceKey.fill(0);
+  recoveryKeyData.fill(0);
+  passphraseData.fill(0);
 });
