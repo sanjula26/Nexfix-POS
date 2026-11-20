@@ -348,3 +348,15 @@ These are source-level authorization findings, not live exploit tests. No SQL, p
 - Main now classifies root `@tailwindcss/vite` and `tailwindcss` as development-only dependencies and carries an npm-generated lockfile. The production-only security audit passed on the merged commit; Electron runtime is updated to 44.11.4.
 - The full development/build-tool audit remains separate: 19 findings (14 high, 5 moderate), tracked in Issue #267. Do not force-downgrade Vite/electron-builder or suppress advisories to clear the report.
 - This plan remains documentation only. No production branch authorization, RLS policy, grants, snapshot policy, customer-sharing rule, or SQL migration has been changed. The approved customer/credit policy still requires implementation and isolated staging tests; supplier, repair, warranty and quotation visibility still need separate design/owner decisions.
+
+
+## Supabase environment readiness recheck — 2026-11-21 (metadata only)
+
+The connected Supabase project list and table/migration metadata were rechecked read-only:
+
+- The operational project contains 44 public tables and 159 recorded migrations; latest recorded migration is `20261110120537 add_expected_branch_stock_guard`.
+- Metadata reports 2 active branch rows, 3 `pos_device_branches` rows, 6 `pos_devices` rows, 1 active `shop_memberships` row, 35 sales rows, 3 customer rows and 0 `pos_state_snapshots` rows. No customer, sale, membership, device or other business row contents were queried in this recheck.
+- The connected project named `NexFix POS Staging` still contains only 5 public tables (`shop_memberships`, `pos_shops`, `pos_shop_members`, `pos_devices`, `pos_state_snapshots`) and 3 fixture migrations (`20261110131158`, `20261110131205`, `20261110131510`). It does not contain `sales`, `customers`, branch stock, purchases, repairs, or the production RLS/RPC topology.
+- Therefore this staging project cannot validate the customer/credit or complete branch-isolation migration. Do not copy production customer/sales data into it or treat the five-table fixture as a full-schema staging environment.
+- No SQL was executed, no schema/data was changed, and no migration was applied. A full-schema synthetic test environment is still required before implementation; creating or expanding that schema requires separate approval.
+
