@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
+import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck, Eye, FileBarChart } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
@@ -44,6 +44,8 @@ export default function GRN() {
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [search, setSearch] = useState('');
+  const [findError, setFindError] = useState('');
+  const [selectedGrn, setSelectedGrn] = useState<Purchase | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<Array<{ name: string; old: number; next: number }>>([]);
@@ -65,7 +67,15 @@ export default function GRN() {
     const blank = rows.findIndex(r => !r.productId);
     setRow(blank >= 0 ? blank : rows.length - 1, { productId: match.id });
   }, { enabled: view === 'form' && formMode === 'receive' && !actionRunning, force: true, minLength: 3 });
-  const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q)).sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q) || p.items.some(item => item.name.toLowerCase().includes(q))).sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  const findGrn = () => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) { setFindError('Enter a GRN number first.'); return; }
+    const match = state.purchases.find(p => p.poNo.trim().toLocaleLowerCase() === query);
+    if (!match) { setFindError('No GRN found with that number. Check the number or use the list search below.'); return; }
+    setFindError('');
+    setSelectedGrn(match);
+  };
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
     if (i !== index) return r;
@@ -230,7 +240,7 @@ export default function GRN() {
         chipTone="blue"
         title="Goods Received Notes"
         sub={processed.length + ' processed · ' + drafts.length + ' drafts'}
-        actions={<button className="btn btn-primary" onClick={startNew}><Plus size={15} /> New GRN</button>}
+        actions={<><button className="btn btn-outline" onClick={() => navigate('/grn-report')}><FileBarChart size={15} /> GRN Report</button><button className="btn btn-primary" onClick={startNew}><Plus size={15} /> New GRN</button></>}
       />
 
       {receivedForTags.length > 0 && <div className="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-emerald-500/30 bg-emerald-500/[0.05]"><div><div className="font-bold text-ink">GRN processed successfully</div><div className="text-sm text-sub mt-1">Print product price labels for {receivedForTags.length} received product line(s). Received quantities will be preselected as label copies.</div></div>{can('page:pricetags') && <button className="btn btn-primary" onClick={() => { try { sessionStorage.setItem('nexfix_grn_price_tags_v1', JSON.stringify({ items: receivedForTags })); } catch { setFormError('Could not prepare the price-tag selection. Open Price Tags and select products manually.'); return; } navigate('/price-tags'); }}><Printer size={15}/> Print price tags for these items</button>}</div>}
@@ -495,10 +505,19 @@ export default function GRN() {
       ) : (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-line">
-            <div className="relative max-w-md">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-              <input className="input pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search GRN, supplier or invoice..." />
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1 max-w-xl">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+                <input className="input pl-9" value={search}
+                  onChange={e => { setSearch(e.target.value); setFindError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') findGrn(); }}
+                  placeholder="Enter GRN number (or search supplier, invoice or item)…"
+                  aria-label="Find a saved GRN by number" />
+              </div>
+              <button type="button" className="btn btn-primary" onClick={findGrn}><Search size={14} /> Find GRN</button>
             </div>
+            {findError && <p role="status" className="mt-2 text-xs font-medium text-rose-600">{findError}</p>}
+            <p className="mt-2 text-xs text-faint">Enter the exact GRN number and select Find GRN to open the saved record. The list below also filters as you type.</p>
           </div>
           {list.length === 0 ? (
             <EmptyState icon={<ClipboardCheck size={26} />} title="No GRNs found" sub="Create a GRN draft to record incoming stock." />
@@ -519,6 +538,7 @@ export default function GRN() {
                       <td className="td">
                         <div className="flex justify-end gap-1">
                           {p.status === 'pending' && <button className="icon-btn !w-8 !h-8" title="Edit" onClick={() => edit(p)} disabled={actionRunning}><Pencil size={14} /></button>}
+                          <button className="icon-btn !w-8 !h-8" title="View GRN details" aria-label={`View GRN ${p.poNo}`} onClick={() => setSelectedGrn(p)} disabled={actionRunning}><Eye size={14} /></button>
                           <button className="icon-btn !w-8 !h-8" title="Print" onClick={() => { setPrintReady(false); setPrintPreview({ grn: p, html: grnPrintHtml(p, state.settings.shopName) }); }} disabled={actionRunning}><Printer size={14} /></button>
                           {p.status === 'pending' && (
                             <button
@@ -549,6 +569,38 @@ export default function GRN() {
           )}
         </div>
       )}
+
+      <Modal open={!!selectedGrn} onClose={() => setSelectedGrn(null)}
+        title={selectedGrn ? `GRN ${selectedGrn.poNo}` : 'GRN details'}
+        sub={selectedGrn ? `${selectedGrn.supplierName} · ${fmtDate(selectedGrn.date)}` : undefined}
+        wide
+        footer={selectedGrn ? (
+          <div className="flex flex-wrap justify-between gap-2">
+            <Badge tone={selectedGrn.status === 'received' ? 'emerald' : 'amber'}>{selectedGrn.status === 'received' ? 'PROCESSED — STOCK RECEIVED' : 'DRAFT — STOCK NOT YET RECEIVED'}</Badge>
+            <div className="flex gap-2">
+              <button className="btn btn-soft" onClick={() => { setPrintReady(false); setPrintPreview({ grn: selectedGrn, html: grnPrintHtml(selectedGrn, state.settings.shopName) }); setSelectedGrn(null); }}><Printer size={14} /> Print</button>
+              <button className="btn btn-primary" onClick={() => setSelectedGrn(null)}>Close</button>
+            </div>
+          </div>
+        ) : undefined}>
+        {selectedGrn && <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Supplier</div><div className="mt-1 font-bold text-ink">{selectedGrn.supplierName}</div></div>
+            <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Supplier invoice</div><div className="mt-1 font-bold text-ink">{selectedGrn.supplierInvoiceNo || '—'}</div></div>
+            <div className="rounded-xl border border-line bg-raised p-3"><div className="text-xs text-sub">Total value</div><div className="mt-1 font-extrabold text-ink num">{fmtRs(selectedGrn.total)}</div></div>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="w-full min-w-[520px]">
+              <thead><tr><th className="th">Item</th><th className="th text-right">Qty</th><th className="th text-right">Unit Cost</th><th className="th text-right">Line Total</th></tr></thead>
+              <tbody>{selectedGrn.items.map((item, index) => <tr key={`${selectedGrn.id}-${index}`}>
+                <td className="td font-semibold">{item.name}</td><td className="td text-right num">{item.qty}</td>
+                <td className="td text-right num">{fmtRs(item.cost)}</td><td className="td text-right num font-bold">{fmtRs(item.qty * item.cost)}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          {selectedGrn.notes && <div className="rounded-xl border border-line p-3"><div className="text-xs font-bold text-sub mb-1">Notes</div><p className="text-sm text-ink whitespace-pre-wrap">{selectedGrn.notes}</p></div>}
+        </div>}
+      </Modal>
 
       <Modal open={!!confirmId} onClose={() => !actionRunning && setConfirmId(null)} title="Process GRN?" sub="Stock will be added once, and the GRN becomes immutable.">
         <p className="text-sm text-sub">This action updates inventory and records the receipt in the inventory ledger. It cannot be repeated after processing.</p>
