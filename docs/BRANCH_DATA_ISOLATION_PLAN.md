@@ -47,7 +47,7 @@ Recommended target:
 - Require active membership, active branch, explicit branch grant and—where applicable—registered device-to-branch binding for branch operations.
 - Keep local POS role checks for local screens and actions, but never treat local role labels as Supabase identity or as an RLS authorization claim.
 - Decide whether each terminal has its own cloud identity. If the same owner cloud account is signed in on every branch terminal, RLS will regard those terminals as the same user. Either intentionally grant that identity all assigned branches or move branch-level access to distinct cloud identities / a signed server-verifiable device authorization design. Never trust a raw renderer-supplied device_id as the sole read authorization credential.
-- Admin/owner cross-branch access must be explicit and audited. Managers should be branch-scoped by default unless the owner grants multiple branches.
+- Admin/owner cross-branch access must be explicit and audited. Managers may access only branch(es) explicitly assigned to them; the Manager role itself never grants cross-branch access. Additional branches require an explicit assignment by Owner/Admin.
 
 ## 5. Database enforcement
 
