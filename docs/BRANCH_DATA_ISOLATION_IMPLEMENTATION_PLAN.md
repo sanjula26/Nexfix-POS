@@ -509,3 +509,12 @@ These policies are permissive; PostgreSQL combines permissive policies with OR. 
 Required negative tests must directly authenticate a Branch A Manager and prove that guessed Branch B row IDs and direct PostgREST/RPC calls fail across the tables above, while Owner/Admin can still access both branches and Manager can manage assigned-branch operations. Include cross-branch transfer source/destination checks and parent-child row checks.
 
 This is a confirmed production security gap relative to the newly approved policy, not a completed fix. No policy, function, schema or production data was changed in this audit.
+### Confirmed current SELECT RLS gap — every shop member can read many branch-owned tables — 2026-11-21
+
+Read-only `pg_policies` inspection of SELECT policies shows `private.is_shop_member(shop_id)` (active membership only, no branch grant) currently permits shop-wide reads of `sales`, `sale_items`, `sale_payments`, `purchases`, `purchase_items`, `purchase_returns` and child rows, `expenses`, `day_sessions`, `inventory_units`, `repairs` and `repair_parts`, `warranty_claims`, `quotations` and `quotation_items`, `customers`, `suppliers`, `audit_log`, `branches`, `branch_stock`, `branch_stock_adjustments`, `stock_transfers` and `stock_transfer_lines`, `pos_device_branches`, `products`, `categories`, `brands`, `kit_items`, `counters`, `owner_daily_sales` and shop rows.
+
+These policies are shop-membership checks only; they do not constrain a member to their assigned branch. The same permissive-policy OR rule applies: a new branch-only SELECT policy will not restrict these existing broad SELECT policies. Replace them with explicit Owner/Admin global reads plus staff branch-authorized predicates/projections. For tables without a durable `branch_id` (notably repairs/repair_parts and customers), design a safe parent/branch mapping or narrow RPC projection before enabling staff access; do not infer a branch from a client selector.
+
+Required direct-query tests: every Branch A staff account must be denied Branch B rows by unfiltered SELECT, guessed row ID, nested child relation, count/aggregate, view, export and Owner Web route; Owner/Admin must retain intended all-branch access. Also test unassigned, inactive and revoked branch grants.
+
+This confirms current production RLS does not enforce the approved branch visibility matrix. No policy/function/schema/data was changed.
