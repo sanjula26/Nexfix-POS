@@ -10,7 +10,7 @@ const {
 } = require('../electron/profile-acl.cjs');
 
 const USER_SID = 'S-1-5-21-111111111-222222222-333333333-1001';
-const PROFILE_PATH = 'D:\\\\NexfixData\\\\profile-001';
+const PROFILE_PATH = 'D:\\NexfixData\\profile-001';
 
 function fakeFs() {
   return {
