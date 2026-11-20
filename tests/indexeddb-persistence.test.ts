@@ -341,7 +341,7 @@ test('restore checkpoint read rejects a transaction that aborts after its reques
 
 
 test('offline queue read rejects a transaction that aborts after its request succeeds', async () => {
-  await idbEnqueue({ type: 'state_write_offline', note: 'transaction-abort-test' });
+  await idbEnqueue({ type: 'state_write', note: 'transaction-abort-test' });
   const originalTransaction = IDBDatabase.prototype.transaction;
   const originalGetAll = IDBObjectStore.prototype.getAll;
   let activeQueueRead: IDBTransaction | null = null;
