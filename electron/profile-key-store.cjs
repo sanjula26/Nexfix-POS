@@ -40,7 +40,7 @@ function validateWrappedKey(value, expectedProvider, profileId) {
       value.kdf?.name === 'scrypt' && value.kdf.N === 32768 && value.kdf.r === 8 && value.kdf.p === 3 &&
       isCanonicalBase64(value.salt, 16) && Buffer.from(value.salt, 'base64').length === 16 &&
       isCanonicalBase64(value.iv, 12) && Buffer.from(value.iv, 'base64').length === 12 &&
-      isCanonicalBase64(value.ciphertext, 0) &&
+      isCanonicalBase64(value.ciphertext, 32) && Buffer.from(value.ciphertext, 'base64').length === 32 &&
       isCanonicalBase64(value.tag, 16) && Buffer.from(value.tag, 'base64').length === 16;
   }
   return false;
