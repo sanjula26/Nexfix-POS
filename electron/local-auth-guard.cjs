@@ -17,7 +17,7 @@ function normalizeState(value) {
 
 function lockDuration(failures) {
   if (failures < MAX_FAILURES) return 0;
-  return Math.min(MAX_LOCK_MS, BASE_LOCK_MS * (2 ** Math.min(failures - MAX_FAILURES, 4)));
+  return Math.min(MAX_LOCK_MS, BASE_LOCK_MS * (2 ** Math.min(failures - MAX_FAILURES, 5)));
 }
 
 function recordFailure(state, now) {
