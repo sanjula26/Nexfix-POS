@@ -132,3 +132,43 @@ test('rejects a symlinked profile manifest', (t) => {
   fs.symlinkSync(outside, path.join(directory, PROFILE_MANIFEST_FILE));
   assert.throws(() => readProfileManifest(directory), /symbolic link/);
 });
+
+test('atomically creates a new managed profile and verifies its manifest', (t) => {
+  const root = temporaryDirectory(t);
+  const created = createManagedProfileDirectory(root, 'Shop Profile', {
+    profileId: PROFILE_ID,
+    label: 'Nexfix Shop',
+    dataSchemaVersion: 1,
+    now: NOW,
+  });
+  assert.equal(created.directory, path.join(fs.realpathSync(root), 'Shop Profile'));
+  assert.equal(created.manifest.profileId, PROFILE_ID);
+  assert.deepEqual(readProfileManifest(created.directory), created.manifest);
+  assert.equal(fs.readdirSync(root).includes('Shop Profile'), true);
+  assert.equal(fs.readdirSync(root).some(name => name.endsWith('.staging')), false);
+});
+
+test('refuses to overwrite an existing profile folder', (t) => {
+  const root = temporaryDirectory(t);
+  const existing = path.join(root, 'Shop Profile');
+  fs.mkdirSync(existing);
+  fs.writeFileSync(path.join(existing, 'owner-data.txt'), 'preserve');
+  assert.throws(() => createManagedProfileDirectory(root, 'Shop Profile', {
+    profileId: PROFILE_ID, label: 'Nexfix Shop', dataSchemaVersion: 1, now: NOW,
+  }), /already exists/);
+  assert.equal(fs.readFileSync(path.join(existing, 'owner-data.txt'), 'utf8'), 'preserve');
+});
+
+test('rejects unsafe folder names and symlinked storage roots', (t) => {
+  const root = temporaryDirectory(t);
+  assert.throws(() => createManagedProfileDirectory(root, '../outside', {
+    profileId: PROFILE_ID, label: 'Nexfix Shop', dataSchemaVersion: 1, now: NOW,
+  }), /unsupported characters/);
+  if (process.platform !== 'win32') {
+    const link = path.join(root, 'linked-root');
+    fs.symlinkSync(root, link, 'dir');
+    assert.throws(() => createManagedProfileDirectory(link, 'Shop Profile', {
+      profileId: PROFILE_ID, label: 'Nexfix Shop', dataSchemaVersion: 1, now: NOW,
+    }), /real local folder/);
+  }
+});
