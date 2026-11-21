@@ -116,10 +116,18 @@ $differences = @(Compare-Object -ReferenceObject $retainedKeys -DifferenceObject
 if ($differences.Count -gt 0) {
   throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
 }
-$finalHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $activeKey --endpoint-url $r2Endpoint --region auto --output json
-if ($LASTEXITCODE -ne 0) { throw 'Active installer disappeared during R2 retention cleanup.' }
-$finalHead = ConvertFrom-Json -InputObject ($finalHeadJson -join "`n")
-if ([int64]$finalHead.ContentLength -ne [int64]$activeRows[0].installer_size) {
-  throw 'Active installer size changed during R2 retention cleanup.'
+# Re-verify every retained installer, including the rollback version, against
+# its immutable published size metadata after deletion has completed.
+foreach ($key in $retainedKeys) {
+  $retainedRows = @($publishedRows | Where-Object { [string]$_.installer_path -eq $key })
+  if ($retainedRows.Count -ne 1) {
+    throw "Retained R2 installer has missing or ambiguous published metadata: $key"
+  }
+  $retainedHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output json
+  if ($LASTEXITCODE -ne 0) { throw "Retained R2 installer disappeared during cleanup: $key" }
+  $retainedHead = ConvertFrom-Json -InputObject ($retainedHeadJson -join "`n")
+  if ([int64]$retainedHead.ContentLength -ne [int64]$retainedRows[0].installer_size) {
+    throw "Retained R2 installer size changed during cleanup: $key"
+  }
 }
 Write-Host "R2 retention verified: active release $($activeRows[0].version) remains and $($remainingKeys.Count) installer(s) are retained."
