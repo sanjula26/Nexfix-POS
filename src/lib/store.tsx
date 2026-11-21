@@ -21,7 +21,7 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
-import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, cacheBranchStockProduct, getDefaultBranchId, getPOSBranchId } from './branchStock';
+import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1065,14 +1065,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           }
           const cloudResult = await adjustBranchStockAtomic({
             shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id,
-            productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId,
+            productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId, refreshCache: false,
           });
           if (!cloudResult.ok) {
             pushAudit('DENIED', 'Product', 'Cloud stock edit was not committed: ' + (cloudResult.error || 'unknown error'));
             return false;
           }
-          if (branchCacheReady && applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
-          try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* server remains authoritative */ }
+          if (!cloudResult.alreadyCommitted && branchCacheReady && applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
+          let refreshed = false;
+          try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* server remains authoritative */ }
+          if (shouldReadBranchStockProductFallback(refreshed)) {
+            try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, normalized.id); } catch { /* next editor open will re-read */ }
+          }
         } else if (exists && supabaseConfigured) {
           if (branchCacheReady) {
             if (applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
@@ -1216,24 +1220,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
         return false;
       }
-      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty });
+      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false });
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
         return false;
       }
       const cachedProductQty = getCachedBranchStock(targetBranchId, id);
-      if (branchCacheReady && cachedProductQty !== null) {
+      if (!cloudResult.alreadyCommitted && branchCacheReady && cachedProductQty !== null) {
         applyBranchStockDeltas(targetBranchId, { [id]: amount });
       }
-      try { await refreshCloudBranchStock(shop.shopId, targetBranchId); } catch { /* cloud remains authoritative; refresh can retry */ }
-      if (expectedBranchQty !== undefined) {
-        if (cloudResult.alreadyCommitted) {
-          // A replay may have been committed before another POS changed stock;
-          // read the latest row instead of caching an assumed expected+delta.
-          try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* the next editor open will re-read */ }
-        } else {
-          cacheBranchStockProduct(targetBranchId, id, expectedBranchQty + amount);
-        }
+      let refreshed = false;
+      try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* cloud remains authoritative; refresh can retry */ }
+      if (shouldReadBranchStockProductFallback(refreshed)) {
+        // A replay may already have committed before another POS changed stock.
+        // Fall back to a single authoritative row read only when the full refresh failed.
+        try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* the next editor open will re-read */ }
       }
     } else if (supabaseConfigured) {
       let cacheApplied = false;

@@ -19,6 +19,7 @@ import {
   buildSupplierLedger,
   getSupplierOutstanding,
 } from '../src/lib/supplierPayments.ts';
+import { validateBranchStockEdit } from '../src/lib/branchStockEditor.ts';
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
@@ -26,6 +27,7 @@ import {
   getCachedBranchStock,
   isBranchStockCacheReady,
   isLocalMainStockReady,
+  shouldReadBranchStockProductFallback,
 } from '../src/lib/branchStock.ts';
 
 test('credit balance excludes allocations for other invoices', () => {
@@ -457,4 +459,66 @@ test('updater authorization recovery does not match unrelated or partial status 
   assert.equal(isUpdaterAuthorizationError('HTTP 500 Internal Server Error'), false);
   assert.equal(isUpdaterAuthorizationError('HTTP 1401 Internal Error'), false);
   assert.equal(isUpdaterAuthorizationError('network timeout'), false);
+});
+
+test('branch stock editor accepts a verified quantity increase and decrease', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 50,
+  };
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 55 }), { ok: true, delta: 5 });
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 42 }), { ok: true, delta: -8 });
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 50 }), { ok: true, delta: 0 });
+});
+
+test('branch stock editor rejects a changed shop or branch baseline', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 50,
+    nextQuantity: 55,
+  };
+  assert.equal(validateBranchStockEdit({ ...base, selectedBranchId: 'branch-b' }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, selectedShopId: 'shop-b' }).ok, false);
+});
+
+test('branch stock editor rejects missing, negative, fractional, and unsafe quantities', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    nextQuantity: 55,
+  };
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: null }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: -1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 1.5 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: Number.MAX_SAFE_INTEGER }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 50, nextQuantity: -1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 50, nextQuantity: 1.5 }).ok, false);
+});
+
+test('branch stock editor rejects oversized or invalid adjustment limits', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 0,
+    nextQuantity: 1_000_001,
+  };
+  assert.equal(validateBranchStockEdit(base).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, maxDelta: -1, nextQuantity: 1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, maxDelta: 1.5, nextQuantity: 1 }).ok, false);
+});
+
+
+test('branch stock refresh falls back to an authoritative product read only when the full branch refresh fails', () => {
+  assert.equal(shouldReadBranchStockProductFallback(true), false);
+  assert.equal(shouldReadBranchStockProductFallback(false), true);
 });
