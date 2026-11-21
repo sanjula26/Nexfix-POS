@@ -249,3 +249,51 @@ h1,h2,h3,.font-display { font-family:var(--font-display); }
   body.printing-price-tags:has(.price-tag-print-area--thermal) { }
   @page price-tag-thermal { size:80mm auto; margin:2mm; }
 }
+
+
+/* Report PDF / print layout. Only the active report page is printed. */
+@media print {
+  .report-print { page: report-print-page; }
+  @page report-print-page { size: A4 portrait; margin: 12mm; }
+  html, body, #root { background: #fff !important; color: #111 !important; }
+  body * { visibility: hidden !important; }
+  .report-print, .report-print * { visibility: visible !important; }
+  .report-print {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483000 !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .report-print button,
+  .report-print input,
+  .report-print select,
+  .report-print textarea,
+  .report-print [role="button"],
+  .report-print .no-print,
+  .report-print .no-print * { display: none !important; }
+  .report-print .overflow-x-auto,
+  .report-print .overflow-y-auto,
+  .report-print .overflow-auto { overflow: visible !important; max-height: none !important; height: auto !important; }
+  .report-print .card { box-shadow: none !important; background: #fff !important; color: #111 !important; border-color: #d1d5db !important; break-inside: avoid; }
+  .report-print table { width: 100% !important; min-width: 0 !important; border-collapse: collapse !important; }
+  .report-print th, .report-print td, .report-print .th, .report-print .td {
+    color: #111 !important;
+    border-color: #d1d5db !important;
+    background: #fff !important;
+    font-size: 9pt !important;
+  }
+  .report-print h1, .report-print h2, .report-print h3,
+  .report-print p, .report-print span, .report-print div { color: #111; }
+  .report-print svg { max-width: 100%; }
+  .report-print tr { break-inside: avoid; }
+  .report-print .grid { break-inside: avoid; }
+}

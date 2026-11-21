@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Download, Users, CalendarDays } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, PageHeading } from '../components/ui';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { dkey, downloadFile, fmtRs, fmtDate } from '../lib/utils';
 
 type SalesmanSale = { id:string; billNo:string; date:string; status:string; salesmanId?:string; cashierId?:string; subtotal:number; discount:number; items?:Array<{ discount?:number }>; total:number; amountPaid:number; profit?:number; payment:string };
@@ -35,8 +36,8 @@ export default function SalesmanCommission() {
     ];
     downloadFile(`nexfix-salesman-commission-${from}-to-${to}.csv`,data.map(row=>row.map(csv).join(',')).join('\n'),'text/csv;charset=utf-8');
   };
-  return <div className="space-y-5">
-    <PageHeading chip="Reports" chipTone="blue" title="Salesman Performance & Commission" sub="Read-only sales analytics grouped by the salesman recorded on each bill." actions={<button className="btn btn-primary" onClick={exportCsv} disabled={!rows.length}><Download size={15}/> Export CSV</button>}/>
+  return <div className="report-print space-y-5">
+    <PageHeading chip="Reports" chipTone="blue" title="Salesman Performance & Commission" sub="Read-only sales analytics grouped by the salesman recorded on each bill." actions={<div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-primary" onClick={exportCsv} disabled={!rows.length}><Download size={15}/> Export CSV</button></div>}/>
     {user?.role !== 'admin' && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm">Report access follows the existing Reports permission. Commission rates are read from user settings and are not payroll calculations.</div>}
     <div className="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
       <label className="text-sm font-semibold">From date<input type="date" className="input mt-1" value={from} max={to} onChange={e=>setFrom(e.target.value)}/></label>

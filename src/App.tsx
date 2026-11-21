@@ -24,6 +24,7 @@ const GRN = lazy(() => import('./pages/GRN'));
 const GRNReport = lazy(() => import('./pages/GRNReport'));
 const Purchases = lazy(() => import('./pages/Purchases'));
 const PurchaseReturn = lazy(() => import('./pages/PurchaseReturn'));
+const PurchaseReturnReport = lazy(() => import('./pages/PurchaseReturnReport'));
 const CSVImport = lazy(() => import('./pages/CSVImport'));
 const SalesHistory = lazy(() => import('./pages/SalesHistory'));
 const MobileTodaySales = lazy(() => import('./pages/MobileTodaySales'));
@@ -31,6 +32,7 @@ const TodaySalesLinks = lazy(() => import('./pages/TodaySalesLinks'));
 const Exchanges = lazy(() => import('./pages/Exchanges'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Reports = lazy(() => import('./pages/Reports'));
+const ReportView = lazy(() => import('./pages/ReportView'));
 const SalesmanCommission = lazy(() => import('./pages/SalesmanCommission'));
 const LowStockSuggestions = lazy(() => import('./pages/LowStockSuggestions'));
 const PriceTags = lazy(() => import('./pages/PriceTags'));
@@ -327,11 +329,13 @@ function AppRoutes() {
           <Route path="/grn" element={<PermissionProtected permission="page:purchases"><GRN /></PermissionProtected>} />
           <Route path="/grn-report" element={<PermissionProtected permission="page:purchases"><GRNReport /></PermissionProtected>} />
           <Route path="/purchase-return" element={<PermissionProtected permission="page:purchases"><PurchaseReturn /></PermissionProtected>} />
+          <Route path="/purchase-return-report" element={<PermissionProtected permission="page:purchases"><PurchaseReturnReport /></PermissionProtected>} />
           <Route path="/csv-import" element={<PermissionProtected adminOnly><CSVImport /></PermissionProtected>} />
           <Route path="/sales" element={<PermissionProtected permission="page:sales"><SalesHistory /></PermissionProtected>} />
           <Route path="/exchanges" element={<PermissionProtected permission="page:exchanges"><Exchanges /></PermissionProtected>} />
           <Route path="/expenses" element={<PermissionProtected permission="page:expenses"><Expenses /></PermissionProtected>} />
           <Route path="/reports" element={<PermissionProtected permission="page:reports"><Reports /></PermissionProtected>} />
+          <Route path="/reports/view/:reportType" element={<PermissionProtected permission="page:reports"><ReportView /></PermissionProtected>} />
           <Route path="/salesman-commission" element={<PermissionProtected permission="page:reports"><SalesmanCommission /></PermissionProtected>} />
           <Route path="/low-stock" element={<PermissionProtected permission="page:reports"><LowStockSuggestions /></PermissionProtected>} />
           <Route path="/price-tags" element={<PermissionProtected permission="page:pricetags"><PriceTags /></PermissionProtected>} />

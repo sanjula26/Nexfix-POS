@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ClipboardList, Download, PackageCheck, Clock4 } from 'lucide-react';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, PageHeading, SearchInput } from '../components/ui';
 import { dkey, downloadFile, fmtDate, fmtRs, inRange, periodRange, type PeriodKey } from '../lib/utils';
@@ -44,9 +45,9 @@ export default function GRNReport() {
   };
 
   return (
-    <div>
-      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button>} />
-      <div className="flex flex-wrap gap-2 mb-5">
+    <div className="report-print">
+      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button></div>} />
+      <div className="flex flex-wrap gap-2 mb-5 no-print">
         {PERIODS.map(p => <button key={p.key} className={`btn !text-xs ${period === p.key ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod(p.key)}>{p.label}</button>)}
         <button className={`btn !text-xs ${period === 'custom' ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod('custom')}>Custom</button>
         {period === 'custom' && <><input className="input !w-auto !py-1.5 text-xs" type="date" value={custom.from} onChange={e => setCustom(c => ({ ...c, from: e.target.value }))} /><input className="input !w-auto !py-1.5 text-xs" type="date" value={custom.to} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))} /></>}

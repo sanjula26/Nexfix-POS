@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart3, CalendarDays, Download, Banknote, TrendingUp, Trophy,
   ReceiptText, Wallet, CreditCard, Banknote as Bank, Smartphone, Landmark, HandCoins,
   ArrowRight, ArrowDownRight, ArrowUpRight, Minus, GitCompareArrows, CalendarX2,
+  PackageCheck, Boxes, AlertTriangle, RotateCcw, ClipboardList, Users,
 } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
   BarChart, Bar, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { usePOS } from '../lib/store';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { Badge, Avatar, EmptyState } from '../components/ui';
 import DatePicker from '../components/DatePicker';
 import { fmtRs, fmtNum, dkey, downloadFile, periodRange, inRange, PeriodKey } from '../lib/utils';
@@ -33,7 +36,8 @@ type CompareMode = 'none' | 'previous' | 'custom' | 'lastmonth' | 'lastyear';
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
 export default function Reports() {
-  const { state } = usePOS();
+  const { state, can, user } = usePOS();
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodKey>('week');
   const [custom, setCustom] = useState({ from: dkey(new Date(Date.now() - 6 * 86400000)), to: dkey(new Date()) });
   const [compareMode, setCompareMode] = useState<CompareMode>('previous');
@@ -212,18 +216,90 @@ export default function Reports() {
   const customRangeError = period === 'custom' && custom.from > custom.to;
   const customCompareError = compareMode === 'custom' && compareFrom && compareTo && compareFrom > compareTo;
 
+  const reportGroups = [
+    { title: 'Sales Reports', description: 'Sales by date, product, invoice and customer returns', items: [
+      { label: 'Date Wise Sales', detail: 'Daily sales totals for a selected date range', path: '/reports/view/date-wise-sales', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Item Wise Sales', detail: 'Quantity, sales value and cost by product', path: '/reports/view/item-wise-sales', permission: 'page:reports', icon: PackageCheck },
+      { label: 'Cashier Performance', detail: 'Bills, units, sales and recorded profit by cashier', path: '/reports/view/cashier-wise-sales', permission: 'page:reports', icon: Users },
+      { label: 'Payment Breakdown', detail: 'Cash, card, bank, mobile and credit payment totals', path: '/reports/view/payment-breakdown', permission: 'page:reports', icon: Wallet },
+      { label: 'Sales by Hour', detail: 'Find the busiest hours using completed bills', path: '/reports/view/sales-by-hour', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Day End Reports', detail: 'Cashier sign-offs and tender breakdown', path: '/day-close-report', permission: 'page:reports', adminOnly: true, icon: ReceiptText },
+      { label: 'Invoice Wise Sales', detail: 'Search bills, view invoices and reprint receipts', path: '/sales', permission: 'page:sales', icon: ReceiptText },
+      { label: 'Returns', detail: 'Review customer exchanges and return history', path: '/exchanges', permission: 'page:exchanges', icon: RotateCcw },
+    ]},
+    { title: 'Stock Reports', description: 'Current stock, expiry, receiving and product movement', items: [
+      { label: 'Stock Balance', detail: 'Current products, quantities and stock values', path: '/inventory', permission: 'page:inventory', icon: Boxes },
+      { label: 'Item Wise Stock', detail: 'Stock quantity and value for each product', path: '/reports/view/item-wise-stock', permission: 'page:reports', icon: PackageCheck },
+      { label: 'Expired Items', detail: 'Tracked units whose recorded expiry date has passed', path: '/reports/view/expired-items', permission: 'page:reports', icon: AlertTriangle },
+      { label: 'Low Stock Items', detail: 'Products at or below their reorder level', path: '/low-stock', permission: 'page:reports', icon: AlertTriangle },
+      { label: 'GRN Reports', detail: 'Received and pending goods-received records', path: '/grn-report', permission: 'page:purchases', icon: ClipboardList },
+      { label: 'GRN And Selling Reports', detail: 'Compare received quantities, sold quantities and current stock', path: '/reports/view/grn-selling', permission: 'page:reports', icon: GitCompareArrows },
+      { label: 'Stock Movement History', detail: 'Receipts, sales, returns and manual stock adjustments', path: '/reports/view/inventory-movements', permission: 'page:inventory', icon: ClipboardList },
+    ]},
+    { title: 'Profit Reports', description: 'Gross profit based on recorded sale line costs and prices', items: [
+      { label: 'Item Wise Profits', detail: 'Gross profit grouped by product', path: '/reports/view/item-wise-profits', permission: 'page:reports', icon: TrendingUp },
+      { label: 'Date Wise Profits', detail: 'Recorded profit grouped by sale date', path: '/reports/view/date-wise-profits', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Sales & Profit Analytics', detail: 'Charts and trends for the selected reporting period', path: '#analytics', permission: 'page:reports', icon: TrendingUp, current: true },
+      { label: 'Balance Sheet Overview', detail: 'Limited POS balance snapshot — not a full accounting statement', path: '/reports/view/balance-overview', permission: 'page:reports', icon: Landmark },
+    ]},
+    { title: 'More Reports', description: 'Customers, categories, expenses and supplier activity', items: [
+      { label: 'Member Wise Sales', detail: 'Sales grouped by customer or walk-in member', path: '/reports/view/member-wise-sales', permission: 'page:reports', icon: Users },
+      { label: 'Category Wise Sales', detail: 'Sales totals grouped by product category', path: '/reports/view/category-wise-sales', permission: 'page:reports', icon: Boxes },
+      { label: 'Expenses Report', detail: 'Review expenses, categories and payment methods', path: '/expenses', permission: 'page:expenses', icon: CreditCard },
+      { label: 'Item Tracking', detail: 'Find IMEI, serial number and tracked unit status', path: '/units', permission: 'page:units', icon: Smartphone },
+      { label: 'Item Sales (Date Range)', detail: 'Product sales between selected dates', path: '/reports/view/item-sales-date-range', permission: 'page:reports', icon: CalendarDays },
+      { label: 'Supplier Wise Sales', detail: 'Sales and gross profit grouped by product supplier', path: '/reports/view/supplier-wise-sales', permission: 'page:reports', icon: HandCoins },
+      { label: 'Supplier Purchase History', detail: 'Received GRNs, purchased quantities and recorded payments', path: '/reports/view/supplier-purchase-history', permission: 'page:purchases', icon: HandCoins },
+      { label: 'Supplier Returns', detail: 'Debit notes and goods returned to suppliers', path: '/purchase-return-report', permission: 'page:purchases', icon: RotateCcw },
+      { label: 'Supplier Payments', detail: 'Supplier payments and outstanding balances', path: '/supplier-payments', permission: 'page:suppliers', icon: Wallet },
+    ]},
+  ];
+
   return (
-    <div>
+    <div className="report-print">
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
           <Badge tone="violet" className="uppercase mb-2"><BarChart3 size={11} /> Analytics</Badge>
           <h1 className="text-[26px] sm:text-3xl font-extrabold text-ink tracking-tight">Reports &amp; Analytics</h1>
           <p className="text-sm text-sub mt-1">Sales, profit, inventory insights with date picker</p>
         </div>
-        <button className="btn btn-outline-emerald bg-surface" onClick={exportCsv}>
+        <div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-outline-emerald bg-surface" onClick={exportCsv}>
           <Download size={15} /> Export CSV
-        </button>
+        </button></div>
       </div>
+
+      <section className="card p-5 mb-6 no-print" aria-label="Report Center">
+        <div className="flex flex-wrap items-end justify-between gap-2 mb-5">
+          <div><h2 className="text-lg font-extrabold text-ink">Report Center</h2><p className="text-sm text-sub mt-1">Choose a section to open the report or business records you need.</p></div>
+          <Badge tone="blue">{reportGroups.reduce((n, group) => n + group.items.filter(item => ('adminOnly' in item && item.adminOnly) ? user?.role === 'admin' : can(item.permission || 'page:reports')).length, 0)} available views</Badge>
+        </div>
+        <div className="space-y-5">
+          {reportGroups.map(group => {
+            const available = group.items.filter(item => ('adminOnly' in item && item.adminOnly) ? user?.role === 'admin' : can(item.permission || 'page:reports'));
+            if (!available.length) return null;
+            return (
+              <section key={group.title}>
+                <div className="flex items-center gap-3 mb-3"><div className="h-px flex-1 bg-line" /><div className="text-xs font-extrabold uppercase tracking-wider text-sub">{group.title}</div><div className="h-px flex-1 bg-line" /></div>
+                <p className="text-xs text-faint mb-3 text-center">{group.description}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {available.map(item => {
+                    const Icon = item.icon;
+                    return (
+                      <button key={item.label} type="button"
+                        onClick={() => ('current' in item && item.current) ? document.getElementById('reports-analytics')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : navigate(item.path)}
+                        className="group flex items-center gap-3 rounded-xl border border-line bg-raised/60 p-4 text-left transition-all hover:border-violet-500/50 hover:bg-violet-500/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
+                        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600"><Icon size={20} /></span>
+                        <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-ink">{item.label}</span><span className="mt-1 block text-xs leading-relaxed text-sub">{item.detail}</span></span>
+                        <ArrowRight size={16} className="shrink-0 text-faint transition-transform group-hover:translate-x-1" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </section>
 
       {/* ============ machine performance ============ */}
       <div className={machineRows.length > 0 ? 'card p-5 mb-6' : 'card px-5 py-3 mb-6'}>
@@ -260,6 +336,7 @@ export default function Reports() {
         )}
       </div>
 
+      <div id="reports-analytics" className="scroll-mt-4" />
       {/* ============ date filter + compare panel ============ */}
       <div className="card p-5 mb-6">
         {/* primary quick tabs */}

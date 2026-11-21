@@ -5,6 +5,7 @@ import { Badge, EmptyState, Field, Modal, PageHeading, SearchInput } from '../co
 import { fmtDate, fmtRs } from '../lib/utils';
 import { getSupplierOutstanding, type SupplierPaymentMethod } from '../lib/supplierPayments';
 import SearchableSelect from '../components/SearchableSelect';
+import ReportPrintButton from '../components/ReportPrintButton';
 
 const METHODS: Array<{ value: SupplierPaymentMethod; label: string; icon: typeof Banknote }> = [
   { value: 'cash', label: 'Cash', icon: Banknote },
@@ -70,14 +71,14 @@ export default function SupplierPayments() {
   };
 
   return (
-    <div>
-      <PageHeading chip="Payables" chipTone="violet" title="Supplier Payments" sub={`${payments.length} payments recorded · ${fmtRs(totalOutstanding)} outstanding`} actions={<button className="btn btn-primary" onClick={() => { setSupplierId(''); setAmount(''); setError(''); }}><Plus size={15} /> New Payment</button>} />
+    <div className="report-print">
+      <PageHeading chip="Payables" chipTone="violet" title="Supplier Payments" sub={`${payments.length} payments recorded · ${fmtRs(totalOutstanding)} outstanding`} actions={<div className="flex flex-wrap gap-2"><ReportPrintButton /><button className="btn btn-primary" onClick={() => { setSupplierId(''); setAmount(''); setError(''); }}><Plus size={15} /> New Payment</button></div>} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Supplier outstanding</div><div className="num text-xl font-extrabold text-amber-600 mt-1">{fmtRs(totalOutstanding)}</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Payments recorded</div><div className="num text-xl font-extrabold text-emerald-600 mt-1">{fmtRs(totalPaid)}</div></div>
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Suppliers</div><div className="num text-xl font-extrabold text-ink mt-1">{state.suppliers.length}</div></div>
       </div>
-      <div className="card p-4 mb-5">
+      <div className="card p-4 mb-5 no-print">
         <div className="grid md:grid-cols-2 gap-4">
           <Field label="Supplier"><SearchableSelect value={supplierId} options={state.suppliers} onChange={v => { setSupplierId(v); setPurchaseId(''); setError(''); }} placeholder="Search supplier by name or phone…" ariaLabel="Payment supplier" clearable getLabel={s => s.name} getSearchText={s => [s.name,s.phone].filter(Boolean).join(' ')} renderOption={s => <><div className="font-semibold text-ink text-sm">{s.name}</div><div className="text-[11px] text-sub">{s.phone}</div></>} /></Field>
           <Field label="Amount (Rs.)" hint={supplier ? (purchaseId && selectedPurchase ? `Purchase outstanding: ${fmtRs(selectedPurchaseOutstanding)}` : `Outstanding: ${fmtRs(outstanding)}`) : undefined}><input className="input num" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" /></Field>
@@ -89,7 +90,7 @@ export default function SupplierPayments() {
         <div className="flex justify-end mt-4"><button className="btn btn-primary" onClick={save}><WalletCards size={15} /> Record payment</button></div>
       </div>
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-line"><SearchInput value={search} onChange={setSearch} placeholder="Search supplier, method or note..." className="max-w-md" /></div>
+        <div className="p-4 border-b border-line no-print"><SearchInput value={search} onChange={setSearch} placeholder="Search supplier, method or note..." className="max-w-md" /></div>
         {rows.length === 0 ? <EmptyState icon={<Banknote size={26} />} title="No supplier payments" sub="Record a payment after receiving a purchase." /> : <div className="overflow-x-auto"><table className="w-full min-w-[760px]"><thead><tr><th className="th">Date</th><th className="th">Supplier</th><th className="th">Reference</th><th className="th">Method</th><th className="th">Note</th><th className="th !text-right">Amount</th><th className="th !text-right">Actions</th></tr></thead><tbody>{rows.map(p => { const s = state.suppliers.find(x => x.id === p.supplierId); return <tr key={p.id} className="hover:bg-raised/40"><td className="td text-xs text-sub">{fmtDate(p.date)}</td><td className="td font-semibold">{s?.name || 'Unknown supplier'}</td><td className="td text-xs text-sub">{p.purchaseId ? (state.purchases.find(x => x.id === p.purchaseId)?.poNo || p.purchaseId) : 'General'}</td><td className="td"><Badge tone="slate">{p.method.toUpperCase()}</Badge></td><td className="td text-xs text-sub">{p.note || '—'}</td><td className="td num font-bold text-right">{fmtRs(p.amount)}</td><td className="td text-right">{can('act:deleteRecords') && <button className="icon-btn !w-8 !h-8 hover:!bg-rose-500/10 hover:!text-rose-500" onClick={() => setConfirmDelete(p.id)}><Trash2 size={14} /></button>}</td></tr>; })}</tbody></table></div>}
       </div>
       <Modal open={!!confirmDelete} onClose={() => setConfirmDelete(null)} title="Delete supplier payment?"><p className="text-sm text-sub">This removes the payment from the supplier account ledger. The original purchase remains unchanged.</p><div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { if (confirmDelete) deleteSupplierPayment(confirmDelete); setConfirmDelete(null); }}>Delete payment</button><button className="btn btn-soft flex-1" onClick={() => setConfirmDelete(null)}>Cancel</button></div></Modal>

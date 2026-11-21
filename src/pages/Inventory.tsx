@@ -8,6 +8,7 @@ import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, Field, EmptyState } from '../components/ui';
 import { fmtRs, fmtNum, uid, fmtDate } from '../lib/utils';
 import SearchableSelect from '../components/SearchableSelect';
+import ReportPrintButton from '../components/ReportPrintButton';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getCachedPOSDeviceBranchId, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isBranchStockCacheReady, isLocalMainStockReady } from '../lib/branchStock';
 import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
@@ -431,7 +432,7 @@ export default function Inventory() {
   };
 
   return (
-    <div>
+    <div className="report-print">
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
           <Badge tone="blue" className="uppercase mb-2"><Layers size={11} /> Stock Control</Badge>
@@ -442,6 +443,7 @@ export default function Inventory() {
         </div>
         {!branchStockReady && <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm">{branchStockLoadMessage || (multipleBranches && selectedBranchId === 'local-main' ? 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC before editing stock.' : 'Selected branch stock is not loaded. Connect online and reopen Inventory to refresh stock totals and adjustment actions.')}</div>}
         <div className="flex items-center gap-2.5">
+          <ReportPrintButton />
           {can('act:manageStock') && (
             <>
               <button type="button" className="btn btn-soft" disabled={!branchStockReady} title={!branchStockReady ? (multipleBranches && selectedBranchId === 'local-main' ? 'This POS is not assigned to an active branch' : 'Load selected branch stock before stock take') : 'Stock take'} onClick={() => { setStockCounts(Object.fromEntries(state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => [p.id, String(stockFor(p) ?? '')]))); setStockTakeOpen(true); }}>

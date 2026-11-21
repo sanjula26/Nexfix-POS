@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowLeftRight, ScanSearch, RotateCcw, Repeat2, ShieldAlert, CheckCircle2, CalendarClock } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, Modal, EmptyState, PageHeading } from '../components/ui';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { fmtRs, fmtDateTime, fmtDate } from '../lib/utils';
 import type { Sale } from '../lib/types';
 import { processSaleReturnAtomic, resolveSaleReturnLines, resolveCloudSaleIdByBillNo, ensureCloudShop } from '../lib/cloudSync';
@@ -223,9 +224,9 @@ export default function Exchanges() {
   };
 
   return (
-    <div>
-      <PageHeading chip="After-sales" chipTone="amber" title="Exchanges / Returns" sub={`${state.settings.exchangeDays}-day exchange policy · ${state.exchanges.length} exchanges processed`} />
-      <div className="card p-6 mb-6">
+    <div className="report-print">
+      <PageHeading chip="After-sales" chipTone="amber" title="Exchanges / Returns" sub={`${state.settings.exchangeDays}-day exchange policy · ${state.exchanges.length} exchanges processed`} actions={<ReportPrintButton />} />
+      <div className="card p-6 mb-6 no-print">
         <h3 className="font-bold text-ink flex items-center gap-2 mb-4"><span className="w-8 h-8 rounded-lg bg-violet-500/10 text-violet-500 flex items-center justify-center"><ArrowLeftRight size={15} /></span>Process Exchange</h3>
         <div className="flex flex-col sm:flex-row gap-2.5"><div className="relative flex-1"><ScanSearch size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" /><input className="input pl-9 num" placeholder="Bill number, IMEI or serial" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === 'Enter' && search()} /></div><button className="btn btn-primary" onClick={() => { void search(); }} disabled={!query.trim()}><ScanSearch size={15} /> Search Bill / IMEI</button></div>
         {searched && !bill && <div className="mt-5 rounded-xl border border-rose-500/25 bg-rose-500/[0.06] px-4 py-3.5 text-sm text-rose-500 font-medium flex items-center gap-2"><ShieldAlert size={16} /> No bill found for “{query}”. Check the number and try again.</div>}

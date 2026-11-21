@@ -5,6 +5,7 @@ import {
 import { usePOS } from '../lib/store';
 import { SearchInput, Badge, Modal, EmptyState, PageHeading, Avatar } from '../components/ui';
 import ReceiptModal, { buildWhatsAppText, getSaleTenderPayments } from '../components/ReceiptModal';
+import ReportPrintButton from '../components/ReportPrintButton';
 import { fmtRs, fmtDateTime, fmtNum, PAYMENT_LABEL, periodRange, inRange, salePayments, salePaymentLabel, openWhatsAppLink, normalizeWhatsAppPhone } from '../lib/utils';
 import type { Sale } from '../lib/types';
 
@@ -48,13 +49,13 @@ export default function SalesHistory() {
   const reversed = rows.filter(s => s.status === 'reversed').length;
 
   return (
-    <div>
+    <div className="report-print">
       <PageHeading
         chip="Transactions" chipTone="violet"
         title="Sales History"
         sub={`${fmtNum(rows.length)} bills · ${fmtRs(revenue)} revenue${refunded ? ` · ${refunded} refunded` : ''}${reversed ? ` · ${reversed} reversed` : ''}`}
         actions={
-          <div className="flex flex-wrap gap-1.5 bg-raised border border-line rounded-xl p-1">
+          <div className="flex flex-wrap items-center gap-2"><div className="flex flex-wrap gap-1.5 bg-raised border border-line rounded-xl p-1">
             {(['today', 'custom', 'week', 'month', 'all'] as RangeKey[]).map(r => (
               <button
                 key={r}
@@ -66,12 +67,12 @@ export default function SalesHistory() {
                 {{ today: 'Today', custom: 'Custom', week: 'This Week', month: 'This Month', all: 'All Time' }[r]}
               </button>
             ))}
-          </div>
+          </div><ReportPrintButton /></div>
         }
       />
 
       {range === 'custom' && (
-        <div className="card mb-4 p-4 flex flex-wrap items-center gap-2">
+        <div className="card mb-4 p-4 flex flex-wrap items-center gap-2 no-print">
           <span className="text-xs font-semibold text-sub">Custom date</span>
           <input type="date" className="input w-40" value={customFrom} onChange={e => setCustomFrom(e.target.value)} aria-label="Sales from date" />
           <span className="text-xs text-faint">to</span>
