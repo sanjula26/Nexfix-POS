@@ -201,4 +201,8 @@ test('pending Auth callback can be consumed once through trusted renderer IPC', 
   assert.ok(mainSource.includes("pendingAuthCallback = { code, flowId: flowId || undefined, audience }"), 'callback audience must travel with the pending code');
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
   assert.ok(preloadSource.includes("takePendingAuthCallback: () => ipcRenderer.invoke('auth:callback:take')"));
+  const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Settings.tsx'), 'utf8');
+  assert.ok(settingsSource.includes('void desktopApi.takePendingAuthCallback?.()'), 'Settings must consume a callback that arrived before React subscribed');
+  assert.ok(settingsSource.includes("if (audience === 'staff')"), 'staff callbacks must not be exchanged by the Admin/updater client');
+  assert.ok(settingsSource.includes('const key = `\${audience}:\${code}`;'), 'event and pending callback delivery must be de-duplicated');
 });
