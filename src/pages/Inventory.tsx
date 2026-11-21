@@ -52,6 +52,8 @@ export default function Inventory() {
   const saveInFlightRef = useRef(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
+  const [stockAdjBusy, setStockAdjBusy] = useState(false);
+  const stockAdjInFlightRef = useRef(false);
   const [restocking, setRestocking] = useState<Product | null>(null);
   const [restockQty, setRestockQty] = useState('1');
   const [restockCost, setRestockCost] = useState('');
@@ -67,6 +69,8 @@ export default function Inventory() {
   const [renameFrom, setRenameFrom] = useState('');
   const [renameTo, setRenameTo] = useState('');
   const [stockTakeOpen, setStockTakeOpen] = useState(false);
+  const [stockTakeBusy, setStockTakeBusy] = useState(false);
+  const stockTakeInFlightRef = useRef(false);
   const [stockCounts, setStockCounts] = useState<Record<string, string>>({});
   const [stockTakeReason, setStockTakeReason] = useState('Stock take adjustment');
   const [newUnitText, setNewUnitText] = useState('');
@@ -132,6 +136,58 @@ export default function Inventory() {
     if (!isBranchStockCacheReady(selectedBranchId, branchStockLoadedBranchId, hasCachedBranchStock(selectedBranchId), cachedDeviceBranchId, offline)) return null;
     return getCachedBranchStock(selectedBranchId, product.id);
   }, [shopId, selectedBranchId, multipleBranches, branchStockLoadedBranchId, branchStockCacheVersion, cachedDeviceBranchId, offline]);
+
+  const submitStockTake = async () => {
+    if (stockTakeInFlightRef.current || !branchStockReady) return;
+    stockTakeInFlightRef.current = true;
+    setStockTakeBusy(true);
+    try {
+      let changed = 0;
+      for (const product of state.products.filter(p => p.active && !p.trackImei && !p.trackSerial)) {
+        const systemQty = stockFor(product);
+        const counted = Number(stockCounts[product.id]);
+        const delta = Number.isFinite(counted) && systemQty !== null ? Math.round(counted - systemQty) : 0;
+        if (delta === 0) continue;
+        const ok = await adjustStock(product.id, delta, stockTakeReason.trim() || 'Stock take adjustment');
+        if (!ok) {
+          // Stop on the first rejected adjustment. The store invalidates and
+          // refreshes that product's server quantity when the compare-and-set
+          // conflict is detected, so reopening Stock Take starts from fresh data.
+          setStockTakeOpen(false);
+          setStockCounts({});
+          setBranchStockCacheVersion(version => version + 1);
+          window.alert('Stock take stopped because an adjustment was rejected. Reopen Stock Take to reload the current branch quantities before continuing.');
+          return;
+        }
+        changed++;
+      }
+      setStockTakeOpen(false);
+      setStockCounts({});
+      if (changed === 0) window.alert('No stock differences to post.');
+    } finally {
+      stockTakeInFlightRef.current = false;
+      setStockTakeBusy(false);
+    }
+  };
+
+  const submitStockAdjustment = async () => {
+    if (!stockAdj || stockAdjInFlightRef.current) return;
+    stockAdjInFlightRef.current = true;
+    setStockAdjBusy(true);
+    try {
+      const ok = await adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason);
+      setStockAdj(null);
+      setAdjDelta('');
+      if (!ok) {
+        // Never leave the stale modal quantity available for another attempt.
+        setBranchStockCacheVersion(version => version + 1);
+        window.alert('Stock adjustment was not committed. Reopen Adjust Stock to load the latest branch quantity before retrying.');
+      }
+    } finally {
+      stockAdjInFlightRef.current = false;
+      setStockAdjBusy(false);
+    }
+  };
 
   const products = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -703,25 +759,25 @@ export default function Inventory() {
         <div className="flex gap-2.5 mt-5"><button className="btn btn-danger-soft flex-1" onClick={() => { if (deleting) deleteProduct(deleting.id); setDeleting(null); }}><Trash2 size={15} /> Delete</button><button className="btn btn-soft flex-1" onClick={() => setDeleting(null)}>Keep product</button></div>
       </Modal>
 
-      <Modal open={stockTakeOpen} onClose={() => setStockTakeOpen(false)} title="Stock take" sub="Compare physical count with system quantity and post adjustments">
+      <Modal open={stockTakeOpen} onClose={() => { if (!stockTakeInFlightRef.current) setStockTakeOpen(false); }} title="Stock take" sub="Compare physical count with system quantity and post adjustments">
         <div className="space-y-4">
           <div className="rounded-xl bg-raised border border-line px-4 py-3 text-sm text-sub">Tracked IMEI/serial stock is excluded here. Reconcile those through Units/GRN.</div>
           <div className="max-h-[55vh] overflow-y-auto rounded-xl border border-line divide-y divide-line">
             {state.products.filter(p => p.active && !p.trackImei && !p.trackSerial).map(p => { const systemQty = stockFor(p); const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) && systemQty !== null ? counted - systemQty : 0; return <div key={p.id} className="p-3 flex items-center gap-3"><div className="min-w-0 flex-1"><div className="font-semibold text-ink truncate">{p.name}</div><div className="text-[11px] text-sub">System {systemQty === null ? '—' : systemQty} · Difference <span className={delta === 0 ? 'text-sub' : delta > 0 ? 'text-emerald-600' : 'text-rose-500'}>{delta > 0 ? '+' : ''}{delta}</span></div></div><input className="input num !w-28" type="number" min={0} value={stockCounts[p.id] ?? ''} onChange={e => setStockCounts(s => ({ ...s, [p.id]: e.target.value }))} /></div>; })}
           </div>
-          <Field label="Reason"><input className="input" value={stockTakeReason} onChange={e => setStockTakeReason(e.target.value)} /></Field>
-          <div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" onClick={() => setStockTakeOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!branchStockReady} onClick={async () => { let changed = 0; let failed = 0; for (const p of state.products.filter(p => p.active && !p.trackImei && !p.trackSerial)) { const systemQty = stockFor(p); const counted = Number(stockCounts[p.id]); const delta = Number.isFinite(counted) && systemQty !== null ? Math.round(counted - systemQty) : 0; if (delta !== 0) { if (await adjustStock(p.id, delta, stockTakeReason.trim() || 'Stock take adjustment')) changed++; else failed++; } } if (failed) { window.alert(`${failed} stock adjustment(s) failed. Review branch selection, stock availability and cloud/queue status, then retry the remaining differences.`); return; } setStockTakeOpen(false); setStockCounts({}); if (changed === 0) window.alert('No stock differences to post.'); }}>Post adjustments</button></div>
+          <Field label="Reason"><input className="input" value={stockTakeReason} disabled={stockTakeBusy} onChange={e => setStockTakeReason(e.target.value)} /></Field>
+          <div className="flex justify-end gap-2"><button type="button" className="btn btn-soft" disabled={stockTakeBusy} onClick={() => setStockTakeOpen(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!branchStockReady || stockTakeBusy} onClick={submitStockTake}>{stockTakeBusy ? 'Posting…' : 'Post adjustments'}</button></div>
         </div>
       </Modal>
-      <Modal open={!!stockAdj} onClose={() => setStockAdj(null)} title="Adjust stock" sub={stockAdj?.name}>
+      <Modal open={!!stockAdj} onClose={() => { if (!stockAdjInFlightRef.current) setStockAdj(null); }} title="Adjust stock" sub={stockAdj?.name}>
         {stockAdj && <div className="space-y-4">
           <div className="flex items-center justify-between rounded-xl bg-raised border border-line px-4 py-3"><span className="text-sm text-sub">Current stock</span><span className="num text-xl font-extrabold text-ink">{stockAdj.stock}</span></div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Quantity (+/-)"><div className="flex gap-2"><button className="btn btn-soft !px-3" onClick={() => setAdjDelta(d => String((parseFloat(d) || 0) - 1))}><Minus size={14} /></button><input className="input num text-center" value={adjDelta} onChange={e => setAdjDelta(e.target.value.replace(/[^\d-]/g, ''))} placeholder="e.g. 10 or -2" /><button className="btn btn-soft !px-3" onClick={() => setAdjDelta(d => String((parseFloat(d) || 0) + 1))}><Plus size={14} /></button></div></Field>
-            <Field label="Reason"><select className="input" value={adjReason} onChange={e => setAdjReason(e.target.value)}>{['Restock', 'Supplier return', 'Damaged / broken', 'Stock count fix', 'Internal use'].map(r => <option key={r}>{r}</option>)}</select></Field>
+            <Field label="Quantity (+/-)"><div className="flex gap-2"><button className="btn btn-soft !px-3" disabled={stockAdjBusy} onClick={() => setAdjDelta(d => String((parseFloat(d) || 0) - 1))}><Minus size={14} /></button><input className="input num text-center" value={adjDelta} disabled={stockAdjBusy} onChange={e => setAdjDelta(e.target.value.replace(/[^\d-]/g, ''))} placeholder="e.g. 10 or -2" /><button className="btn btn-soft !px-3" disabled={stockAdjBusy} onClick={() => setAdjDelta(d => String((parseFloat(d) || 0) + 1))}><Plus size={14} /></button></div></Field>
+            <Field label="Reason"><select className="input" value={adjReason} disabled={stockAdjBusy} onChange={e => setAdjReason(e.target.value)}>{['Restock', 'Supplier return', 'Damaged / broken', 'Stock count fix', 'Internal use'].map(r => <option key={r}>{r}</option>)}</select></Field>
           </div>
           {adjDelta && <p className="text-sm text-sub">New stock will be <b className="num text-ink">{Math.max(0, stockAdj.stock + (parseFloat(adjDelta) || 0))}</b></p>}
-          <button className="btn btn-primary w-full" disabled={!adjDelta || parseFloat(adjDelta) === 0 || user == null} onClick={async () => { const ok = await adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason); if (ok) setStockAdj(null); else window.alert('Stock adjustment was not committed. Check branch selection, available stock and cloud connection.'); }}><Boxes size={15} /> Apply adjustment</button>
+          <button className="btn btn-primary w-full" disabled={stockAdjBusy || !adjDelta || parseFloat(adjDelta) === 0 || user == null} onClick={submitStockAdjustment}><Boxes size={15} /> {stockAdjBusy ? 'Saving…' : 'Apply adjustment'}</button>
         </div>}
       </Modal>
 
