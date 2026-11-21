@@ -518,9 +518,7 @@ test('branch stock editor rejects oversized or invalid adjustment limits', () =>
 });
 
 
-test('branch stock refresh uses a single-product fallback only when a committed replay could not refresh the branch cache', () => {
-  assert.equal(shouldReadBranchStockProductFallback(true, true), false);
-  assert.equal(shouldReadBranchStockProductFallback(true, false), false);
-  assert.equal(shouldReadBranchStockProductFallback(false, false), false);
-  assert.equal(shouldReadBranchStockProductFallback(false, true), true);
+test('branch stock refresh falls back to an authoritative product read only when the full branch refresh fails', () => {
+  assert.equal(shouldReadBranchStockProductFallback(true), false);
+  assert.equal(shouldReadBranchStockProductFallback(false), true);
 });
