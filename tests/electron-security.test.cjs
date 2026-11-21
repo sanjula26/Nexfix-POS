@@ -187,3 +187,32 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+test('Electron main registers the POS profile session and clears its key on shutdown', () => {
+  assert.match(mainSource, /registerPOSProfileIpc\(\{/);
+  assert.match(mainSource, /safeStorage,\s*isTrustedRenderer,/);
+  assert.match(mainSource, /app\.on\('will-quit',\s*\(\)\s*=>\s*\{\s*try\s*\{\s*posProfileIpc\.lock\(\)/);
+});
+
+test('preload exposes only scoped POS profile operations, not the raw data key', () => {
+  const preloadSource = fs.readFileSync(
+    path.join(__dirname, '..', 'electron', 'preload.cjs'),
+    'utf8',
+  );
+  for (const method of [
+    'choosePOSStorageRoot',
+    'discoverPOSProfiles',
+    'createPOSProfile',
+    'unlockPOSProfile',
+    'recoverPOSProfile',
+    'getPOSProfileStatus',
+    'lockPOSProfile',
+    'readPOSProfileData',
+    'writePOSProfileData',
+    'changePOSFolderLockPassphrase',
+    'resetPOSFolderLockPassphrase',
+  ]) {
+    assert.match(preloadSource, new RegExp(method + ':'));
+  }
+  assert.doesNotMatch(preloadSource, /dataKey|rawProfileKey|exportProfileKey/i);
+});
