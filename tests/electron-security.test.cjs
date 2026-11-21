@@ -197,6 +197,8 @@ test('pending Auth callback can be consumed once through trusted renderer IPC', 
   assert.ok(handler.includes('const callback=pendingAuthCallback;'), 'handler must read the pending callback');
   assert.ok(handler.includes('pendingAuthCallback=null;'), 'handler must clear the callback after reading it');
   assert.ok(handler.includes('return callback;'), 'handler must return the callback to the trusted renderer');
+  assert.ok(mainSource.includes("parsed.hostname === 'staff-auth' ? 'staff' : parsed.hostname === 'auth' ? 'admin' : ''"), 'Admin and staff callback audiences must be separated');
+  assert.ok(mainSource.includes("pendingAuthCallback = { code, flowId: flowId || undefined, audience }"), 'callback audience must travel with the pending code');
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
   assert.ok(preloadSource.includes("takePendingAuthCallback: () => ipcRenderer.invoke('auth:callback:take')"));
 });
