@@ -611,3 +611,9 @@ test('stock adjustment uses compare-and-set for verified online cloud quantities
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, -1), undefined);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 1.5), undefined);
 });
+
+test('Adjust Stock and Stock Take pass verified online quantities to the store', () => {
+  const inventorySource = readFileSync(new URL('../src/pages/Inventory.tsx', import.meta.url), 'utf8');
+  assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
+  assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
+});
