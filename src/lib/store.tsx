@@ -1074,7 +1074,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (!cloudResult.alreadyCommitted && branchCacheReady && applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
           let refreshed = false;
           try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* server remains authoritative */ }
-          if (shouldReadBranchStockProductFallback(refreshed, cloudResult.alreadyCommitted === true)) {
+          if (shouldReadBranchStockProductFallback(refreshed)) {
             try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, normalized.id); } catch { /* next editor open will re-read */ }
           }
         } else if (exists && supabaseConfigured) {
@@ -1231,7 +1231,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       let refreshed = false;
       try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* cloud remains authoritative; refresh can retry */ }
-      if (shouldReadBranchStockProductFallback(refreshed, cloudResult.alreadyCommitted === true)) {
+      if (shouldReadBranchStockProductFallback(refreshed)) {
         // A replay may already have committed before another POS changed stock.
         // Fall back to a single authoritative row read only when the full refresh failed.
         try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* the next editor open will re-read */ }
