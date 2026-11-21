@@ -31,7 +31,8 @@ $headers = @{
 if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
   $headers.Authorization = "Bearer $supabaseApiKey"
 }
-$activeRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_path,installer_size" -Headers $headers)
+$publishedRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc" -Headers $headers)
+$activeRows = @($publishedRows | Where-Object { [bool]$_.is_active })
 if ($activeRows.Count -ne 1) {
   throw "Expected exactly one active private Windows release; found $($activeRows.Count). No R2 objects were changed."
 }
@@ -71,9 +72,24 @@ if ([int64]$activeHead.ContentLength -ne [int64]$activeRows[0].installer_size) {
   throw 'Active R2 installer size does not match the Supabase release record. No objects were changed.'
 }
 
-# Always keep the active database-published installer, even if an older release
-# is re-run. Fill the other two slots with the newest versions by semantic version.
-$newestOtherInstallers = @($versionedInstallers | Where-Object { $_.Key -ne $activeKey } | Select-Object -First ($maxRetainedReleases - 1))
+# Keep the active release plus the newest previously published inactive release
+# that still exists in R2 and matches its immutable database size metadata. This
+# prevents an uploaded-but-never-published orphan from becoming a rollback version.
+$newestOtherInstallers = @()
+$previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [string]$_.installer_path -ne $activeKey })
+foreach ($previous in $previousRows) {
+  $candidate = @($versionedInstallers | Where-Object { $_.Key -eq [string]$previous.installer_path })
+  if ($candidate.Count -ne 1) { continue }
+  $previousHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$previous.installer_path) --endpoint-url $r2Endpoint --region auto --output json
+  if ($LASTEXITCODE -ne 0) { throw "Could not verify previous published R2 installer: $($previous.installer_path). No R2 objects were changed." }
+  $previousHead = ConvertFrom-Json -InputObject ($previousHeadJson -join "`n")
+  if ([int64]$previousHead.ContentLength -ne [int64]$previous.installer_size) {
+    Write-Warning "Skipping previous installer with a size mismatch: $($previous.installer_path)"
+    continue
+  }
+  $newestOtherInstallers = @($candidate)
+  break
+}
 $retained = @($activeEntry) + @($newestOtherInstallers)
 $retainedKeys = @($retained | ForEach-Object { [string]$_.Key } | Sort-Object)
 $removeKeys = @($versionedInstallers | Where-Object { $retainedKeys -notcontains $_.Key } | ForEach-Object { [string]$_.Key })
