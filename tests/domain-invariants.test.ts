@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
+import { buildNormalizedCatalogSyncFingerprint } from '../src/lib/cloudSyncFingerprint.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -457,4 +459,48 @@ test('updater authorization recovery does not match unrelated or partial status 
   assert.equal(isUpdaterAuthorizationError('HTTP 500 Internal Server Error'), false);
   assert.equal(isUpdaterAuthorizationError('HTTP 1401 Internal Error'), false);
   assert.equal(isUpdaterAuthorizationError('network timeout'), false);
+});
+
+
+test('normalized catalog sync fingerprint ignores operational stock and credit-balance changes', () => {
+  const base = {
+    products: [{ id: 'product-1', name: 'Laptop', price: 100, cost: 80, stock: 4, attributes: { color: 'black' } }],
+    customers: [{ id: 'customer-1', name: 'Customer', phone: '0771234567', creditLimit: 500, creditBalance: 40 }],
+    suppliers: [{ id: 'supplier-1', name: 'Supplier', phone: '0777654321' }],
+    kitItems: [{ id: 'kit-1', kitProductId: 'product-1', componentProductId: 'product-2', qty: 1 }],
+    settings: { branchId: 'branch-a' },
+  } as unknown as POSState;
+  const baseline = buildNormalizedCatalogSyncFingerprint(base);
+  const operationalOnly = {
+    ...base,
+    products: base.products.map(product => ({ ...product, stock: 50 })),
+    customers: base.customers.map(customer => ({ ...customer, creditBalance: 10 })),
+  };
+  assert.equal(buildNormalizedCatalogSyncFingerprint(operationalOnly), baseline);
+});
+
+test('normalized catalog sync fingerprint changes for catalog metadata, customer details, suppliers, kits, and branch changes', () => {
+  const base = {
+    products: [{ id: 'product-1', name: 'Laptop', price: 100, cost: 80, stock: 4, attributes: { color: 'black' } }],
+    customers: [{ id: 'customer-1', name: 'Customer', phone: '0771234567', creditLimit: 500, creditBalance: 40 }],
+    suppliers: [{ id: 'supplier-1', name: 'Supplier', phone: '0777654321' }],
+    kitItems: [{ id: 'kit-1', kitProductId: 'product-1', componentProductId: 'product-2', qty: 1 }],
+    settings: { branchId: 'branch-a' },
+  } as unknown as POSState;
+  const baseline = buildNormalizedCatalogSyncFingerprint(base);
+  assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, products: base.products.map(product => ({ ...product, price: 120 })) }), baseline);
+  assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, customers: base.customers.map(customer => ({ ...customer, name: 'Updated customer' })) }), baseline);
+  assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, suppliers: base.suppliers.map(supplier => ({ ...supplier, phone: '0711111111' })) }), baseline);
+  assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, kitItems: base.kitItems?.map(item => ({ ...item, qty: 2 })) }), baseline);
+  assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, settings: { branchId: 'branch-b' } }), baseline);
+});
+
+
+test('catalog sync retry budget is not reset by unrelated POS state updates', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.ok(appSource.includes('const stateRef = useRef(state);'));
+  assert.match(appSource, /useEffect\(\(\) => \{\s*stateRef\.current = state;\s*\}, \[state\]\);/);
+  assert.ok(appSource.includes('syncNormalizedCatalog(stateRef.current)'));
+  assert.ok(appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity]);'));
+  assert.ok(!appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity, state]);'));
 });
