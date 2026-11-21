@@ -7,7 +7,8 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbReadState, idbHasPriorUseEvidence, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { canMutatePOSState, type POSStorageStatus } from './storageHealth';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -171,6 +172,8 @@ interface StoreCtx {
   /** Phase 2: connectivity + backup */
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
+  storageStatus: POSStorageStatus;
+  storageError: string;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
@@ -270,6 +273,7 @@ function migrate(s: POSState): POSState {
     settings: {
       ...s.settings,
       adminPinHash,
+      openingFloat: s.settings?.openingFloat ?? 0,
       whatsappReceipts: s.settings?.whatsappReceipts ?? false,
       categories: s.settings?.categories?.length ? s.settings.categories : [...DEFAULT_CATEGORIES],
       brands: s.settings?.brands?.length ? s.settings.brands : [...DEFAULT_BRANDS],
@@ -303,8 +307,20 @@ function loadState(): POSState {
   return loadStateFromLocalStorage() || buildSeed();
 }
 
+/** Any old local cache is evidence that this browser may contain an existing shop.
+ * If the authoritative IndexedDB row is missing, do not silently start with demo seed.
+ */
+function hasLegacyLocalState(): boolean {
+  try {
+    return localStorage.getItem(STORE_KEY) !== null || localStorage.getItem(STORE_KEY_V1) !== null;
+  } catch {
+    // If we cannot inspect the legacy cache, choose recovery/lockout over seed initialization.
+    return true;
+  }
+}
+
 /** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
-async function persistState(state: POSState): Promise<void> {
+async function persistState(state: POSState): Promise<boolean> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
@@ -322,7 +338,7 @@ async function persistState(state: POSState): Promise<void> {
           detail: { message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
-      return;
+      return false;
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
     // durably persisted locally. This closes the crash window between the
@@ -336,6 +352,20 @@ async function persistState(state: POSState): Promise<void> {
           localStorage.removeItem(pendingKey);
         }
       }
+      // Refund/return retry keys are cleared only after the resulting local
+      // records are confirmed durable in IndexedDB. Clearing them immediately
+      // after a cloud commit leaves a crash window for duplicate transactions.
+      for (const sale of state.sales) {
+        const key = 'nexfix_pending_refund_v1:' + sale.id;
+        const pendingReturnId = localStorage.getItem(key);
+        if (pendingReturnId && (sale.status === 'refunded' || (sale.refunds || []).some(refund => refund.id === pendingReturnId))) {
+          localStorage.removeItem(key);
+        }
+      }
+      for (const purchaseReturn of state.purchaseReturns || []) {
+        const key = 'nexfix_pending_purchase_return_v1:' + purchaseReturn.purchaseId;
+        if (localStorage.getItem(key) === purchaseReturn.id) localStorage.removeItem(key);
+      }
     } catch { /* ignore malformed/stale marker */ }
   } else {
     // The POS can boot from its legacy cache when IndexedDB is unavailable,
@@ -345,12 +375,13 @@ async function persistState(state: POSState): Promise<void> {
         detail: { message: 'IndexedDB is unavailable on this PC. POS changes cannot be safely saved locally. Do not retry a sale until its status is checked in Sales History/cloud.' },
       }));
     }
-    return;
+    return false;
   }
   // Track write for offline queue (future cloud sync)
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     await queueWrite('state_write_offline');
   }
+  return true;
 }
 
 function loadSession(): Session | null {
@@ -361,7 +392,21 @@ function loadSession(): Session | null {
 }
 
 export function POSProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<POSState>(loadState);
+  const [state, setStateRaw] = useState<POSState>(loadState);
+  const [storageStatus, setStorageStatus] = useState<POSStorageStatus>(() => idbAvailable() ? 'checking' : 'unavailable');
+  const [storageError, setStorageError] = useState(() => idbAvailable() ? '' : 'IndexedDB is unavailable on this device. POS data cannot be safely saved.');
+  const storageStatusRef = useRef<POSStorageStatus>(idbAvailable() ? 'checking' : 'unavailable');
+  const markStorageStatus = useCallback((status: POSStorageStatus, message = '') => {
+    storageStatusRef.current = status;
+    setStorageStatus(status);
+    setStorageError(message);
+  }, []);
+  // Central state-write gate: once storage is unhealthy, no page or background
+  // callback can commit another local POS mutation until a clean reload succeeds.
+  const setState = useCallback((update: React.SetStateAction<POSState>) => {
+    if (!canMutatePOSState(storageStatusRef.current)) return;
+    setStateRaw(update);
+  }, []);
   const [session, setSession] = useState<Session | null>(loadSession);
   const [dark, setDark] = useState<boolean>(() => {
     try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch { return false; }
@@ -397,58 +442,84 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
-  // Boot: prefer IndexedDB, migrate from localStorage if needed
+  // Boot: IndexedDB must load and remain writable before POS mutations are enabled.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!idbAvailable()) {
-        setReady(true);
-        return;
-      }
-      try {
-        const fromIdb = await idbLoadState();
-        if (cancelled) return;
-        if (fromIdb) {
-          // idbLoadState always repairs the default admin recovery account
-          let hydrated = migrate(fromIdb);
-          const local = loadStateFromLocalStorage();
-          if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
-            hydrated = { ...hydrated, kitItems: local.kitItems };
-            await idbSaveState(hydrated);
-          }
-          setState(hydrated);
-        } else {
-          // IDB unavailable / failed — fall back to localStorage or seed (which now includes defaults)
-          const local = loadStateFromLocalStorage() || buildSeed();
-          setState(migrate(local));
-          await idbSaveState(local);
-        }
-        // NOTE: Do NOT clear session here.
-        // Clearing session against stateRef races with concurrent signIn and
-        // was deleting a freshly written session (login → bounce back to /login).
-
-        const meta = await idbGetMeta();
-        const queued = await idbListQueue();
-        if (!cancelled) {
-          setBackupMeta(meta);
-          setPendingQueueCount(queued.length);
-        }
-      } catch { /* keep localStorage state */ }
-      // Re-hydrate session from storage AFTER users are loaded so login is not lost
+        markStorageStatus('unavailable', 'IndexedDB is unavailable on this device. POS data cannot be safely saved. Use a supported Electron/Chromium build and reload.');
+      } else {
+        let bootError = '';
         try {
-          const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
-          if (raw) {
-            const sess = JSON.parse(raw) as Session;
-            // Prefer the just-loaded state (stateRef updates on next render; use functional check later via setSession)
-            setSession(sess);
+          const storedState = await idbReadState();
+          if (cancelled) return;
+          let fromIdb: POSState | null = null;
+          if (storedState === null) {
+            bootError = 'IndexedDB could not be read. Existing local data has been kept untouched; POS editing and sales are locked to prevent data loss.';
+          } else if (storedState === undefined) {
+            const priorUseEvidence = await idbHasPriorUseEvidence();
+            if (priorUseEvidence === null) {
+              bootError = 'IndexedDB is empty but its prior-use metadata could not be verified. POS editing and sales remain locked to protect shop data.';
+            } else if (priorUseEvidence || hasLegacyLocalState()) {
+              // An empty main row plus any queue/checkpoint/backup metadata or legacy cache
+              // is not a safe first run. Re-read in case another window restored it meanwhile.
+              const recoveredState = await idbReadState();
+              if (recoveredState) fromIdb = recoveredState;
+              else bootError = 'IndexedDB has no saved POS state, but previous shop data or recovery evidence exists. The POS is locked to protect your data; use a verified backup recovery before continuing.';
+            } else {
+              // Seed is allowed only when every durable store and legacy cache are empty.
+              fromIdb = await idbLoadState();
+              if (!fromIdb) bootError = 'IndexedDB could not be initialized. POS editing and sales remain locked.';
+            }
+          } else {
+            fromIdb = storedState;
           }
-        } catch { /* ignore */ }
-        if (!cancelled) setReady(true);
-      // Register service worker for offline shell
+          if (fromIdb) {
+            let hydrated = migrate(fromIdb);
+            const local = loadStateFromLocalStorage();
+            if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
+              hydrated = { ...hydrated, kitItems: local.kitItems };
+              const migrated = await idbSaveState(hydrated);
+              if (!migrated) bootError = 'IndexedDB opened, but the legacy Kits migration could not be saved. POS editing and sales are locked until storage is healthy.';
+            }
+            setStateRaw(hydrated);
+            const meta = await idbGetMeta();
+            const queued = await idbListQueue();
+            if (!cancelled) {
+              setBackupMeta(meta);
+              setPendingQueueCount(queued.length);
+            }
+          }
+        } catch (error) {
+          bootError = error instanceof Error
+            ? `IndexedDB startup check failed: ${error.message}. POS editing and sales are locked to protect local data.`
+            : 'IndexedDB startup check failed. POS editing and sales are locked to protect local data.';
+        }
+        if (cancelled) return;
+        if (bootError) markStorageStatus('degraded', bootError);
+        else markStorageStatus('healthy');
+      }
+
+      // NOTE: Do NOT clear session here. Clearing it can race with concurrent sign-in.
+      try {
+        const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
+        if (raw) setSession(JSON.parse(raw) as Session);
+      } catch { /* ignore malformed session */ }
+      if (!cancelled) setReady(true);
       registerServiceWorker().catch(() => {});
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [markStorageStatus]);
+
+  // A failed durable write immediately moves the whole POS into read-only mode.
+  useEffect(() => {
+    const onStorageError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      markStorageStatus('degraded', detail?.message || 'Local POS storage failed. Reload only after checking the device storage.');
+    };
+    window.addEventListener('nexfix:storage-error', onStorageError);
+    return () => window.removeEventListener('nexfix:storage-error', onStorageError);
+  }, [markStorageStatus]);
 
   const user = useMemo(
     () => (session ? state.users.find(u => u.id === session.userId && u.active) || null : null),
@@ -471,7 +542,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   // path cannot silently bypass Google Drive backup. Existing event-specific scheduling
   // remains as an earlier debounce trigger; this watcher is the safety net.
   useEffect(() => {
-    if (!ready || !user) {
+    if (!ready || storageStatusRef.current !== 'healthy' || !user) {
       previousBackupStateRef.current = state;
       return;
     }
@@ -479,23 +550,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       scheduleGoogleBackup(() => stateRef.current, 'settings');
     }
     previousBackupStateRef.current = state;
-  }, [state, ready, user?.id]);
+  }, [state, ready, user?.id, storageStatus]);
 
   // Debounced persist to IndexedDB + localStorage
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || storageStatus !== 'healthy') return;
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
-      persistState(state).catch(() => {});
+      void persistState(state).then(saved => {
+        if (!saved) markStorageStatus('degraded', 'Local POS storage could not confirm the latest save. POS editing and sales are locked; verify any recent sale before retrying.');
+      }).catch(error => {
+        markStorageStatus('degraded', error instanceof Error ? error.message : 'Local POS storage failed. POS editing and sales are locked.');
+      });
     }, 120);
     return () => {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
-  }, [state, ready]);
+  }, [state, ready, storageStatus, markStorageStatus]);
 
   // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
   useEffect(() => {
-    if (!ready || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
+    if (!ready || storageStatus !== 'healthy' || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
     let cancelled = false;
     (async () => {
       const shop = await ensureCloudShop('Nexfix Shop');
@@ -515,13 +590,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
     })();
     return () => { cancelled = true; };
-  }, [ready, user?.id, user?.role, connectivity]);
+  }, [ready, storageStatus, user?.id, user?.role, connectivity]);
 
   // Connectivity listeners + auto-flush queue when back online
   useEffect(() => {
     const unsub = onConnectivityChange(async (status) => {
       setConnectivity(status);
-      if (status === 'online') {
+      if (status === 'online' && storageStatusRef.current === 'healthy') {
         const { flushed, pending } = await flushSyncQueue();
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
@@ -550,7 +625,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Automatic backups are a system operation. Any authenticated POS user
     // may keep the scheduler running; manual JSON export remains permission-gated.
-    if (!ready || !user) return;
+    if (!ready || storageStatus !== 'healthy' || !user) return;
     const stop = startAutoBackup(
       () => stateRef.current,
       async () => {
@@ -561,7 +636,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       },
     );
     return stop;
-  }, [ready, backupMeta.autoBackupHours, user?.id, user?.role, can]);
+  }, [ready, storageStatus, backupMeta.autoBackupHours, user?.id, user?.role, can]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -1788,6 +1863,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      throw new Error('POS local storage is not healthy. The sale was not started; verify storage and check Sales History before retrying.');
+    }
     if (!user) throw new Error('Sign in again before completing this sale.');
     if (!can('page:pos')) {
       pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
@@ -2219,6 +2297,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      pushAudit('DENIED', 'Sale', 'Blocked refund because local IndexedDB storage is not healthy');
+      return false;
+    }
     if (!user || !can('act:refund')) {
       pushAudit('DENIED', 'Sale', 'Blocked refund without refund permission');
       return false;
@@ -2267,7 +2349,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(pendingRefundKey, returnId);
         }
       } catch {
-        returnId = crypto.randomUUID();      }
+        pushAudit('DENIED', 'Sale', 'Cloud refund blocked: the retry/idempotency key could not be read or saved locally. Check the refund status before retrying.');
+        return false;
+      }
     }
 
     const returnLines = remainingItems.map(({ it, qty }) => {
@@ -2310,7 +2394,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
         return false;
       }
-      try { localStorage.removeItem(pendingRefundKey); } catch { /* ignore */ }
+      // Keep the retry key until persistState confirms the local refund is
+      // durable in IndexedDB. A crash before that save must reuse this ID.
     }
 
     // Offline cloud-enabled refunds are queued as a normalized atomic return
@@ -2337,7 +2422,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const refundCreditAmount = Math.min(refundCreditDue, refundValue);
     const refundCashAmount = Math.max(0, Math.round((refundValue - refundCreditAmount) * 100) / 100);
     const refundEvent = {
-      id: uid(),
+      // Reuse the cloud/queue idempotency key so durable local reconciliation
+      // can clear only the matching pending marker, not a newer retry.
+      id: returnId || uid(),
       date: new Date().toISOString(),
       amount: Math.round(refundValue * 100) / 100,
       cashAmount: refundCashAmount,
@@ -2572,6 +2659,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [pushAudit, user, can]);
 
   const receivePurchase = useCallback(async (id: string, processorName?: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!canMutatePOSState(storageStatusRef.current)) return { ok: false, error: 'POS local storage is not healthy. GRN was not processed; verify storage before retrying.' };
     if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
@@ -2726,6 +2814,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
 
   const createPurchaseReturn = useCallback(async (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): Promise<PurchaseReturn | null> => {
+    if (!canMutatePOSState(storageStatusRef.current)) {
+      pushAudit('DENIED', 'Purchase', 'Blocked supplier return because local IndexedDB storage is not healthy');
+      return null;
+    }
     if (purchaseReturnLockRef.current) return null;
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase return without purchase access');
@@ -2819,7 +2911,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             localStorage.setItem(returnKey, returnId);
           }
         } catch {
-          returnId = uid();
+          pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: the retry/idempotency key could not be read or saved locally. Check the return status before retrying.');
+          return null;
         }
       } else {
         returnId = uid();
@@ -2918,9 +3011,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       });
       if (!applied) return null;
 
-      if (cloudEnabled) {
-        try { localStorage.removeItem(returnKey); } catch (error) { void error; }
-      }
+      // Keep the cloud return key until persistState confirms this return
+      // is durable in IndexedDB, so a crash cannot create a second return ID.
       pushAudit('PURCHASE_RETURN', 'Purchase', 'Debit Note ' + ret.dnNo + ' · ' + purchase.poNo + ' · ' + purchase.supplierName + ' · Rs.' + ret.total.toLocaleString());
       return ret;
     } finally {
@@ -3414,6 +3506,7 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const refreshPOS = useCallback(async () => {
+    if (!canMutatePOSState(storageStatusRef.current)) return;
     // A refresh is a data reload, not an authentication operation. Capture the
     // React session first and restore that exact session after the data reload.
     // This prevents a stale IDB snapshot from making user temporarily null and
@@ -3421,10 +3514,26 @@ const deletePurchase = useCallback((id: string) => {
     const current = stateRef.current;
     const activeSession = session;
     try {
-      if (ready) await persistState(current);
+      if (ready) {
+        const saved = await persistState(current);
+        if (!saved) {
+          markStorageStatus('degraded', 'The current POS state could not be confirmed in IndexedDB before refresh. Editing and sales are locked; verify any recent sale before retrying.');
+          return;
+        }
+      }
 
-      const fromIdb = idbAvailable() ? await idbLoadState() : null;
-      let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
+      if (!idbAvailable()) {
+        markStorageStatus('unavailable', 'IndexedDB became unavailable during POS refresh. Existing local data has been kept untouched; editing and sales are locked.');
+        return;
+      }
+      const fromIdb = await idbReadState();
+      if (!fromIdb) {
+        // A missing authoritative row is not a first-run opportunity during refresh.
+        // Never replace the current state with a seed or legacy cache.
+        markStorageStatus('degraded', 'IndexedDB has no readable saved POS state during refresh. Existing in-memory data has been kept untouched; editing and sales are locked.');
+        return;
+      }
+      let refreshed = migrate(fromIdb);
 
       if (activeSession) {
         const currentUser = current.users.find(u => u.id === activeSession.userId);
@@ -3453,12 +3562,19 @@ const deletePurchase = useCallback((id: string) => {
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
       if (activeSession) setSession(activeSession);
-    } catch {
-      // A refresh failure must leave the authenticated POS session untouched.
-      setState(current);
+    } catch (error) {
+      // A thrown IndexedDB read/write error is just as unsafe as a null result.
+      // Lock mutations immediately; keep the current in-memory state/session
+      // visible for reconciliation instead of allowing another write attempt.
+      markStorageStatus(
+        'degraded',
+        error instanceof Error
+          ? `POS refresh failed while accessing IndexedDB: ${error.message}. Existing local data has been kept untouched; editing and sales are locked until storage is healthy.`
+          : 'POS refresh failed while accessing IndexedDB. Existing local data has been kept untouched; editing and sales are locked until storage is healthy.',
+      );
       if (activeSession) setSession(activeSession);
     }
-  }, [ready, session]);
+  }, [ready, session, markStorageStatus]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback(async (u: InventoryUnit): Promise<boolean> => {
@@ -4077,6 +4193,9 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
+    // Manual queue flush is also a cloud write path; keep it disabled whenever
+    // local IndexedDB is not verified healthy, just like automatic reconnect.
+    if (!canMutatePOSState(storageStatusRef.current)) return 0;
     const { flushed, pending } = await flushSyncQueue();
     setPendingQueueCount(pending);
     if (flushed > 0) pushAudit('SYNC', 'Offline', `Flushed ${flushed} queued write(s)`);
@@ -4096,7 +4215,7 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
+    connectivity, ready, storageStatus, storageError, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,

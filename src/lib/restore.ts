@@ -1,5 +1,6 @@
 import type { POSState } from './types';
-import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint, idbSaveState } from './db';
+import { idbClearRestoreCheckpoint, idbSaveRestoreCheckpoint } from './db';
+import { persistAndVerifyRestoredState, rollbackAndVerifyRestore } from './restorePersistence';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
 import { isCloudSafeBackup } from './driveSync';
 
@@ -31,11 +32,7 @@ export async function prepareRestore(current: POSState): Promise<void> {
 }
 
 export async function rollbackRestore(): Promise<boolean> {
-  const checkpoint = await idbLoadRestoreCheckpoint();
-  if (!checkpoint) return false;
-  const restored = await idbSaveState(checkpoint);
-  if (!restored) return false;
-  return idbClearRestoreCheckpoint();
+  return rollbackAndVerifyRestore();
 }
 
 export async function restoreBackup(input: unknown): Promise<BackupEnvelope> {
@@ -101,8 +98,9 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
   const nextState = cloudSafe ? restoreLocalAuthentication(current, backup.state) : backup.state;
   await prepareRestore(current);
   try {
-    const saved = await idbSaveState(nextState);
-    if (!saved) throw new Error('Could not persist restored POS state.');
+    // The checkpoint remains in place until the newly committed row is read
+    // back and compared with the fully validated restore payload.
+    await persistAndVerifyRestoredState(nextState);
     const checkpointCleared = await idbClearRestoreCheckpoint();
     if (!checkpointCleared) throw new Error('Could not clear the restore safety checkpoint.');
     return nextState;

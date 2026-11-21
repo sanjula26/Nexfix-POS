@@ -47,22 +47,23 @@ const Kits = lazy(() => import('./pages/Kits'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 
 function CloudAuthLifecycle() {
-  const { user } = usePOS();
+  const { user, ready, storageStatus } = usePOS();
   useEffect(() => {
-    if (!user) return;
+    if (!ready || storageStatus !== 'healthy' || !user) return;
     // Local POS authentication is independent from the one-time cloud account
     // session. Keep the cloud session across local cashier/admin logout and
     // app restarts; explicit Cloud sign-out in Settings remains the sign-out path.
     // Updater authorization belongs to this physical PC, not the local role.
     void refreshDesktopUpdaterCredentials().catch(() => {});
-  }, [user]);
+  }, [user, ready, storageStatus]);
   return null;
 }
 
 function SessionSecurity() {
-  const { user, signOut } = usePOS();
+  const { user, signOut, ready, storageStatus } = usePOS();
   const previousUserId = useRef<string | null>(user?.id || null);
   useEffect(() => {
+    if (!ready || storageStatus !== 'healthy') return;
     if (!user) { previousUserId.current = null; return; }
     const freshLogin = previousUserId.current === null;
     previousUserId.current = user.id;
@@ -88,12 +89,12 @@ function SessionSecurity() {
       window.clearTimeout(rememberTimer);
       events.forEach(event => window.removeEventListener(event, resetIdle));
     };
-  }, [user, signOut]);
+  }, [user, signOut, ready, storageStatus]);
   return null;
 }
 
 function CloudSyncStateBridge() {
-  const { state, user, connectivity } = usePOS();
+  const { state, user, connectivity, ready, storageStatus } = usePOS();
 
   // Do not upload the entire POSState after every local mutation. The legacy
   // snapshot contains sales, products, customers, units, repairs and settings,
@@ -116,7 +117,7 @@ function CloudSyncStateBridge() {
   }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.customerCreditPayments, state.suppliers, state.kitItems, state.units]);
 
   useEffect(() => {
-    if (!user || connectivity !== 'online') return;
+    if (!ready || storageStatus !== 'healthy' || !user || connectivity !== 'online') return;
     scheduleCloudSync();
     if (user.role === 'admin' || user.role === 'manager') {
       const timer = window.setTimeout(() => {
@@ -128,9 +129,49 @@ function CloudSyncStateBridge() {
       };
     }
     return () => cancelScheduledCloudSync();
-  }, [cloudSnapshotTrigger, user, connectivity]);
+  }, [cloudSnapshotTrigger, user, connectivity, ready, storageStatus]);
 
   return null;
+}
+
+function SyncManagerLifecycle() {
+  const { ready, storageStatus } = usePOS();
+  useEffect(() => {
+    if (!ready || storageStatus !== 'healthy') return;
+    return startSyncManager();
+  }, [ready, storageStatus]);
+  return null;
+}
+
+function StorageGuard() {
+  const { storageStatus, storageError } = usePOS();
+  useEffect(() => {
+    if (storageStatus === 'healthy' || storageStatus === 'checking') return;
+    const blockKeyboard = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      const isReload = event.key === 'F5' || ((event.ctrlKey || event.metaKey) && key === 'r');
+      const isClose = event.altKey && event.key === 'F4';
+      if (isReload || isClose) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', blockKeyboard, true);
+    return () => window.removeEventListener('keydown', blockKeyboard, true);
+  }, [storageStatus]);
+
+  if (storageStatus === 'healthy' || storageStatus === 'checking') return null;
+  const unavailable = storageStatus === 'unavailable';
+  return (
+    <div role="alertdialog" aria-modal="true" aria-labelledby="storage-guard-title" className="fixed inset-0 z-[99999] grid place-items-center bg-slate-950/95 p-5 text-slate-900">
+      <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl sm:p-8">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 text-amber-700"><AlertTriangle size={24} /></div>
+        <h1 id="storage-guard-title" className="text-xl font-black">Local POS storage is not safe</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-700">{storageError || 'The local IndexedDB store could not be verified.'}</p>
+        <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm font-semibold leading-6 text-amber-900">{unavailable ? 'This device cannot provide the required local storage. Do not use this POS for sales until IndexedDB is available.' : 'POS editing, checkout and background sync have been locked. Do not retry a recent sale until its status is checked in Sales History or cloud records.'}</p>
+        <button type="button" onClick={() => window.location.reload()} className="mt-5 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700">Reload POS and recheck storage</button>
+      </div>
+    </div>
+  );
 }
 
 function RouteFallback() {
@@ -352,10 +393,11 @@ function AppRoutes() {
 }
 
 export default function App() {
-  useEffect(() => startSyncManager(), []);
   return (
     <POSProvider>
       <HashRouter>
+        <SyncManagerLifecycle />
+        <StorageGuard />
         <CloudAuthLifecycle />
         <SessionSecurity />
         <CloudSyncStateBridge />

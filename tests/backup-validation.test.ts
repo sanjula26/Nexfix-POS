@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  hasValidPOSStateShape,
   parseBackup,
   validateBackup,
   validateBackupForRestore,
@@ -21,8 +22,12 @@ function validState(): Record<string, unknown> {
     sessions: [] as unknown[],
     units: [] as unknown[],
     repairs: [] as unknown[],
-    settings: {},
-    permissions: {},
+    settings: {
+      shopName: 'Test Shop', tagline: '', address: '', phone: '', email: '', receiptFooter: '',
+      taxDefault: 0, lowStockDefault: 5, exchangeDays: 3, openingFloat: 0,
+      adminPinHash: '', whatsappReceipts: false,
+    },
+    permissions: { admin: { 'page:dashboard': true }, cashier: { 'page:pos': true } },
     counters: { bill: 0, po: 0, ex: 0, job: 0, quote: 0, claim: 0 },
   };
 }
@@ -44,6 +49,45 @@ test('backup validation accepts a valid v2 POS backup', () => {
   const automatic = validEnvelope();
   (automatic._meta as unknown as Record<string, unknown>).kind = 'auto';
   assert.equal(validateBackup(automatic), true);
+});
+
+test('state validation accepts legacy fields that the existing migration fills', () => {
+  const legacy = validState();
+  legacy.customers = [{
+    id: 'customer-legacy',
+    name: 'Legacy customer',
+    phone: '',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    creditBalance: 0,
+  }];
+  delete legacy.suppliers;
+  delete legacy.units;
+  delete legacy.repairs;
+  delete (legacy.settings as Record<string, unknown>).adminPinHash;
+  delete (legacy.settings as Record<string, unknown>).openingFloat;
+  delete (legacy.settings as Record<string, unknown>).whatsappReceipts;
+  legacy.permissions = {};
+  legacy.counters = {};
+
+  assert.equal(hasValidPOSStateShape(legacy), true);
+  assert.equal(validateBackup(validEnvelope(legacy)), true);
+});
+
+test('state validation still rejects invalid types in migration-compatible fields', () => {
+  const invalidCustomer = validState();
+  invalidCustomer.customers = [{
+    id: 'customer-invalid',
+    name: 'Invalid customer',
+    phone: '',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    creditBalance: 0,
+    loyaltyPoints: 'many',
+  }];
+  assert.equal(hasValidPOSStateShape(invalidCustomer), false);
+
+  const invalidSettings = validState();
+  (invalidSettings.settings as Record<string, unknown>).whatsappReceipts = 'false';
+  assert.equal(hasValidPOSStateShape(invalidSettings), false);
 });
 
 test('backup parsing accepts valid JSON and safely rejects malformed JSON', () => {
