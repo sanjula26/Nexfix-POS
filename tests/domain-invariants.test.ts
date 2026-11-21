@@ -21,7 +21,7 @@ import {
   buildSupplierLedger,
   getSupplierOutstanding,
 } from '../src/lib/supplierPayments.ts';
-import { validateBranchStockEdit } from '../src/lib/branchStockEditor.ts';
+import { getExpectedBranchQtyForStockAdjustment, validateBranchStockEdit } from '../src/lib/branchStockEditor.ts';
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
@@ -601,4 +601,13 @@ test('stale branch stock conflict invalidates only the affected cached product',
     if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
     else Reflect.deleteProperty(globalThis, 'localStorage');
   }
+});
+
+test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('', false, 12), undefined);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, null), undefined);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, -1), undefined);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 1.5), undefined);
 });
