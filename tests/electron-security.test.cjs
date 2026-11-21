@@ -210,7 +210,7 @@ test('pending Auth callback can be consumed once through trusted renderer IPC', 
 
 test('Staff Auth uses a separate Supabase storage namespace and no Admin updater lifecycle', () => {
   const staffAuthSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'staffSupabase.ts'), 'utf8');
-  assert.match(staffAuthSource, /nexfix-staff-\\$\\{projectRef\\}-auth-token/);
+  assert.match(staffAuthSource, /nexfix-staff-\$\{projectRef\}-auth-token/);
   assert.match(staffAuthSource, /storageKey: staffSupabaseStorageKey/);
   assert.match(staffAuthSource, /detectSessionInUrl: false/);
   assert.doesNotMatch(staffAuthSource, /cloudAuth|cloudSync|ensureCloudShop|register_pos_device|desktop-updates/);
