@@ -27,6 +27,7 @@ import {
   getCachedBranchStock,
   isBranchStockCacheReady,
   isLocalMainStockReady,
+  shouldReadBranchStockProductFallback,
 } from '../src/lib/branchStock.ts';
 
 test('credit balance excludes allocations for other invoices', () => {
@@ -514,4 +515,12 @@ test('branch stock editor rejects oversized or invalid adjustment limits', () =>
   assert.equal(validateBranchStockEdit(base).ok, false);
   assert.equal(validateBranchStockEdit({ ...base, maxDelta: -1, nextQuantity: 1 }).ok, false);
   assert.equal(validateBranchStockEdit({ ...base, maxDelta: 1.5, nextQuantity: 1 }).ok, false);
+});
+
+
+test('branch stock refresh uses a single-product fallback only when a committed replay could not refresh the branch cache', () => {
+  assert.equal(shouldReadBranchStockProductFallback(true, true), false);
+  assert.equal(shouldReadBranchStockProductFallback(true, false), false);
+  assert.equal(shouldReadBranchStockProductFallback(false, false), false);
+  assert.equal(shouldReadBranchStockProductFallback(false, true), true);
 });
