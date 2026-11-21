@@ -32,11 +32,16 @@ const singleInstanceLock = app.requestSingleInstanceLock();
 function emitAuthCallback(url){
   try{
     const parsed = new URL(url);
-    if(parsed.protocol !== AUTH_PROTOCOL + ':' || parsed.hostname !== 'auth' || parsed.pathname !== '/callback') return;
+    if(parsed.protocol !== AUTH_PROTOCOL + ':' || parsed.pathname !== '/callback') return;
+    // Keep Admin/updater and staff PKCE callbacks explicitly separated. Staff
+    // links must use nexfix://staff-auth/callback and are never passed to the
+    // legacy Admin/updater completion flow.
+    const audience = parsed.hostname === 'staff-auth' ? 'staff' : parsed.hostname === 'auth' ? 'admin' : '';
+    if(!audience) return;
     const code = parsed.searchParams.get('code')?.trim() || '';
     if(!code || code.length > 4096) return;
     const flowId = parsed.searchParams.get('sb_flow_id')?.trim() || '';
-    pendingAuthCallback = { code, flowId: flowId || undefined };
+    pendingAuthCallback = { code, flowId: flowId || undefined, audience };
     const win = getMainWindow();
     if(win && !win.isDestroyed()) win.webContents.send('auth:callback', pendingAuthCallback);
   }catch{}
