@@ -36,6 +36,9 @@ jobs:
           }
           Write-Host 'Main branch and explicit private release storage retention approval verified.'
 
+      - name: Checkout repository scripts
+        uses: actions/checkout@v7
+
       # Install the R2 CLI before any private storage credentials are added to
       # a step environment. This mirrors the production release tool boundary.
       - name: Prepare AWS CLI before exposing R2 credentials
