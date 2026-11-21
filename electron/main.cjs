@@ -551,6 +551,16 @@ app.on('before-quit',(event)=>{
   requestExitWithBackup();
 });
 
+// A deep link may arrive before the renderer subscribes. Allow the trusted
+// renderer to consume the pending PKCE callback once after startup. The
+// callback code is never exposed to an untrusted frame or persisted to disk.
+ipcMain.handle('auth:callback:take',(event)=>{
+  if(!isTrustedRenderer(event)) return null;
+  const callback=pendingAuthCallback;
+  pendingAuthCallback=null;
+  return callback;
+});
+
 function isCloudAuthStorageKey(key){
   return typeof key==='string' && key.length<=120 && /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
 }
