@@ -37,8 +37,9 @@ export function getExpectedBranchQtyForStockAdjustment(
   offline: boolean,
   quantity: number | null,
 ): number | undefined {
-  if (!shopId.trim() || offline || quantity === null || !Number.isSafeInteger(quantity) || quantity < 0) {
-    return undefined;
-  }
+  if (!shopId.trim() || offline) return undefined;
+  // For an online cloud shop, an invalid baseline must fail closed in adjustStock;
+  // returning undefined here would select the legacy non-CAS RPC.
+  if (quantity === null || !Number.isSafeInteger(quantity) || quantity < 0) return -1;
   return quantity;
 }
