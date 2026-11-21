@@ -68,7 +68,9 @@ values (
   'a3000000-0000-4000-8000-000000000001',
   'a4000000-0000-4000-8000-000000000001',
   10
-);
+)
+on conflict (branch_id, product_id) do update
+set qty = excluded.qty, updated_at = now();
 
 select set_config('request.jwt.claim.sub', 'a1000000-0000-4000-8000-000000000001', true);
 select set_config(
