@@ -180,8 +180,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # Install tools before any private upload credentials enter the environment.
-          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) { choco install awscli -y --no-progress }
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            choco install awscli -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'AWS CLI installation failed before private upload credentials were exposed.' }
+            $awsExe = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
+            if (-not (Get-Command aws -ErrorAction SilentlyContinue) -and (Test-Path $awsExe)) {
+              $awsDirectory = Split-Path $awsExe -Parent
+              $env:PATH = "$awsDirectory;$env:PATH"
+              Add-Content -Path $env:GITHUB_PATH -Value $awsDirectory
+            }
+          }
           aws --version
+          if ($LASTEXITCODE -ne 0) { throw 'AWS CLI is unavailable to subsequent credential-bearing release steps.' }
           npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4
           node -e "require('tus-js-client')"
 
