@@ -85,8 +85,14 @@ const staffAuthStorage = {
     )) return;
 
     const desktop = getDesktopStorage();
-    if (desktop?.isDesktop && desktop.removeCloudAuthStorageItem) {
-      try { await desktop.removeCloudAuthStorageItem(key); } catch { /* fail closed on next read */ }
+    if (desktop?.isDesktop) {
+      if (!desktop.removeCloudAuthStorageItem) {
+        throw new Error('Secure Staff Cloud session storage removal is unavailable in this Windows POS build.');
+      }
+      const result = await desktop.removeCloudAuthStorageItem(key);
+      if (!result?.ok) {
+        throw new Error(result?.error || 'Secure Staff Cloud session could not be cleared.');
+      }
     }
     try { localStorageSafe()?.removeItem(key); } catch { /* optional cleanup */ }
   },
