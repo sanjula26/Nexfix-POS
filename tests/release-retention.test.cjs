@@ -50,6 +50,7 @@ test('Supabase retention is active-release-safe, paginated, and retains only a c
   assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$activeGroup\[0\] \$activeSize/);
   assert.match(supabaseRetentionScript, /\$previousRows\s*=\s*@\(\$publishedRows/);
   assert.match(supabaseRetentionScript, /\$maxRetainedReleases\s*=\s*2/);
+  assert.match(supabaseRetentionScript, /\$maxRetainedReleases - 1/);
   assert.match(supabaseRetentionScript, /select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
   assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$candidate\[0\] \(\[int64\]\$previous\.installer_size\)/);
   assert.match(supabaseRetentionScript, /if\s*\(-not\s*\$Apply\)/);
