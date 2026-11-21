@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
@@ -492,4 +493,14 @@ test('normalized catalog sync fingerprint changes for catalog metadata, customer
   assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, suppliers: base.suppliers.map(supplier => ({ ...supplier, phone: '0711111111' })) }), baseline);
   assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, kitItems: base.kitItems?.map(item => ({ ...item, qty: 2 })) }), baseline);
   assert.notEqual(buildNormalizedCatalogSyncFingerprint({ ...base, settings: { branchId: 'branch-b' } }), baseline);
+});
+
+
+test('catalog sync retry budget is not reset by unrelated POS state updates', () => {
+  const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  assert.ok(appSource.includes('const stateRef = useRef(state);'));
+  assert.ok(appSource.includes('stateRef.current = state;'));
+  assert.ok(appSource.includes('syncNormalizedCatalog(stateRef.current)'));
+  assert.ok(appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity]);'));
+  assert.ok(!appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity, state]);'));
 });
