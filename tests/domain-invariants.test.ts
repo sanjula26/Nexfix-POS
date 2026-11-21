@@ -28,6 +28,8 @@ import {
   isBranchStockCacheReady,
   isLocalMainStockReady,
   shouldReadBranchStockProductFallback,
+  invalidateCachedBranchStockProduct,
+  isStaleBranchStockConflict,
 } from '../src/lib/branchStock.ts';
 
 test('credit balance excludes allocations for other invoices', () => {
@@ -521,4 +523,35 @@ test('branch stock editor rejects oversized or invalid adjustment limits', () =>
 test('branch stock refresh falls back to an authoritative product read only when the full branch refresh fails', () => {
   assert.equal(shouldReadBranchStockProductFallback(true), false);
   assert.equal(shouldReadBranchStockProductFallback(false), true);
+});
+
+
+test('stale branch stock conflict invalidates only the affected cached product', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map<string, string>();
+  const fakeStorage = {
+    getItem: (name: string) => values.get(name) ?? null,
+    setItem: (name: string, value: string) => { values.set(name, String(value)); },
+    removeItem: (name: string) => { values.delete(name); },
+    clear: () => { values.clear(); },
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
+    get length() { return values.size; },
+  } as Storage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: fakeStorage });
+  try {
+    cacheBranchStock('branch-a', [
+      { product_id: 'product-a', qty: 4 },
+      { product_id: 'product-b', qty: 8 },
+    ]);
+    assert.equal(getCachedBranchStock('branch-a', 'product-a'), 4);
+    assert.equal(invalidateCachedBranchStockProduct('branch-a', 'product-a'), true);
+    assert.equal(getCachedBranchStock('branch-a', 'product-a'), null);
+    assert.equal(getCachedBranchStock('branch-a', 'product-b'), 8);
+    assert.equal(isStaleBranchStockConflict('Stock changed on another POS (expected 4, current 50.00).'), true);
+    assert.equal(isStaleBranchStockConflict('permission denied'), false);
+    assert.equal(isStaleBranchStockConflict(null), false);
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
 });
