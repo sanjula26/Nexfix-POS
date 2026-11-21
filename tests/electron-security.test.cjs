@@ -187,3 +187,14 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+test('pending Auth callback can be consumed once through trusted renderer IPC', () => {
+  const marker = "ipcMain.handle('auth:callback:take'";
+  const start = mainSource.indexOf(marker);
+  assert.notEqual(start, -1, 'Missing pending Auth callback retrieval IPC');
+  const handler = mainSource.slice(start, start + 420);
+  assert.match(handler, /isTrustedRenderer\\(event\\)/, 'callback retrieval must reject untrusted frames');
+  assert.match(handler, /const callback=pendingAuthCallback;\\s*pendingAuthCallback=null;\\s*return callback;/, 'callback must be consumed exactly once');
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  assert.match(preloadSource, /takePendingAuthCallback:\s*\\(\\)\\s*=>\\s*ipcRenderer\\.invoke\\('auth:callback:take'\\)/);
+});
