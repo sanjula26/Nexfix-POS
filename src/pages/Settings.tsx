@@ -1,3 +1,4 @@
+import { completeStaffSignIn } from '../lib/staffCloudAuth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -461,9 +462,22 @@ export default function Settings() {
       if (handledCallbacks.has(key)) return;
       handledCallbacks.add(key);
       if (audience === 'staff') {
-        // Never exchange a staff authorization code with the Admin/updater
-        // Supabase client. Staff sign-in requires its own isolated client.
-        setLegacyOtpMsg({ ok: false, text: 'Staff Cloud sign-in is not enabled on this POS build yet. Please ask the Owner/Admin.' });
+        // Staff PKCE is exchanged only by the isolated Staff Supabase client.
+        // It must never run Admin updater recovery or device registration.
+        setLegacyOtpBusy(true);
+        setLegacyOtpMsg(null);
+        try {
+          const result = await completeStaffSignIn(code);
+          if (!result.ok) {
+            setLegacyOtpMsg({ ok: false, text: result.error || 'Staff Cloud sign-in could not be completed.' });
+            return;
+          }
+          setLegacyOtpMsg({ ok: true, text: 'Staff Cloud sign-in confirmed. Shop data access remains limited to permissions assigned by the Owner/Admin.' });
+        } catch (error) {
+          setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Staff Cloud sign-in could not be completed.' });
+        } finally {
+          setLegacyOtpBusy(false);
+        }
         return;
       }
       setLegacyOtpBusy(true);
