@@ -27,7 +27,8 @@ if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
   $headers.Authorization = "Bearer $supabaseApiKey"
 }
 
-$activeRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_path,installer_size" -Headers $headers)
+$publishedRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc" -Headers $headers)
+$activeRows = @($publishedRows | Where-Object { [bool]$_.is_active })
 if ($activeRows.Count -ne 1) {
   throw "Expected exactly one active private Windows release; found $($activeRows.Count). No Supabase objects were changed."
 }
@@ -134,13 +135,19 @@ if (-not (Test-CompleteChunkGroup $activeGroup[0] $activeSize)) {
   throw "Active Supabase release chunks are incomplete or have incorrect sizes: $activeKey. No Supabase objects were changed."
 }
 
-$completePrevious = @(
-  $groups |
-    Where-Object {
-      $_.Key -ne $activeKey -and (Test-CompleteChunkGroup $_)
-    } |
-    Select-Object -First ($maxRetainedReleases - 1)
-)
+# Retain only a previously published inactive release whose complete chunk
+# set matches the installer_size recorded at publish time. This excludes partial
+# uploads and orphaned chunk groups that never became a usable updater release.
+$completePrevious = @()
+$previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [string]$_.installer_path -ne $activeKey })
+foreach ($previous in $previousRows) {
+  $candidate = @($groups | Where-Object { $_.Key -eq [string]$previous.installer_path })
+  if ($candidate.Count -ne 1) { continue }
+  if (Test-CompleteChunkGroup $candidate[0] ([int64]$previous.installer_size)) {
+    $completePrevious = @($candidate)
+    break
+  }
+}
 $retainedGroups = @($activeGroup[0]) + @($completePrevious)
 $retainedKeys = @($retainedGroups | ForEach-Object { [string]$_.Key } | Sort-Object)
 $removePaths = @(
