@@ -96,7 +96,9 @@ function SessionSecurity() {
 function CloudSyncStateBridge() {
   const { state, user, connectivity } = usePOS();
   const stateRef = useRef(state);
-  stateRef.current = state;
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Do not upload the entire POSState after every local mutation. The legacy
   // snapshot contains sales, products, customers, units, repairs and settings,
