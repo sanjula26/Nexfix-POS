@@ -38,7 +38,7 @@ test('R2 retention protects the active database pointer and keeps only one publi
   assert.match(retentionScript, /\$previousHead\.ContentLength\s*-ne\s*\[int64\]\$previous\.installer_size/);
   assert.match(retentionScript, /\$retained\s*=\s*@\(\$activeEntry\)\s*\+\s*@\(\$newestOtherInstallers\)/);
   assert.match(retentionScript, /EXPECTED_ACTIVE_INSTALLER_PATH/);
-  assert.match(retentionScript, /head-object[\s\S]*?Active installer disappeared during R2 retention cleanup/);
+  assert.match(retentionScript, /head-object[\s\S]*?Retained R2 installer disappeared during cleanup/);
   assert.match(retentionScript, /foreach\s*\(\$key in \$retainedKeys\)/);
   assert.match(retentionScript, /Retained R2 installer size changed during cleanup/);
   assert.match(retentionScript, /if\s*\(-not\s*\$Apply\)/);
