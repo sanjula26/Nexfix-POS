@@ -148,3 +148,9 @@ export function getPOSBranchId(shopId: string, configuredBranchId?: string | nul
   if (hasMultipleCachedBranches(shopId)) return 'local-main';
   return getDefaultBranchId(shopId) || 'local-main';
 }
+
+
+/** Use a single-product server read only when a replayed write is already committed and the full branch refresh failed. */
+export function shouldReadBranchStockProductFallback(fullBranchRefreshSucceeded: boolean, alreadyCommitted: boolean): boolean {
+  return !fullBranchRefreshSucceeded && alreadyCommitted;
+}
