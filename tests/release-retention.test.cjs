@@ -7,55 +7,66 @@ const root = path.join(__dirname, '..');
 const releaseWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'desktop-build.yml'), 'utf8');
 const retentionWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'r2-retention.yml'), 'utf8');
 const retentionScript = fs.readFileSync(path.join(root, 'scripts', 'retain-private-r2-installers.ps1'), 'utf8');
+const supabaseRetentionScript = fs.readFileSync(path.join(root, 'scripts', 'retain-private-supabase-chunks.ps1'), 'utf8');
 const qaWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'windows-no-publish-qa.yml'), 'utf8');
 
-test('production release passes the newly built installer path to shared retention guard', () => {
-  assert.match(releaseWorkflow, /EXPECTED_ACTIVE_INSTALLER_PATH\s*=\s*"win32\/latest\/\$\(\$installer\.Name\)"/);
-  assert.match(releaseWorkflow, /scripts\/retain-private-r2-installers\.ps1/);
-  assert.match(releaseWorkflow, /confirm_private_retention_cleanup/);
+test('production release automatically runs two-version retention only after active release verification', () => {
+  const verify = releaseWorkflow.indexOf('- name: Verify private Windows release');
+  const cleanup = releaseWorkflow.indexOf('- name: Automatically retain active and previous private release in Supabase and R2');
+  const tag = releaseWorkflow.indexOf('- name: Create release tag after private release verification');
+  assert.ok(verify >= 0 && cleanup > verify && tag > cleanup, 'retention must run after release verification and before tag creation');
+  assert.match(releaseWorkflow, /scripts\/retain-private-supabase-chunks\.ps1" -Apply/);
+  assert.match(releaseWorkflow, /scripts\/retain-private-r2-installers\.ps1" -Apply/);
+  assert.doesNotMatch(releaseWorkflow, /confirm_private_retention_cleanup/);
 });
 
-test('standalone R2 retention uses the same active-release-safe helper', () => {
+test('standalone private storage retention covers Supabase and R2 with explicit manual confirmation', () => {
+  assert.match(retentionWorkflow, /scripts\/retain-private-supabase-chunks\.ps1/);
   assert.match(retentionWorkflow, /scripts\/retain-private-r2-installers\.ps1/);
   assert.match(retentionWorkflow, /RETENTION_REF\s*-ne\s*'refs\/heads\/main'/);
   assert.match(retentionWorkflow, /RETENTION_CONFIRMED\s*-ne\s*'true'/);
   assert.match(retentionWorkflow, /default:\s*false/);
 });
 
-test('shared retention helper protects the active database pointer before deletion', () => {
+test('R2 retention protects the active database pointer and keeps only one newest previous installer', () => {
   assert.match(retentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&is_active=eq\.true/);
   assert.match(retentionScript, /\$activeKey\s*=\s*\[string\]\$activeRows\[0\]\.installer_path/);
   assert.match(retentionScript, /\$activeEntry\s*=\s*@\(\$versionedInstallers\s*\|\s*Where-Object\s*\{\s*\$_.Key\s*-eq\s*\$activeKey\s*\}\)/);
+  assert.match(retentionScript, /\$maxRetainedReleases\s*=\s*2/);
   assert.match(retentionScript, /\$retained\s*=\s*@\(\$activeEntry\)\s*\+\s*@\(\$newestOtherInstallers\)/);
   assert.match(retentionScript, /EXPECTED_ACTIVE_INSTALLER_PATH/);
   assert.match(retentionScript, /head-object[\s\S]*?Active installer disappeared during R2 retention cleanup/);
+  assert.match(retentionScript, /if\s*\(-not\s*\$Apply\)/);
 });
 
-test('Supabase secret API key requests use a server User-Agent and only legacy JWTs as bearer tokens', () => {
-  assert.match(retentionScript, /apikey\s*=\s*\$supabaseApiKey/);
-  assert.match(retentionScript, /'User-Agent'\s*=\s*'Nexfix-GitHub-Action\/1\.0'/);
-  assert.match(retentionScript, /if\s*\(\$supabaseApiKey\.StartsWith\('eyJ'/);
-  assert.match(retentionScript, /\$headers\.Authorization\s*=\s*"Bearer \$supabaseApiKey"/);
-  assert.doesNotMatch(retentionScript, /Authorization\s*=\s*"Bearer \$\(\$env:SUPABASE_SERVICE_ROLE_KEY\)"/);
+test('Supabase retention is active-release-safe, paginated, and retains only a complete previous version', () => {
+  assert.match(supabaseRetentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&is_active=eq\.true/);
+  assert.match(supabaseRetentionScript, /list-v2/);
+  assert.match(supabaseRetentionScript, /nextCursor/);
+  assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$activeGroup\[0\] \$activeSize/);
+  assert.match(supabaseRetentionScript, /Select-Object -First \(\$maxRetainedReleases - 1\)/);
+  assert.match(supabaseRetentionScript, /\$maxRetainedReleases\s*=\s*2/);
+  assert.match(supabaseRetentionScript, /if\s*\(-not\s*\$Apply\)/);
+  assert.match(supabaseRetentionScript, /Select-Object -Skip \$offset -First 1000/);
+  assert.match(supabaseRetentionScript, /Supabase retention verified/);
+  assert.doesNotMatch(supabaseRetentionScript, /DELETE\s+FROM\s+storage\.objects/i);
 });
 
-
-test('Supabase chunk cleanup uses server-safe API-key headers for opaque and legacy keys', () => {
-  const cleanupStep = releaseWorkflow.match(/- name: Remove superseded private release chunks[\s\S]*?(?=\n      - name: Retain active private installer)/)?.[0] ?? '';
-  assert.ok(cleanupStep, 'production workflow must contain the separately gated private chunk cleanup step');
-  assert.match(cleanupStep, /apikey\s*=\s*\$supabaseApiKey/);
-  assert.match(cleanupStep, /'User-Agent'\s*=\s*'Nexfix-GitHub-Action\/1\.0'/);
-  assert.match(cleanupStep, /if\s*\(\$supabaseApiKey\.StartsWith\('eyJ'/);
-  assert.match(cleanupStep, /\$headers\.Authorization\s*=\s*"Bearer \$supabaseApiKey"/);
-  assert.doesNotMatch(cleanupStep, /Authorization\s*=\s*"Bearer \$env:SUPABASE_SERVICE_ROLE_KEY"/);
+test('Supabase cleanup uses Storage API credentials safely for opaque and legacy keys', () => {
+  assert.match(supabaseRetentionScript, /apikey\s*=\s*\$supabaseApiKey/);
+  assert.match(supabaseRetentionScript, /'User-Agent'\s*=\s*'Nexfix-GitHub-Action\/2\.0'/);
+  assert.match(supabaseRetentionScript, /if\s*\(\$supabaseApiKey\.StartsWith\('eyJ'/);
+  assert.match(supabaseRetentionScript, /\$headers\.Authorization\s*=\s*"Bearer \$supabaseApiKey"/);
+  assert.match(supabaseRetentionScript, /Method Delete/);
 });
 
-test('Windows no-publish QA parses the shared PowerShell retention script', () => {
+test('Windows no-publish QA parses both private storage retention scripts', () => {
   assert.match(qaWorkflow, /Validate private R2 retention script syntax/);
+  assert.match(qaWorkflow, /Validate private Supabase retention script syntax/);
   assert.match(qaWorkflow, /System\.Management\.Automation\.Language\.Parser\]::ParseFile/);
 });
 
-test('production publishing and standalone R2 cleanup share one concurrency lock', () => {
+test('production publishing and standalone storage cleanup share one concurrency lock', () => {
   const releaseGroup = releaseWorkflow.match(/concurrency:\s*\n\s+group:\s*(.+)/)?.[1];
   const retentionGroup = retentionWorkflow.match(/concurrency:\s*\n\s+group:\s*(.+)/)?.[1];
   assert.ok(releaseGroup, 'production workflow must define a storage concurrency group');
@@ -64,13 +75,20 @@ test('production publishing and standalone R2 cleanup share one concurrency lock
   assert.match(retentionWorkflow, /cancel-in-progress:\s*false/);
 });
 
-test('retention validates active object and size before the first delete', () => {
+test('R2 retention validates active object and size before the first delete', () => {
   const activeSizeCheck = retentionScript.indexOf('Active R2 installer size does not match');
   const firstDelete = retentionScript.indexOf('aws s3api delete-object');
   assert.ok(activeSizeCheck >= 0, 'active R2 object size must be compared with the database row');
   assert.ok(firstDelete > activeSizeCheck, 'no R2 deletion may occur before active object validation');
 });
 
+test('Supabase retention validates active chunks before the first delete and batches API removals', () => {
+  const activeCheck = supabaseRetentionScript.indexOf('Active Supabase release chunks are incomplete');
+  const firstDelete = supabaseRetentionScript.indexOf('Method Delete');
+  assert.ok(activeCheck >= 0, 'active Supabase chunk integrity must be checked');
+  assert.ok(firstDelete > activeCheck, 'no Supabase deletion may occur before active chunk validation');
+  assert.match(supabaseRetentionScript, /for \(\$offset = 0; \$offset -lt \$removePaths\.Count; \$offset \+= 1000\)/);
+});
 
 test('owner phone link registry sync uses apikey-only auth for opaque Supabase keys', () => {
   const ownerSyncWorkflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'sync-owner-phone-links.yml'), 'utf8');
