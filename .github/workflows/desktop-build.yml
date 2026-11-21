@@ -184,7 +184,7 @@ jobs:
             choco install awscli -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw 'AWS CLI installation failed before private upload credentials were exposed.' }
             $awsExe = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
-            if (-not (Get-Command aws -ErrorAction SilentlyContinue) -and (Test-Path $awsExe)) {
+            if (Test-Path $awsExe) {
               $awsDirectory = Split-Path $awsExe -Parent
               $env:PATH = "$awsDirectory;$env:PATH"
               Add-Content -Path $env:GITHUB_PATH -Value $awsDirectory
