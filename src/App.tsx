@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { buildCreditSettlementSyncFingerprint } from './lib/creditSettlementSyncFingerprint';
+import { buildNormalizedCatalogSyncFingerprint } from './lib/cloudSyncFingerprint';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { POSProvider, usePOS } from './lib/store';
@@ -115,20 +116,40 @@ function CloudSyncStateBridge() {
     units: (state.units || []).map(u => [u.id, u.productId, u.imei, u.serial, u.expiryDate, u.status, u.cost]),
   }), [state.sales, state.purchases, state.repairs, state.products, state.customers, state.customerCreditPayments, state.suppliers, state.kitItems, state.units]);
 
+  const catalogSyncTrigger = useMemo(
+    () => buildNormalizedCatalogSyncFingerprint(state),
+    [state.products, state.customers, state.suppliers, state.kitItems, state.settings.branchId],
+  );
+  const lastCatalogSyncKeyRef = useRef<string | null>(null);
+  const userId = user?.id;
+  const userRole = user?.role;
+
+  // Snapshot writes are reserved for transaction/history boundaries. Catalog
+  // reconciliation has its own narrower trigger below so a sale, credit
+  // settlement, repair status change, or stock-only change cannot re-upload
+  // every product/customer/supplier row.
   useEffect(() => {
-    if (!user || connectivity !== 'online') return;
-    scheduleCloudSync();
-    if (user.role === 'admin' || user.role === 'manager') {
-      const timer = window.setTimeout(() => {
-        void syncNormalizedCatalog(state).catch(() => {});
-      }, 500);
-      return () => {
-        window.clearTimeout(timer);
-        cancelScheduledCloudSync();
-      };
+    if (!userId || connectivity !== 'online') {
+      cancelScheduledCloudSync();
+      return;
     }
+    scheduleCloudSync();
     return () => cancelScheduledCloudSync();
-  }, [cloudSnapshotTrigger, user, connectivity]);
+  }, [cloudSnapshotTrigger, userId, connectivity]);
+
+  useEffect(() => {
+    if (!userId || (userRole !== 'admin' && userRole !== 'manager') || connectivity !== 'online') {
+      lastCatalogSyncKeyRef.current = null;
+      return;
+    }
+    const syncKey = `${userId}:${catalogSyncTrigger}`;
+    if (lastCatalogSyncKeyRef.current === syncKey) return;
+    const timer = window.setTimeout(() => {
+      lastCatalogSyncKeyRef.current = syncKey;
+      void syncNormalizedCatalog(state).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [catalogSyncTrigger, userId, userRole, connectivity, state]);
 
   return null;
 }
