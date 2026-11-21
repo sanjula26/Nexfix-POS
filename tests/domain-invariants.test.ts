@@ -607,9 +607,10 @@ test('stock adjustment uses compare-and-set for verified online cloud quantities
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
   assert.equal(getExpectedBranchQtyForStockAdjustment('', false, 12), undefined);
-  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, null), undefined);
-  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, -1), undefined);
-  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 1.5), undefined);
+  // Invalid online cloud baselines fail closed instead of selecting the legacy non-CAS RPC.
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, null), -1);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, -1), -1);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 1.5), -1);
 });
 
 test('Adjust Stock and Stock Take pass verified online quantities to the store', () => {
