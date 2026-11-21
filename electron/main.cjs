@@ -567,7 +567,11 @@ ipcMain.handle('auth:callback:take',(event)=>{
 });
 
 function isCloudAuthStorageKey(key){
-  return typeof key==='string' && key.length<=120 && /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
+  if(typeof key!=='string' || key.length>120) return false;
+  // Admin/updater keeps the legacy Supabase key. Staff receives a separate
+  // app-namespaced key; do not accept arbitrary renderer-selected storage keys.
+  return /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key) ||
+    /^nexfix-staff-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
 }
 ipcMain.handle('cloud-auth-storage:get',(event,key)=>{
   if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
