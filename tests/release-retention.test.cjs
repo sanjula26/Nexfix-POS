@@ -29,7 +29,8 @@ test('standalone private storage retention covers Supabase and R2 with explicit 
 });
 
 test('R2 retention protects the active database pointer and keeps only one published complete previous installer', () => {
-  assert.match(retentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&is_active=eq\.true/);
+  assert.match(retentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
+  assert.match(retentionScript, /\$activeRows\s*=\s*@\(\$publishedRows\s*\|\s*Where-Object\s*\{\s*\[bool\]\$_.is_active\s*\}\)/);
   assert.match(retentionScript, /\$activeKey\s*=\s*\[string\]\$activeRows\[0\]\.installer_path/);
   assert.match(retentionScript, /\$activeEntry\s*=\s*@\(\$versionedInstallers\s*\|\s*Where-Object\s*\{\s*\$_.Key\s*-eq\s*\$activeKey\s*\}\)/);
   assert.match(retentionScript, /\$maxRetainedReleases\s*=\s*2/);
@@ -42,11 +43,12 @@ test('R2 retention protects the active database pointer and keeps only one publi
 });
 
 test('Supabase retention is active-release-safe, paginated, and retains only a complete previous version', () => {
-  assert.match(supabaseRetentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&is_active=eq\.true/);
+  assert.match(supabaseRetentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
+  assert.match(supabaseRetentionScript, /\$activeRows\s*=\s*@\(\$publishedRows\s*\|\s*Where-Object\s*\{\s*\[bool\]\$_.is_active\s*\}\)/);
   assert.match(supabaseRetentionScript, /list-v2/);
   assert.match(supabaseRetentionScript, /nextCursor/);
   assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$activeGroup\[0\] \$activeSize/);
-  assert.match(supabaseRetentionScript, /Select-Object -First \(\$maxRetainedReleases - 1\)/);
+  assert.match(supabaseRetentionScript, /\$previousRows\s*=\s*@\(\$publishedRows/);
   assert.match(supabaseRetentionScript, /\$maxRetainedReleases\s*=\s*2/);
   assert.match(supabaseRetentionScript, /select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
   assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$candidate\[0\] \(\[int64\]\$previous\.installer_size\)/);
