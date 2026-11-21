@@ -499,7 +499,7 @@ test('normalized catalog sync fingerprint changes for catalog metadata, customer
 test('catalog sync retry budget is not reset by unrelated POS state updates', () => {
   const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   assert.ok(appSource.includes('const stateRef = useRef(state);'));
-  assert.ok(appSource.includes('stateRef.current = state;'));
+  assert.ok(appSource.includes('useEffect(() => {\n    stateRef.current = state;\n  }, [state]);'));
   assert.ok(appSource.includes('syncNormalizedCatalog(stateRef.current)'));
   assert.ok(appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity]);'));
   assert.ok(!appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity, state]);'));
