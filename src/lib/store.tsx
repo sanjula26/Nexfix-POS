@@ -21,7 +21,7 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
-import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
+import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1222,6 +1222,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false });
       if (!cloudResult.ok) {
+        if (isStaleBranchStockConflict(cloudResult.error)) {
+          // Remove the stale cached quantity first. A single authoritative row
+          // read then repopulates it; if that read fails, the UI sees no cached
+          // quantity and disables another adjustment instead of replaying stale data.
+          invalidateCachedBranchStockProduct(targetBranchId, id);
+          try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* missing cache keeps this product disabled until refresh */ }
+        }
         pushAudit('DENIED', 'Product', 'Cloud stock adjustment was not committed: ' + (cloudResult.error || 'unknown error'));
         return false;
       }
