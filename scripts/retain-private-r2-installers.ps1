@@ -1,3 +1,5 @@
+param([switch]$Apply)
+
 $ErrorActionPreference = 'Stop'
 
 foreach ($name in @('R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'SUPABASE_SERVICE_ROLE_KEY')) {
@@ -9,7 +11,7 @@ foreach ($name in @('R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
 $expectedActiveKey = [string]$env:EXPECTED_ACTIVE_INSTALLER_PATH
 $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
 $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
-$maxRetainedReleases = 3
+$maxRetainedReleases = 2
 
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
   choco install awscli -y --no-progress
@@ -80,6 +82,11 @@ if ($retainedKeys -notcontains $activeKey) { throw 'Active installer is not prot
 Write-Host "Active release protected: $($activeRows[0].version) / $activeKey"
 Write-Host "Retaining active + newest private installers (maximum $maxRetainedReleases)."
 Write-Host "Superseded installers to remove: $($removeKeys.Count)"
+if (-not $Apply) {
+  Write-Host 'Preview only. Pass -Apply after verifying this exact retention plan.'
+  $removeKeys | ForEach-Object { Write-Host "Would remove: $_" }
+  return
+}
 foreach ($key in $removeKeys) {
   Write-Host "Removing superseded private installer: $key"
   aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output text | Out-Null
