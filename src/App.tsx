@@ -95,6 +95,8 @@ function SessionSecurity() {
 
 function CloudSyncStateBridge() {
   const { state, user, connectivity } = usePOS();
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   // Do not upload the entire POSState after every local mutation. The legacy
   // snapshot contains sales, products, customers, units, repairs and settings,
@@ -161,7 +163,7 @@ function CloudSyncStateBridge() {
       inFlightCatalogSyncKeyRef.current = syncKey;
       let succeeded = false;
       try {
-        const result = await syncNormalizedCatalog(state);
+        const result = await syncNormalizedCatalog(stateRef.current);
         succeeded = result.ok;
       } catch {
         // A rejected network request is handled by the same bounded retry path.
@@ -190,7 +192,7 @@ function CloudSyncStateBridge() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [catalogSyncTrigger, userId, userRole, connectivity, state]);
+  }, [catalogSyncTrigger, userId, userRole, connectivity]);
 
   return null;
 }
