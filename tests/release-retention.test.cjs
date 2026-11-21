@@ -186,3 +186,8 @@ test('manual retention prepares AWS CLI before exposing private storage credenti
   assert.match(retainStep, /R2_SECRET_ACCESS_KEY/);
   assert.match(retainStep, /SUPABASE_SERVICE_ROLE_KEY/);
 });
+
+test('R2 retention script never installs tools after credentials may be present', () => {
+  assert.match(retentionScript, /AWS CLI must be prepared before private R2 credentials are used/);
+  assert.doesNotMatch(retentionScript, /choco install awscli/);
+});
