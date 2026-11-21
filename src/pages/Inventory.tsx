@@ -11,7 +11,7 @@ import SearchableSelect from '../components/SearchableSelect';
 import type { Product, InventoryUnit } from '../lib/types';
 import { getCachedBranchStock, getCachedPOSDeviceBranchId, getPOSBranchId, hasCachedBranchStock, hasMultipleCachedBranches, isBranchStockCacheReady, isLocalMainStockReady } from '../lib/branchStock';
 import { ensureCloudShop, getCloudShopId, getCloudBranchStockQuantity, refreshCloudBranchStock, resolveCloudBranchId } from '../lib/cloudSync';
-import { validateBranchStockEdit } from '../lib/branchStockEditor';
+import { getExpectedBranchQtyForStockAdjustment, validateBranchStockEdit } from '../lib/branchStockEditor';
 
 const FALLBACK_CATEGORIES = ['Smartphones', 'Laptops', 'Tablets', 'Audio', 'Power', 'Accessories', 'Storage', 'Batteries', 'Parts', 'Desktop', 'Other'];
 
@@ -148,7 +148,7 @@ export default function Inventory() {
         const counted = Number(stockCounts[product.id]);
         const delta = Number.isFinite(counted) && systemQty !== null ? Math.round(counted - systemQty) : 0;
         if (delta === 0) continue;
-        const ok = await adjustStock(product.id, delta, stockTakeReason.trim() || 'Stock take adjustment');
+        const ok = await adjustStock(product.id, delta, stockTakeReason.trim() || 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment(shopId, offline, systemQty));
         if (!ok) {
           // Stop on the first rejected adjustment. The store invalidates and
           // refreshes that product's server quantity when the compare-and-set
@@ -175,7 +175,7 @@ export default function Inventory() {
     stockAdjInFlightRef.current = true;
     setStockAdjBusy(true);
     try {
-      const ok = await adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason);
+      const ok = await adjustStock(stockAdj.id, parseFloat(adjDelta) || 0, adjReason, getExpectedBranchQtyForStockAdjustment(shopId, offline, stockAdj.stock));
       setStockAdj(null);
       setAdjDelta('');
       if (!ok) {
