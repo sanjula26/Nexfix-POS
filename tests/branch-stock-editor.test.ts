@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { validateBranchStockEdit } from '../src/lib/branchStockEditor.ts';
 
 const base = {
@@ -87,4 +88,15 @@ test('zero is a valid expected branch quantity and still selects compare-and-set
   );
   assert.equal(request.rpcName, 'adjust_branch_stock_atomic_expected');
   assert.equal(request.rpcArgs.p_expected_branch_qty, 0);
+});
+
+
+test('expected branch stock SQL locks the quantity and rejects stale baselines before applying the audited adjustment', () => {
+  const migration = readFileSync(new URL('../supabase/migrations/20261110120537_add_expected_branch_stock_guard.sql', import.meta.url), 'utf8');
+  assert.match(migration, /pg_advisory_xact_lock\(hashtext\(p_adjustment_id::text\)\)/);
+  assert.match(migration, /FROM public\.products p[\s\S]*?FOR UPDATE/);
+  assert.match(migration, /FROM public\.branch_stock bs[\s\S]*?FOR UPDATE/);
+  assert.match(migration, /IF v_actual_qty IS DISTINCT FROM p_expected_branch_qty THEN/);
+  assert.match(migration, /USING ERRCODE = '40001'/);
+  assert.match(migration, /IF v_actual_qty IS DISTINCT FROM p_expected_branch_qty THEN[\s\S]*?RETURN public\.adjust_branch_stock_atomic\(/);
 });
