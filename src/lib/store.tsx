@@ -5,8 +5,9 @@ import {
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
-import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
+import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, isLegacyPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
+import { runLocalAuthAttempt } from './localAuthGuard';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -104,15 +105,15 @@ interface StoreCtx {
   signOut: (force?: boolean) => void;
   /** Switching to the other POS role always authenticates the target account; admin → cashier uses cashier credentials, cashier → admin accepts the admin unlock PIN or admin login password. */
   switchRole: (role: Role, credential?: string, email?: string) => Promise<{ ok: boolean; error?: string }>;
-  changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
+  changeAdminPin: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>;
   /** verify the admin password without switching role (used for price overrides etc.) */
-  verifyAdminPin: (pin: string, reason?: string) => boolean;
+  verifyAdminPin: (pin: string, reason?: string) => Promise<boolean>;
   /** Fresh admin confirmation for sensitive destructive/security actions. */
   confirmSensitiveAdmin: (reason: string) => Promise<boolean>;
   sensitiveAdminPrompt: { reason: string } | null;
-  resolveSensitiveAdmin: (credential: string) => boolean;
+  resolveSensitiveAdmin: (credential: string) => Promise<boolean>;
   cancelSensitiveAdmin: () => void;
-  unlockSession: (credential: string) => boolean;
+  unlockSession: (credential: string) => Promise<boolean>;
   // products
   saveProduct: (p: Product) => Promise<boolean>;
   deleteProduct: (id: string) => void;
@@ -583,54 +584,92 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user?.email]);
 
-  const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
+  const upgradeLegacyAdminPin = useCallback(async (secret: string) => {
+    const storedHash = stateRef.current.settings.adminPinHash || '';
+    if (!isLegacyPasswordHash(storedHash)) return;
+    if (!(await verifyPasswordAsync(secret, storedHash))) return;
+    const upgradedHash = await hashPasswordAsync(secret);
+    stateRef.current = {
+      ...stateRef.current,
+      settings: { ...stateRef.current.settings, adminPinHash: upgradedHash },
+    };
+    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
+  }, []);
+
+  const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
     if (!user) return false;
-    const ok = verifyPassword(pin || '', state.settings.adminPinHash);
-    if (!ok) {
-      setState(s => ({
-        ...s,
-        audit: [{
-          id: uid(), time: new Date().toISOString(),
-          user: user?.email || 'unknown', action: 'DENIED', entity: 'Security',
-          details: `Failed admin verification${reason ? ` for ${reason}` : ''} (${user?.name || 'unknown'})`,
-        }, ...s.audit].slice(0, 500),
-      }));
+    const attempt = await runLocalAuthAttempt(() =>
+      verifyPasswordAsync(pin || '', stateRef.current.settings.adminPinHash || ''),
+    );
+    if (attempt.success) {
+      await upgradeLegacyAdminPin(pin || '');
+      return true;
     }
-    return ok;
-  }, [state.settings.adminPinHash, user]);
+    pushAudit('DENIED', 'Security', attempt.allowed
+      ? `Failed admin verification${reason ? ` for ${reason}` : ''} (${user.name || 'unknown'})`
+      : `Admin verification temporarily locked${reason ? ` for ${reason}` : ''}`);
+    return false;
+  }, [pushAudit, user, upgradeLegacyAdminPin]);
 
-  const unlockSession = useCallback((credential: string): boolean => {
+  const unlockSession = useCallback(async (credential: string): Promise<boolean> => {
     if (!user || !credential) return false;
-    const current = stateRef.current.users.find(u => u.id === user.id);
-    if (!current || !current.active || current.mustChangePassword) return false;
+    const currentUser = stateRef.current.users.find(u => u.id === user.id);
+    if (!currentUser || !currentUser.active || currentUser.mustChangePassword) return false;
 
-    let passwordOk = false;
-    try {
-      passwordOk = isHashed(current.password)
-        ? verifyPassword(credential, current.password)
-        : credential === current.password;
-    } catch { passwordOk = false; }
+    // A non-admin user's own password unlocks only that account and must not
+    // clear the shared administrator-credential lockout history.
+    if (currentUser.role !== 'admin') {
+      let cashierPasswordOk = false;
+      try {
+        cashierPasswordOk = isHashed(currentUser.password)
+          ? await verifyPasswordAsync(credential, currentUser.password)
+          : credential === currentUser.password;
+      } catch { cashierPasswordOk = false; }
+      if (cashierPasswordOk) {
+        loginAtRef.current = Date.now();
+        pushAudit('UNLOCK', 'Auth', 'User session unlocked after idle lock');
+        return true;
+      }
+    }
 
-    // An unattended terminal can be recovered by the current account or by
-    // an active administrator credential, without destroying the current cart.
-    let elevatedOk = false;
-    try {
-      elevatedOk = stateRef.current.users
-        .filter(u => u.role === 'admin' && u.active)
-        .some(admin => isHashed(admin.password)
-          ? verifyPassword(credential, admin.password)
-          : credential === admin.password);
-    } catch { elevatedOk = false; }
-    const adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
+    const attempt = await runLocalAuthAttempt(async () => {
+      let passwordOk = false;
+      if (currentUser.role === 'admin') {
+        try {
+          passwordOk = isHashed(currentUser.password)
+            ? await verifyPasswordAsync(credential, currentUser.password)
+            : credential === currentUser.password;
+        } catch { passwordOk = false; }
+      }
 
-    if (passwordOk || elevatedOk || adminPinOk) {
+      // An unattended terminal can also be recovered by an active administrator credential.
+      let elevatedOk = false;
+      if (!passwordOk) {
+        for (const admin of stateRef.current.users.filter(u => u.role === 'admin' && u.active)) {
+          try {
+            const valid = isHashed(admin.password)
+              ? await verifyPasswordAsync(credential, admin.password)
+              : credential === admin.password;
+            if (valid) { elevatedOk = true; break; }
+          } catch { /* continue checking active administrators */ }
+        }
+      }
+      const pinHash = stateRef.current.settings.adminPinHash || '';
+      const adminPinOk = !passwordOk && !elevatedOk && !!pinHash && await verifyPasswordAsync(credential, pinHash);
+      return passwordOk || elevatedOk || adminPinOk;
+    });
+
+    if (attempt.success) {
+      await upgradeLegacyAdminPin(credential);
       loginAtRef.current = Date.now();
       pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
       return true;
     }
-    pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
+    pushAudit('DENIED', 'Auth', attempt.allowed
+      ? 'Failed idle-lock unlock attempt'
+      : 'Idle-lock authentication temporarily locked');
     return false;
-  }, [pushAudit, user]);
+  }, [pushAudit, user, upgradeLegacyAdminPin]);
   const sensitiveAuthAtRef = useRef(0);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
     if (user?.role !== 'admin') {
@@ -648,28 +687,39 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return new Promise<boolean>(resolve => { sensitiveAdminResolverRef.current = resolve; });
   }, [pushAudit, user]);
 
-  const resolveSensitiveAdmin = useCallback((credential: string): boolean => {
+  const resolveSensitiveAdmin = useCallback(async (credential: string): Promise<boolean> => {
     const resolver = sensitiveAdminResolverRef.current;
     if (!resolver || !sensitiveAdminPrompt) return false;
     const secret = String(credential || '');
-    const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
-    let passwordOk = false;
-    try {
-      passwordOk = !!admin && (isHashed(admin.password) ? verifyPassword(secret, admin.password) : secret === admin.password);
-    } catch { passwordOk = false; }
-    let pinOk = false;
-    try { pinOk = !!secret && verifyPassword(secret, stateRef.current.settings.adminPinHash || ''); } catch { pinOk = false; }
-    if (!passwordOk && !pinOk) {
-      pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
+    const attempt = await runLocalAuthAttempt(async () => {
+      const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
+      let passwordOk = false;
+      try {
+        passwordOk = !!admin && (isHashed(admin.password)
+          ? await verifyPasswordAsync(secret, admin.password)
+          : secret === admin.password);
+      } catch { passwordOk = false; }
+      const pinHash = stateRef.current.settings.adminPinHash || '';
+      let pinOk = false;
+      if (!passwordOk) {
+        try { pinOk = !!secret && !!pinHash && await verifyPasswordAsync(secret, pinHash); } catch { pinOk = false; }
+      }
+      return passwordOk || pinOk;
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason
+        : 'Administrator confirmation temporarily locked for ' + sensitiveAdminPrompt.reason);
       return false;
     }
+    await upgradeLegacyAdminPin(secret);
     sensitiveAuthAtRef.current = Date.now();
     pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
     resolver(true);
     sensitiveAdminResolverRef.current = null;
     setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, sensitiveAdminPrompt]);
+  }, [pushAudit, sensitiveAdminPrompt, upgradeLegacyAdminPin]);
 
   const cancelSensitiveAdmin = useCallback(() => {
     const resolver = sensitiveAdminResolverRef.current;
@@ -722,7 +772,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let passwordOk = false;
-    if (isHashed(u.password)) {
+    if (u.role === 'admin') {
+      const guarded = await runLocalAuthAttempt(async () => {
+        if (!u.active) return false;
+        return isHashed(u.password)
+          ? await verifyPasswordAsync(password, u.password)
+          : u.password === password;
+      });
+      if (!guarded.allowed) {
+        return { ok: false, error: `Too many failed administrator sign-in attempts. Try again in ${Math.ceil(guarded.retryAfterMs / 1000)} seconds.` };
+      }
+      passwordOk = guarded.success;
+    } else if (isHashed(u.password)) {
       passwordOk = await verifyPasswordAsync(password, u.password);
       if (!passwordOk) {
         try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
@@ -749,10 +810,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       stateRef.current = { ...stateRef.current, users: nextUsers };
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
+    if (nextUser.role === 'admin') await upgradeLegacyAdminPin(password);
+    const initialPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: hashPin(password) } : s.settings,
+      settings: pinWasUnset ? { ...s.settings, adminPinHash: initialPinHash } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
@@ -768,7 +831,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
     } catch { /* ignore */ }
     return { ok: true };
-  }, []);
+  }, [upgradeLegacyAdminPin]);
 
   const createInitialAdmin = useCallback(async (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => {
     const cleanName = name.trim();
@@ -799,7 +862,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       id: uid(), name: cashierName, email: cashierMail, password: cashierHashed, role: 'cashier',
       active: true, createdAt: nowIso, mustChangePassword: false,
     } : null;
-    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
+    const initialAdminPinHash = await hashPasswordAsync(next);
+    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: initialAdminPinHash } };
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
@@ -895,11 +959,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     } else if (role === 'admin' && user.role === 'cashier') {
       target = state.users.find(u => u.role === 'admin' && u.active);
       if (!target) return { ok: false, error: 'No active administrator account exists' };
-      const pinOk = verifyPassword(secret, state.settings.adminPinHash);
-      const passwordOk = isHashed(target.password)
-        ? await verifyPasswordAsync(secret, target.password)
-        : verifyPassword(secret, target.password || '');
-      if (!pinOk && !passwordOk) {
+      const guardedAdminUnlock = await runLocalAuthAttempt(async () => {
+        const pinHash = stateRef.current.settings.adminPinHash || '';
+        const pinOk = !!pinHash && await verifyPasswordAsync(secret, pinHash);
+        if (pinOk) return true;
+        return isHashed(target!.password)
+          ? await verifyPasswordAsync(secret, target!.password)
+          : secret === (target!.password || '');
+      });
+      if (!guardedAdminUnlock.allowed) {
+        return { ok: false, error: `Too many failed administrator unlock attempts. Try again in ${Math.ceil(guardedAdminUnlock.retryAfterMs / 1000)} seconds.` };
+      }
+      if (!guardedAdminUnlock.success) {
         setState(st => ({ ...st, audit: [{
           id: uid(), time: new Date().toISOString(), user: user.email,
           action: 'DENIED', entity: 'Auth',
@@ -915,6 +986,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
     try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
 
+    if (role === 'admin') await upgradeLegacyAdminPin(secret);
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
     setSession(sess);
@@ -934,23 +1006,28 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }, ...st.audit].slice(0, 500),
     }));
     return { ok: true };
-  }, [state.users, state.settings.adminPinHash, session, user]);
-  const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
+  }, [state.users, state.settings.adminPinHash, session, user, upgradeLegacyAdminPin]);
+  const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
-    let currentOk = false;
-    if (state.settings.adminPinHash) {
-      try { currentOk = verifyPassword(currentSecret, state.settings.adminPinHash); } catch { currentOk = false; }
-    } else {
+    const attempt = await runLocalAuthAttempt(async () => {
+      const storedHash = stateRef.current.settings.adminPinHash || '';
+      if (storedHash) return verifyPasswordAsync(currentSecret, storedHash);
       const admin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
-      try { currentOk = !!admin && (isHashed(admin.password) ? verifyPassword(currentSecret, admin.password) : currentSecret === admin.password); } catch { currentOk = false; }
-    }
-    if (!currentOk) return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
-    if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
-    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
+      return !!admin && (isHashed(admin.password)
+        ? await verifyPasswordAsync(currentSecret, admin.password)
+        : currentSecret === admin.password);
+    });
+    if (!attempt.allowed) return { ok: false, error: `Too many failed attempts. Try again in ${Math.ceil(attempt.retryAfterMs / 1000)} seconds.` };
+    if (!attempt.success) return { ok: false, error: stateRef.current.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
+    const nextSecret = String(next || '').trim();
+    if (nextSecret.length < 8) return { ok: false, error: 'New admin unlock PIN must be at least 8 characters' };
+    const upgradedHash = await hashPasswordAsync(nextSecret);
+    stateRef.current = { ...stateRef.current, settings: { ...stateRef.current.settings, adminPinHash: upgradedHash } };
+    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: upgradedHash } }));
     pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
     return { ok: true };
-  }, [user, state.settings.adminPinHash, pushAudit]);
+  }, [user, pushAudit]);
 
   /* ---------------- products ---------------- */
   const saveKitItems = useCallback((items: KitItem[]) => {

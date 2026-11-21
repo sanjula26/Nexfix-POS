@@ -836,15 +836,18 @@ export default function POS() {
   };
 
   /* ---------- admin gate (price override) ---------- */
-  const tryGate = () => {
+  const tryGate = async () => {
     if (!gatePin || gateBusy) return;
     setGateBusy(true); setGateErr('');
-    setTimeout(() => {
-      const ok = verifyAdminPin(gatePin, 'price override');
+    let ok = false;
+    try {
+      await new Promise(resolve => window.setTimeout(resolve, 350));
+      ok = await verifyAdminPin(gatePin, 'price override');
+    } finally {
       setGateBusy(false);
-      if (ok) { setPriceUnlocked(true); setGateOpen(false); setGatePin(''); toast('Price override unlocked for this bill', 'amber'); }
-      else { setGateErr('Incorrect admin password'); setGatePin(''); }
-    }, 350);
+    }
+    if (ok) { setPriceUnlocked(true); setGateOpen(false); setGatePin(''); toast('Price override unlocked for this bill', 'amber'); }
+    else { setGateErr('Incorrect admin password or temporary authentication lock'); setGatePin(''); }
   };
 
   /* ---------- keyboard shortcuts ---------- */
