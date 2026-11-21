@@ -150,6 +150,8 @@ test('owner local Windows test build stays local and never publishes or uploads'
   const localBuild = fs.readFileSync(path.join(root, 'scripts', 'build-windows-test.ps1'), 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.match(localBuild, /Node\.js 22/);
+  assert.match(localBuild, /VITE_SEED_DEMO = 'false'/);
+  assert.match(localBuild, /LIVE-CLOUD-TEST/);
   assert.match(localBuild, /npm.*desktop:build/);
   assert.match(packageJson.scripts['desktop:build'], /electron-builder --win --publish never/);
   assert.match(localBuild, /VITE_GOOGLE_BACKUP_API_KEY/);
