@@ -21,7 +21,7 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
-import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId } from './branchStock';
+import { getCachedBranchStock, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -1074,7 +1074,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (!cloudResult.alreadyCommitted && branchCacheReady && applyBranchStockDeltas(targetBranchId, { [normalized.id]: stockDelta })) cacheApplied = true;
           let refreshed = false;
           try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* server remains authoritative */ }
-          if (!refreshed && cloudResult.alreadyCommitted) {
+          if (shouldReadBranchStockProductFallback(refreshed, cloudResult.alreadyCommitted === true)) {
             try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, normalized.id); } catch { /* next editor open will re-read */ }
           }
         } else if (exists && supabaseConfigured) {
@@ -1231,7 +1231,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       let refreshed = false;
       try { refreshed = (await refreshCloudBranchStock(shop.shopId, targetBranchId)).ok; } catch { /* cloud remains authoritative; refresh can retry */ }
-      if (!refreshed && cloudResult.alreadyCommitted) {
+      if (shouldReadBranchStockProductFallback(refreshed, cloudResult.alreadyCommitted === true)) {
         // A replay may already have committed before another POS changed stock.
         // Fall back to a single authoritative row read only when the full refresh failed.
         try { await getCloudBranchStockQuantity(shop.shopId, targetBranchId, id); } catch { /* the next editor open will re-read */ }
