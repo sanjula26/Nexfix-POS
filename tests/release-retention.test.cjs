@@ -49,7 +49,10 @@ test('Supabase retention is active-release-safe, paginated, and retains only a c
   assert.match(supabaseRetentionScript, /\$activeRows\s*=\s*@\(\$publishedRows\s*\|\s*Where-Object\s*\{\s*\[bool\]\$_.is_active\s*\}\)/);
   assert.match(supabaseRetentionScript, /list-v2/);
   assert.match(supabaseRetentionScript, /nextCursor/);
-  assert.match(supabaseRetentionScript, /function ConvertTo-InstallerSize/);
+  assert.match(supabaseRetentionScript, /function ConvertTo-InstallerSize\s*\{\s*param\(/);
+  assert.match(supabaseRetentionScript, /-InputValue \(\$activeRows\[0\]\.installer_size\) -Label/);
+  assert.match(supabaseRetentionScript, /-InputValue \(\$previous\.installer_size\) -Label/);
+  assert.match(supabaseRetentionScript, /-InputValue \(\$retainedRows\[0\]\.installer_size\) -Label/);
   assert.match(supabaseRetentionScript, /while \(\$value -is \[System\.Array\]\)/);
   assert.match(supabaseRetentionScript, /\$value\.Count -ne 1/);
   assert.match(supabaseRetentionScript, /\[int64\]::TryParse/);
