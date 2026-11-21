@@ -198,5 +198,5 @@ test('pending Auth callback can be consumed once through trusted renderer IPC', 
   assert.ok(handler.includes('pendingAuthCallback=null;'), 'handler must clear the callback after reading it');
   assert.ok(handler.includes('return callback;'), 'handler must return the callback to the trusted renderer');
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
-  assert.match(preloadSource, /takePendingAuthCallback:\s*\\(\\)\\s*=>\\s*ipcRenderer\\.invoke\\('auth:callback:take'\\)/);
+  assert.ok(preloadSource.includes("takePendingAuthCallback: () => ipcRenderer.invoke('auth:callback:take')"));
 });
