@@ -37,7 +37,7 @@ If Docker or Supabase fails to start, stop here. Do not switch the test to the h
 In local Supabase Studio:
 
 1. Open **Authentication → Users**.
-2. Add a new user with a unique test-only email, for example `stock-qa-20261121@example.invalid`.
+2. Add a new user with a fresh unique test-only email, for example `stock-qa-20261121@example.invalid`. Use a new email each time you repeat this fixture; the shop and branch IDs are fixed for this isolated local test.
 3. Set a temporary test password and mark the email confirmed.
 4. Copy the generated user UUID. Keep the password only in your local test session; do not commit it or save it to Notion.
 
