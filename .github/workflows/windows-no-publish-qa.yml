@@ -96,7 +96,7 @@ jobs:
           }
           Write-Host 'Private Supabase retention PowerShell syntax verified.'
 
-      - name: Exercise Supabase installer-size helper with mocked inputs
+      - name: Exercise Supabase and R2 metadata parsers with mocked inputs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
