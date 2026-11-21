@@ -38,6 +38,14 @@ $env:VITE_APP_VERSION = [string]$package.version
 $env:VITE_SUPABASE_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
 $env:VITE_SUPABASE_ANON_KEY = 'sb_publishable_9DYtQ1kfcKClSb47Ghh-cQ_FRDz2tK-'
 $env:VITE_PUBLIC_APP_URL = 'https://sanjula26.github.io/Nexfix-POS/'
+$env:VITE_SEED_DEMO = 'false'
+
+Write-Warning 'This test build connects to the live NexFix Supabase project. Cloud stock edits, sales, GRNs, and other cloud actions can affect real shop data.'
+Write-Warning 'For the stock regression, use a designated test product and a controlled quantity. Do not use real sales, GRNs, or backup/restore actions during this test.'
+$liveConfirmation = Read-Host 'Type LIVE-CLOUD-TEST to confirm you understand this build uses the live cloud project'
+if ($liveConfirmation -cne 'LIVE-CLOUD-TEST') {
+  throw 'Build cancelled. No installer was created.'
+}
 
 if ([string]::IsNullOrWhiteSpace($env:VITE_GOOGLE_BACKUP_API_KEY)) {
   $env:VITE_GOOGLE_BACKUP_API_KEY = ''
