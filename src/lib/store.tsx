@@ -7,6 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
+import { clearAuthThrottle, getAuthThrottleWaitMs, recordAuthThrottleFailure, shouldCountAdminIdleUnlockFailure } from './authThrottle';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -585,8 +586,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
     if (!user) return false;
+    if (getAuthThrottleWaitMs('admin') > 0) return false;
     const ok = verifyPassword(pin || '', state.settings.adminPinHash);
+    if (ok) clearAuthThrottle('admin');
     if (!ok) {
+      recordAuthThrottleFailure('admin');
       setState(s => ({
         ...s,
         audit: [{
@@ -601,6 +605,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const unlockSession = useCallback((credential: string): boolean => {
     if (!user || !credential) return false;
+    const unlockScope = 'session-unlock:' + user.id;
+    if (getAuthThrottleWaitMs(unlockScope) > 0) return false;
     const current = stateRef.current.users.find(u => u.id === user.id);
     if (!current || !current.active || current.mustChangePassword) return false;
 
@@ -614,20 +620,32 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // An unattended terminal can be recovered by the current account or by
     // an active administrator credential, without destroying the current cart.
     let elevatedOk = false;
-    try {
-      elevatedOk = stateRef.current.users
-        .filter(u => u.role === 'admin' && u.active)
-        .some(admin => isHashed(admin.password)
-          ? verifyPassword(credential, admin.password)
-          : credential === admin.password);
-    } catch { elevatedOk = false; }
-    const adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
+    let adminCredentialChecked = false;
+    if (!passwordOk && getAuthThrottleWaitMs('admin') === 0) {
+      adminCredentialChecked = true;
+      try {
+        elevatedOk = stateRef.current.users
+          .filter(u => u.role === 'admin' && u.active)
+          .some(admin => isHashed(admin.password)
+            ? verifyPassword(credential, admin.password)
+            : credential === admin.password);
+      } catch { elevatedOk = false; }
+    }
+    let adminPinOk = false;
+    if (!passwordOk && !elevatedOk && getAuthThrottleWaitMs('admin') === 0) {
+      adminCredentialChecked = true;
+      adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
+    }
 
     if (passwordOk || elevatedOk || adminPinOk) {
+      clearAuthThrottle(unlockScope);
+      if (elevatedOk || adminPinOk || (current.role === 'admin' && passwordOk)) clearAuthThrottle('admin');
       loginAtRef.current = Date.now();
       pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
       return true;
     }
+    recordAuthThrottleFailure(unlockScope);
+    if (shouldCountAdminIdleUnlockFailure(current.role, adminCredentialChecked)) recordAuthThrottleFailure('admin');
     pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
     return false;
   }, [pushAudit, user]);
@@ -650,7 +668,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const resolveSensitiveAdmin = useCallback((credential: string): boolean => {
     const resolver = sensitiveAdminResolverRef.current;
-    if (!resolver || !sensitiveAdminPrompt) return false;
+    if (!resolver || !sensitiveAdminPrompt || getAuthThrottleWaitMs('admin') > 0) return false;
     const secret = String(credential || '');
     const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
     let passwordOk = false;
@@ -660,9 +678,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let pinOk = false;
     try { pinOk = !!secret && verifyPassword(secret, stateRef.current.settings.adminPinHash || ''); } catch { pinOk = false; }
     if (!passwordOk && !pinOk) {
+      recordAuthThrottleFailure('admin');
       pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
       return false;
     }
+    clearAuthThrottle('admin');
     sensitiveAuthAtRef.current = Date.now();
     pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
     resolver(true);
@@ -712,6 +732,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const users = [...(stateRef.current.users || [])];
     const u = users.find(x => (x.email || '').trim().toLowerCase() === mail);
+    if (u?.role === 'admin' && getAuthThrottleWaitMs('admin', now) > 0) {
+      return { ok: false, error: 'Incorrect email or password' };
+    }
     if (!u) {
       const failures = guard.failures + 1;
       const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
@@ -731,6 +754,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       passwordOk = u.password === password;
     }
     if (!passwordOk || !u.active) {
+      if (u.role === 'admin') recordAuthThrottleFailure('admin', now);
       const failures = guard.failures + 1;
       const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
       const nextGuard = { failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 };
@@ -740,6 +764,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     try { localStorage.removeItem(RATE_KEY); } catch { /* ignore */ }
+    if (u.role === 'admin') clearAuthThrottle('admin');
     if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
@@ -873,6 +898,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
     }
 
+    if (role === 'admin' && user.role === 'cashier' && getAuthThrottleWaitMs('admin') > 0) {
+      return { ok: false, error: `Too many failed administrator attempts. Try again in ${Math.ceil(getAuthThrottleWaitMs('admin') / 1000)} seconds.` };
+    }
+
     if (role === 'cashier' && user.role === 'admin') {
       const mail = (email || '').trim().toLowerCase();
       if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
@@ -905,6 +934,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           action: 'DENIED', entity: 'Auth',
           details: 'Failed ADMIN unlock attempt by ' + user.name,
         }, ...st.audit].slice(0, 500) }));
+        recordAuthThrottleFailure('admin', now);
         const failures = guard.failures + 1;
         const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
         try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
@@ -914,6 +944,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
     try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
+    if (role === 'admin' && user.role === 'cashier') clearAuthThrottle('admin');
 
     const prev = session ? loadSession() : null;
     const sess = { userId: target.id, remember: prev?.remember ?? true };
@@ -937,6 +968,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.users, state.settings.adminPinHash, session, user]);
   const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
+    if (getAuthThrottleWaitMs('admin') > 0) return { ok: false, error: 'Too many failed administrator attempts. Wait before trying again.' };
     const currentSecret = String(current || '').trim();
     let currentOk = false;
     if (state.settings.adminPinHash) {
@@ -945,8 +977,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const admin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
       try { currentOk = !!admin && (isHashed(admin.password) ? verifyPassword(currentSecret, admin.password) : currentSecret === admin.password); } catch { currentOk = false; }
     }
-    if (!currentOk) return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
+    if (!currentOk) {
+      recordAuthThrottleFailure('admin');
+      return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
+    }
     if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
+    clearAuthThrottle('admin');
     setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
     pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
     return { ok: true };
