@@ -53,7 +53,9 @@ Effective branch access is the intersection of active member grants and the curr
 | technician | Explicitly assigned branch(es) only | Repair access remains blocked until repairs have reliable branch provenance |
 | inventory_manager | Explicitly assigned branch(es) only | Stock/IMEI/GRN and supplier-cost access must be separately permissioned |
 
-The existing private.is_shop_admin(shop_id) helper includes both admin and manager; it is not safe as the all-branch predicate. The eventual implementation needs a separately named, narrowly defined helper (for example, private.is_shop_owner_admin(shop_id)) that checks the active membership and the explicitly approved all-branch role. Never broaden that helper to include manager.
+The existing private.is_shop_admin(shop_id) helper includes both admin and manager; it is not safe as the all-branch predicate. Until a separate server-verifiable Owner entitlement is designed, only an active `shop_memberships.role = 'admin'` membership may receive all-branch access. Manager must remain assigned-branch-only. Implement a separately named helper (for example, private.is_shop_owner_admin(shop_id)) that checks this exact approved entitlement; never reuse private.is_shop_admin or trust the local POS admin role for cloud authorization.
+
+A read-only production schema check on 2026-11-21 confirmed that `shop_memberships` has a composite primary key `(user_id, shop_id)` and no surrogate membership ID. Its exact key must be used in the grant relation unless a future, separately approved migration deliberately adds a stable ID.
 
 The profiles.role constraint and shop_memberships.role are separate existing role sources. Do not silently change or merge them. The proposed inventory_manager cloud role needs a compatibility decision for profile/local role mapping before UI enablement.
 
@@ -67,14 +69,14 @@ Proposed relation: shop_membership_branch_grants
 |---|---|
 | id | Stable primary key |
 | shop_id | Tenant key; must match both membership and branch |
-| shop_membership_id | FK to the active membership record; do not store a second independently editable user ID |
+| member_user_id | Auth user ID; composite FK with `shop_id` to `shop_memberships(user_id, shop_id)`; do not add a second independently editable identity |
 | branch_id | FK to a branch in the same shop |
 | granted_at, granted_by | Server-generated grant audit metadata |
 | revoked_at, revoked_by | Nullable revocation audit metadata |
 | created_at, updated_at | Server-managed timestamps |
 
 Required integrity rules:
-- A composite FK or equivalent database constraint must ensure the membership and branch belong to the same shop; never rely only on a client check.
+- A composite FK `(member_user_id, shop_id)` must reference `shop_memberships(user_id, shop_id)`, and `(shop_id, branch_id)` must reference `branches(shop_id, id)`. This ensures the membership and branch belong to the same shop; never rely only on a client check.
 - At most one current active grant exists for a membership/branch pair. Historical grant rows should be retained; re-grant must not erase the previous revoke history.
 - Only the explicit shop Owner/Admin server privilege may grant or revoke another member's branch assignments.
 - Clients must not write grant rows directly. Use a narrow server-side RPC that derives the actor from auth.uid(), validates the actor's membership and target membership, and writes audit metadata server-side.
@@ -153,18 +155,19 @@ Use a disposable project with the complete current migration history and no real
 
 Create synthetic Branch A and Branch B records for every branch-owned parent and child table, including sales/items/payments, purchases/items, sessions, expenses, stock, stock adjustments, inventory units, transfers/lines, returns, reversals, trade-ins and relevant audit records. Include missing-branch legacy repair/customer/warranty/quotation fixtures to prove they remain owner-only.
 
-## 9. Product decisions required before staff rollout
+## 9. Data visibility decisions and safe defaults before staff rollout
 
-These are not safe to decide by implementation assumption:
+The following customer/credit visibility rules were explicitly confirmed by the owner and recorded in PR #281 on 2026-11-21. They are adopted as the design baseline; implementation still requires the full staging and authorization gates below. Other datasets remain owner-only until separately decided.
 
 | Dataset / capability | Safe default until decision | Decision needed |
 |---|---|---|
-| Customer directory, phone/email | Owner/Admin only | Shared shop-wide, assigned-branch, or owner-only? |
-| Credit balances, statements, FIFO settlements | Owner/Admin only | Is credit shared across branches or partitioned by originating sale/branch? |
-| Quotations | Owner/Admin only | Which branch owns a quote, and can another branch convert it? |
-| Repairs and repair history | Owner/Admin only while branchless | How is origin branch established for new and historical records? |
-| Warranty claims/history | Owner/Admin only while branchless | Which branch owns a claim and who can service it? |
-| Supplier directory | Shop-wide only if contact identity is approved as shared | Should supplier identity be shared while prices/terms are branch-private? |
+| Customer master/contact profile | Owner/Admin can see the shop-wide master; branch staff can see only explicitly branch-linked profiles through a branch-safe projection | No direct shop-wide customer table reads for branch staff |
+| Invoices and credit history | Branch staff sees only invoices, outstanding balances and settlements for assigned branches; Owner/Admin retains shop-wide history and FIFO | Branch-only FIFO must not allocate to an unassigned branch |
+| Global customer credit balance and `get_owner_credit_customers` | Owner/Admin only | Do not expose the global balance or Owner/Admin RPC to branch staff |
+| Quotations | Owner/Admin only until branch ownership and conversion rules are explicitly approved | Do not infer a quote's branch from the current device |
+| Repairs and repair history | Owner/Admin only while branchless | Establish reliable origin branch for new and historical records before staff access |
+| Warranty claims/history | Owner/Admin only while branch provenance is unresolved | Define claim ownership and cross-branch servicing before staff access |
+| Supplier directory, supplier prices and terms | Owner/Admin only until an explicit shared-data decision | Decide whether identity is shop-wide while prices/terms are branch-private |
 | Product catalogue cost/margin | Owner/Admin only for cost and margin | Which roles may view cost, purchase price and profit? |
 | Stock transfers | Owner/Admin only initially | Should a Manager be allowed to initiate/approve transfers between two explicitly assigned branches? |
 | Full-shop snapshots and Drive backup | Owner/Admin only | No branch-staff access until a branch-safe format exists |
@@ -218,7 +221,8 @@ Do not silently convert shop-wide credit into branch balances or move historical
 | Full staging schema and synthetic A/B fixture | Not yet available/verified |
 | Branch RLS and RPC enforcement | Not implemented end-to-end; production remains shop-member scoped in audited paths |
 | Offline cache/queue branch isolation | Open |
-| Customer/credit/supplier/quotation/repair/warranty policy | Owner decisions required |
+| Customer master and credit baseline | Owner decisions confirmed in PR #281; branch-safe projections and enforcement still unimplemented |
+| Supplier/cost/quotation/repair/warranty policy | Owner-only defaults remain until separate decisions and branch provenance are implemented |
 | Direct PostgREST/RPC negative tests | Not run |
 | Production migration approval | Not granted; no production changes authorized |
 
