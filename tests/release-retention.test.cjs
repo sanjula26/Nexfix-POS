@@ -144,3 +144,14 @@ test('private upload tools are prepared before R2 and Supabase credentials are e
   assert.match(prepareStep, /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
   assert.match(releaseWorkflow.slice(prepareStart, r2Start), /choco install awscli/);
 });
+
+
+test('owner local Windows test build stays local and never publishes or uploads', () => {
+  const localBuild = fs.readFileSync(path.join(root, 'scripts', 'build-windows-test.ps1'), 'utf8');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.match(localBuild, /Node\.js 22/);
+  assert.match(localBuild, /npm.*desktop:build/);
+  assert.match(packageJson.scripts['desktop:build'], /electron-builder --win --publish never/);
+  assert.match(localBuild, /VITE_GOOGLE_BACKUP_API_KEY/);
+  assert.doesNotMatch(localBuild, /aws s3api|R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY|SUPABASE_SERVICE_ROLE_KEY|upload-artifact|storage\/v1\/object\/upload/);
+});
