@@ -154,3 +154,24 @@ export function getPOSBranchId(shopId: string, configuredBranchId?: string | nul
 export function shouldReadBranchStockProductFallback(fullBranchRefreshSucceeded: boolean): boolean {
   return !fullBranchRefreshSucceeded;
 }
+
+
+/** Remove one stale cached quantity so the UI cannot retry it if server refresh fails. */
+export function invalidateCachedBranchStockProduct(branchId: string, productId: string): boolean {
+  if (!branchId || branchId === 'local-main' || !productId) return false;
+  try {
+    const s = storage();
+    if (!s) return false;
+    const parsed = JSON.parse(s.getItem(key(branchId)) || 'null') as { values?: Record<string, number> } | null;
+    if (!parsed?.values || typeof parsed.values !== 'object' || Array.isArray(parsed.values)) return false;
+    const values = { ...parsed.values };
+    delete values[productId];
+    s.setItem(key(branchId), JSON.stringify({ updatedAt: new Date().toISOString(), values }));
+    return true;
+  } catch { return false; }
+}
+
+/** Identify only the server compare-and-set stale-quantity rejection. */
+export function isStaleBranchStockConflict(error: string | null | undefined): boolean {
+  return typeof error === 'string' && error.toLowerCase().includes('stock changed on another pos');
+}
