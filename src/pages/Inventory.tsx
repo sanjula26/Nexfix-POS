@@ -369,14 +369,14 @@ export default function Inventory() {
       if (shouldApplyBranchStockEdit && branchStockDelta !== 0) {
         const adjusted = await adjustStock(editing.id, branchStockDelta, 'Inventory product editor stock change', currentBranchStock as number);
         if (!adjusted) {
-          // The compare-and-set guard may reject a stale quantity after another POS
-          // changes this branch. Invalidate the baseline so repeated Save clicks
-          // cannot send the same stale expected quantity and flood Postgres logs.
+          // The compare-and-set guard may reject a stale quantity after the
+          // server branch quantity changes. Invalidate the baseline so repeated
+          // Save clicks cannot resend the same stale expected quantity.
           setBranchStockExpectedQty(null);
           setBranchStockExpectedBranchId(null);
           setBranchStockExpectedShopId(null);
           setBranchStockEditReady(false);
-          alert('Product details were saved, but branch stock was not changed. The server quantity may have changed on another POS. Close and reopen this editor to load the latest branch quantity before trying again.');
+          alert('Product details were saved, but branch stock was not changed. The server quantity changed after this editor was opened. Close and reopen this editor to load the latest branch quantity before trying again.');
           return;
         }
       }
