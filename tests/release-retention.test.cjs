@@ -178,9 +178,11 @@ test('private upload tools are prepared before R2 and Supabase credentials are e
 
 
 test('manual retention prepares AWS CLI before exposing private storage credentials', () => {
+  const checkoutStart = retentionWorkflow.indexOf('uses: actions/checkout@v7');
   const prepareStart = retentionWorkflow.indexOf('- name: Prepare AWS CLI before exposing R2 credentials');
   const retainStart = retentionWorkflow.indexOf('- name: Retain active and previous private release in both storage providers');
-  assert.ok(prepareStart >= 0 && retainStart > prepareStart, 'AWS CLI must be prepared before the secret-bearing retention step');
+  assert.ok(checkoutStart >= 0 && prepareStart > checkoutStart, 'repository scripts must be checked out before retention setup');
+  assert.ok(retainStart > prepareStart, 'AWS CLI must be prepared before the secret-bearing retention step');
   const prepareStep = retentionWorkflow.slice(prepareStart, retainStart);
   const retainStep = retentionWorkflow.slice(retainStart);
   assert.match(prepareStep, /choco install awscli/);
