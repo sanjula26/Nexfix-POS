@@ -36,6 +36,22 @@ jobs:
           }
           Write-Host 'Main branch and explicit private release storage retention approval verified.'
 
+      # Install the R2 CLI before any private storage credentials are added to
+      # a step environment. This mirrors the production release tool boundary.
+      - name: Prepare AWS CLI before exposing R2 credentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              throw 'AWS CLI is missing and Chocolatey is unavailable on this runner.'
+            }
+            choco install awscli -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'AWS CLI installation failed before retention credentials were exposed.' }
+          }
+          aws --version
+          if ($LASTEXITCODE -ne 0) { throw 'AWS CLI is not available for private R2 retention.' }
+
       - name: Retain active and previous private release in both storage providers
         shell: pwsh
         env:
