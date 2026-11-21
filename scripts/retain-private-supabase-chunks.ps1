@@ -36,7 +36,13 @@ if ($activeRows.Count -ne 1) {
 $activeVersion = [string]$activeRows[0].version
 $activeKey = [string]$activeRows[0].installer_path
 
-function ConvertTo-InstallerSize($value, [string]$label) {
+function ConvertTo-InstallerSize {
+  param(
+    [Parameter(Mandatory = $true)][AllowNull()][object]$InputValue,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+  $value = $InputValue
+  $label = $Label
   # PostgREST normally returns a scalar numeric value. Defensively unwrap a
   # single-item array (some PowerShell response shapes enumerate JSON values),
   # but reject ambiguous multi-value metadata instead of guessing.
@@ -59,7 +65,7 @@ function ConvertTo-InstallerSize($value, [string]$label) {
   return $parsed
 }
 
-$activeSize = ConvertTo-InstallerSize $activeRows[0].installer_size 'Active release installer_size'
+$activeSize = ConvertTo-InstallerSize -InputValue ($activeRows[0].installer_size) -Label 'Active release installer_size'
 if ($activeVersion -notmatch '^\d+\.\d+\.\d+$' -or $activeKey -notmatch '^win32/latest/Nexfix-POS-\d+\.\d+\.\d+-x64-installer\.exe$' -or $activeSize -le 0) {
   throw 'Active release metadata is invalid. No Supabase objects were changed.'
 }
@@ -167,7 +173,7 @@ $previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [
 foreach ($previous in $previousRows) {
   $candidate = @($groups | Where-Object { $_.Key -eq [string]$previous.installer_path })
   if ($candidate.Count -ne 1) { continue }
-  if ($completePrevious.Count -lt ($maxRetainedReleases - 1) -and (Test-CompleteChunkGroup $candidate[0] (ConvertTo-InstallerSize $previous.installer_size "Previous release $($previous.version) installer_size"))) {
+  if ($completePrevious.Count -lt ($maxRetainedReleases - 1) -and (Test-CompleteChunkGroup $candidate[0] (ConvertTo-InstallerSize -InputValue ($previous.installer_size) -Label "Previous release $($previous.version) installer_size"))) {
     $completePrevious += @($candidate)
   }
   if ($completePrevious.Count -ge ($maxRetainedReleases - 1)) { break }
@@ -216,7 +222,7 @@ foreach ($retainedKey in $retainedKeys) {
   if ($retainedRows.Count -ne 1 -or $retainedGroup.Count -ne 1) {
     throw "Retained Supabase release has missing or ambiguous metadata/chunks: $retainedKey"
   }
-  if (-not (Test-CompleteChunkGroup $retainedGroup[0] (ConvertTo-InstallerSize $retainedRows[0].installer_size "Retained release $retainedKey installer_size"))) {
+  if (-not (Test-CompleteChunkGroup $retainedGroup[0] (ConvertTo-InstallerSize -InputValue ($retainedRows[0].installer_size) -Label "Retained release $retainedKey installer_size"))) {
     throw "Retained Supabase release chunks disappeared or changed during retention cleanup: $retainedKey"
   }
 }

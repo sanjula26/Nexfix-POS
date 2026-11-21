@@ -96,6 +96,12 @@ jobs:
           }
           Write-Host 'Private Supabase retention PowerShell syntax verified.'
 
+      - name: Exercise Supabase installer-size helper with mocked inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:GITHUB_WORKSPACE/tests/retention-installer-size.test.ps1"
+
       - name: Verify production boundaries
         run: npm run verify:boundaries
 
