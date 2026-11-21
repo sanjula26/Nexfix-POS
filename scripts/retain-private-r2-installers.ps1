@@ -14,10 +14,7 @@ $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
 $maxRetainedReleases = 2
 
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
-  choco install awscli -y --no-progress
-  if ($LASTEXITCODE -ne 0 -or -not (Get-Command aws -ErrorAction SilentlyContinue)) {
-    throw 'AWS CLI could not be installed; no R2 objects were changed.'
-  }
+  throw 'AWS CLI must be prepared before private R2 credentials are used. No R2 objects were changed.'
 }
 
 $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
