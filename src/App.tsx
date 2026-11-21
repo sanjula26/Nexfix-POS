@@ -121,6 +121,7 @@ function CloudSyncStateBridge() {
     [state.products, state.customers, state.suppliers, state.kitItems, state.settings.branchId],
   );
   const lastCatalogSyncKeyRef = useRef<string | null>(null);
+  const inFlightCatalogSyncKeyRef = useRef<string | null>(null);
   const userId = user?.id;
   const userRole = user?.role;
 
@@ -144,11 +145,51 @@ function CloudSyncStateBridge() {
     }
     const syncKey = `${userId}:${catalogSyncTrigger}`;
     if (lastCatalogSyncKeyRef.current === syncKey) return;
-    const timer = window.setTimeout(() => {
-      lastCatalogSyncKeyRef.current = syncKey;
-      void syncNormalizedCatalog(state).catch(() => {});
-    }, 500);
-    return () => window.clearTimeout(timer);
+
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    const runCatalogSync = async () => {
+      if (cancelled || lastCatalogSyncKeyRef.current === syncKey) return;
+      // Serialize catalog reconciliations. If another fingerprint is being
+      // reconciled, wait briefly rather than racing an older state over it.
+      if (inFlightCatalogSyncKeyRef.current) {
+        timer = window.setTimeout(() => void runCatalogSync(), 250);
+        return;
+      }
+
+      inFlightCatalogSyncKeyRef.current = syncKey;
+      let succeeded = false;
+      try {
+        const result = await syncNormalizedCatalog(state);
+        succeeded = result.ok;
+      } catch {
+        // A rejected network request is handled by the same bounded retry path.
+      } finally {
+        if (inFlightCatalogSyncKeyRef.current === syncKey) {
+          inFlightCatalogSyncKeyRef.current = null;
+        }
+      }
+
+      if (cancelled) return;
+      if (succeeded) {
+        // Only remember a fingerprint after the full normalized catalog sync
+        // reports success. A failed result must remain eligible for retry.
+        lastCatalogSyncKeyRef.current = syncKey;
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 3) {
+        timer = window.setTimeout(() => void runCatalogSync(), 2000 * 2 ** (attempts - 1));
+      }
+    };
+
+    timer = window.setTimeout(() => void runCatalogSync(), 500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [catalogSyncTrigger, userId, userRole, connectivity, state]);
 
   return null;
