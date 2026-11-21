@@ -143,10 +143,10 @@ $previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [
 foreach ($previous in $previousRows) {
   $candidate = @($groups | Where-Object { $_.Key -eq [string]$previous.installer_path })
   if ($candidate.Count -ne 1) { continue }
-  if (Test-CompleteChunkGroup $candidate[0] ([int64]$previous.installer_size)) {
-    $completePrevious = @($candidate)
-    break
+  if ($completePrevious.Count -lt ($maxRetainedReleases - 1) -and (Test-CompleteChunkGroup $candidate[0] ([int64]$previous.installer_size))) {
+    $completePrevious += @($candidate)
   }
+  if ($completePrevious.Count -ge ($maxRetainedReleases - 1)) { break }
 }
 $retainedGroups = @($activeGroup[0]) + @($completePrevious)
 $retainedKeys = @($retainedGroups | ForEach-Object { [string]$_.Key } | Sort-Object)
