@@ -183,8 +183,17 @@ $differences = @(Compare-Object -ReferenceObject $retainedKeys -DifferenceObject
 if ($differences.Count -gt 0) {
   throw "Supabase retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
 }
-$finalActive = @($remainingGroups | Where-Object { $_.Key -eq $activeKey })
-if ($finalActive.Count -ne 1 -or -not (Test-CompleteChunkGroup $finalActive[0] $activeSize)) {
-  throw 'Active Supabase release chunks disappeared or changed during retention cleanup.'
+# Verify every retained version after deletion, not only the active release.
+# This confirms the rollback copy still has the exact complete chunk set and sizes
+# recorded when that version was published.
+foreach ($retainedKey in $retainedKeys) {
+  $retainedRows = @($publishedRows | Where-Object { [string]$_.installer_path -eq $retainedKey })
+  $retainedGroup = @($remainingGroups | Where-Object { $_.Key -eq $retainedKey })
+  if ($retainedRows.Count -ne 1 -or $retainedGroup.Count -ne 1) {
+    throw "Retained Supabase release has missing or ambiguous metadata/chunks: $retainedKey"
+  }
+  if (-not (Test-CompleteChunkGroup $retainedGroup[0] ([int64]$retainedRows[0].installer_size))) {
+    throw "Retained Supabase release chunks disappeared or changed during retention cleanup: $retainedKey"
+  }
 }
 Write-Host "Supabase retention verified: active release $activeVersion remains with $($remainingObjects.Count) chunk object(s); at most two release versions are retained."
