@@ -150,7 +150,7 @@ export function getPOSBranchId(shopId: string, configuredBranchId?: string | nul
 }
 
 
-/** Use a single-product server read only when a replayed write is already committed and the full branch refresh failed. */
+/** Use a single-product server read only when the full branch refresh fails. */
 export function shouldReadBranchStockProductFallback(fullBranchRefreshSucceeded: boolean): boolean {
   return !fullBranchRefreshSucceeded;
 }
