@@ -1,3 +1,4 @@
+import { completeStaffSignIn } from '../lib/staffCloudAuth';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -389,7 +390,7 @@ export default function Settings() {
   const [cloudSessionStatus, setCloudSessionStatus] = useState<{ loading: boolean; email?: string; error?: string; shopName?: string }>({ loading: true });
   const [legacyOtpBusy, setLegacyOtpBusy] = useState(false);
   const [legacyOtpMsg, setLegacyOtpMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getUpdateStatus?:()=>Promise<{supported?:boolean;authorized?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);onAuthCallback?:(listener:(event:{code:string;flowId?:string})=>void)=>(()=>void)}}).nexfixDesktop;
+  const desktopApi=(window as Window & {nexfixDesktop?:{isPackaged?:boolean;isPortable?:boolean;getUpdateStatus?:()=>Promise<{supported?:boolean;authorized?:boolean;available?:boolean;version?:string|null;downloading?:boolean}>;getVersion?:()=>Promise<string>;copyText?:(text:string)=>Promise<boolean>;openExternal?:(url:string)=>Promise<boolean>;checkForUpdates?:()=>Promise<{supported?:boolean;available?:boolean;version?:string|null;error?:string}>;downloadAndInstallUpdate?:()=>Promise<{supported?:boolean;started?:boolean;error?:string}>;clearUpdateCredentials?:()=>Promise<unknown>;clearCloudUpdaterDeviceToken?:()=>Promise<{ok?:boolean;error?:string}>;onUpdateEvent?:(listener:(event:{type:string;version?:string;percent?:number;message?:string})=>void)=>(()=>void);takePendingAuthCallback?:()=>Promise<{code:string;flowId?:string;audience?:'admin'|'staff'}|null>;onAuthCallback?:(listener:(event:{code:string;flowId?:string;audience?:'admin'|'staff'})=>void)=>(()=>void)}}).nexfixDesktop;
 
   const refreshCloudSessionStatus = useCallback(async () => {
     if (!supabaseConfigured || !supabase) {
@@ -449,11 +450,40 @@ export default function Settings() {
   }, []);
   useEffect(() => {
     if (!desktopApi?.onAuthCallback) return;
-    const unsubscribe = desktopApi.onAuthCallback(async ({ code, flowId }) => {
+    // The deep link can arrive before React subscribes. Register the event
+    // listener first, then consume the one-time pending callback. A callback
+    // delivered through both paths is de-duplicated by audience + code.
+    const handledCallbacks = new Set<string>();
+    const completeCallback = async (callback: { code: string; flowId?: string; audience?: 'admin' | 'staff' }) => {
+      const code = callback.code?.trim() || '';
+      if (!code) return;
+      const audience = callback.audience || 'admin'; // legacy payload compatibility
+      const key = `${audience}:${code}`;
+      if (handledCallbacks.has(key)) return;
+      handledCallbacks.add(key);
+      if (audience === 'staff') {
+        // Staff PKCE is exchanged only by the isolated Staff Supabase client.
+        // It must never run Admin updater recovery or device registration.
+        setLegacyOtpBusy(true);
+        setLegacyOtpMsg(null);
+        try {
+          const result = await completeStaffSignIn(code);
+          if (!result.ok) {
+            setLegacyOtpMsg({ ok: false, text: result.error || 'Staff Cloud sign-in could not be completed.' });
+            return;
+          }
+          setLegacyOtpMsg({ ok: true, text: 'Staff Cloud sign-in confirmed. Shop data access remains limited to permissions assigned by the Owner/Admin.' });
+        } catch (error) {
+          setLegacyOtpMsg({ ok: false, text: error instanceof Error ? error.message : 'Staff Cloud sign-in could not be completed.' });
+        } finally {
+          setLegacyOtpBusy(false);
+        }
+        return;
+      }
       setLegacyOtpBusy(true);
       setLegacyOtpMsg(null);
       try {
-        const result = await completeLegacyCloudEmailMagicLink(code, flowId);
+        const result = await completeLegacyCloudEmailMagicLink(code, callback.flowId);
         if (!result.ok) {
           setLegacyOtpMsg({ ok: false, text: result.error || 'Cloud Admin sign-in link could not be completed.' });
           return;
@@ -466,7 +496,13 @@ export default function Settings() {
       } finally {
         setLegacyOtpBusy(false);
       }
-    });
+    };
+    const unsubscribe = desktopApi.onAuthCallback((callback) => { void completeCallback(callback); });
+    void desktopApi.takePendingAuthCallback?.()
+      .then((callback) => { if (callback) void completeCallback(callback); })
+      .catch(() => {
+        setLegacyOtpMsg({ ok: false, text: 'Could not recover the pending Cloud sign-in callback. Please open the sign-in link again.' });
+      });
     return unsubscribe;
   }, [cloudSetupEmail, desktopApi]);
   const reauthorizeUpdater=async()=>{
