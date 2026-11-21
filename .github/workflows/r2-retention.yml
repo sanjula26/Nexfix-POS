@@ -1,10 +1,10 @@
-name: Private R2 Installer Retention
+name: Private Release Storage Retention
 
 on:
   workflow_dispatch:
     inputs:
       confirm_retention_cleanup:
-        description: 'Confirm retaining the active release plus the two newest other private installers, and deleting the rest'
+        description: 'Confirm retaining only the active and newest complete previous private release in both Supabase Storage and Cloudflare R2'
         required: true
         type: boolean
         default: false
@@ -29,14 +29,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:RETENTION_REF -ne 'refs/heads/main') {
-            throw "Private R2 retention may only run from main. Selected ref: $env:RETENTION_REF"
+            throw "Private release storage retention may only run from main. Selected ref: $env:RETENTION_REF"
           }
           if ($env:RETENTION_CONFIRMED -ne 'true') {
-            throw 'R2 retention cleanup was not explicitly confirmed. No private objects were changed.'
+            throw 'Private release storage retention was not explicitly confirmed. No private objects were changed.'
           }
-          Write-Host 'Main branch and explicit private R2 retention approval verified.'
+          Write-Host 'Main branch and explicit private release storage retention approval verified.'
 
-      - name: Retain active release and two newest private installers
+      - name: Retain active and previous private release in both storage providers
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -46,4 +46,5 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:GITHUB_WORKSPACE/scripts/retain-private-r2-installers.ps1"
+          & "$env:GITHUB_WORKSPACE/scripts/retain-private-supabase-chunks.ps1" -Apply
+          & "$env:GITHUB_WORKSPACE/scripts/retain-private-r2-installers.ps1" -Apply
