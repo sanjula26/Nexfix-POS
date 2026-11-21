@@ -19,6 +19,7 @@ $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
 $headers = @{
   apikey = $supabaseApiKey
   'Content-Type' = 'application/json'
+  Accept = 'application/json'
   'User-Agent' = 'Nexfix-GitHub-Action/2.0'
 }
 # Opaque sb_secret_* API keys are not JWT bearer tokens. Preserve Authorization
@@ -27,7 +28,33 @@ if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
   $headers.Authorization = "Bearer $supabaseApiKey"
 }
 
-$publishedRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc" -Headers $headers)
+function ConvertFrom-ReleaseMetadataJson {
+  param([Parameter(Mandatory = $true)][string]$Json)
+
+  # Parse the raw HTTP response rather than relying on Invoke-RestMethod's
+  # PowerShell pipeline conversion. Keep the JSON root array intact so a
+  # scalar bigint column cannot be accidentally expanded into an object array.
+  $rows = ConvertFrom-Json -InputObject $Json -AsHashtable -NoEnumerate
+  if ($rows -isnot [System.Array] -or $rows.Count -lt 1) {
+    throw 'Supabase release metadata response must be a non-empty JSON array. No objects were changed.'
+  }
+  foreach ($row in $rows) {
+    if ($row -isnot [System.Collections.IDictionary] -or
+        -not $row.Contains('installer_size') -or
+        -not $row.Contains('installer_path') -or
+        -not $row.Contains('is_active')) {
+      throw 'Supabase release metadata contains a row with a missing or invalid required field. No objects were changed.'
+    }
+  }
+  return ,$rows
+}
+
+$releaseMetadataUrl = "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc"
+$releaseResponse = Invoke-WebRequest -Uri $releaseMetadataUrl -Method Get -Headers $headers
+if ([int]$releaseResponse.StatusCode -lt 200 -or [int]$releaseResponse.StatusCode -ge 300) {
+  throw "Supabase release metadata request failed with HTTP $($releaseResponse.StatusCode). No objects were changed."
+}
+$publishedRows = ConvertFrom-ReleaseMetadataJson -Json ([string]$releaseResponse.Content)
 $activeRows = @($publishedRows | Where-Object { [bool]$_.is_active })
 if ($activeRows.Count -ne 1) {
   throw "Expected exactly one active private Windows release; found $($activeRows.Count). No Supabase objects were changed."
@@ -35,7 +62,37 @@ if ($activeRows.Count -ne 1) {
 
 $activeVersion = [string]$activeRows[0].version
 $activeKey = [string]$activeRows[0].installer_path
-$activeSize = [int64]$activeRows[0].installer_size
+
+function ConvertTo-InstallerSize {
+  param(
+    [Parameter(Mandatory = $true)][AllowNull()][object]$InputValue,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+  $value = $InputValue
+  $label = $Label
+  # PostgREST normally returns a scalar numeric value. Defensively unwrap a
+  # single-item array (some PowerShell response shapes enumerate JSON values),
+  # but reject ambiguous multi-value metadata instead of guessing.
+  while ($value -is [System.Array]) {
+    if ($value.Count -ne 1) {
+      throw "$label must contain exactly one numeric value; received $($value.Count). No Supabase objects were changed."
+    }
+    $value = $value[0]
+  }
+  if ($null -eq $value) {
+    throw "$label is missing. No Supabase objects were changed."
+  }
+  $parsed = [int64]0
+  $raw = [string]$value
+  $style = [Globalization.NumberStyles]::Integer
+  $culture = [Globalization.CultureInfo]::InvariantCulture
+  if (-not [int64]::TryParse($raw, $style, $culture, [ref]$parsed) -or $parsed -le 0) {
+    throw "$label must be a positive 64-bit integer; received '$raw'. No Supabase objects were changed."
+  }
+  return $parsed
+}
+
+$activeSize = ConvertTo-InstallerSize -InputValue ($activeRows[0].installer_size) -Label 'Active release installer_size'
 if ($activeVersion -notmatch '^\d+\.\d+\.\d+$' -or $activeKey -notmatch '^win32/latest/Nexfix-POS-\d+\.\d+\.\d+-x64-installer\.exe$' -or $activeSize -le 0) {
   throw 'Active release metadata is invalid. No Supabase objects were changed.'
 }
@@ -143,7 +200,7 @@ $previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [
 foreach ($previous in $previousRows) {
   $candidate = @($groups | Where-Object { $_.Key -eq [string]$previous.installer_path })
   if ($candidate.Count -ne 1) { continue }
-  if ($completePrevious.Count -lt ($maxRetainedReleases - 1) -and (Test-CompleteChunkGroup $candidate[0] ([int64]$previous.installer_size))) {
+  if ($completePrevious.Count -lt ($maxRetainedReleases - 1) -and (Test-CompleteChunkGroup $candidate[0] (ConvertTo-InstallerSize -InputValue ($previous.installer_size) -Label "Previous release $($previous.version) installer_size"))) {
     $completePrevious += @($candidate)
   }
   if ($completePrevious.Count -ge ($maxRetainedReleases - 1)) { break }
@@ -192,7 +249,7 @@ foreach ($retainedKey in $retainedKeys) {
   if ($retainedRows.Count -ne 1 -or $retainedGroup.Count -ne 1) {
     throw "Retained Supabase release has missing or ambiguous metadata/chunks: $retainedKey"
   }
-  if (-not (Test-CompleteChunkGroup $retainedGroup[0] ([int64]$retainedRows[0].installer_size))) {
+  if (-not (Test-CompleteChunkGroup $retainedGroup[0] (ConvertTo-InstallerSize -InputValue ($retainedRows[0].installer_size) -Label "Retained release $retainedKey installer_size"))) {
     throw "Retained Supabase release chunks disappeared or changed during retention cleanup: $retainedKey"
   }
 }
