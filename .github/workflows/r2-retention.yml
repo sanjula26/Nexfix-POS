@@ -1,10 +1,10 @@
-name: Private R2 Installer Retention
+name: Private Release Storage Retention
 
 on:
   workflow_dispatch:
     inputs:
       confirm_retention_cleanup:
-        description: 'Confirm retaining the active release plus the two newest other private installers, and deleting the rest'
+        description: 'Confirm retaining only the active and newest complete previous private release in both Supabase Storage and Cloudflare R2'
         required: true
         type: boolean
         default: false
@@ -29,14 +29,39 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:RETENTION_REF -ne 'refs/heads/main') {
-            throw "Private R2 retention may only run from main. Selected ref: $env:RETENTION_REF"
+            throw "Private release storage retention may only run from main. Selected ref: $env:RETENTION_REF"
           }
           if ($env:RETENTION_CONFIRMED -ne 'true') {
-            throw 'R2 retention cleanup was not explicitly confirmed. No private objects were changed.'
+            throw 'Private release storage retention was not explicitly confirmed. No private objects were changed.'
           }
-          Write-Host 'Main branch and explicit private R2 retention approval verified.'
+          Write-Host 'Main branch and explicit private release storage retention approval verified.'
 
-      - name: Retain active release and two newest private installers
+      - name: Checkout repository scripts
+        uses: actions/checkout@v7
+
+      # Install the R2 CLI before any private storage credentials are added to
+      # a step environment. This mirrors the production release tool boundary.
+      - name: Prepare AWS CLI before exposing R2 credentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              throw 'AWS CLI is missing and Chocolatey is unavailable on this runner.'
+            }
+            choco install awscli -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'AWS CLI installation failed before retention credentials were exposed.' }
+            $awsExe = 'C:\Program Files\Amazon\AWSCLIV2\aws.exe'
+            if (Test-Path $awsExe) {
+              $awsDirectory = Split-Path $awsExe -Parent
+              $env:PATH = "$awsDirectory;$env:PATH"
+              Add-Content -Path $env:GITHUB_PATH -Value $awsDirectory
+            }
+          }
+          aws --version
+          if ($LASTEXITCODE -ne 0) { throw 'AWS CLI is not available for private R2 retention.' }
+
+      - name: Retain active and previous private release in both storage providers
         shell: pwsh
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -46,4 +71,5 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          & "$env:GITHUB_WORKSPACE/scripts/retain-private-r2-installers.ps1"
+          & "$env:GITHUB_WORKSPACE/scripts/retain-private-supabase-chunks.ps1" -Apply
+          & "$env:GITHUB_WORKSPACE/scripts/retain-private-r2-installers.ps1" -Apply

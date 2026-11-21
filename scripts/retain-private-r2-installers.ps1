@@ -1,3 +1,5 @@
+param([switch]$Apply)
+
 $ErrorActionPreference = 'Stop'
 
 foreach ($name in @('R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET', 'SUPABASE_SERVICE_ROLE_KEY')) {
@@ -9,13 +11,10 @@ foreach ($name in @('R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
 $expectedActiveKey = [string]$env:EXPECTED_ACTIVE_INSTALLER_PATH
 $projectUrl = 'https://ocmzgamnehwbkuwkjdrr.supabase.co'
 $r2Endpoint = "https://$env:R2_ACCOUNT_ID.r2.cloudflarestorage.com"
-$maxRetainedReleases = 3
+$maxRetainedReleases = 2
 
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
-  choco install awscli -y --no-progress
-  if ($LASTEXITCODE -ne 0 -or -not (Get-Command aws -ErrorAction SilentlyContinue)) {
-    throw 'AWS CLI could not be installed; no R2 objects were changed.'
-  }
+  throw 'AWS CLI must be prepared before private R2 credentials are used. No R2 objects were changed.'
 }
 
 $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
@@ -29,7 +28,34 @@ $headers = @{
 if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
   $headers.Authorization = "Bearer $supabaseApiKey"
 }
-$activeRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&is_active=eq.true&select=version,installer_path,installer_size" -Headers $headers)
+function ConvertFrom-ReleaseMetadataJson {
+  param([Parameter(Mandatory = $true)][string]$Json)
+
+  # Preserve the raw PostgREST JSON array and scalar installer metadata. This
+  # avoids Invoke-RestMethod pipeline enumeration turning row properties into
+  # arrays when multiple releases are returned.
+  $rows = ConvertFrom-Json -InputObject $Json -AsHashtable -NoEnumerate
+  if ($rows -isnot [System.Array] -or $rows.Count -lt 1) {
+    throw 'Supabase release metadata response must be a non-empty JSON array. No R2 objects were changed.'
+  }
+  foreach ($row in $rows) {
+    if ($row -isnot [System.Collections.IDictionary] -or
+        -not $row.Contains('installer_size') -or
+        -not $row.Contains('installer_path') -or
+        -not $row.Contains('is_active')) {
+      throw 'Supabase release metadata contains a row with a missing or invalid required field. No R2 objects were changed.'
+    }
+  }
+  return ,$rows
+}
+
+$releaseMetadataUrl = "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc"
+$releaseResponse = Invoke-WebRequest -Uri $releaseMetadataUrl -Method Get -Headers $headers
+if ([int]$releaseResponse.StatusCode -lt 200 -or [int]$releaseResponse.StatusCode -ge 300) {
+  throw "Supabase release metadata request failed with HTTP $($releaseResponse.StatusCode). No R2 objects were changed."
+}
+$publishedRows = ConvertFrom-ReleaseMetadataJson -Json ([string]$releaseResponse.Content)
+$activeRows = @($publishedRows | Where-Object { [bool]$_.is_active })
 if ($activeRows.Count -ne 1) {
   throw "Expected exactly one active private Windows release; found $($activeRows.Count). No R2 objects were changed."
 }
@@ -69,9 +95,24 @@ if ([int64]$activeHead.ContentLength -ne [int64]$activeRows[0].installer_size) {
   throw 'Active R2 installer size does not match the Supabase release record. No objects were changed.'
 }
 
-# Always keep the active database-published installer, even if an older release
-# is re-run. Fill the other two slots with the newest versions by semantic version.
-$newestOtherInstallers = @($versionedInstallers | Where-Object { $_.Key -ne $activeKey } | Select-Object -First ($maxRetainedReleases - 1))
+# Keep the active release plus the newest previously published inactive release
+# that still exists in R2 and matches its immutable database size metadata. This
+# prevents an uploaded-but-never-published orphan from becoming a rollback version.
+$newestOtherInstallers = @()
+$previousRows = @($publishedRows | Where-Object { -not [bool]$_.is_active -and [string]$_.installer_path -ne $activeKey })
+foreach ($previous in $previousRows) {
+  $candidate = @($versionedInstallers | Where-Object { $_.Key -eq [string]$previous.installer_path })
+  if ($candidate.Count -ne 1) { continue }
+  $previousHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key ([string]$previous.installer_path) --endpoint-url $r2Endpoint --region auto --output json
+  if ($LASTEXITCODE -ne 0) { throw "Could not verify previous published R2 installer: $($previous.installer_path). No R2 objects were changed." }
+  $previousHead = ConvertFrom-Json -InputObject ($previousHeadJson -join "`n")
+  if ([int64]$previousHead.ContentLength -ne [int64]$previous.installer_size) {
+    Write-Warning "Skipping previous installer with a size mismatch: $($previous.installer_path)"
+    continue
+  }
+  $newestOtherInstallers = @($candidate)
+  break
+}
 $retained = @($activeEntry) + @($newestOtherInstallers)
 $retainedKeys = @($retained | ForEach-Object { [string]$_.Key } | Sort-Object)
 $removeKeys = @($versionedInstallers | Where-Object { $retainedKeys -notcontains $_.Key } | ForEach-Object { [string]$_.Key })
@@ -80,6 +121,11 @@ if ($retainedKeys -notcontains $activeKey) { throw 'Active installer is not prot
 Write-Host "Active release protected: $($activeRows[0].version) / $activeKey"
 Write-Host "Retaining active + newest private installers (maximum $maxRetainedReleases)."
 Write-Host "Superseded installers to remove: $($removeKeys.Count)"
+if (-not $Apply) {
+  Write-Host 'Preview only. Pass -Apply after verifying this exact retention plan.'
+  $removeKeys | ForEach-Object { Write-Host "Would remove: $_" }
+  return
+}
 foreach ($key in $removeKeys) {
   Write-Host "Removing superseded private installer: $key"
   aws s3api delete-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output text | Out-Null
@@ -93,10 +139,18 @@ $differences = @(Compare-Object -ReferenceObject $retainedKeys -DifferenceObject
 if ($differences.Count -gt 0) {
   throw "R2 retention verification failed. Expected: $($retainedKeys -join ', '); found: $($remainingKeys -join ', ')"
 }
-$finalHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $activeKey --endpoint-url $r2Endpoint --region auto --output json
-if ($LASTEXITCODE -ne 0) { throw 'Active installer disappeared during R2 retention cleanup.' }
-$finalHead = ConvertFrom-Json -InputObject ($finalHeadJson -join "`n")
-if ([int64]$finalHead.ContentLength -ne [int64]$activeRows[0].installer_size) {
-  throw 'Active installer size changed during R2 retention cleanup.'
+# Re-verify every retained installer, including the rollback version, against
+# its immutable published size metadata after deletion has completed.
+foreach ($key in $retainedKeys) {
+  $retainedRows = @($publishedRows | Where-Object { [string]$_.installer_path -eq $key })
+  if ($retainedRows.Count -ne 1) {
+    throw "Retained R2 installer has missing or ambiguous published metadata: $key"
+  }
+  $retainedHeadJson = aws s3api head-object --bucket $env:R2_BUCKET --key $key --endpoint-url $r2Endpoint --region auto --output json
+  if ($LASTEXITCODE -ne 0) { throw "Retained R2 installer disappeared during cleanup: $key" }
+  $retainedHead = ConvertFrom-Json -InputObject ($retainedHeadJson -join "`n")
+  if ([int64]$retainedHead.ContentLength -ne [int64]$retainedRows[0].installer_size) {
+    throw "Retained R2 installer size changed during cleanup: $key"
+  }
 }
 Write-Host "R2 retention verified: active release $($activeRows[0].version) remains and $($remainingKeys.Count) installer(s) are retained."
