@@ -171,6 +171,7 @@ test('private upload tools are prepared before R2 and Supabase credentials are e
   const prepareStep = releaseWorkflow.slice(prepareStart, r2Start);
   assert.match(prepareStep, /choco install awscli/);
   assert.match(prepareStep, /GITHUB_PATH/, 'AWS CLI path must persist to later credential-bearing release steps');
+  assert.doesNotMatch(prepareStep, /secrets\./, 'tool preparation must not receive private credentials');
   assert.match(prepareStep, /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
   assert.match(releaseWorkflow.slice(prepareStart, r2Start), /choco install awscli/);
 });
