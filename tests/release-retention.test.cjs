@@ -28,11 +28,13 @@ test('standalone private storage retention covers Supabase and R2 with explicit 
   assert.match(retentionWorkflow, /default:\s*false/);
 });
 
-test('R2 retention protects the active database pointer and keeps only one newest previous installer', () => {
+test('R2 retention protects the active database pointer and keeps only one published complete previous installer', () => {
   assert.match(retentionScript, /desktop_releases\?platform=eq\.win32&channel=eq\.latest&is_active=eq\.true/);
   assert.match(retentionScript, /\$activeKey\s*=\s*\[string\]\$activeRows\[0\]\.installer_path/);
   assert.match(retentionScript, /\$activeEntry\s*=\s*@\(\$versionedInstallers\s*\|\s*Where-Object\s*\{\s*\$_.Key\s*-eq\s*\$activeKey\s*\}\)/);
   assert.match(retentionScript, /\$maxRetainedReleases\s*=\s*2/);
+  assert.match(retentionScript, /select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
+  assert.match(retentionScript, /\$previousHead\.ContentLength\)\s*-ne\s*\[int64\]\$previous\.installer_size/);
   assert.match(retentionScript, /\$retained\s*=\s*@\(\$activeEntry\)\s*\+\s*@\(\$newestOtherInstallers\)/);
   assert.match(retentionScript, /EXPECTED_ACTIVE_INSTALLER_PATH/);
   assert.match(retentionScript, /head-object[\s\S]*?Active installer disappeared during R2 retention cleanup/);
@@ -46,6 +48,8 @@ test('Supabase retention is active-release-safe, paginated, and retains only a c
   assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$activeGroup\[0\] \$activeSize/);
   assert.match(supabaseRetentionScript, /Select-Object -First \(\$maxRetainedReleases - 1\)/);
   assert.match(supabaseRetentionScript, /\$maxRetainedReleases\s*=\s*2/);
+  assert.match(supabaseRetentionScript, /select=version,installer_path,installer_size,is_active,published_at&order=published_at\.desc/);
+  assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$candidate\[0\] \(\[int64\]\$previous\.installer_size\)/);
   assert.match(supabaseRetentionScript, /if\s*\(-not\s*\$Apply\)/);
   assert.match(supabaseRetentionScript, /Select-Object -Skip \$offset -First 1000/);
   assert.match(supabaseRetentionScript, /Supabase retention verified/);
