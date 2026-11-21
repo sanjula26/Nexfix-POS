@@ -213,6 +213,7 @@ test('Staff Auth uses a separate Supabase storage namespace and no Admin updater
   assert.match(staffAuthSource, /nexfix-staff-\$\{projectRef\}-auth-token/);
   assert.match(staffAuthSource, /storageKey: staffSupabaseStorageKey/);
   assert.match(staffAuthSource, /detectSessionInUrl: false/);
+  assert.match(staffAuthSource, /Secure Staff Cloud session storage removal is unavailable/);
   assert.doesNotMatch(staffAuthSource, /cloudAuth|cloudSync|ensureCloudShop|register_pos_device|desktop-updates/);
   assert.match(mainSource, /nexfix-staff-\[a-z0-9-\]\+-auth-token/);
   assert.match(mainSource, /sb-\[a-z0-9-\]\+-auth-token/);
