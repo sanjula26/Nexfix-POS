@@ -156,7 +156,7 @@ export default function Inventory() {
           setStockTakeOpen(false);
           setStockCounts({});
           setBranchStockCacheVersion(version => version + 1);
-          window.alert('Stock take stopped because an adjustment was rejected. Reopen Stock Take to reload the current branch quantities before continuing.');
+          window.alert(`Stock take stopped because an adjustment was rejected. ${changed} earlier adjustment(s) were already committed and were not rolled back. Reopen Stock Take to reload the current branch quantities before continuing.`);
           return;
         }
         changed++;
