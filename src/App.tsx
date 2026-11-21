@@ -171,13 +171,13 @@ function CloudSyncStateBridge() {
         }
       }
 
-      if (cancelled) return;
       if (succeeded) {
-        // Only remember a fingerprint after the full normalized catalog sync
-        // reports success. A failed result must remain eligible for retry.
+        // A completed sync is valid for this user/fingerprint even if a
+        // render cleanup happened while the request was in flight.
         lastCatalogSyncKeyRef.current = syncKey;
         return;
       }
+      if (cancelled) return;
 
       attempts += 1;
       if (attempts < 3) {
