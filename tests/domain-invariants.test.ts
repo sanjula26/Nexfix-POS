@@ -617,5 +617,5 @@ test('Adjust Stock and Stock Take pass verified online quantities to the store',
   const inventorySource = readFileSync(new URL('../src/pages/Inventory.tsx', import.meta.url), 'utf8');
   assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
   assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
-  assert.match(inventorySource, /earlier adjustment\\\(s\\\) were already committed and were not rolled back/);
+  assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
 });
