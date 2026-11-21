@@ -170,6 +170,29 @@ test('private upload tools are prepared before R2 and Supabase credentials are e
   }
   const prepareStep = releaseWorkflow.slice(prepareStart, r2Start);
   assert.match(prepareStep, /choco install awscli/);
+  assert.match(prepareStep, /GITHUB_PATH/, 'AWS CLI path must persist to later credential-bearing release steps');
+  assert.doesNotMatch(prepareStep, /secrets\./, 'tool preparation must not receive private credentials');
   assert.match(prepareStep, /npm install --no-save --no-package-lock --ignore-scripts tus-js-client@4/);
   assert.match(releaseWorkflow.slice(prepareStart, r2Start), /choco install awscli/);
+});
+
+
+test('manual retention prepares AWS CLI before exposing private storage credentials', () => {
+  const checkoutStart = retentionWorkflow.indexOf('uses: actions/checkout@v7');
+  const prepareStart = retentionWorkflow.indexOf('- name: Prepare AWS CLI before exposing R2 credentials');
+  const retainStart = retentionWorkflow.indexOf('- name: Retain active and previous private release in both storage providers');
+  assert.ok(checkoutStart >= 0 && prepareStart > checkoutStart, 'repository scripts must be checked out before retention setup');
+  assert.ok(retainStart > prepareStart, 'AWS CLI must be prepared before the secret-bearing retention step');
+  const prepareStep = retentionWorkflow.slice(prepareStart, retainStart);
+  const retainStep = retentionWorkflow.slice(retainStart);
+  assert.match(prepareStep, /choco install awscli/);
+  assert.match(prepareStep, /GITHUB_PATH/);
+  assert.doesNotMatch(prepareStep, /secrets\./);
+  assert.match(retainStep, /R2_SECRET_ACCESS_KEY/);
+  assert.match(retainStep, /SUPABASE_SERVICE_ROLE_KEY/);
+});
+
+test('R2 retention script never installs tools after credentials may be present', () => {
+  assert.match(retentionScript, /AWS CLI must be prepared before private R2 credentials are used/);
+  assert.doesNotMatch(retentionScript, /choco install awscli/);
 });
