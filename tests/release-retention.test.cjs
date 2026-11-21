@@ -39,6 +39,8 @@ test('R2 retention protects the active database pointer and keeps only one publi
   assert.match(retentionScript, /\$retained\s*=\s*@\(\$activeEntry\)\s*\+\s*@\(\$newestOtherInstallers\)/);
   assert.match(retentionScript, /EXPECTED_ACTIVE_INSTALLER_PATH/);
   assert.match(retentionScript, /head-object[\s\S]*?Active installer disappeared during R2 retention cleanup/);
+  assert.match(retentionScript, /foreach\s*\(\$key in \$retainedKeys\)/);
+  assert.match(retentionScript, /Retained R2 installer size changed during cleanup/);
   assert.match(retentionScript, /if\s*\(-not\s*\$Apply\)/);
 });
 
@@ -56,6 +58,8 @@ test('Supabase retention is active-release-safe, paginated, and retains only a c
   assert.match(supabaseRetentionScript, /if\s*\(-not\s*\$Apply\)/);
   assert.match(supabaseRetentionScript, /Select-Object -Skip \$offset -First 1000/);
   assert.match(supabaseRetentionScript, /Supabase retention verified/);
+  assert.match(supabaseRetentionScript, /foreach\s*\(\$retainedKey in \$retainedKeys\)/);
+  assert.match(supabaseRetentionScript, /Test-CompleteChunkGroup \$retainedGroup\[0\] \(\[int64\]\$retainedRows\[0\]\.installer_size\)/);
   assert.doesNotMatch(supabaseRetentionScript, /DELETE\s+FROM\s+storage\.objects/i);
 });
 
