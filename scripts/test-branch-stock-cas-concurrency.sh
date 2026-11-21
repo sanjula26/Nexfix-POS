@@ -93,7 +93,7 @@ rpc_sql() {
   local adjustment_id="$1"
   local note="$2"
   printf "SELECT set_config('request.jwt.claim.sub','%s',false);\n" "$user_id"
-  printf "SELECT set_config('request.jwt.claims','{\\"sub\\":\\"%s\\",\\"role\\":\\"authenticated\\"}',false);\n" "$user_id"
+  printf "SELECT set_config('request.jwt.claims','{\"sub\":\"%s\",\"role\":\"authenticated\"}',false);\n" "$user_id"
   printf "\\set VERBOSITY verbose\n"
   cat <<SQL
 SELECT public.adjust_branch_stock_atomic_expected(
