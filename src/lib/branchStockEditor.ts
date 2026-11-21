@@ -30,3 +30,15 @@ export function validateBranchStockEdit(input: BranchStockEditValidationInput): 
   }
   return { ok: true, delta };
 }
+
+/** Use compare-and-set only for a verified online cloud quantity; preserve local/offline delta queue behavior. */
+export function getExpectedBranchQtyForStockAdjustment(
+  shopId: string,
+  offline: boolean,
+  quantity: number | null,
+): number | undefined {
+  if (!shopId.trim() || offline || quantity === null || !Number.isSafeInteger(quantity) || quantity < 0) {
+    return undefined;
+  }
+  return quantity;
+}
