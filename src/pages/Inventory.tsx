@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Package, Plus, Pencil, Trash2, Boxes, Banknote, AlertTriangle, Layers,
@@ -48,6 +48,8 @@ export default function Inventory() {
   const [branchStockExpectedQty, setBranchStockExpectedQty] = useState<number | null>(null);
   const [branchStockExpectedBranchId, setBranchStockExpectedBranchId] = useState<string | null>(null);
   const [branchStockExpectedShopId, setBranchStockExpectedShopId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [stockAdj, setStockAdj] = useState<Product | null>(null);
   const [restocking, setRestocking] = useState<Product | null>(null);
@@ -195,7 +197,7 @@ export default function Inventory() {
     setIsNew(false);
   };
 
-  const save = async () => {
+  const saveProductChanges = async () => {
     if (!editing || !editing.name.trim()) return;
     const current = isNew ? null : state.products.find(p => p.id === editing.id);
     const currentTracked = !!(current?.trackImei || current?.trackSerial);
@@ -311,7 +313,14 @@ export default function Inventory() {
       if (shouldApplyBranchStockEdit && branchStockDelta !== 0) {
         const adjusted = await adjustStock(editing.id, branchStockDelta, 'Inventory product editor stock change', currentBranchStock as number);
         if (!adjusted) {
-          alert('Product details were saved, but branch stock was not changed. Close and reopen the editor to load the latest branch quantity, then retry.');
+          // The compare-and-set guard may reject a stale quantity after another POS
+          // changes this branch. Invalidate the baseline so repeated Save clicks
+          // cannot send the same stale expected quantity and flood Postgres logs.
+          setBranchStockExpectedQty(null);
+          setBranchStockExpectedBranchId(null);
+          setBranchStockExpectedShopId(null);
+          setBranchStockEditReady(false);
+          alert('Product details were saved, but branch stock was not changed. The server quantity may have changed on another POS. Close and reopen this editor to load the latest branch quantity before trying again.');
           return;
         }
       }
@@ -324,6 +333,18 @@ export default function Inventory() {
     setBranchStockExpectedBranchId(null);
     setBranchStockExpectedShopId(null);
     setNewUnitText('');
+  };
+
+  const save = async () => {
+    if (saveInFlightRef.current || !editing || !editing.name.trim()) return;
+    saveInFlightRef.current = true;
+    setSaving(true);
+    try {
+      await saveProductChanges();
+    } finally {
+      saveInFlightRef.current = false;
+      setSaving(false);
+    }
   };
 
   const num = (v: string) => Number(v.replace(/[^\d.]/g, '')) || 0;
@@ -550,8 +571,8 @@ export default function Inventory() {
         footer={
           <div className="flex gap-2 justify-end">
             <button type="button" className="btn btn-soft" onClick={() => { setEditing(null); setBranchStockDraftDirty(false); setBranchStockEditReady(true); setBranchStockExpectedQty(null); setBranchStockExpectedBranchId(null); setBranchStockExpectedShopId(null); }}>Cancel</button>
-            <button type="button" className="btn btn-primary" onClick={save} disabled={!editing?.name.trim() || (editing && (editing.trackImei || editing.trackSerial) && editing.stock !== (isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length)) || (editing && !isNew && (state.products.find(p => p.id === editing.id)?.trackImei || state.products.find(p => p.id === editing.id)?.trackSerial) && !(editing.trackImei || editing.trackSerial) && state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length > 0)}>
-              {isNew ? <Plus size={15} /> : <Pencil size={15} />} {isNew ? 'Add product' : 'Save changes'}
+            <button type="button" className="btn btn-primary" onClick={save} disabled={saving || !editing?.name.trim() || (editing && (editing.trackImei || editing.trackSerial) && editing.stock !== (isNew ? 0 : state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length)) || (editing && !isNew && (state.products.find(p => p.id === editing.id)?.trackImei || state.products.find(p => p.id === editing.id)?.trackSerial) && !(editing.trackImei || editing.trackSerial) && state.units.filter(u => u.productId === editing.id && u.status === 'in_stock').length > 0)}>
+              {isNew ? <Plus size={15} /> : <Pencil size={15} />} {saving ? 'Saving…' : isNew ? 'Add product' : 'Save changes'}
             </button>
           </div>
         }
