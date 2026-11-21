@@ -19,6 +19,7 @@ $supabaseApiKey = [string]$env:SUPABASE_SERVICE_ROLE_KEY
 $headers = @{
   apikey = $supabaseApiKey
   'Content-Type' = 'application/json'
+  Accept = 'application/json'
   'User-Agent' = 'Nexfix-GitHub-Action/2.0'
 }
 # Opaque sb_secret_* API keys are not JWT bearer tokens. Preserve Authorization
@@ -27,7 +28,33 @@ if ($supabaseApiKey.StartsWith('eyJ', [StringComparison]::Ordinal)) {
   $headers.Authorization = "Bearer $supabaseApiKey"
 }
 
-$publishedRows = @(Invoke-RestMethod -Uri "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc" -Headers $headers)
+function ConvertFrom-ReleaseMetadataJson {
+  param([Parameter(Mandatory = $true)][string]$Json)
+
+  # Parse the raw HTTP response rather than relying on Invoke-RestMethod's
+  # PowerShell pipeline conversion. Keep the JSON root array intact so a
+  # scalar bigint column cannot be accidentally expanded into an object array.
+  $rows = ConvertFrom-Json -InputObject $Json -AsHashtable -NoEnumerate
+  if ($rows -isnot [System.Array] -or $rows.Count -lt 1) {
+    throw 'Supabase release metadata response must be a non-empty JSON array. No objects were changed.'
+  }
+  foreach ($row in $rows) {
+    if ($row -isnot [System.Collections.IDictionary] -or
+        -not $row.Contains('installer_size') -or
+        -not $row.Contains('installer_path') -or
+        -not $row.Contains('is_active')) {
+      throw 'Supabase release metadata contains a row with a missing or invalid required field. No objects were changed.'
+    }
+  }
+  return ,$rows
+}
+
+$releaseMetadataUrl = "$projectUrl/rest/v1/desktop_releases?platform=eq.win32&channel=eq.latest&select=version,installer_path,installer_size,is_active,published_at&order=published_at.desc"
+$releaseResponse = Invoke-WebRequest -Uri $releaseMetadataUrl -Method Get -Headers $headers
+if ([int]$releaseResponse.StatusCode -lt 200 -or [int]$releaseResponse.StatusCode -ge 300) {
+  throw "Supabase release metadata request failed with HTTP $($releaseResponse.StatusCode). No objects were changed."
+}
+$publishedRows = ConvertFrom-ReleaseMetadataJson -Json ([string]$releaseResponse.Content)
 $activeRows = @($publishedRows | Where-Object { [bool]$_.is_active })
 if ($activeRows.Count -ne 1) {
   throw "Expected exactly one active private Windows release; found $($activeRows.Count). No Supabase objects were changed."
