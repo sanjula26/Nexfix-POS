@@ -7,6 +7,8 @@ import {
   idbClearQueue,
   idbClearRestoreCheckpoint,
   idbEnqueue,
+  idbEnqueueDetailed,
+  idbSetMetaDetailed,
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
@@ -172,6 +174,48 @@ test('detailed IndexedDB state writes preserve the quota failure type', async ()
 
   try {
     const result = await reopenedDb.idbSaveStateDetailed({ products: [], users: [], sales: [] } as unknown as POSState);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, 'quota_exceeded');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
+
+test('detailed offline queue writes preserve quota failure type', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?queue-quota-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'sync_queue' && args[1] === 'readwrite') {
+      throw new DOMException('Injected queue quota failure', 'QuotaExceededError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const result = await reopenedDb.idbEnqueueDetailed({
+      type: 'state_write',
+      id: 'quota-test-queue-entry',
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, 'quota_exceeded');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
+test('detailed backup metadata writes preserve quota failure type', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?meta-quota-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'meta' && args[1] === 'readwrite') {
+      throw new DOMException('Injected metadata quota failure', 'QuotaExceededError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const result = await reopenedDb.idbSetMetaDetailed({ backupCount: 3 });
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.error.kind, 'quota_exceeded');
   } finally {
