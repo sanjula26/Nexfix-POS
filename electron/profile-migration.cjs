@@ -146,6 +146,11 @@ function transitionMigrationJournal(journal, nextPhase, now = new Date().toISOSt
   const next = cloneJournal(journal);
   next.phase = nextPhase;
   next.updatedAt = now;
+  if (journal.phase === 'blocked_recovery' && nextPhase === 'snapshotting') {
+    next.entries = Object.fromEntries(MIGRATION_PURPOSES.map(purpose => [
+      purpose, { status: 'pending' },
+    ]));
+  }
   assertValidJournal(next);
   return next;
 }
