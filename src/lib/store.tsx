@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbSaveStateDetailed, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -308,18 +308,18 @@ async function persistState(state: POSState): Promise<void> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
-    const saved = await idbSaveState(state);
+    const saved = await idbSaveStateDetailed(state);
     // Never enqueue an offline state sync from a stale IndexedDB snapshot when
     // this authoritative write failed. Keep the cloud-sale marker so a later
     // successful persist can safely reconcile the sale instead of risking a
     // duplicate or silently syncing older state.
-    if (!saved) {
-      console.error('[POS Storage] IndexedDB state save failed; offline sync enqueue skipped to avoid stale-state sync.');
+    if (!saved.ok) {
+      console.error('[POS Storage] IndexedDB state save failed (' + saved.error.kind + '); offline sync enqueue skipped to avoid stale-state sync.');
       // Surface durability failures to the active POS screen. Do not pretend the
       // state is saved, and do not enqueue a potentially stale snapshot.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
-          detail: { message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
+          detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
       return;
