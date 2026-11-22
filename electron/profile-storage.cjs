@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { readProfileManifest } = require('./storage-profile.cjs');
 const { encryptProfilePayload, decryptProfilePayload } = require('./profile-crypto.cjs');
+const { validateMigrationJournal } = require('./profile-migration.cjs');
 
 const PROFILE_DATA_FILES = Object.freeze({
   app_state: 'app-state.nxf',
@@ -66,14 +67,30 @@ class EncryptedProfileStorage {
     if (!fs.existsSync(filePath)) return null;
     const envelope = parseEnvelopeFile(filePath, this.profileId, purpose);
     const plaintext = decryptProfilePayload(this.dataKey, this.profileId, purpose, envelope);
-    try { return plaintext.toString('utf8'); }
-    finally { plaintext.fill(0); }
+    try {
+      const serialized = plaintext.toString('utf8');
+      if (purpose === 'migration_journal') {
+        let journal;
+        try { journal = JSON.parse(serialized); }
+        catch { throw new Error('POS migration journal is invalid JSON.'); }
+        const validation = validateMigrationJournal(journal);
+        if (!validation.valid) throw new Error(validation.reason);
+      }
+      return serialized;
+    } finally { plaintext.fill(0); }
   }
 
   write(purpose, serializedPayload) {
     assertPurpose(purpose);
     if (typeof serializedPayload !== 'string') {
       throw new Error('POS profile data must be serialized to a string before encryption.');
+    }
+    if (purpose === 'migration_journal') {
+      let journal;
+      try { journal = JSON.parse(serializedPayload); }
+      catch { throw new Error('POS migration journal must be valid JSON.'); }
+      const validation = validateMigrationJournal(journal);
+      if (!validation.valid) throw new Error(validation.reason);
     }
     const plaintext = Buffer.from(serializedPayload, 'utf8');
     if (plaintext.length > 256 * 1024 * 1024) {
