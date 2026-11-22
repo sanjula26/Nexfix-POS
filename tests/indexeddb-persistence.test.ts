@@ -12,6 +12,9 @@ import {
   idbLoadState,
   idbSaveRestoreCheckpoint,
   idbSaveState,
+  idbSaveStateDetailed,
+  estimateIndexedDBQuota,
+  classifyIndexedDBWriteFailure,
 } from '../src/lib/db.ts';
 
 before(async () => {
@@ -111,6 +114,66 @@ test('IndexedDB queue read failures are surfaced instead of treated as an empty 
 
   try {
     await assert.rejects(reopenedDb.idbListQueue(), /Injected queue read failure/);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
+
+test('IndexedDB quota estimator uses runtime estimates and the conservative threshold', async () => {
+  const below = await estimateIndexedDBQuota({
+    estimate: async () => ({ usage: 840, quota: 1000 }),
+  });
+  assert.equal(below.status, 'available');
+  if (below.status === 'available') {
+    assert.equal(below.usageRatio, 0.84);
+    assert.equal(below.nearQuota, false);
+    assert.equal(below.remainingBytes, 160);
+  }
+
+  const above = await estimateIndexedDBQuota({
+    estimate: async () => ({ usage: 860, quota: 1000 }),
+  });
+  assert.equal(above.status, 'available');
+  if (above.status === 'available') assert.equal(above.nearQuota, true);
+});
+
+test('IndexedDB quota estimator safely handles unsupported and failed estimates', async () => {
+  assert.deepEqual(await estimateIndexedDBQuota(null), { status: 'unsupported' });
+  assert.deepEqual(await estimateIndexedDBQuota({
+    estimate: async () => { throw new Error('estimate unavailable'); },
+  }), { status: 'unavailable' });
+  assert.deepEqual(await estimateIndexedDBQuota({
+    estimate: async () => ({ usage: undefined, quota: 1000 }),
+  }), { status: 'unavailable' });
+  await assert.rejects(
+    estimateIndexedDBQuota({ estimate: async () => ({ usage: 1, quota: 2 }) }, 0),
+    /threshold/,
+  );
+});
+
+test('IndexedDB write failure classifier distinguishes quota exhaustion', () => {
+  assert.deepEqual(
+    classifyIndexedDBWriteFailure(new DOMException('full', 'QuotaExceededError')),
+    { kind: 'quota_exceeded', message: 'IndexedDB storage quota has been exceeded.' },
+  );
+  assert.equal(classifyIndexedDBWriteFailure(new Error('other')).kind, 'write_failed');
+});
+
+test('detailed IndexedDB state writes preserve the quota failure type', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?quota-write-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = args[0];
+    const isStateStore = stores === 'app_state' || (Array.isArray(stores) && stores.includes('app_state'));
+    if (isStateStore && args[1] === 'readwrite') throw new DOMException('Injected quota failure', 'QuotaExceededError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const result = await reopenedDb.idbSaveStateDetailed({ products: [], users: [], sales: [] } as unknown as POSState);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, 'quota_exceeded');
   } finally {
     IDBDatabase.prototype.transaction = originalTransaction;
   }
