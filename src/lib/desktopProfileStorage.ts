@@ -9,7 +9,8 @@ export type DesktopProfilePurpose =
   | 'app_state'
   | 'sync_queue'
   | 'meta'
-  | 'restore_checkpoint';
+  | 'restore_checkpoint'
+  | 'migration_journal';
 
 type ProfileReadResponse = {
   ok: boolean;
