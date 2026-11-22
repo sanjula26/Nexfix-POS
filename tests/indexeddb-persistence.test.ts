@@ -251,3 +251,42 @@ test('backup metadata write does not overwrite existing metadata when the read f
   assert.equal(preserved.backupCount, 7);
   assert.equal(preserved.autoBackupHours, 12);
 });
+
+
+test('concurrent backup metadata patches are merged atomically without losing fields', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?meta-concurrent=${Date.now()}`);
+  await reopenedDb.idbSetMeta({ backupCount: 4, autoBackupHours: 6 });
+
+  const results = await Promise.all([
+    reopenedDb.idbSetMetaDetailed({ lastManualBackupAt: '2026-11-22T10:00:00.000Z' }),
+    reopenedDb.idbSetMetaDetailed({ lastCloudBackupAt: '2026-11-22T10:01:00.000Z' }),
+  ]);
+  assert.equal(results.every((result) => result.ok), true);
+
+  const finalMeta = await reopenedDb.idbGetMetaDetailed();
+  assert.equal(finalMeta.ok, true);
+  if (finalMeta.ok) {
+    assert.equal(finalMeta.value.backupCount, 4);
+    assert.equal(finalMeta.value.lastManualBackupAt, '2026-11-22T10:00:00.000Z');
+    assert.equal(finalMeta.value.lastCloudBackupAt, '2026-11-22T10:01:00.000Z');
+  }
+});
+
+test('detailed backup metadata reads report storage failures instead of returning defaults', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?meta-detailed-read-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'meta' && args[1] === 'readonly') {
+      throw new DOMException('Injected metadata read failure', 'InvalidStateError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const result = await reopenedDb.idbGetMetaDetailed();
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.kind, 'write_failed');
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
