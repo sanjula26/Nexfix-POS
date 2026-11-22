@@ -444,8 +444,13 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
+    if (!desktopApi.getPOSOverflowFolder) {
+      setError('This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.');
+      setLoading(false);
+      return;
+    }
     let active = true;
-    void desktopApi.getPOSOverflowFolder?.().then(result => {
+    void desktopApi.getPOSOverflowFolder().then(result => {
       if (!active) return;
       setFolderStatus(result);
       if (!result?.ok) setError(result?.error || 'Saved storage folder status could not be checked.');
