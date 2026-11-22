@@ -1256,7 +1256,7 @@ export default function Settings() {
                   onClick={async () => {
                     setBackupMsg('Preparing secure backup…');
                     const result = await runManualBackup();
-                    setBackupMsg(result.ok ? 'Manual backup downloaded successfully.' : (result.error || 'Backup download failed.'));
+                    setBackupMsg(result.error || (result.ok ? 'Manual backup downloaded successfully.' : 'Backup download failed.'));
                   }}
                 >
                   <Download size={15} /> Export backup
@@ -1291,7 +1291,7 @@ export default function Settings() {
                 </button>
               )}
             </div>
-            {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${(importMsg || backupMsg).includes('success') || (importMsg || backupMsg).includes('downloaded') || (importMsg || backupMsg).includes('Flushed') || (importMsg || backupMsg).includes('Auto') || (importMsg || backupMsg).includes('Google') || (importMsg || backupMsg).includes('Reloading') ? 'text-emerald-500' : 'text-rose-500'}`}>{importMsg || backupMsg}</p>}
+            {(importMsg || backupMsg) && <p className={`text-[13px] font-medium mt-3 ${/(could not|failed|error|not saved|unable|warning)/i.test(importMsg || backupMsg) ? 'text-rose-500' : 'text-emerald-500'}`}>{importMsg || backupMsg}</p>}
           </div>
 
           {user?.role === 'admin' && <div className="card p-6 border border-rose-500/25"><h3 className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500 flex items-center justify-center"><RotateCcw size={15} /></span>Danger Zone</h3><p className="text-xs text-faint mb-4">Clear the current local dataset and restore the demo dataset. This action replaces local POS records and cannot be undone.</p><button className="btn btn-danger-soft" onClick={() => setConfirmReset(true)}><RotateCcw size={15} /> Clear Demo Data</button></div>}
