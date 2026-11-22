@@ -11,6 +11,7 @@ const PROFILE_DATA_FILES = Object.freeze({
   sync_queue: 'sync-queue.nxf',
   meta: 'profile-meta.nxf',
   restore_checkpoint: 'restore-checkpoint.nxf',
+  migration_journal: 'migration-journal.nxf',
 });
 const MAX_ENCRYPTED_FILE_BYTES = 350 * 1024 * 1024;
 
