@@ -23,7 +23,7 @@ const PHASE_TRANSITIONS = Object.freeze({
   verifying: new Set(['ready_to_cutover', 'blocked_recovery']),
   ready_to_cutover: new Set(['folder_primary', 'blocked_recovery']),
   folder_primary: new Set(['blocked_recovery']),
-  blocked_recovery: new Set(['snapshotting', 'copying', 'verifying', 'ready_to_cutover', 'folder_primary']),
+  blocked_recovery: new Set(['snapshotting']),
 });
 
 function assertPurpose(purpose) {
