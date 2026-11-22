@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { registerPOSProfileIpc } = require('../electron/profile-ipc.cjs');
+const { createMigrationJournal } = require('../electron/profile-migration.cjs');
 
 function safeStorage(prefix = 'dpapi:') {
   return {
@@ -79,7 +80,7 @@ test('trusted IPC supports choose, discover, create, encrypted read/write, lock 
 
   const journal = await ctx.call('pos-profile:write', {
     purpose: 'migration_journal',
-    payload: JSON.stringify({ version: 1, phase: 'snapshotting' }),
+    payload: JSON.stringify(createMigrationJournal(created.profile.profileId, '2026-11-22T08:00:00.000Z')),
   });
   assert.equal(journal.ok, true);
   const loadedJournal = await ctx.call('pos-profile:read', { purpose: 'migration_journal' });
