@@ -230,9 +230,10 @@ test('preload exposes only scoped POS overflow-folder preference operations', ()
 
 test('desktop startup gate is outside POSProvider and leaves browser development unaffected', () => {
   const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
-  const gate = appSource.indexOf('<DesktopOverflowFolderSetup>');
-  const provider = appSource.indexOf('<POSProvider>', gate);
-  assert.ok(gate >= 0 && provider > gate, 'folder selection must finish before POSProvider initializes');
+  assert.match(appSource, /function POSApplication\(\)[\s\S]*?<POSProvider>/);
+  const appRoot = appSource.slice(appSource.indexOf('export default function App()'));
+  assert.match(appRoot, /<DesktopOverflowFolderSetup>[\s\S]*?<POSApplication\s*\/>/,
+    'folder selection must wrap the POS application before POSProvider mounts');
   assert.match(appSource, /if\s*\(!desktopApi\?\.isDesktop\)\s*return\s*<>\{children\}<\/>/);
   assert.match(appSource, /IndexedDB will continue to store your normal POS data first/);
 });
