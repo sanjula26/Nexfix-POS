@@ -78,14 +78,15 @@ test('trusted IPC supports choose, discover, create, encrypted read/write, lock 
   assert.equal(loaded.found, true);
   assert.equal(loaded.payload, JSON.stringify({ products: [{ id: 'one' }] }));
 
+  const journalPayload = JSON.stringify(createMigrationJournal(created.profile.profileId, '2026-11-22T08:00:00.000Z'));
   const journal = await ctx.call('pos-profile:write', {
     purpose: 'migration_journal',
-    payload: JSON.stringify(createMigrationJournal(created.profile.profileId, '2026-11-22T08:00:00.000Z')),
+    payload: journalPayload,
   });
   assert.equal(journal.ok, true);
   const loadedJournal = await ctx.call('pos-profile:read', { purpose: 'migration_journal' });
   assert.equal(loadedJournal.ok, true);
-  assert.equal(loadedJournal.payload, JSON.stringify({ version: 1, phase: 'snapshotting' }));
+  assert.equal(loadedJournal.payload, journalPayload);
 
   await ctx.call('pos-profile:lock');
   const lockedRead = await ctx.call('pos-profile:read', { purpose: 'app_state' });
