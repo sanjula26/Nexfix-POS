@@ -225,15 +225,17 @@ test('detailed backup metadata writes preserve quota failure type', async () => 
 test('backup metadata write does not overwrite existing metadata when the read fails', async () => {
   const reopenedDb = await import(`../src/lib/db.ts?meta-read-failure=${Date.now()}`);
   await reopenedDb.idbSetMeta({ backupCount: 7, autoBackupHours: 12 });
-  const originalTransaction = IDBDatabase.prototype.transaction;
+  const originalGet = IDBObjectStore.prototype.get;
+  const originalPut = IDBObjectStore.prototype.put;
   let writeAttempts = 0;
-  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
-    if (args[0] === 'meta' && args[1] === 'readonly') {
-      throw new DOMException('Injected metadata read failure', 'InvalidStateError');
-    }
-    if (args[0] === 'meta' && args[1] === 'readwrite') writeAttempts += 1;
-    return originalTransaction.apply(this, args);
-  } as IDBDatabase['transaction'];
+  IDBObjectStore.prototype.get = function (...args: Parameters<IDBObjectStore['get']>) {
+    if (this.name === 'meta') throw new DOMException('Injected metadata read failure', 'InvalidStateError');
+    return originalGet.apply(this, args);
+  };
+  IDBObjectStore.prototype.put = function (...args: Parameters<IDBObjectStore['put']>) {
+    if (this.name === 'meta') writeAttempts += 1;
+    return originalPut.apply(this, args);
+  };
 
   try {
     const result = await reopenedDb.idbSetMetaDetailed({ backupCount: 99 });
@@ -244,7 +246,8 @@ test('backup metadata write does not overwrite existing metadata when the read f
     }
     assert.equal(writeAttempts, 0, 'must not attempt a write after metadata read failure');
   } finally {
-    IDBDatabase.prototype.transaction = originalTransaction;
+    IDBObjectStore.prototype.get = originalGet;
+    IDBObjectStore.prototype.put = originalPut;
   }
 
   const preserved = await reopenedDb.idbGetMeta();
