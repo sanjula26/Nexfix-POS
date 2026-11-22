@@ -8,6 +8,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { createManagedProfileDirectory } = require('../electron/storage-profile.cjs');
 const { EncryptedProfileStorage, PROFILE_DATA_FILES } = require('../electron/profile-storage.cjs');
+const { createMigrationJournal } = require('../electron/profile-migration.cjs');
 
 const PROFILE_ID = 'd9d6f0e1-5b2d-4e21-9e72-0cce0d8c7a10';
 const NOW = '2026-11-20T08:00:00.000Z';
@@ -51,8 +52,10 @@ test('increments revisions and keeps queue, metadata and restore checkpoint sepa
   assert.equal(storage.read('sync_queue'), '[{"id":"q1"}]');
   assert.equal(storage.read('meta'), '{"backupCount":1}');
   assert.equal(storage.read('restore_checkpoint'), '{"sales":[]}');
-  assert.equal(storage.write('migration_journal', '{"phase":"snapshotting"}').revision, 1);
-  assert.equal(storage.read('migration_journal'), '{"phase":"snapshotting"}');
+  const journal = JSON.stringify(createMigrationJournal(PROFILE_ID, NOW));
+  assert.equal(storage.write('migration_journal', journal).revision, 1);
+  assert.equal(storage.read('migration_journal'), journal);
+  assert.throws(() => storage.write('migration_journal', '{"phase":"folder_primary"}'), /invalid|journal/i);
   assert.notEqual(PROFILE_DATA_FILES.app_state, PROFILE_DATA_FILES.sync_queue);
   storage.destroy();
 });
