@@ -174,7 +174,7 @@ interface StoreCtx {
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
-  setAutoBackupHours: (hours: number) => Promise<void>;
+  setAutoBackupHours: (hours: number) => Promise<boolean>;
   flushOfflineQueue: () => Promise<number>;
   pendingQueueCount: number;
   // Phase 3 — units & repairs
@@ -4102,19 +4102,20 @@ const deletePurchase = useCallback((id: string) => {
     }
   }, []);
 
-  const setAutoBackupHours = useCallback(async (hours: number) => {
+  const setAutoBackupHours = useCallback(async (hours: number): Promise<boolean> => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
-      return;
+      return false;
     }
     const result = await idbSetMetaDetailed({ autoBackupHours: Math.max(0, hours) });
     if (!result.ok) {
       console.error('[Backup] auto-backup interval could not be saved:', result.error.message);
-      return;
+      return false;
     }
     setBackupMeta(result.value);
     const label = hours <= 0 ? 'OFF' : hours < 1 ? `${Math.round(hours * 60)}m` : `${hours}h`;
     pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${label}`);
+    return true;
   }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
