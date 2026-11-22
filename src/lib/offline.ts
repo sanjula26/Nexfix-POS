@@ -1,8 +1,20 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
-import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState } from './db';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
+
+type QueueStorageError = Error & { storageFailureKind?: 'quota_exceeded' | 'write_failed' };
+
+async function idbEnqueueChecked(operation: Parameters<typeof idbEnqueueDetailed>[0]): Promise<boolean> {
+  const result = await idbEnqueueDetailed(operation);
+  if (!result.ok) {
+    const error = new Error(result.error.message) as QueueStorageError;
+    error.storageFailureKind = result.error.kind;
+    throw error;
+  }
+  return true;
+}
 
 export type Connectivity = 'online' | 'offline' | 'unknown';
 export function getConnectivity(): Connectivity { if(typeof navigator==='undefined') return 'unknown'; return navigator.onLine?'online':'offline'; }
@@ -15,7 +27,7 @@ export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { 
  * persistence does not repeatedly serialize/rewrite the same pending sale jobs.
  */
 export async function queueWrite(note?:string):Promise<void>{
-  const queued=await idbEnqueue({type:'state_write',note});
+  const queued=await idbEnqueueChecked({type:'state_write',note});
   if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');
   const state=await idbLoadState();
   if(!state) return;
@@ -51,30 +63,30 @@ export async function queueWrite(note?:string):Promise<void>{
         payments:sale.payments,
       },
     };
-    const ok=await idbEnqueue({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
+    const ok=await idbEnqueueChecked({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
     if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
   }
 }
 
 export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product}):Promise<void>{
-  const queued=await idbEnqueue({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueueChecked({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify(input)});
   if(!queued)throw new Error('Local sync storage is unavailable; stock adjustment was not queued safely.');
 }
 export async function queueInventoryUnitsAdd(input:{shopId?:string;branchId:string;deviceId:string;units:InventoryUnit[];newUnitIds:string[];operationId:string}):Promise<void>{
-  const queued=await idbEnqueue({type:'inventory_units_add',id:`inventory-units:${input.operationId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueueChecked({type:'inventory_units_add',id:`inventory-units:${input.operationId}`,payload:JSON.stringify(input)});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked units were not queued safely.');
 }
 export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:string;deviceId:string;unit:InventoryUnit;operationId:string}):Promise<void>{
-  const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueueChecked({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify(input)});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
-export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
-export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
-export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
-export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
-export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
-export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
-export async function queueSaleReversalRejection(requestId:string,note?:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_reject',id:`sale-reversal-reject:${requestId}`,payload:JSON.stringify({requestId,note})});if(!queued)throw new Error('Local sync storage is unavailable; reversal rejection was not queued safely.');}
+export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueueChecked({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
+export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueueChecked({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
+export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueueChecked({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
+export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueueChecked({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
+export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueueChecked({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
+export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueueChecked({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
+export async function queueSaleReversalRejection(requestId:string,note?:string):Promise<void>{const queued=await idbEnqueueChecked({type:'sale_reversal_reject',id:`sale-reversal-reject:${requestId}`,payload:JSON.stringify({requestId,note})});if(!queued)throw new Error('Local sync storage is unavailable; reversal rejection was not queued safely.');}
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
