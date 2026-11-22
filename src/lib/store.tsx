@@ -445,10 +445,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         // Clearing session against stateRef races with concurrent signIn and
         // was deleting a freshly written session (login → bounce back to /login).
 
-        const meta = await idbGetMeta();
+        const metaResult = await idbGetMetaDetailed();
         const queued = await idbListQueue();
         if (!cancelled) {
-          setBackupMeta(meta);
+          if (metaResult.ok) setBackupMeta(metaResult.value);
+          else console.warn('[Backup] local backup metadata could not be loaded during startup:', metaResult.error.message);
           setPendingQueueCount(queued.length);
         }
       } catch { /* keep localStorage state */ }
@@ -555,8 +556,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             if (!metadataResult.ok) {
               console.warn('[Google Backup] reconnect shop metadata sync failed:', metadataResult.error);
             }
-            const meta = await idbGetMeta();
-            setBackupMeta(meta);
+            const metaResult = await idbGetMetaDetailed();
+            if (metaResult.ok) setBackupMeta(metaResult.value);
+            else console.warn('[Backup] local backup metadata could not be refreshed after reconnect:', metaResult.error.message);
           } catch { /* ignore */ }
         }
       }
@@ -574,8 +576,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       async () => {
         // Refresh both success and failure metadata so Settings never looks
         // silently stale after an automatic attempt.
-        const meta = await idbGetMeta();
-        setBackupMeta(meta);
+        const metaResult = await idbGetMetaDetailed();
+        if (metaResult.ok) setBackupMeta(metaResult.value);
+        else console.warn('[Backup] local backup metadata could not be refreshed after automatic backup:', metaResult.error.message);
       },
     );
     return stop;
