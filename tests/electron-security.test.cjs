@@ -49,6 +49,30 @@ test('development navigation is limited to the configured origin', () => {
   assert.equal(isAllowedNavigation('http://user@localhost:5173/'), false);
 });
 
+test('encrypted POS profile IPC is registered before renderer startup and locked on quit', () => {
+  assert.match(mainSource, /require\('\.\/profile-ipc\.cjs'\)/);
+  const ready = mainSource.indexOf("app.whenReady().then(()=>");
+  const register = mainSource.indexOf("registerPOSProfileIpc({ ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer })");
+  const create = mainSource.indexOf("setupAutoUpdater(); createWindow();", ready);
+  assert.ok(ready >= 0 && register > ready && create > register,
+    'profile IPC must be registered before the renderer window is created');
+  assert.match(mainSource, /app\.on\('will-quit',\s*\(\)\s*=>\s*\{\s*try\s*\{\s*posProfileIpc\?\.lock\(\)/);
+});
+
+test('preload exposes only narrow POS profile IPC methods', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  for (const method of [
+    'choosePOSStorageRoot', 'discoverPOSProfiles', 'createPOSProfile',
+    'unlockPOSProfileWithPassphrase', 'unlockPOSProfileWithRecoveryKey',
+    'getPOSProfileStatus', 'lockPOSProfile', 'readPOSProfileData',
+    'writePOSProfileData', 'changePOSProfilePassphrase', 'resetPOSProfilePassphrase',
+  ]) {
+    assert.match(preloadSource, new RegExp('\\b' + method + ':'));
+  }
+  assert.doesNotMatch(preloadSource, /ipcRenderer\.send\s*\(/,
+    'preload must use request/response IPC rather than exposing raw event sending');
+});
+
 test('Electron keeps the renderer sandboxed and isolated', () => {
   assert.match(
     mainSource,
