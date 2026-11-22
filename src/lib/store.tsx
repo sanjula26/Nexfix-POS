@@ -7,7 +7,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMeta, idbGetMetaDetailed, idbSetMeta, idbSetMetaDetailed, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -4070,15 +4070,22 @@ const deletePurchase = useCallback((id: string) => {
     if (!(await confirmSensitiveAdmin('full local backup export'))) return { ok: false, error: 'Backup export cancelled.' };
     try {
       const result = await downloadBackup(stateRef.current, 'manual', { download: true, cloud: false });
-      const meta = await idbGetMeta();
-      setBackupMeta(meta);
+      const metaResult = await idbGetMetaDetailed();
+      if (metaResult.ok) {
+        setBackupMeta(metaResult.value);
+      } else {
+        console.error('[Backup] local backup history could not be read after export:', metaResult.error.message);
+      }
       if (!result.local) {
         const error = result.error || 'Backup file could not be downloaded to this PC.';
         pushAudit('DENIED', 'Settings', 'Manual backup download failed');
         return { ok: false, error };
       }
       pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
-      return { ok: true };
+      const warning = result.error || (!metaResult.ok
+        ? `Backup file downloaded, but backup history could not be refreshed: ${metaResult.error.message}`
+        : undefined);
+      return { ok: true, ...(warning ? { error: warning } : {}) };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Backup download failed.';
       pushAudit('DENIED', 'Settings', 'Manual backup download failed');
@@ -4087,8 +4094,12 @@ const deletePurchase = useCallback((id: string) => {
   }, [state, pushAudit, user, can, confirmSensitiveAdmin]);
 
   const refreshBackupMeta = useCallback(async () => {
-    const meta = await idbGetMeta();
-    setBackupMeta(meta);
+    const result = await idbGetMetaDetailed();
+    if (result.ok) {
+      setBackupMeta(result.value);
+    } else {
+      console.error('[Backup] local backup history could not be refreshed:', result.error.message);
+    }
   }, []);
 
   const setAutoBackupHours = useCallback(async (hours: number) => {
@@ -4096,8 +4107,12 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
       return;
     }
-    const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
-    setBackupMeta(meta);
+    const result = await idbSetMetaDetailed({ autoBackupHours: Math.max(0, hours) });
+    if (!result.ok) {
+      console.error('[Backup] auto-backup interval could not be saved:', result.error.message);
+      return;
+    }
+    setBackupMeta(result.value);
     const label = hours <= 0 ? 'OFF' : hours < 1 ? `${Math.round(hours * 60)}m` : `${hours}h`;
     pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${label}`);
   }, [pushAudit, user]);
