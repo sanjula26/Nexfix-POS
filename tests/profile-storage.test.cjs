@@ -51,6 +51,8 @@ test('increments revisions and keeps queue, metadata and restore checkpoint sepa
   assert.equal(storage.read('sync_queue'), '[{"id":"q1"}]');
   assert.equal(storage.read('meta'), '{"backupCount":1}');
   assert.equal(storage.read('restore_checkpoint'), '{"sales":[]}');
+  assert.equal(storage.write('migration_journal', '{"phase":"snapshotting"}').revision, 1);
+  assert.equal(storage.read('migration_journal'), '{"phase":"snapshotting"}');
   assert.notEqual(PROFILE_DATA_FILES.app_state, PROFILE_DATA_FILES.sync_queue);
   storage.destroy();
 });
