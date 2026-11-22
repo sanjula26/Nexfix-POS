@@ -36,6 +36,63 @@ export interface BackupMeta {
 function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{ const req=indexedDB.open(DB_NAME,DB_VERSION); req.onerror=()=>reject(req.error||new Error('IDB open failed')); req.onsuccess=()=>resolve(req.result); req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});if(!db.objectStoreNames.contains(STORE_QUEUE)){const q=db.createObjectStore(STORE_QUEUE,{keyPath:'id'});q.createIndex('ts','ts',{unique:false});}if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});};}); }
 function idbReq<T>(req: IDBRequest<T>): Promise<T> { return new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);}); }
 
+export type IndexedDBWriteFailureKind = 'quota_exceeded' | 'write_failed';
+export interface IndexedDBWriteFailure {
+  kind: IndexedDBWriteFailureKind;
+  message: string;
+}
+export type IndexedDBWriteResult =
+  | { ok: true }
+  | { ok: false; error: IndexedDBWriteFailure };
+
+export type IndexedDBQuotaEstimate =
+  | { status: 'available'; usage: number; quota: number; remainingBytes: number; usageRatio: number; threshold: number; nearQuota: boolean }
+  | { status: 'unsupported' | 'unavailable' };
+
+/** Read the browser's quota estimate without assuming a fixed IndexedDB capacity. */
+export async function estimateIndexedDBQuota(
+  storage: Pick<StorageManager, 'estimate'> | null = typeof navigator !== 'undefined' ? navigator.storage : null,
+  threshold = 0.85,
+): Promise<IndexedDBQuotaEstimate> {
+  if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+    throw new RangeError('IndexedDB quota threshold must be greater than 0 and at most 1.');
+  }
+  if (!storage || typeof storage.estimate !== 'function') return { status: 'unsupported' };
+  try {
+    const estimate = await storage.estimate();
+    const usage = estimate.usage;
+    const quota = estimate.quota;
+    if (!Number.isFinite(usage) || !Number.isFinite(quota) || (quota as number) <= 0 || (usage as number) < 0) {
+      return { status: 'unavailable' };
+    }
+    const safeUsage = usage as number;
+    const safeQuota = quota as number;
+    const usageRatio = safeUsage / safeQuota;
+    return {
+      status: 'available',
+      usage: safeUsage,
+      quota: safeQuota,
+      remainingBytes: Math.max(0, safeQuota - safeUsage),
+      usageRatio,
+      threshold,
+      nearQuota: usageRatio >= threshold,
+    };
+  } catch {
+    return { status: 'unavailable' };
+  }
+}
+
+/** Convert browser write failures into a stable, non-sensitive storage contract. */
+export function classifyIndexedDBWriteFailure(error: unknown): IndexedDBWriteFailure {
+  const candidate = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown } : {};
+  const name = typeof candidate.name === 'string' ? candidate.name : '';
+  const code = typeof candidate.code === 'number' ? candidate.code : 0;
+  if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' || code === 22 || code === 1014) {
+    return { kind: 'quota_exceeded', message: 'IndexedDB storage quota has been exceeded.' };
+  }
+  return { kind: 'write_failed', message: 'IndexedDB could not commit the requested data.' };
+}
+
 function idbTransactionComplete(tx: IDBTransaction, message: string): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -288,8 +345,34 @@ export async function idbLoadState():Promise<POSState|null>{
     return null;
   }
 }
-export async function idbSaveState(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'main',value:state,updatedAt:new Date().toISOString()});await idbTransactionComplete(tx,'State save failed');return true;}catch{return false;}}
-export async function idbSaveRestoreCheckpoint(state:POSState):Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).put({key:'restore_checkpoint',value:state,updatedAt:new Date().toISOString()});await idbTransactionComplete(tx,'Restore checkpoint failed');return true;}catch{return false;}}
+export async function idbSaveStateDetailed(state: POSState): Promise<IndexedDBWriteResult> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_STATE, 'readwrite');
+    tx.objectStore(STORE_STATE).put({ key: 'main', value: state, updatedAt: new Date().toISOString() });
+    await idbTransactionComplete(tx, 'State save failed');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+  }
+}
+export async function idbSaveState(state: POSState): Promise<boolean> {
+  return (await idbSaveStateDetailed(state)).ok;
+}
+export async function idbSaveRestoreCheckpointDetailed(state: POSState): Promise<IndexedDBWriteResult> {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_STATE, 'readwrite');
+    tx.objectStore(STORE_STATE).put({ key: 'restore_checkpoint', value: state, updatedAt: new Date().toISOString() });
+    await idbTransactionComplete(tx, 'Restore checkpoint failed');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+  }
+}
+export async function idbSaveRestoreCheckpoint(state: POSState): Promise<boolean> {
+  return (await idbSaveRestoreCheckpointDetailed(state)).ok;
+}
 export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
 export async function idbClearRestoreCheckpoint():Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
 
