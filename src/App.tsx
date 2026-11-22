@@ -434,21 +434,13 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       choosePOSOverflowFolder?: () => Promise<OverflowFolderStatus>;
     };
   }).nexfixDesktop, []);
-  const [loading, setLoading] = useState(Boolean(desktopApi?.isDesktop));
+  const [loading, setLoading] = useState(Boolean(desktopApi?.isDesktop && desktopApi.getPOSOverflowFolder));
   const [choosing, setChoosing] = useState(false);
   const [folderStatus, setFolderStatus] = useState<OverflowFolderStatus | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!desktopApi?.isDesktop) {
-      setLoading(false);
-      return;
-    }
-    if (!desktopApi.getPOSOverflowFolder) {
-      setError('This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.');
-      setLoading(false);
-      return;
-    }
+    if (!desktopApi?.isDesktop || !desktopApi.getPOSOverflowFolder) return;
     let active = true;
     void desktopApi.getPOSOverflowFolder().then(result => {
       if (!active) return;
@@ -504,8 +496,10 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
             The previously selected folder is not available. Reconnect its drive or choose another folder.
           </p>
         )}
-        {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
-        <button type="button" onClick={() => void chooseFolder()} disabled={choosing}
+        {(error || (desktopApi?.isDesktop && !desktopApi.getPOSOverflowFolder
+          ? 'This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.'
+          : '')) && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error || 'This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.'}</p>}
+        <button type="button" onClick={() => void chooseFolder()} disabled={choosing || !desktopApi?.choosePOSOverflowFolder}
           className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-lg transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
           {choosing ? <Loader2 size={17} className="animate-spin" /> : null}
           {choosing ? 'Checking folder…' : 'Select storage folder'}
