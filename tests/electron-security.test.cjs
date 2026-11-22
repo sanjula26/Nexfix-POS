@@ -243,5 +243,5 @@ test('disconnected overflow folder does not block POS while IndexedDB remains th
   assert.match(appSource, /if \(folderStatus\?\.ok && folderStatus\.configured && !folderStatus\.available\)[\s\S]{0,1600}POS is continuing with IndexedDB/);
   assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}\{children\}/);
   assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}chooseFolder\(\)/);
-  assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}role="alert"/);
+  assert.match(appSource, /role="alert"[\s\S]{0,1000}POS is continuing with IndexedDB/);
 });
