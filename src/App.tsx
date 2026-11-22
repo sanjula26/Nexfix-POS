@@ -417,7 +417,103 @@ function AppRoutes() {
   );
 }
 
-export default function App() {
+type OverflowFolderStatus = {
+  ok?: boolean;
+  configured?: boolean;
+  available?: boolean;
+  folderPath?: string | null;
+  error?: string;
+  canceled?: boolean;
+};
+
+function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
+  const desktopApi = useMemo(() => (window as Window & {
+    nexfixDesktop?: {
+      isDesktop?: boolean;
+      getPOSOverflowFolder?: () => Promise<OverflowFolderStatus>;
+      choosePOSOverflowFolder?: () => Promise<OverflowFolderStatus>;
+    };
+  }).nexfixDesktop, []);
+  const [loading, setLoading] = useState(Boolean(desktopApi?.isDesktop));
+  const [choosing, setChoosing] = useState(false);
+  const [folderStatus, setFolderStatus] = useState<OverflowFolderStatus | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!desktopApi?.isDesktop) {
+      setLoading(false);
+      return;
+    }
+    let active = true;
+    void desktopApi.getPOSOverflowFolder?.().then(result => {
+      if (!active) return;
+      setFolderStatus(result);
+      if (!result?.ok) setError(result?.error || 'Saved storage folder status could not be checked.');
+    }).catch(() => {
+      if (active) setError('Saved storage folder status could not be checked. Please choose the folder again.');
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [desktopApi]);
+
+  const chooseFolder = async () => {
+    if (!desktopApi?.choosePOSOverflowFolder || choosing) return;
+    setChoosing(true);
+    setError('');
+    try {
+      const result = await desktopApi.choosePOSOverflowFolder();
+      if (!result?.ok) {
+        setError(result?.error || 'The selected folder could not be saved. Please try again.');
+      } else if (!result.canceled && result.configured && result.available) {
+        setFolderStatus(result);
+      } else if (result.error) {
+        setError(result.error);
+      }
+    } catch {
+      setError('The folder could not be selected. Please try again.');
+    } finally {
+      setChoosing(false);
+    }
+  };
+
+  if (!desktopApi?.isDesktop) return <>{children}</>;
+  if (loading) return <RouteFallback />;
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.available) return <>{children}</>;
+
+  return (
+    <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+      <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-[#101a2d] sm:p-8">
+        <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-300">
+          <AlertTriangle size={23} />
+        </div>
+        <h1 className="text-xl font-black">Choose a POS storage folder</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Before opening Nexfix POS, select a folder on this computer or an attached drive. This folder is prepared for extra storage if the browser database becomes full.
+        </p>
+        <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950 dark:border-cyan-300/20 dark:bg-cyan-300/10 dark:text-cyan-100">
+          <strong>Important:</strong> IndexedDB will continue to store your normal POS data first. Nexfix will use the selected folder only after a safe, verified storage migration is implemented and the database approaches its limit. Your current POS data will not be moved by selecting this folder.
+        </div>
+        {folderStatus?.configured && !folderStatus.available && (
+          <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-300/10 dark:text-amber-200">
+            The previously selected folder is not available. Reconnect its drive or choose another folder.
+          </p>
+        )}
+        {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
+        <button type="button" onClick={() => void chooseFolder()} disabled={choosing}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-lg transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+          {choosing ? <Loader2 size={17} className="animate-spin" /> : null}
+          {choosing ? 'Checking folder…' : 'Select storage folder'}
+        </button>
+        <p className="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">
+          Choose a normal writable folder, not the drive root itself. You can use an internal drive or an attached external drive.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function POSApplication() {
   useEffect(() => startSyncManager(), []);
   return (
     <POSProvider>
@@ -429,5 +525,13 @@ export default function App() {
         <AppRoutes />
       </HashRouter>
     </POSProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <DesktopOverflowFolderSetup>
+      <POSApplication />
+    </DesktopOverflowFolderSetup>
   );
 }
