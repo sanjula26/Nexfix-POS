@@ -4,7 +4,7 @@
  */
 
 import type { POSState } from './types';
-import { idbGetMeta, idbSetMeta } from './db';
+import { idbGetMetaDetailed, idbSetMetaDetailed } from './db';
 import { downloadFile, dkey } from './utils';
 import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
 import type { BackupEnvelope } from './backupValidation';
@@ -53,12 +53,11 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
   }
   const successful = local || cloud;
   if (kind === 'auto') {
-    const meta = await idbGetMeta();
     if (cloud) {
       // Automatic success is cloud-authoritative: only a confirmed Drive write
-      // advances the auto schedule and clears its durable retry state.
+      // advances the schedule, and the counter update is atomic with the read.
       const now = new Date().toISOString();
-      await idbSetMeta({
+      const saved = await idbSetMetaDetailed((meta) => ({
         lastAutoBackupAt: now,
         lastCloudBackupAt: now,
         lastCloudBackupError: undefined,
@@ -66,20 +65,28 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
         pendingAutoBackupAt: undefined,
         nextAutoBackupRetryAt: undefined,
         autoBackupFailureCount: 0,
-      });
+      }));
+      if (!saved.ok) {
+        errorMessage = [errorMessage, `Google Drive backup succeeded, but local backup history could not be saved: ${saved.error.message}`].filter(Boolean).join(' ');
+      }
     } else if (errorMessage) {
       // Never advance lastAutoBackupAt on a failed cloud upload. The scheduler
       // owns retry timing and will keep the pending marker alive.
-      await idbSetMeta({ lastCloudBackupError: errorMessage });
+      const saved = await idbSetMetaDetailed({ lastCloudBackupError: errorMessage });
+      if (!saved.ok) {
+        errorMessage = [errorMessage, `Backup retry details could not be saved locally: ${saved.error.message}`].filter(Boolean).join(' ');
+      }
     }
   } else if (successful || errorMessage) {
     const now = new Date().toISOString();
-    const meta = await idbGetMeta();
-    await idbSetMeta({
+    const saved = await idbSetMetaDetailed((meta) => ({
       lastManualBackupAt: now,
       backupCount: (meta.backupCount || 0) + 1,
       ...(cloud ? { lastCloudBackupAt: now, lastCloudBackupError: undefined } : (errorMessage ? { lastCloudBackupError: errorMessage } : {})),
-    });
+    }));
+    if (!saved.ok) {
+      errorMessage = [errorMessage, `Backup completed, but local backup history could not be saved: ${saved.error.message}`].filter(Boolean).join(' ');
+    }
   }
   return { local, cloud, ...(errorMessage ? { error: errorMessage } : {}) };
 }
@@ -130,7 +137,12 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
   const tick = async (force = false) => {
     if (running) return;
     try {
-      const meta = await idbGetMeta();
+      const metaResult = await idbGetMetaDetailed();
+      if (!metaResult.ok) {
+        console.error('[Google Backup] scheduler paused because local backup metadata could not be read:', metaResult.error.message);
+        return;
+      }
+      const meta = metaResult.value;
       const now = Date.now();
       const online = typeof navigator === 'undefined' || navigator.onLine;
       const intervalHours = Number(meta.autoBackupHours) || 0;
@@ -151,36 +163,48 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       // Persist the pending marker before the network operation. This survives tab/browser
       // restarts and ensures a failed upload is retried instead of being silently lost.
       if (!pending) {
-        await idbSetMeta({ pendingAutoBackupAt: new Date().toISOString(), autoBackupFailureCount: 0 });
+        const pendingWrite = await idbSetMetaDetailed({
+          pendingAutoBackupAt: new Date().toISOString(),
+          autoBackupFailureCount: 0,
+        });
+        if (!pendingWrite.ok) {
+          console.error('[Google Backup] scheduler paused because the pending retry marker could not be saved:', pendingWrite.error.message);
+          return;
+        }
       }
       if (!online) return;
 
       running = true;
       const result = await downloadBackup(getState(), 'auto', { download: false, cloud: true });
       if (result.cloud) {
+        if (result.error) console.error('[Google Backup] backup uploaded, but local metadata needs attention:', result.error);
         await onBackup?.(new Date().toISOString());
         return;
       }
 
-      const latest = await idbGetMeta();
-      const failures = (latest.autoBackupFailureCount || 0) + 1;
-      await idbSetMeta({
+      const retryWrite = await idbSetMetaDetailed((latest) => ({
         pendingAutoBackupAt: latest.pendingAutoBackupAt || new Date().toISOString(),
         nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
-        autoBackupFailureCount: failures,
-      });
+        autoBackupFailureCount: (latest.autoBackupFailureCount || 0) + 1,
+      }));
+      if (!retryWrite.ok) {
+        console.error('[Google Backup] upload failed and retry metadata could not be saved:', retryWrite.error.message);
+        return;
+      }
       await onBackup?.(new Date().toISOString());
-    } catch {
-      // Keep the durable pending marker; the next retry tick will attempt the upload again.
-      try {
-        const meta = await idbGetMeta();
-        await idbSetMeta({
-          pendingAutoBackupAt: meta.pendingAutoBackupAt || new Date().toISOString(),
-          nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
-          autoBackupFailureCount: (meta.autoBackupFailureCount || 0) + 1,
-        });
-        await onBackup?.(new Date().toISOString());
-      } catch { /* metadata is best-effort */ }
+    } catch (error) {
+      console.error('[Google Backup] scheduler tick failed:', error);
+      // Only retry if the existing metadata can be read and atomically updated.
+      const retryWrite = await idbSetMetaDetailed((latest) => ({
+        pendingAutoBackupAt: latest.pendingAutoBackupAt || new Date().toISOString(),
+        nextAutoBackupRetryAt: new Date(Date.now() + RETRY_DELAY_MS).toISOString(),
+        autoBackupFailureCount: (latest.autoBackupFailureCount || 0) + 1,
+      }));
+      if (!retryWrite.ok) {
+        console.error('[Google Backup] retry metadata could not be saved:', retryWrite.error.message);
+        return;
+      }
+      await onBackup?.(new Date().toISOString());
     } finally { running = false; }
   };
   // Re-check the normal due/pending rules after reconnect; do not force
