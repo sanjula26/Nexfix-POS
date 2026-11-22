@@ -400,10 +400,27 @@ const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
 export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
 export type IndexedDBMetaWriteResult =
   | { ok: true; value: BackupMeta }
-  | { ok: false; error: IndexedDBWriteFailure; value: BackupMeta };
+  | { ok: false; error: IndexedDBWriteFailure; value?: BackupMeta };
 
 export async function idbSetMetaDetailed(patch: Partial<BackupMeta>): Promise<IndexedDBMetaWriteResult> {
-  const current = await idbGetMeta();
+  let current: BackupMeta;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readonly');
+    const row = await idbReq<{ key: string; value: BackupMeta } | undefined>(
+      tx.objectStore(STORE_META).get('backup'),
+    );
+    await idbTransactionComplete(tx, 'Backup metadata read failed');
+    current = { ...DEFAULT_META, ...(row?.value || {}) };
+  } catch {
+    // Do not merge against defaults when the existing metadata could not be read:
+    // doing so could overwrite backup history/retry state with an incomplete record.
+    return {
+      ok: false,
+      error: { kind: 'write_failed', message: 'Existing backup metadata could not be read; no metadata write was attempted.' },
+    };
+  }
+
   const next = { ...current, ...patch };
   try {
     const db = await getDB();
@@ -416,6 +433,7 @@ export async function idbSetMetaDetailed(patch: Partial<BackupMeta>): Promise<In
   }
 }
 export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta> {
-  return (await idbSetMetaDetailed(patch)).value;
+  const result = await idbSetMetaDetailed(patch);
+  return result.value ?? idbGetMeta();
 }
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
