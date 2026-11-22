@@ -30,3 +30,16 @@ export function validateBranchStockEdit(input: BranchStockEditValidationInput): 
   }
   return { ok: true, delta };
 }
+
+/** Use compare-and-set only for a verified online cloud quantity; preserve local/offline delta queue behavior. */
+export function getExpectedBranchQtyForStockAdjustment(
+  shopId: string,
+  offline: boolean,
+  quantity: number | null,
+): number | undefined {
+  if (!shopId.trim() || offline) return undefined;
+  // For an online cloud shop, an invalid baseline must fail closed in adjustStock;
+  // returning undefined here would select the legacy non-CAS RPC.
+  if (quantity === null || !Number.isSafeInteger(quantity) || quantity < 0) return -1;
+  return quantity;
+}

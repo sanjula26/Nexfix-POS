@@ -5,11 +5,13 @@ on:
     branches: [main, 'test/**']
     paths:
       - 'supabase/**'
+      - 'scripts/test-branch-stock-cas-concurrency.sh'
       - '.github/workflows/database-tests.yml'
   pull_request:
     branches: [main]
     paths:
       - 'supabase/**'
+      - 'scripts/test-branch-stock-cas-concurrency.sh'
       - '.github/workflows/database-tests.yml'
   workflow_dispatch:
 
@@ -416,6 +418,17 @@ jobs:
       - name: Run pgTAP database tests against local database
         working-directory: /tmp/nexfix-supabase-test
         run: supabase test db --local
+
+      - name: Ensure PostgreSQL client is available
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+
+      - name: Verify concurrent stock compare-and-set with two local sessions
+        working-directory: /tmp/nexfix-supabase-test
+        run: bash "$GITHUB_WORKSPACE/scripts/test-branch-stock-cas-concurrency.sh"
 
       - name: Stop local Supabase containers
         if: always()

@@ -21,6 +21,7 @@ import {
   buildSupplierLedger,
   getSupplierOutstanding,
 } from '../src/lib/supplierPayments.ts';
+import { getExpectedBranchQtyForStockAdjustment, validateBranchStockEdit } from '../src/lib/branchStockEditor.ts';
 import {
   applyBranchStockDeltas,
   cacheBranchStock,
@@ -28,6 +29,9 @@ import {
   getCachedBranchStock,
   isBranchStockCacheReady,
   isLocalMainStockReady,
+  shouldReadBranchStockProductFallback,
+  invalidateCachedBranchStockProduct,
+  isStaleBranchStockConflict,
 } from '../src/lib/branchStock.ts';
 
 test('credit balance excludes allocations for other invoices', () => {
@@ -503,4 +507,115 @@ test('catalog sync retry budget is not reset by unrelated POS state updates', ()
   assert.ok(appSource.includes('syncNormalizedCatalog(stateRef.current)'));
   assert.ok(appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity]);'));
   assert.ok(!appSource.includes('}, [catalogSyncTrigger, userId, userRole, connectivity, state]);'));
+});
+
+
+test('branch stock editor accepts a verified quantity increase and decrease', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 50,
+  };
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 55 }), { ok: true, delta: 5 });
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 42 }), { ok: true, delta: -8 });
+  assert.deepEqual(validateBranchStockEdit({ ...base, nextQuantity: 50 }), { ok: true, delta: 0 });
+});
+
+test('branch stock editor rejects a changed shop or branch baseline', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 50,
+    nextQuantity: 55,
+  };
+  assert.equal(validateBranchStockEdit({ ...base, selectedBranchId: 'branch-b' }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, selectedShopId: 'shop-b' }).ok, false);
+});
+
+test('branch stock editor rejects missing, negative, fractional, and unsafe quantities', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    nextQuantity: 55,
+  };
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: null }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: -1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 1.5 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: Number.MAX_SAFE_INTEGER }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 50, nextQuantity: -1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, expectedQuantity: 50, nextQuantity: 1.5 }).ok, false);
+});
+
+test('branch stock editor rejects oversized or invalid adjustment limits', () => {
+  const base = {
+    expectedShopId: 'shop-a',
+    expectedBranchId: 'branch-a',
+    selectedShopId: 'shop-a',
+    selectedBranchId: 'branch-a',
+    expectedQuantity: 0,
+    nextQuantity: 1_000_001,
+  };
+  assert.equal(validateBranchStockEdit(base).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, maxDelta: -1, nextQuantity: 1 }).ok, false);
+  assert.equal(validateBranchStockEdit({ ...base, maxDelta: 1.5, nextQuantity: 1 }).ok, false);
+});
+
+
+test('branch stock refresh falls back to an authoritative product read only when the full branch refresh fails', () => {
+  assert.equal(shouldReadBranchStockProductFallback(true), false);
+  assert.equal(shouldReadBranchStockProductFallback(false), true);
+});
+
+
+test('stale branch stock conflict invalidates only the affected cached product', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const values = new Map<string, string>();
+  const fakeStorage = {
+    getItem: (name: string) => values.get(name) ?? null,
+    setItem: (name: string, value: string) => { values.set(name, String(value)); },
+    removeItem: (name: string) => { values.delete(name); },
+    clear: () => { values.clear(); },
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
+    get length() { return values.size; },
+  } as Storage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: fakeStorage });
+  try {
+    cacheBranchStock('branch-a', [
+      { product_id: 'product-a', qty: 4 },
+      { product_id: 'product-b', qty: 8 },
+    ]);
+    assert.equal(getCachedBranchStock('branch-a', 'product-a'), 4);
+    assert.equal(invalidateCachedBranchStockProduct('branch-a', 'product-a'), true);
+    assert.equal(getCachedBranchStock('branch-a', 'product-a'), null);
+    assert.equal(getCachedBranchStock('branch-a', 'product-b'), 8);
+    assert.equal(isStaleBranchStockConflict('Stock changed on another POS (expected 4, current 50.00).'), true);
+    assert.equal(isStaleBranchStockConflict('permission denied'), false);
+    assert.equal(isStaleBranchStockConflict(null), false);
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
+
+test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('', false, 12), undefined);
+  // Invalid online cloud baselines fail closed instead of selecting the legacy non-CAS RPC.
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, null), -1);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, -1), -1);
+  assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 1.5), -1);
+});
+
+test('Adjust Stock and Stock Take pass verified online quantities to the store', () => {
+  const inventorySource = readFileSync(new URL('../src/pages/Inventory.tsx', import.meta.url), 'utf8');
+  assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
+  assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
+  assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
 });
