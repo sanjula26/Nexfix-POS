@@ -377,12 +377,45 @@ export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{try{cons
 export async function idbClearRestoreCheckpoint():Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
 
 type QueueInput={type:QueueOp['type'];id?:string;ts?:string;note?:string;payload?:string};
-export async function idbEnqueue(op:QueueInput):Promise<boolean>{try{const db=await getDB();const entry={id:op.id||(crypto.randomUUID?.()||String(Date.now())),ts:op.ts||new Date().toISOString(),...op} as QueueOp;const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).put(entry);await idbTransactionComplete(tx,'Offline queue write failed');return true;}catch{return false;}}
+export async function idbEnqueueDetailed(op: QueueInput): Promise<IndexedDBWriteResult> {
+  try {
+    const db = await getDB();
+    const entry = { id: op.id || (crypto.randomUUID?.() || String(Date.now())), ts: op.ts || new Date().toISOString(), ...op } as QueueOp;
+    const tx = db.transaction(STORE_QUEUE, 'readwrite');
+    tx.objectStore(STORE_QUEUE).put(entry);
+    await idbTransactionComplete(tx, 'Offline queue write failed');
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+  }
+}
+export async function idbEnqueue(op: QueueInput): Promise<boolean> {
+  return (await idbEnqueueDetailed(op)).ok;
+}
 export async function idbListQueue():Promise<QueueOp[]>{if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
 export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
-export async function idbSetMeta(patch:Partial<BackupMeta>):Promise<BackupMeta>{const current=await idbGetMeta();const next={...current,...patch};try{const db=await getDB();const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:'backup',value:next});await idbTransactionComplete(tx,'Backup metadata write failed');}catch{/* metadata is best-effort */}return next;}
+export type IndexedDBMetaWriteResult =
+  | { ok: true; value: BackupMeta }
+  | { ok: false; error: IndexedDBWriteFailure; value: BackupMeta };
+
+export async function idbSetMetaDetailed(patch: Partial<BackupMeta>): Promise<IndexedDBMetaWriteResult> {
+  const current = await idbGetMeta();
+  const next = { ...current, ...patch };
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).put({ key: 'backup', value: next });
+    await idbTransactionComplete(tx, 'Backup metadata write failed');
+    return { ok: true, value: next };
+  } catch (error) {
+    return { ok: false, error: classifyIndexedDBWriteFailure(error), value: next };
+  }
+}
+export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta> {
+  return (await idbSetMetaDetailed(patch)).value;
+}
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
