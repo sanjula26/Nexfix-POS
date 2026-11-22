@@ -7,8 +7,6 @@ import {
   idbClearQueue,
   idbClearRestoreCheckpoint,
   idbEnqueue,
-  idbEnqueueDetailed,
-  idbSetMetaDetailed,
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
