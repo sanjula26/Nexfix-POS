@@ -478,6 +478,24 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   if (loading) return <RouteFallback />;
   if (folderStatus?.ok && folderStatus.configured && folderStatus.available) return <>{children}</>;
 
+  // No folder-backed writes or quota migration exist yet: IndexedDB remains the
+  // only active POS store. A disconnected overflow destination must not stop
+  // sales until a future migration manifest explicitly records folder-only data.
+  if (folderStatus?.ok && folderStatus.configured && !folderStatus.available) {
+    return (
+      <>
+        <div role="alert" className="fixed inset-x-0 top-0 z-[300] flex flex-wrap items-center justify-center gap-3 border-b border-amber-300 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900 shadow-sm dark:border-amber-300/20 dark:bg-amber-950 dark:text-amber-100">
+          <span>The selected extra-storage folder is disconnected. POS is continuing with IndexedDB; reconnect the drive or choose another folder before overflow migration is enabled.</span>
+          <button type="button" onClick={() => void chooseFolder()} disabled={choosing}
+            className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-bold hover:bg-amber-100 disabled:opacity-60 dark:hover:bg-amber-900">
+            {choosing ? 'Checking folder…' : 'Reconnect / choose folder'}
+          </button>
+        </div>
+        {children}
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
       <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-[#101a2d] sm:p-8">
