@@ -349,7 +349,25 @@ async function persistState(state: POSState): Promise<void> {
   }
   // Track write for offline queue (future cloud sync)
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    await queueWrite('state_write_offline');
+    try {
+      await queueWrite('state_write_offline');
+    } catch (error) {
+      const failureKind = error && typeof error === 'object' &&
+        'storageFailureKind' in error &&
+        (error.storageFailureKind === 'quota_exceeded' || error.storageFailureKind === 'write_failed')
+        ? error.storageFailureKind
+        : 'write_failed';
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
+          detail: {
+            kind: failureKind,
+            message: failureKind === 'quota_exceeded'
+              ? 'The POS change was saved locally, but the offline sync queue is full. Do not repeat the sale. Reconnect and verify pending sync before continuing; storage overflow setup is not active yet.'
+              : 'The POS change was saved locally, but its offline sync queue could not be confirmed. Do not repeat the sale. Reconnect and verify pending sync before continuing.',
+          },
+        }));
+      }
+    }
   }
 }
 
