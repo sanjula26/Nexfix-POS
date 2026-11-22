@@ -211,3 +211,28 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+test('POS overflow folder IPC is registered before the renderer window is created', () => {
+  assert.match(mainSource, /require\('\.\/overflow-folder\.cjs'\)/);
+  const ready = mainSource.indexOf("app.whenReady().then(()=>");
+  const register = mainSource.indexOf("registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer })");
+  const create = mainSource.indexOf("setupAutoUpdater(); createWindow();", ready);
+  assert.ok(ready >= 0 && register > ready && create > register,
+    'overflow folder preference IPC must be registered before renderer startup');
+});
+
+test('preload exposes only scoped POS overflow-folder preference operations', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  assert.match(preloadSource, /getPOSOverflowFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('pos-overflow-folder:get'\)/);
+  assert.match(preloadSource, /choosePOSOverflowFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('pos-overflow-folder:choose'\)/);
+  assert.doesNotMatch(preloadSource, /pos-overflow-folder:.*(?:write|delete|clear)/);
+});
+
+test('desktop startup gate is outside POSProvider and leaves browser development unaffected', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+  const gate = appSource.indexOf('<DesktopOverflowFolderSetup>');
+  const provider = appSource.indexOf('<POSProvider>', gate);
+  assert.ok(gate >= 0 && provider > gate, 'folder selection must finish before POSProvider initializes');
+  assert.match(appSource, /if\s*\(!desktopApi\?\.isDesktop\)\s*return\s*<>\{children\}<\/>/);
+  assert.match(appSource, /IndexedDB will continue to store your normal POS data first/);
+});
