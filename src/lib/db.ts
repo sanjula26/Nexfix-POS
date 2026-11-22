@@ -426,7 +426,9 @@ export async function idbGetMetaDetailed(): Promise<IndexedDBMetaReadResult> {
  * read and put in the same transaction prevents concurrent scheduler/manual
  * patches from overwriting each other's fields.
  */
-export async function idbSetMetaDetailed(patch: Partial<BackupMeta>): Promise<IndexedDBMetaWriteResult> {
+export async function idbSetMetaDetailed(
+  patch: Partial<BackupMeta> | ((current: BackupMeta) => Partial<BackupMeta>),
+): Promise<IndexedDBMetaWriteResult> {
   let next: BackupMeta | undefined;
   try {
     const db = await getDB();
@@ -435,7 +437,8 @@ export async function idbSetMetaDetailed(patch: Partial<BackupMeta>): Promise<In
     const request = store.get('backup') as IDBRequest<{ key: string; value: BackupMeta } | undefined>;
     request.onsuccess = () => {
       const current = { ...DEFAULT_META, ...(request.result?.value || {}) };
-      next = { ...current, ...patch };
+      const resolvedPatch = typeof patch === 'function' ? patch(current) : patch;
+      next = { ...current, ...resolvedPatch };
       store.put({ key: 'backup', value: next });
     };
     const txComplete = idbTransactionComplete(tx, 'Backup metadata update failed');
