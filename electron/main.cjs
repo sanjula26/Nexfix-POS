@@ -4,6 +4,7 @@ const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncr
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
 const { registerPOSProfileIpc } = require('./profile-ipc.cjs');
+const { registerOverflowFolderIpc } = require('./overflow-folder.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -25,6 +26,7 @@ let updateDeviceId = '';
 let updateAuthMode = 'bearer';
 let updateCheckPromise = null;
 let posProfileIpc = null;
+let posOverflowFolderIpc = null;
 const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 const UPDATE_FEED_URL = 'https://ocmzgamnehwbkuwkjdrr.supabase.co/functions/v1/desktop-updates';
 const AUTH_PROTOCOL = 'nexfix';
@@ -625,6 +627,7 @@ app.whenReady().then(()=>{
   // Register the encrypted profile bridge before the renderer loads. The live POS
   // store is not switched to this backend until the startup gate/migration lands.
   posProfileIpc = registerPOSProfileIpc({ ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer });
+  posOverflowFolderIpc = registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer });
   app.on('will-quit', () => { try { posProfileIpc?.lock(); } catch {} });
   setupAutoUpdater(); createWindow();
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});
