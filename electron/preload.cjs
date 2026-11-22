@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   isPackaged: process.defaultApp !== true,
   isPortable: Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
   platform: process.platform,
+  // Main-process-owned preference for the future IndexedDB quota overflow destination.
+  getPOSOverflowFolder: () => ipcRenderer.invoke('pos-overflow-folder:get'),
+  choosePOSOverflowFolder: () => ipcRenderer.invoke('pos-overflow-folder:choose'),
   // Encrypted POS profile operations. Main-process IPC validates every caller.
   choosePOSStorageRoot: () => ipcRenderer.invoke('pos-profile:choose-storage-root'),
   discoverPOSProfiles: (storageRoot) => ipcRenderer.invoke('pos-profile:discover', { storageRoot }),
