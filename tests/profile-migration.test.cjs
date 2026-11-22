@@ -70,6 +70,15 @@ test('only allows folder-primary after all domains are verified and preserves pr
   assert.throws(() => transitionMigrationJournal(active, 'copying', NOW), /not allowed/);
 });
 
+test('blocked recovery requires a fresh snapshot and clears old copy evidence', () => {
+  let journal = copiedJournal();
+  journal = transitionMigrationJournal(journal, 'blocked_recovery', NOW);
+  assert.throws(() => transitionMigrationJournal(journal, 'folder_primary', NOW), /not allowed/);
+  journal = transitionMigrationJournal(journal, 'snapshotting', NOW);
+  assert.ok(MIGRATION_PURPOSES.every(purpose => journal.entries[purpose].status === 'pending'));
+  assert.equal(journal.phase, 'snapshotting');
+});
+
 test('rejects malformed identities, incomplete domains and unsafe cutover journals', () => {
   const journal = createMigrationJournal(PROFILE_ID, NOW);
   assert.equal(validateMigrationJournal({ ...journal, profileId: '../other' }).valid, false);
