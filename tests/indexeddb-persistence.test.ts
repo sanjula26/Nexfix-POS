@@ -266,10 +266,15 @@ test('concurrent backup metadata patches are merged atomically without losing fi
   ]);
   assert.equal(results.every((result) => result.ok), true);
 
+  await Promise.all([
+    reopenedDb.idbSetMetaDetailed((current) => ({ backupCount: current.backupCount + 1 })),
+    reopenedDb.idbSetMetaDetailed((current) => ({ backupCount: current.backupCount + 1 })),
+  ]);
+
   const finalMeta = await reopenedDb.idbGetMetaDetailed();
   assert.equal(finalMeta.ok, true);
   if (finalMeta.ok) {
-    assert.equal(finalMeta.value.backupCount, 4);
+    assert.equal(finalMeta.value.backupCount, 6, 'concurrent increments must not overwrite each other');
     assert.equal(finalMeta.value.lastManualBackupAt, '2026-11-22T10:00:00.000Z');
     assert.equal(finalMeta.value.lastCloudBackupAt, '2026-11-22T10:01:00.000Z');
   }
