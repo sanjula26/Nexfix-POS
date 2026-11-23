@@ -106,7 +106,7 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
       const result = operation();
       if (result !== null && (typeof result === 'object' || typeof result === 'function')
         && typeof (result as PromiseLike<T>).then === 'function') {
-        return Promise.resolve(result as PromiseLike<unknown>).finally(finish) as T;
+        return Promise.resolve(result as unknown as PromiseLike<unknown>).finally(finish) as unknown as T;
       }
       finish();
       return result as T;
