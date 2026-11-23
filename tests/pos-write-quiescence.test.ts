@@ -37,7 +37,7 @@ test('pause closes the gate, drains active writes, then flushes the latest state
   );
   assert.deepEqual(events, ['write-start']);
 
-  write.resolve();
+  write.resolve(undefined);
   await activeWrite;
   const lease = await pause;
   assert.deepEqual(events, ['write-start', 'write-finish', 'flush-latest-state']);
