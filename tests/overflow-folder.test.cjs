@@ -149,7 +149,7 @@ test('primary folder can only be rebound to a folder containing the same verifie
   try {
     await manager.chooseFolder();
     manager.markPrimary(profile.directory, profile.manifest.profileId);
-    await assert.rejects(manager.chooseFolder(), /different POS profile/);
+    await assert.rejects(manager.chooseFolder(), /does not contain the configured primary POS profile/);
     assert.equal(manager.getPreference().storageMode, 'folder_primary');
     nextSelection = replacement;
     const reconnected = await manager.chooseFolder();
