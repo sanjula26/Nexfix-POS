@@ -566,6 +566,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }
         // Never load localStorage or seed data when the encrypted folder is primary.
       }
+      if (!primaryStorageBlocked && idbAvailable() && !isDesktopProfilePrimary()) {
+        void checkIndexedDBQuotaAfterWrite();
+      }
       // Re-hydrate session from storage AFTER users are loaded so login is not lost
         try {
           const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
