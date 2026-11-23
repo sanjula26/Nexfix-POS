@@ -77,6 +77,7 @@ type DesktopPOSMigrationResponse = {
   ok: boolean;
   journal?: DesktopPOSMigrationJournal | null;
   error?: string;
+  code?: string;
 };
 
 export type DesktopPOSProfileResult = {
@@ -270,7 +271,11 @@ async function requireMigrationResponse(
   fallback: string,
 ): Promise<DesktopPOSMigrationJournal | null> {
   const result = await promise;
-  if (!result || result.ok !== true) throw new Error(result?.error || fallback);
+  if (!result || result.ok !== true) {
+    const error = new Error(result?.error || fallback) as Error & { code?: string };
+    if (result?.code) error.code = result.code;
+    throw error;
+  }
   return result.journal ?? null;
 }
 
