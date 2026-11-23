@@ -7,12 +7,10 @@ import {
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new Promise<T>((res) => {
     resolve = res;
-    reject = rej;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve };
 }
 
 test('pause closes the gate, drains active writes, then flushes the latest state', async () => {
@@ -94,4 +92,24 @@ test('invalid pause timeout is rejected before the gate is closed', async () => 
   const coordinator = createPOSWriteQuiescenceCoordinator();
   await assert.rejects(coordinator.pause({ timeoutMs: 0 }), /positive finite number/);
   assert.equal(coordinator.isPaused, false);
+});
+
+test('flush timeout keeps the gate closed until the already-started flush settles', async () => {
+  const coordinator = createPOSWriteQuiescenceCoordinator();
+  const flush = deferred<void>();
+
+  await assert.rejects(
+    coordinator.pause({ timeoutMs: 10, flushPendingState: () => flush.promise }),
+    (error: unknown) => error instanceof POSWriteQuiescenceError && error.code === 'timeout',
+  );
+  assert.equal(coordinator.isPaused, true);
+  await assert.rejects(
+    coordinator.runWrite('must-wait-for-flush', () => 'unsafe'),
+    (error: unknown) => error instanceof POSWriteQuiescenceError && error.code === 'paused',
+  );
+
+  flush.resolve(undefined);
+  await Promise.resolve();
+  assert.equal(coordinator.isPaused, false);
+  assert.equal(await coordinator.runWrite('after-flush-settled', () => 'ok'), 'ok');
 });
