@@ -27,22 +27,26 @@ function registerPOSProfileIpc(options) {
   const selectedRoots = new Set();
   const discoveredProfiles = new Set();
 
-  function getConfiguredStorageRoot() {
+  function getConfiguredStoragePreference() {
     if (typeof options.getConfiguredStorageRoot !== 'function') return null;
-    const preference = options.getConfiguredStorageRoot();
-    if (!preference || preference.ok !== true || preference.configured !== true ||
-        preference.available !== true || typeof preference.folderPath !== 'string') return null;
-    return path.resolve(preference.folderPath);
+    try {
+      return options.getConfiguredStorageRoot();
+    } catch {
+      return { ok: false, configured: true, available: false, folderPath: null };
+    }
   }
 
   function isSelectedStorageRoot(root) {
-    const configuredRoot = getConfiguredStorageRoot();
-    const matchesConfigured = configuredRoot && (
-      process.platform === 'win32'
+    const preference = getConfiguredStoragePreference();
+    if (preference?.configured === true) {
+      if (preference.ok !== true || preference.available !== true ||
+          typeof preference.folderPath !== 'string') return false;
+      const configuredRoot = path.resolve(preference.folderPath);
+      const platform = options.platform || process.platform;
+      return platform === 'win32'
         ? configuredRoot.toLowerCase() === root.toLowerCase()
-        : configuredRoot === root
-    );
-    if (matchesConfigured) selectedRoots.add(root);
+        : configuredRoot === root;
+    }
     return selectedRoots.has(root);
   }
 
