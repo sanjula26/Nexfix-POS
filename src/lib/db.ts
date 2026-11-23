@@ -6,7 +6,7 @@ import {
   readDesktopProfilePayload,
   writeDesktopProfileJson,
   type DesktopProfilePurpose,
-} from './desktopProfileStorage';
+} from './desktopProfileStorage.ts';
 
 let desktopProfilePrimary = false;
 const profileWriteQueues = new Map<DesktopProfilePurpose, Promise<unknown>>();
