@@ -109,7 +109,7 @@ test('flush timeout keeps the gate closed until the already-started flush settle
   );
 
   flush.resolve(undefined);
-  await Promise.resolve();
+  await new Promise<void>(resolve => setTimeout(resolve, 0));
   assert.equal(coordinator.isPaused, false);
   assert.equal(await coordinator.runWrite('after-flush-settled', () => 'ok'), 'ok');
 });
