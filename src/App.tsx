@@ -3,6 +3,18 @@ import { buildCreditSettlementSyncFingerprint } from './lib/creditSettlementSync
 import { buildNormalizedCatalogSyncFingerprint } from './lib/cloudSyncFingerprint';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
+import { setDesktopProfilePrimary } from './lib/db';
+import {
+  discoverDesktopPOSProfiles,
+  getDesktopPOSMigrationJournal,
+  getDesktopPOSProfileStatus,
+  readDesktopProfilePayload,
+  transitionDesktopPOSStorageMigration,
+  unlockDesktopPOSProfileWithOS,
+  unlockDesktopPOSProfileWithPassphrase,
+  unlockDesktopPOSProfileWithRecoveryKey,
+  type DesktopPOSMigrationPurpose,
+} from './lib/desktopProfileStorage';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
@@ -429,6 +441,67 @@ type OverflowFolderStatus = {
   error?: string;
   canceled?: boolean;
 };
+
+const PRIMARY_PROFILE_PURPOSES: DesktopPOSMigrationPurpose[] = [
+  'app_state', 'sync_queue', 'meta', 'restore_checkpoint',
+];
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyAndActivatePrimaryProfile(status: OverflowFolderStatus, directory: string): Promise<void> {
+  const active = await getDesktopPOSProfileStatus();
+  if (!active.unlocked || active.profile?.profileId !== status.profileId) {
+    throw new Error('The unlocked encrypted profile does not match the configured primary POS profile.');
+  }
+  let journal = await getDesktopPOSMigrationJournal();
+  if (!journal || journal.profileId !== status.profileId) {
+    throw new Error('The primary POS profile has no matching migration journal.');
+  }
+  if (journal.phase !== 'ready_to_cutover' && journal.phase !== 'folder_primary') {
+    throw new Error('The primary POS migration was interrupted before all data was verified. Do not use an older IndexedDB copy.');
+  }
+
+  for (const purpose of PRIMARY_PROFILE_PURPOSES) {
+    const entry = journal.entries[purpose];
+    if (entry.status !== 'verified' || !entry.sha256 || !Number.isFinite(entry.bytes) || !Number.isFinite(entry.revision)) {
+      throw new Error(`The primary POS ${purpose} data has no completed verification record.`);
+    }
+    const serialized = await readDesktopProfilePayload(purpose);
+    if (serialized === null) throw new Error(`The primary POS ${purpose} file is missing.`);
+    const bytes = new TextEncoder().encode(serialized).byteLength;
+    const sha256 = await sha256Hex(serialized);
+    if (bytes !== entry.bytes || sha256 !== entry.sha256) {
+      throw new Error(`The primary POS ${purpose} data failed its integrity check.`);
+    }
+    const value = JSON.parse(serialized);
+    if (purpose === 'app_state' &&
+        (!value || !Array.isArray(value.products) || !Array.isArray(value.users) || !Array.isArray(value.sales))) {
+      throw new Error('The primary POS state file has an unsupported data shape.');
+    }
+    if (purpose === 'sync_queue' && !Array.isArray(value)) {
+      throw new Error('The primary POS offline queue has an unsupported data shape.');
+    }
+    if (purpose === 'meta' &&
+        (!value || !Number.isFinite(value.autoBackupHours) || !Number.isFinite(value.backupCount))) {
+      throw new Error('The primary POS backup metadata has an unsupported data shape.');
+    }
+    if (purpose === 'restore_checkpoint' && value !== null &&
+        (!value || !Array.isArray(value.products) || !Array.isArray(value.users) || !Array.isArray(value.sales))) {
+      throw new Error('The primary POS restore checkpoint has an unsupported data shape.');
+    }
+  }
+
+  if (journal.phase === 'ready_to_cutover') {
+    journal = await transitionDesktopPOSStorageMigration('folder_primary');
+  }
+  if (journal.phase !== 'folder_primary') {
+    throw new Error('The encrypted POS profile did not complete its primary-storage cutover.');
+  }
+  setDesktopProfilePrimary(true);
+}
 
 function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   const desktopApi = useMemo(() => (window as Window & {
