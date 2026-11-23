@@ -121,7 +121,9 @@ function createOverflowFolderManager(options = {}) {
 
   function assertPrimaryProfileAtRoot(root, profileDirectoryName, profileId) {
     const profileDirectory = pathApi.join(root, profileDirectoryName);
-    const stat = fsApi.lstatSync(profileDirectory);
+    let stat;
+    try { stat = fsApi.lstatSync(profileDirectory); }
+    catch { throw new Error('The selected folder does not contain the configured primary POS profile.'); }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       throw new Error('The selected folder does not contain the configured primary POS profile.');
     }
@@ -206,6 +208,9 @@ function createOverflowFolderManager(options = {}) {
   function markPrimary(profileDirectory, profileId) {
     const current = readConfig();
     if (!current?.folderPath) throw new Error('Choose the POS overflow folder before marking it primary.');
+    if (current.storageMode === 'folder_primary' && current.profileId !== profileId) {
+      throw new Error('A different POS profile is already the primary storage.');
+    }
     const root = validateFolder(current.folderPath, { fsApi, pathApi });
     const stat = fsApi.lstatSync(profileDirectory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
