@@ -810,10 +810,292 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   );
 }
 
+type StorageQuotaWarning = {
+  reason: 'near_quota' | 'quota_exceeded';
+  usage?: number;
+  quota?: number;
+  ratio?: number;
+};
+
+function formatStorageBytes(value?: number): string {
+  if (!Number.isFinite(value) || value === undefined || value < 0) return 'Unknown';
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function StorageOverflowController() {
+  const { pauseStorageMaintenance } = usePOS();
+  const [warning, setWarning] = useState<StorageQuotaWarning | null>(null);
+  const [blocking, setBlocking] = useState(false);
+  const [phase, setPhase] = useState<'warning' | 'create' | 'unlock' | 'recovery' | 'copying' | 'error'>('warning');
+  const [folderPath, setFolderPath] = useState('');
+  const [profileDirectory, setProfileDirectory] = useState('');
+  const [profileId, setProfileId] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [confirmPassphrase, setConfirmPassphrase] = useState('');
+  const [unlockMode, setUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
+  const [unlockSecret, setUnlockSecret] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const onQuotaWarning = (event: Event) => {
+      const detail = (event as CustomEvent<StorageQuotaWarning>).detail;
+      if (!detail || (detail.reason !== 'near_quota' && detail.reason !== 'quota_exceeded')) return;
+      setWarning(detail);
+      setBlocking(detail.reason === 'quota_exceeded');
+      setPhase('warning');
+      setError('');
+    };
+    window.addEventListener('nexfix:storage-quota-warning', onQuotaWarning);
+    return () => window.removeEventListener('nexfix:storage-quota-warning', onQuotaWarning);
+  }, []);
+
+  const runMigration = async () => {
+    setBusy(true);
+    setPhase('copying');
+    setError('');
+    try {
+      await migrateIndexedDBToEncryptedPOSFolder(pauseStorageMaintenance);
+      setRecoveryKey('');
+      setPassphrase('');
+      setConfirmPassphrase('');
+      setUnlockSecret('');
+      setWarning(null);
+      setBlocking(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Encrypted POS storage migration failed.');
+      setPhase('error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prepareMigration = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const folder = await getConfiguredPOSOverflowFolder();
+      if (!folder.ok || !folder.available || folder.storageMode !== 'indexeddb' || !folder.folderPath) {
+        throw new Error(folder.error || 'Reconnect the selected POS storage folder before migrating data.');
+      }
+      setFolderPath(folder.folderPath);
+      const discovery = await discoverDesktopPOSProfiles(folder.folderPath);
+      if (discovery.duplicates.length > 0 || discovery.invalid.length > 0 || discovery.available.length > 1) {
+        throw new Error('The selected folder has multiple or invalid POS profiles. No profile was deleted or overwritten.');
+      }
+      if (discovery.available.length === 0) {
+        setPhase('create');
+        return;
+      }
+      const profile = discovery.available[0];
+      setProfileDirectory(profile.directory);
+      setProfileId(profile.profileId);
+      const active = await getDesktopPOSProfileStatus();
+      if (active.unlocked && active.profile?.profileId !== profile.profileId) {
+        throw new Error('A different encrypted POS profile is already open. Close and reopen Nexfix before migrating.');
+      }
+      if (!active.unlocked) {
+        try {
+          await unlockDesktopPOSProfileWithOS(profile.directory);
+        } catch {
+          setUnlockMode('passphrase');
+          setPhase('unlock');
+          setError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
+          return;
+        }
+      }
+      await runMigration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not prepare the encrypted POS folder.');
+      setPhase('error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createProfile = async () => {
+    if (passphrase.length < 12 || !/[A-Za-z]/.test(passphrase) || !/[0-9]/.test(passphrase)) {
+      setError('Use at least 12 characters with letters and numbers.');
+      return;
+    }
+    if (passphrase !== confirmPassphrase) {
+      setError('The two passphrases do not match.');
+      return;
+    }
+    if (!folderPath) {
+      setError('Choose the POS storage folder first.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const created = await createDesktopPOSProfile({
+        storageRoot: folderPath,
+        directoryName: 'Nexfix POS Data',
+        label: 'NexFix POS Storage',
+        passphrase,
+      });
+      setProfileDirectory(created.profile.directory);
+      setProfileId(created.profile.profileId);
+      setRecoveryKey(created.recoveryKey);
+      setPhase('recovery');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create the encrypted POS profile.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlockExistingProfile = async () => {
+    if (!profileDirectory || !unlockSecret.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (unlockMode === 'passphrase') {
+        await unlockDesktopPOSProfileWithPassphrase(profileDirectory, unlockSecret);
+      } else {
+        await unlockDesktopPOSProfileWithRecoveryKey(profileDirectory, unlockSecret);
+      }
+      setUnlockSecret('');
+      await runMigration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not unlock the encrypted POS profile.');
+      setBusy(false);
+    }
+  };
+
+  const reconnectFolder = async () => {
+    const api = typeof window !== 'undefined' ? window.nexfixDesktop : undefined;
+    if (!api?.choosePOSOverflowFolder) {
+      setError('The desktop folder chooser is unavailable in this app build.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.choosePOSOverflowFolder();
+      if (!result?.ok || !result.available || !result.folderPath || result.storageMode !== 'indexeddb') {
+        throw new Error(result?.error || 'The selected folder could not be reconnected.');
+      }
+      setFolderPath(result.folderPath);
+      window.dispatchEvent(new CustomEvent('nexfix:storage-folder-updated'));
+      await prepareMigration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not reconnect the POS storage folder.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!warning) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-cyan-200 bg-white p-5 text-slate-900 shadow-2xl dark:border-cyan-300/20 dark:bg-[#101a2d] dark:text-white sm:p-7">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className={`mt-1 shrink-0 ${blocking ? 'text-red-600' : 'text-amber-600'}`} size={26} />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-black">
+              {blocking ? 'POS storage is full' : 'POS storage is almost full'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              {blocking
+                ? 'IndexedDB could not save the latest change. Do not repeat the sale. Move the latest in-memory POS data to the selected encrypted folder before continuing.'
+                : 'IndexedDB is approaching its storage limit. You can move the POS data to the selected encrypted folder now, before writes start failing.'}
+            </p>
+            {warning.usage !== undefined && warning.quota !== undefined && (
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                Used {formatStorageBytes(warning.usage)} of {formatStorageBytes(warning.quota)}
+                {warning.ratio !== undefined ? ` (${Math.round(warning.ratio * 100)}%)` : ''}
+              </p>
+            )}
+          </div>
+          {!blocking && phase === 'warning' && (
+            <button type="button" onClick={() => setWarning(null)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10">Close</button>
+          )}
+        </div>
+
+        {phase === 'warning' && (
+          <div className="mt-6 space-y-3">
+            <button type="button" onClick={() => void prepareMigration()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {busy ? 'Checking selected folder…' : 'Prepare encrypted folder migration'}
+            </button>
+            <button type="button" onClick={() => void reconnectFolder()} disabled={busy}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 disabled:opacity-60 dark:border-white/15 dark:text-slate-200">
+              Reconnect / choose storage folder
+            </button>
+          </div>
+        )}
+
+        {phase === 'create' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">Create an encrypted POS folder profile. This passphrase is separate from the normal POS login.</p>
+            <input type="password" value={passphrase} onChange={event => setPassphrase(event.target.value)}
+              placeholder="New profile passphrase (12+ characters)" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <input type="password" value={confirmPassphrase} onChange={event => setConfirmPassphrase(event.target.value)}
+              placeholder="Confirm profile passphrase" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <button type="button" onClick={() => void createProfile()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Create encrypted profile</button>
+          </div>
+        )}
+
+        {phase === 'recovery' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. It is shown only during profile creation.</p>
+            <pre className="select-all break-all rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm text-slate-900 dark:border-white/15 dark:bg-black/30 dark:text-white">{recoveryKey}</pre>
+            <p className="text-xs text-slate-500">Do not send this key to anyone. If the Windows account or drive is lost, this key may be needed to unlock the data.</p>
+            <button type="button" onClick={() => void runMigration()} disabled={busy || !recoveryKey}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">I saved the recovery key — start migration</button>
+          </div>
+        )}
+
+        {phase === 'unlock' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">Unlock the existing encrypted POS profile to continue.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setUnlockMode('passphrase')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'passphrase' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Passphrase</button>
+              <button type="button" onClick={() => setUnlockMode('recovery')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'recovery' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Recovery key</button>
+            </div>
+            <input type="password" value={unlockSecret} onChange={event => setUnlockSecret(event.target.value)}
+              placeholder={unlockMode === 'passphrase' ? 'Profile passphrase' : 'Profile recovery key'}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <button type="button" onClick={() => void unlockExistingProfile()} disabled={busy || !unlockSecret.trim()}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Unlock and migrate</button>
+          </div>
+        )}
+
+        {phase === 'copying' && (
+          <div className="mt-6 rounded-xl bg-cyan-50 p-4 text-sm text-cyan-900 dark:bg-cyan-400/10 dark:text-cyan-100">
+            POS writes and background workers are paused. Copying app state, offline queue, backup metadata and restore checkpoint; then reading each file back and checking its SHA-256 hash. Do not close Nexfix.
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="mt-6 space-y-3">
+            <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>
+            {profileDirectory && (
+              <button type="button" onClick={() => void runMigration()} disabled={busy}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Retry migration</button>
+            )}
+            {!profileDirectory && (
+              <button type="button" onClick={() => setPhase('warning')} disabled={busy}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Back</button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function POSApplication() {
   useEffect(() => startSyncManager(), []);
   return (
     <POSProvider>
+      <StorageOverflowController />
       <HashRouter>
         <CloudAuthLifecycle />
         <SessionSecurity />
