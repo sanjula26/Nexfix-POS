@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   discoverPOSProfiles: (storageRoot) => ipcRenderer.invoke('pos-profile:discover', { storageRoot }),
   createPOSProfile: (payload) => ipcRenderer.invoke('pos-profile:create', payload),
   unlockPOSProfileWithPassphrase: (directory, secret) => ipcRenderer.invoke('pos-profile:unlock-passphrase', { directory, secret }),
+  unlockPOSProfileWithOS: (directory) => ipcRenderer.invoke('pos-profile:unlock-os', { directory }),
   unlockPOSProfileWithRecoveryKey: (directory, secret) => ipcRenderer.invoke('pos-profile:unlock-recovery', { directory, secret }),
   getPOSProfileStatus: () => ipcRenderer.invoke('pos-profile:status'),
   lockPOSProfile: () => ipcRenderer.invoke('pos-profile:lock'),
