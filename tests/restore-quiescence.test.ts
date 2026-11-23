@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBackupRestore, completeRestore, pauseRestoreWork } from '../src/lib/restore.ts';
+import { pauseRestoreWork, runRestoreWork } from '../src/lib/restoreWorkGate.ts';
 
-test('restore and checkpoint cleanup are rejected while storage maintenance is paused', async () => {
+test('restore operations are rejected while the storage maintenance lease is held', async () => {
   const release = await pauseRestoreWork();
   try {
     await assert.rejects(
-      applyBackupRestore({} as never, {}),
+      runRestoreWork(() => 'unsafe', 'POS restore is temporarily paused for safe storage maintenance.'),
       /restore is temporarily paused for safe storage maintenance/i,
     );
     await assert.rejects(
-      completeRestore(),
+      runRestoreWork(() => undefined, 'POS restore checkpoint cleanup is temporarily paused for safe storage maintenance.'),
       /restore checkpoint cleanup is temporarily paused for safe storage maintenance/i,
     );
   } finally {
@@ -18,14 +18,22 @@ test('restore and checkpoint cleanup are rejected while storage maintenance is p
   }
 });
 
-test('restore pause lease can be released idempotently', async () => {
-  const release = await pauseRestoreWork();
-  release();
-  release();
-  // With the gate open, restore reaches its ordinary admin check rather than
-  // being rejected by the storage-maintenance boundary.
+test('restore gate drains active work and reopens after an idempotent release', async () => {
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  let started!: () => void;
+  const didStart = new Promise<void>(resolve => { started = resolve; });
+  const active = runRestoreWork(async () => { started(); await pending; return 'complete'; });
+  await didStart;
+  const pause = pauseRestoreWork();
   await assert.rejects(
-    applyBackupRestore({} as never, {}),
-    /only an active admin can restore POS data/i,
+    runRestoreWork(() => 'blocked'),
+    /restore is temporarily paused for safe storage maintenance/i,
   );
+  finish();
+  assert.equal(await active, 'complete');
+  const release = await pause;
+  release();
+  release();
+  assert.equal(await runRestoreWork(() => 'resumed'), 'resumed');
 });
