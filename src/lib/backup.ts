@@ -21,7 +21,7 @@ export interface BackupOptions { download?: boolean; cloud?: boolean; }
 
 export interface BackupResult { local: boolean; cloud: boolean; error?: string; }
 
-export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<BackupResult> {
+async function downloadBackupWork(state: POSState, kind: 'manual' | 'auto' = 'manual', options: BackupOptions = {}): Promise<BackupResult> {
   // Automatic/reconnect backups are cloud-only. A local JSON file is an explicit manual action.
   const wantDownload = kind === 'manual' && options.download !== false;
   const wantCloud = options.cloud !== false && isGoogleSyncEnabled();
@@ -90,6 +90,29 @@ export async function downloadBackup(state: POSState, kind: 'manual' | 'auto' = 
     }
   }
   return { local, cloud, ...(errorMessage ? { error: errorMessage } : {}) };
+}
+
+
+/**
+ * Tracks complete manual/automatic backup executions, including their local
+ * metadata writes. Migration must first pause/drain the automatic scheduler,
+ * then pause this gate so a manual backup cannot race the storage snapshot.
+ */
+const backupExecutionWork = createDrainableWorkGate();
+
+export function pauseBackupExecutionWork(): Promise<() => void> {
+  return backupExecutionWork.pause();
+}
+
+export function downloadBackup(
+  state: POSState,
+  kind: 'manual' | 'auto' = 'manual',
+  options: BackupOptions = {},
+): Promise<BackupResult> {
+  return backupExecutionWork.run(
+    () => downloadBackupWork(state, kind, options),
+    () => { throw new Error('POS backup operations are temporarily paused for safe storage maintenance.'); },
+  );
 }
 
 type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
