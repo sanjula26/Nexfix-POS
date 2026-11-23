@@ -625,8 +625,11 @@ app.whenReady().then(()=>{
   session.defaultSession.setPermissionRequestHandler((webContents,permission,callback)=>callback(permission==='camera'&&isAllowedNavigation(webContents.getURL())));
   // Register the encrypted profile bridge before the renderer loads. The live POS
   // store is not switched to this backend until the startup gate/migration lands.
-  posProfileIpc = registerPOSProfileIpc({ ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer });
-  registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer });
+  const overflowFolderManager = registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer });
+  posProfileIpc = registerPOSProfileIpc({
+    ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer,
+    getConfiguredStorageRoot: () => overflowFolderManager.getPreference(),
+  });
   app.on('will-quit', () => { try { posProfileIpc?.lock(); } catch {} });
   setupAutoUpdater(); createWindow();
   app.on('activate',()=>{if(BrowserWindow.getAllWindows().length===0)createWindow();});
