@@ -37,6 +37,8 @@ function setup(t, useConfiguredRoot = false, configuredAvailable = true) {
     ipcMain, dialog, BrowserWindow, safeStorage: safeStorage(),
     isTrustedRenderer: () => trusted, platform: 'linux',
     getConfiguredStorageRoot: useConfiguredRoot ? () => ({ ok: true, configured: true, available: configuredAvailable, folderPath: root }) : undefined,
+    markOverflowFolderPrimary: (directory, profileId) => ({ ok: true, available: true, storageMode: 'folder_primary', profileId, profileDirectory: directory }),
+    markOverflowFolderIndexedDBPrimary: () => ({ ok: true, storageMode: 'indexeddb' }),
   });
   const event = { sender: { mainFrame: {} }, senderFrame: {} };
   const call = (channel, payload) => handlers.get(channel)(event, payload);
