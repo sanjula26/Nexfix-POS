@@ -1,4 +1,4 @@
-import { createDrainableWorkGate } from './drainableWorkGate';
+import { createDrainableWorkGate } from './drainableWorkGate.ts';
 
 const restoreWork = createDrainableWorkGate();
 
