@@ -108,6 +108,48 @@ test('trusted IPC supports choose, discover, create, encrypted read/write, lock 
   assert.equal((await ctx.call('pos-profile:status')).unlocked, true);
 });
 
+test('migration journal IPC enforces copy, verification and cutover ordering', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const created = await ctx.call('pos-profile:create', {
+    storageRoot: ctx.root,
+    directoryName: 'Migration POS',
+    label: 'NexFix Migration Shop',
+    passphrase: 'Nexfix-IPC-Lock-2026',
+  });
+  assert.equal(created.ok, true);
+
+  const started = await ctx.call('pos-profile:migration:begin');
+  assert.equal(started.ok, true);
+  assert.equal(started.journal.phase, 'snapshotting');
+  const invalidCutover = await ctx.call('pos-profile:migration:transition', { nextPhase: 'folder_primary' });
+  assert.equal(invalidCutover.ok, false);
+
+  const copying = await ctx.call('pos-profile:migration:transition', { nextPhase: 'copying' });
+  assert.equal(copying.journal.phase, 'copying');
+  const purposes = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
+  const details = { revision: 1, bytes: 12, sha256: 'a'.repeat(64) };
+  for (const purpose of purposes) {
+    const result = await ctx.call('pos-profile:migration:record-copy', { purpose, details });
+    assert.equal(result.ok, true);
+  }
+
+  const verifying = await ctx.call('pos-profile:migration:transition', { nextPhase: 'verifying' });
+  assert.equal(verifying.journal.phase, 'verifying');
+  for (const purpose of purposes) {
+    const result = await ctx.call('pos-profile:migration:record-verification', { purpose, details });
+    assert.equal(result.ok, true);
+  }
+
+  const ready = await ctx.call('pos-profile:migration:transition', { nextPhase: 'ready_to_cutover' });
+  assert.equal(ready.journal.phase, 'ready_to_cutover');
+  const primary = await ctx.call('pos-profile:migration:transition', { nextPhase: 'folder_primary' });
+  assert.equal(primary.journal.phase, 'folder_primary');
+  const restarted = await ctx.call('pos-profile:migration:begin');
+  assert.equal(restarted.ok, false);
+  assert.match(restarted.error, /already the primary storage/);
+});
+
 test('uses the already-selected overflow folder without opening a second folder chooser', async (t) => {
   const ctx = setup(t, true);
   const found = await ctx.call('pos-profile:discover', { storageRoot: ctx.root });
