@@ -191,7 +191,7 @@ interface StoreCtx {
   /** Pause and drain all public POS business mutation entry points. */
   pausePOSMutationWrites: () => Promise<POSWriteQuiescenceLease>;
   /** Pause and drain every audited local POS storage writer before a migration snapshot. */
-  pauseStorageMaintenance: () => Promise<() => void>;
+  pauseStorageMaintenance: () => Promise<POSStorageMaintenanceLease>;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
