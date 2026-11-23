@@ -2,6 +2,13 @@
 
 const path = require('node:path');
 const { POSProfileSession } = require('./profile-session.cjs');
+const {
+  createMigrationJournal,
+  recordMigrationCopy,
+  recordMigrationVerification,
+  transitionMigrationJournal,
+  validateMigrationJournal,
+} = require('./profile-migration.cjs');
 
 const MAX_PROFILE_PAYLOAD_BYTES = 256 * 1024 * 1024;
 const MAX_PASSPHRASE_LENGTH = 1024;
@@ -127,6 +134,58 @@ function registerPOSProfileIpc(options) {
       throw new Error('Scan the selected POS storage folder and choose a listed profile first.');
     }
     return profileSession.unlockWithOS(directory);
+  });
+
+  function readMigrationJournal() {
+    const active = profileSession.requireActive();
+    const serialized = profileSession.read('migration_journal');
+    if (serialized === null) return null;
+    let journal;
+    try { journal = JSON.parse(serialized); }
+    catch { throw new Error('The encrypted POS migration journal contains invalid JSON.'); }
+    const validation = validateMigrationJournal(journal);
+    if (!validation.valid || journal.profileId !== active.profileId) {
+      throw new Error(validation.reason || 'The migration journal belongs to another POS profile.');
+    }
+    return journal;
+  }
+
+  function writeMigrationJournal(journal) {
+    profileSession.write('migration_journal', JSON.stringify(journal));
+    return journal;
+  }
+
+  register('pos-profile:migration:status', () => ({ ok: true, journal: readMigrationJournal() }));
+
+  register('pos-profile:migration:begin', () => {
+    const active = profileSession.requireActive();
+    const existing = readMigrationJournal();
+    if (existing?.phase === 'folder_primary') {
+      throw new Error('This POS profile is already the primary storage. Do not restart an IndexedDB migration.');
+    }
+    const journal = createMigrationJournal(active.profileId);
+    return { ok: true, journal: writeMigrationJournal(journal) };
+  });
+
+  register('pos-profile:migration:transition', (payload) => {
+    const current = readMigrationJournal();
+    if (!current) throw new Error('Start a POS storage migration before changing its phase.');
+    const next = transitionMigrationJournal(current, payload?.nextPhase);
+    return { ok: true, journal: writeMigrationJournal(next) };
+  });
+
+  register('pos-profile:migration:record-copy', (payload) => {
+    const current = readMigrationJournal();
+    if (!current) throw new Error('Start a POS storage migration before recording copied data.');
+    const next = recordMigrationCopy(current, payload?.purpose, payload?.details);
+    return { ok: true, journal: writeMigrationJournal(next) };
+  });
+
+  register('pos-profile:migration:record-verification', (payload) => {
+    const current = readMigrationJournal();
+    if (!current) throw new Error('Start a POS storage migration before verifying copied data.');
+    const next = recordMigrationVerification(current, payload?.purpose, payload?.details);
+    return { ok: true, journal: writeMigrationJournal(next) };
   });
 
   register('pos-profile:status', () => ({ ok: true, ...profileSession.getStatus() }));
