@@ -21,7 +21,7 @@ function safeStorage(prefix = 'dpapi:') {
   };
 }
 
-function setup(t, useConfiguredRoot = false) {
+function setup(t, useConfiguredRoot = false, configuredAvailable = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-profile-ipc-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const handlers = new Map();
@@ -32,7 +32,7 @@ function setup(t, useConfiguredRoot = false) {
   const api = registerPOSProfileIpc({
     ipcMain, dialog, BrowserWindow, safeStorage: safeStorage(),
     isTrustedRenderer: () => trusted, platform: 'linux',
-    getConfiguredStorageRoot: useConfiguredRoot ? () => ({ ok: true, configured: true, available: true, folderPath: root }) : undefined,
+    getConfiguredStorageRoot: useConfiguredRoot ? () => ({ ok: true, configured: true, available: configuredAvailable, folderPath: root }) : undefined,
   });
   const event = { sender: { mainFrame: {} }, senderFrame: {} };
   const call = (channel, payload) => handlers.get(channel)(event, payload);
@@ -121,6 +121,20 @@ test('uses the already-selected overflow folder without opening a second folder 
   });
   assert.equal(created.ok, true);
   assert.equal(ctx.api.session.getStatus().unlocked, true);
+});
+
+test('does not allow a different profile folder while the configured overflow drive is unavailable', async (t) => {
+  const ctx = setup(t, true, false);
+  const selected = await ctx.call('pos-profile:choose-storage-root');
+  assert.equal(selected.ok, true);
+  const created = await ctx.call('pos-profile:create', {
+    storageRoot: ctx.root,
+    directoryName: 'Wrong Folder',
+    label: 'NexFix Shop',
+    passphrase: 'Nexfix-IPC-Lock-2026',
+  });
+  assert.equal(created.ok, false);
+  assert.match(created.error, /Choose the POS storage folder/);
 });
 
 test('IPC refuses arbitrary paths and does not permit multiple active profiles', async (t) => {
