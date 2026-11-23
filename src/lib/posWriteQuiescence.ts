@@ -35,7 +35,7 @@ export interface POSWriteQuiescenceCoordinator {
   readonly activeWrites: number;
   runWrite<T>(label: string, operation: () => T | Promise<T>): Promise<T>;
   /** Preserve sync return values while tracking sync/async top-level POS mutations. */
-  runMutation<T>(label: string, operation: () => T | Promise<T>): T | Promise<T>;
+  runMutation<T>(label: string, operation: () => T): T;
   pause(options?: {
     timeoutMs?: number;
     /** Flush the latest in-memory state after tracked writes have drained. */
@@ -85,7 +85,7 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
     }
   };
 
-  const runMutation = <T>(label: string, operation: () => T | Promise<T>): T | Promise<T> => {
+  const runMutation = <T>(label: string, operation: () => T): T => {
     if (paused) {
       throw new POSWriteQuiescenceError(
         'paused',
@@ -106,7 +106,7 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
       const result = operation();
       if (result !== null && (typeof result === 'object' || typeof result === 'function')
         && typeof (result as PromiseLike<T>).then === 'function') {
-        return Promise.resolve(result as PromiseLike<T>).finally(finish);
+        return Promise.resolve(result as PromiseLike<unknown>).finally(finish) as T;
       }
       finish();
       return result as T;
