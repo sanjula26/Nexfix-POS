@@ -143,7 +143,7 @@ test('primary folder can only be rebound to a folder containing the same verifie
   });
   fs.cpSync(profile.directory, path.join(replacement, 'Nexfix POS Data'), { recursive: true });
   // The primary marker lives at the storage-folder root and must travel with the profile.
-  let nextSelection = wrong;
+  let nextSelection = selected;
   const manager = createOverflowFolderManager({
     app: { getPath: () => userData },
     dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [nextSelection] }) },
@@ -153,6 +153,7 @@ test('primary folder can only be rebound to a folder containing the same verifie
     await manager.chooseFolder();
     manager.markPrimary(profile.directory, profile.manifest.profileId);
     fs.copyFileSync(path.join(selected, PRIMARY_MARKER_FILE), path.join(replacement, PRIMARY_MARKER_FILE));
+    nextSelection = wrong;
     await assert.rejects(manager.chooseFolder(), /does not contain the configured primary POS profile/);
     assert.equal(manager.getPreference().storageMode, 'folder_primary');
     nextSelection = replacement;
