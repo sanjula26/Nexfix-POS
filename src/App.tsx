@@ -516,7 +516,7 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
     );
   }
 
-  if (folderStatus?.ok && folderStatus.configured && folderStatus.storageMode === 'unknown') {
+  if (folderStatus?.storageMode === 'unknown' || (folderStatus?.ok === false && folderStatus.configured)) {
     return (
       <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
         <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
