@@ -26,7 +26,11 @@ function setup(t, useConfiguredRoot = false, configuredAvailable = true) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const handlers = new Map();
   const ipcMain = { handle: (channel, handler) => handlers.set(channel, handler) };
-  const dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: [root] }) };
+  let dialogCalls = 0;
+  const dialog = { showOpenDialog: async () => {
+    dialogCalls += 1;
+    return { canceled: false, filePaths: [root] };
+  } };
   const BrowserWindow = { getAllWindows: () => [] };
   let trusted = true;
   const api = registerPOSProfileIpc({
@@ -36,7 +40,7 @@ function setup(t, useConfiguredRoot = false, configuredAvailable = true) {
   });
   const event = { sender: { mainFrame: {} }, senderFrame: {} };
   const call = (channel, payload) => handlers.get(channel)(event, payload);
-  return { root, handlers, api, call, setTrusted: value => { trusted = value; } };
+  return { root, handlers, api, call, setTrusted: value => { trusted = value; }, dialogCalls: () => dialogCalls };
 }
 
 test('registers only scoped profile operations and rejects untrusted renderer frames', async (t) => {
@@ -152,6 +156,11 @@ test('migration journal IPC enforces copy, verification and cutover ordering', a
 
 test('uses the already-selected overflow folder without opening a second folder chooser', async (t) => {
   const ctx = setup(t, true);
+  const chosen = await ctx.call('pos-profile:choose-storage-root');
+  assert.equal(chosen.ok, true);
+  assert.equal(chosen.storageRoot, ctx.root);
+  assert.equal(chosen.reusedConfiguredFolder, true);
+  assert.equal(ctx.dialogCalls(), 0);
   const found = await ctx.call('pos-profile:discover', { storageRoot: ctx.root });
   assert.equal(found.ok, true);
   assert.equal(found.available.length, 0);
