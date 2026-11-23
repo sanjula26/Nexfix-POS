@@ -177,12 +177,12 @@ function registerPOSProfileIpc(options) {
           typeof options.markOverflowFolderIndexedDBPrimary !== 'function') {
         throw new Error('The selected overflow folder cannot be marked primary in this desktop build.');
       }
-      const marked = options.markOverflowFolderPrimary(active.directory, active.profileId);
-      if (!marked || marked.ok !== true || marked.available !== true ||
-          marked.storageMode !== 'folder_primary' || marked.profileId !== active.profileId) {
-        throw new Error(marked?.error || 'The selected POS folder could not be verified as primary storage.');
-      }
       try {
+        const marked = options.markOverflowFolderPrimary(active.directory, active.profileId);
+        if (!marked || marked.ok !== true || marked.available !== true ||
+            marked.storageMode !== 'folder_primary' || marked.profileId !== active.profileId) {
+          throw new Error(marked?.error || 'The selected POS folder could not be verified as primary storage.');
+        }
         return { ok: true, journal: writeMigrationJournal(next) };
       } catch (error) {
         try {
