@@ -145,6 +145,18 @@ test('refuses an invalid storage root and requires a profile unlock for every da
   assert.throws(() => session.write('cookies', '{}'), /No POS profile is unlocked/);
 });
 
+test('rejects UNC network paths before creating a profile folder', async (t) => {
+  const root = temporaryRoot(t);
+  const session = new POSProfileSession({ safeStorage: safeStorage('windows:'), platform: 'win32' });
+  await assert.rejects(session.create({
+    storageRoot: '\\\\server\\share',
+    directoryName: 'Network POS',
+    label: 'NexFix Shop',
+    passphrase: PASSWORD,
+  }), /local folder|Network folders/i);
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
 test('validates the lock password before creating any new profile folder', async (t) => {
   const root = temporaryRoot(t);
   const session = new POSProfileSession({ safeStorage: safeStorage('windows:'), platform: 'linux' });
