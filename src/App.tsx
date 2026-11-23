@@ -593,14 +593,20 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       );
       if (!profile) throw new Error('The configured primary POS profile was not found in the selected folder.');
       if (active) setPrimaryDirectory(profile.directory);
-      try {
-        await unlockDesktopPOSProfileWithOS(profile.directory);
-      } catch {
-        if (active) {
-          setPrimaryUnlockRequired(true);
-          setUnlockError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
+      const profileStatus = await getDesktopPOSProfileStatus();
+      if (profileStatus.unlocked && profileStatus.profile?.profileId !== folderStatus.profileId) {
+        throw new Error('A different encrypted POS profile is already open in this app session.');
+      }
+      if (!profileStatus.unlocked) {
+        try {
+          await unlockDesktopPOSProfileWithOS(profile.directory);
+        } catch {
+          if (active) {
+            setPrimaryUnlockRequired(true);
+            setUnlockError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
+          }
+          return;
         }
-        return;
       }
       await verifyAndActivatePrimaryProfile(folderStatus, profile.directory);
       if (active) {
