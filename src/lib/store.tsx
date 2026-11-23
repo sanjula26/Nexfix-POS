@@ -23,6 +23,7 @@ import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { createDrainableWorkGate } from './drainableWorkGate';
+import { createStatePersistenceGate, type StatePersistencePause } from './statePersistenceGate';
 import { createPOSWriteQuiescenceCoordinator, type POSWriteQuiescenceLease } from './posWriteQuiescence';
 import { pauseRestoreWork } from './restore';
 import { pauseAutoBackupWork, pauseBackupExecutionWork } from './backup';
@@ -324,16 +325,7 @@ function loadState(): POSState {
 }
 
 /** Persist the latest POS snapshot to IndexedDB and its offline queue marker. */
-const statePersistenceWork = createDrainableWorkGate();
-
-export type POSStatePersistencePause = {
-  release: () => void;
-  latestState: POSState;
-  stateSaved: boolean;
-  queueSaved: boolean;
-  failureKind?: string;
-};
-
+export type POSStatePersistencePause = StatePersistencePause<POSState>;
 export type POSStorageMaintenanceLease = POSStatePersistencePause;
 
 async function persistStateWork(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
@@ -409,11 +401,10 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
 }
 
 /** Normal debounced writes are tracked so migration can stop and drain them. */
+const statePersistenceGate = createStatePersistenceGate<POSState>(persistStateWork);
+
 function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
-  return statePersistenceWork.run(
-    () => persistStateWork(state),
-    () => { throw new Error('POS state persistence is temporarily paused for safe storage maintenance.'); },
-  );
+  return statePersistenceGate.persist(state);
 }
 
 /**
@@ -423,22 +414,8 @@ function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, '
  * open until this final flush has finished because offline persistence may
  * append a state_write operation.
  */
-export async function pauseStatePersistence(getLatestState: () => POSState): Promise<POSStatePersistencePause> {
-  const release = await statePersistenceWork.pause();
-  try {
-    const latestState = getLatestState();
-    const result = await persistStateWork(latestState);
-    // QuotaExceededError is the exact condition this migration path is meant
-    // to recover from. Keep the in-memory snapshot and let the folder migration
-    // copy it; other failures abort because the IndexedDB source may be unreadable.
-    if (!result.stateSaved && result.failureKind !== 'quota_exceeded') {
-      throw new Error('Could not safely read or flush POS state before storage maintenance.');
-    }
-    return { ...result, latestState, release };
-  } catch (error) {
-    release();
-    throw error;
-  }
+export function pauseStatePersistence(getLatestState: () => POSState): Promise<POSStatePersistencePause> {
+  return statePersistenceGate.pauseAndFlush(getLatestState);
 }
 
 function loadSession(): Session | null {
