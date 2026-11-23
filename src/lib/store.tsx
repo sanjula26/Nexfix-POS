@@ -36,6 +36,11 @@ const THEME_KEY = 'nexfix_theme';
 
 // One renderer-wide barrier for public POS business mutations.
 const posMutationCoordinator = createPOSWriteQuiescenceCoordinator();
+const backgroundPOSStateRefreshWork = createDrainableWorkGate();
+
+export function pauseBackgroundPOSStateRefresh(): Promise<() => void> {
+  return backgroundPOSStateRefreshWork.pause();
+}
 
 interface Session { userId: string; remember: boolean }
 
@@ -560,9 +565,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
     let cancelled = false;
-    (async () => {
+    const refresh = async () => {
       const shop = await ensureCloudShop('Nexfix Shop');
-      if (!shop.ok || !shop.shopId) return;
+      if (!shop.ok || !shop.shopId || cancelled) return;
       const remote = await listSaleReversalRequests(shop.shopId);
       if (!remote.ok || !remote.requests || cancelled) return;
       setState(s => {
@@ -576,7 +581,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }
         return { ...s, reverseRequests: [...localById.values()].sort((a,b) => +new Date(b.requestedAt) - +new Date(a.requestedAt)) };
       });
-    })();
+    };
+    void backgroundPOSStateRefreshWork.run(refresh, async () => undefined).catch(error => {
+      console.error('[POS Storage] background state refresh failed:', error);
+    });
     return () => { cancelled = true; };
   }, [ready, user?.id, user?.role, connectivity]);
 
