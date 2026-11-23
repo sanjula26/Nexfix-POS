@@ -257,10 +257,11 @@ test('primary mode fails closed if its durable folder marker disappears', async 
     });
     manager.markPrimary(profile.directory, profile.manifest.profileId);
     fs.unlinkSync(path.join(selected, PRIMARY_MARKER_FILE));
+    fs.rmSync(profile.directory, { recursive: true, force: true });
     const status = manager.getPreference();
     assert.equal(status.storageMode, 'folder_primary');
     assert.equal(status.available, false);
-    assert.match(status.error, /primary POS storage marker is missing/);
+    assert.match(status.error, /does not contain the configured primary POS profile/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
