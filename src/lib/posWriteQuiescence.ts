@@ -34,6 +34,8 @@ export interface POSWriteQuiescenceCoordinator {
   readonly isPaused: boolean;
   readonly activeWrites: number;
   runWrite<T>(label: string, operation: () => T | Promise<T>): Promise<T>;
+  /** Preserve sync return values while tracking sync/async top-level POS mutations. */
+  runMutation<T>(label: string, operation: () => T | Promise<T>): T | Promise<T>;
   pause(options?: {
     timeoutMs?: number;
     /** Flush the latest in-memory state after tracked writes have drained. */
@@ -80,6 +82,37 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
     } finally {
       activeWrites -= 1;
       notifyIdle();
+    }
+  };
+
+  const runMutation = <T>(label: string, operation: () => T | Promise<T>): T | Promise<T> => {
+    if (paused) {
+      throw new POSWriteQuiescenceError(
+        'paused',
+        `POS writes are temporarily paused for safe local storage maintenance (${label}).`,
+      );
+    }
+
+    activeWrites += 1;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      activeWrites -= 1;
+      notifyIdle();
+    };
+
+    try {
+      const result = operation();
+      if (result !== null && (typeof result === 'object' || typeof result === 'function')
+        && typeof (result as PromiseLike<T>).then === 'function') {
+        return Promise.resolve(result as PromiseLike<T>).finally(finish);
+      }
+      finish();
+      return result as T;
+    } catch (error) {
+      finish();
+      throw error;
     }
   };
 
@@ -146,6 +179,7 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
     get isPaused() { return paused; },
     get activeWrites() { return activeWrites; },
     runWrite,
+    runMutation,
     pause,
   };
 }
