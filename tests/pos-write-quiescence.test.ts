@@ -113,3 +113,42 @@ test('flush timeout keeps the gate closed until the already-started flush settle
   assert.equal(coordinator.isPaused, false);
   assert.equal(await coordinator.runWrite('after-flush-settled', () => 'ok'), 'ok');
 });
+
+
+test('runMutation preserves synchronous results and releases the active count immediately', () => {
+  const coordinator = createPOSWriteQuiescenceCoordinator();
+  const result = coordinator.runMutation('sync-settings', () => 42);
+  assert.equal(result, 42);
+  assert.equal(coordinator.activeWrites, 0);
+});
+
+test('runMutation tracks asynchronous public mutations until they settle', async () => {
+  const coordinator = createPOSWriteQuiescenceCoordinator();
+  const mutation = deferred<void>();
+  const started = deferred<void>();
+  const active = coordinator.runMutation('async-sale', async () => {
+    started.resolve(undefined);
+    await mutation.promise;
+    return 'committed';
+  });
+  await started.promise;
+  assert.equal(coordinator.activeWrites, 1);
+  const pause = coordinator.pause();
+  assert.equal(coordinator.isPaused, true);
+  mutation.resolve(undefined);
+  assert.equal(await active, 'committed');
+  const lease = await pause;
+  assert.equal(coordinator.activeWrites, 0);
+  lease.release();
+});
+
+test('runMutation rejects synchronously while the maintenance gate is paused', async () => {
+  const coordinator = createPOSWriteQuiescenceCoordinator();
+  const lease = await coordinator.pause();
+  assert.throws(
+    () => coordinator.runMutation('blocked-stock-edit', () => 'unsafe'),
+    (error: unknown) => error instanceof POSWriteQuiescenceError && error.code === 'paused',
+  );
+  lease.release();
+  assert.equal(coordinator.runMutation('after-resume', () => 'ok'), 'ok');
+});
