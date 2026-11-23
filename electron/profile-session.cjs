@@ -118,7 +118,8 @@ class POSProfileSession {
     this.assertSafeStorage();
     validateLockPassphrase(passphrase);
     const profileId = crypto.randomUUID();
-    const created = createManagedProfileDirectory(storageRoot, directoryName, {
+    const safeStorageRoot = resolveStorageRoot(storageRoot);
+    const created = createManagedProfileDirectory(safeStorageRoot, directoryName, {
       profileId,
       label,
       dataSchemaVersion: 1,
