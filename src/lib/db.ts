@@ -380,8 +380,7 @@ export async function idbReadLegacyProfileSnapshot(factory?: IDBFactory): Promis
 
 export async function idbLoadState():Promise<POSState|null>{
   if (desktopProfilePrimary) {
-    try { return await readDesktopProfileJson<POSState>('app_state'); }
-    catch { return null; }
+    return readDesktopProfileJson<POSState>('app_state');
   }
   try {
     const db=await getDB();
@@ -440,7 +439,7 @@ export async function idbSaveRestoreCheckpointDetailed(state: POSState): Promise
 export async function idbSaveRestoreCheckpoint(state: POSState): Promise<boolean> {
   return (await idbSaveRestoreCheckpointDetailed(state)).ok;
 }
-export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{if(desktopProfilePrimary){try{return await readDesktopProfileJson<POSState>('restore_checkpoint');}catch{return null;}}try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
+export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{if(desktopProfilePrimary){return readDesktopProfileJson<POSState>('restore_checkpoint');}try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
 export async function idbClearRestoreCheckpoint():Promise<boolean>{if(desktopProfilePrimary){try{await withProfileWriteLock('restore_checkpoint',()=>writeDesktopProfileJson('restore_checkpoint',null).then(()=>undefined));return true;}catch{return false;}}try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
 
 type QueueInput={type:QueueOp['type'];id?:string;ts?:string;note?:string;payload?:string};
@@ -474,7 +473,7 @@ export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.le
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];await writeDesktopProfileJson('sync_queue',queue.filter(op=>op.id!==id));});}catch{/* best-effort cleanup */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
-export async function idbGetMeta():Promise<BackupMeta>{if(desktopProfilePrimary){try{return{...DEFAULT_META,...((await readDesktopProfileJson<BackupMeta>('meta'))||{})};}catch{return{...DEFAULT_META};}}try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
+export async function idbGetMeta():Promise<BackupMeta>{if(desktopProfilePrimary){return{...DEFAULT_META,...((await readDesktopProfileJson<BackupMeta>('meta'))||{})};}try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
 export type IndexedDBMetaReadResult =
   | { ok: true; value: BackupMeta }
   | { ok: false; error: IndexedDBWriteFailure };
