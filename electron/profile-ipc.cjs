@@ -171,6 +171,33 @@ function registerPOSProfileIpc(options) {
     const current = readMigrationJournal();
     if (!current) throw new Error('Start a POS storage migration before changing its phase.');
     const next = transitionMigrationJournal(current, payload?.nextPhase);
+    if (payload?.nextPhase === 'folder_primary') {
+      const active = profileSession.requireActive();
+      if (typeof options.markOverflowFolderPrimary !== 'function' ||
+          typeof options.markOverflowFolderIndexedDBPrimary !== 'function') {
+        throw new Error('The selected overflow folder cannot be marked primary in this desktop build.');
+      }
+      const marked = options.markOverflowFolderPrimary(active.directory, active.profileId);
+      if (!marked || marked.ok !== true || marked.available !== true ||
+          marked.storageMode !== 'folder_primary' || marked.profileId !== active.profileId) {
+        throw new Error(marked?.error || 'The selected POS folder could not be verified as primary storage.');
+      }
+      try {
+        return { ok: true, journal: writeMigrationJournal(next) };
+      } catch (error) {
+        try {
+          const rolledBack = options.markOverflowFolderIndexedDBPrimary(active.profileId);
+          if (!rolledBack || rolledBack.ok !== true || rolledBack.storageMode !== 'indexeddb') {
+            throw new Error('The overflow-folder primary marker could not be rolled back.');
+          }
+        } catch {
+          const uncertain = new Error('POS storage cutover is uncertain. Keep POS closed until the storage pointer is repaired.');
+          uncertain.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
+          throw uncertain;
+        }
+        throw error;
+      }
+    }
     return { ok: true, journal: writeMigrationJournal(next) };
   });
 
