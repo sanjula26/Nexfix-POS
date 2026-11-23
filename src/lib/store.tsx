@@ -22,6 +22,10 @@ import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { createDrainableWorkGate } from './drainableWorkGate';
+import { createPOSWriteQuiescenceCoordinator, type POSWriteQuiescenceLease } from './posWriteQuiescence';
+import { pauseRestoreWork } from './restore';
+import { pauseAutoBackupWork, pauseBackupExecutionWork } from './backup';
+import { pauseOfflineQueueFlush, pauseOfflineQueueMutations } from './offline';
 import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
@@ -29,6 +33,9 @@ const STORE_KEY = 'nexfix_pos_v2';
 const STORE_KEY_V1 = 'nexfix_pos_v1';
 const SESSION_KEY = 'nexfix_session_v1';
 const THEME_KEY = 'nexfix_theme';
+
+// One renderer-wide barrier for public POS business mutations.
+const posMutationCoordinator = createPOSWriteQuiescenceCoordinator();
 
 interface Session { userId: string; remember: boolean }
 
@@ -174,6 +181,8 @@ interface StoreCtx {
   ready: boolean; // false while IndexedDB is loading
   /** Pause debounced state persistence, drain active writes, and flush the latest state for safe storage maintenance. */
   pauseStatePersistence: () => Promise<() => void>;
+  /** Pause and drain all public POS business mutation entry points. */
+  pausePOSMutationWrites: () => Promise<POSWriteQuiescenceLease>;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
@@ -4100,6 +4109,11 @@ const deletePurchase = useCallback((id: string) => {
     scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
+  const pausePOSMutationWrites = useCallback(async (): Promise<POSWriteQuiescenceLease> => {
+    if (!ready) throw new Error('POS is still loading; storage maintenance cannot start yet.');
+    return posMutationCoordinator.pause();
+  }, [ready]);
+
   const pauseStorageStatePersistence = useCallback(
     () => pauseStatePersistence(() => stateRef.current),
     [],
@@ -4187,14 +4201,41 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
+    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, pausePOSMutationWrites, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
     saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  const guardedValue: StoreCtx = { ...value };
+  const mutationActions = [
+    'signIn', 'createInitialAdmin', 'changePassword', 'changeManagedPassword', 'signOut', 'switchRole',
+    'changeAdminPin', 'verifyAdminPin', 'resolveSensitiveAdmin', 'unlockSession',
+    'saveProduct', 'deleteProduct', 'saveKitItems', 'saveQuotations', 'adjustStock',
+    'saveCustomer', 'deleteCustomer', 'saveSupplier', 'deleteSupplier', 'saveSupplierPayment',
+    'deleteSupplierPayment', 'saveCustomerCreditPayment',
+    'completeSale', 'completeSaleCloud', 'refundSale', 'requestBillReverse', 'approveBillReverse',
+    'rejectBillReverse', 'holdSale', 'resumeHold', 'deleteHold',
+    'savePurchase', 'saveGRNDraft', 'updateGRNDraft', 'receivePurchase', 'processGRN',
+    'createPurchaseReturn', 'deletePurchase', 'addExpense', 'deleteExpense', 'processExchange',
+    'saveUser', 'toggleUserActive', 'deleteUser', 'setPermission', 'updateSettings',
+    'closeSession', 'closeDay', 'logAudit', 'clearAudit', 'importData', 'resetData', 'refreshPOS',
+    'runManualBackup', 'setAutoBackupHours', 'flushOfflineQueue',
+    'saveUnit', 'saveUnitsBulk', 'deleteUnit', 'saveRepair', 'updateRepairStatus', 'deleteRepair',
+    'saveWarrantyClaim', 'saveCategory', 'removeCategory', 'renameCategory', 'openSession',
+    'saveBrand', 'removeBrand',
+  ] as const satisfies readonly (keyof StoreCtx)[];
+
+  for (const actionName of mutationActions) {
+    const action = guardedValue[actionName];
+    if (typeof action !== 'function') throw new Error(`POS mutation action is not callable: ${actionName}`);
+    const invoke = action as unknown as (...args: unknown[]) => unknown;
+    (guardedValue as unknown as Record<string, unknown>)[actionName] = (...args: unknown[]) =>
+      posMutationCoordinator.runMutation(actionName, () => invoke(...args));
+  }
+
+  return <Ctx.Provider value={guardedValue}>{children}</Ctx.Provider>;
 }
 
 export function usePOS() {
