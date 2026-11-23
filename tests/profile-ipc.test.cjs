@@ -126,7 +126,8 @@ test('uses the already-selected overflow folder without opening a second folder 
 test('does not allow a different profile folder while the configured overflow drive is unavailable', async (t) => {
   const ctx = setup(t, true, false);
   const selected = await ctx.call('pos-profile:choose-storage-root');
-  assert.equal(selected.ok, true);
+  assert.equal(selected.ok, false);
+  assert.match(selected.error, /Reconnect the selected POS overflow folder/);
   const created = await ctx.call('pos-profile:create', {
     storageRoot: ctx.root,
     directoryName: 'Wrong Folder',
