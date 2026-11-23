@@ -50,3 +50,25 @@ test('pause fallback can inspect durable pending work without running the worker
   const result = await gate.run(() => 'worker', () => { calls++; return 'deferred'; });
   assert.equal(result, 'deferred'); assert.equal(calls, 1); release();
 });
+
+test('timed-out drain aborts maintenance and keeps new work blocked until the active worker settles', async () => {
+  const gate = createDrainableWorkGate();
+  const finish = deferred<void>();
+  const started = deferred<void>();
+  const active = gate.run(async () => { started.resolve(); await finish.promise; return 'done'; }, () => 'paused');
+  await started.promise;
+  await assert.rejects(gate.pause({ timeoutMs: 10 }), /did not drain within 10 ms/);
+  assert.equal(gate.isPaused(), true);
+  assert.equal(await gate.run(() => 'unsafe', () => 'deferred'), 'deferred');
+  finish.resolve();
+  assert.equal(await active, 'done');
+  await Promise.resolve();
+  assert.equal(gate.isPaused(), false);
+  assert.equal(gate.activeCount(), 0);
+});
+
+test('rejects invalid drain timeouts before closing the gate', async () => {
+  const gate = createDrainableWorkGate();
+  await assert.rejects(gate.pause({ timeoutMs: 0 }), /between 1 and 120000/);
+  assert.equal(gate.isPaused(), false);
+});
