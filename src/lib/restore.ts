@@ -2,7 +2,7 @@ import type { POSState } from './types';
 import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint, idbSaveState } from './db';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
 import { isCloudSafeBackup } from './driveSync';
-import { createDrainableWorkGate } from './drainableWorkGate';
+import { runRestoreWork } from './restoreWorkGate';
 
 const SESSION_KEY = 'nexfix_session_v1';
 
@@ -124,16 +124,12 @@ async function applyBackupRestoreWork(current: POSState, input: unknown): Promis
  * A restore is one indivisible storage operation: checkpoint, replacement,
  * checkpoint cleanup, and any rollback must finish before a migration snapshot.
  */
-const restoreWork = createDrainableWorkGate();
-
-export function pauseRestoreWork(): Promise<() => void> {
-  return restoreWork.pause();
-}
+export { pauseRestoreWork } from './restoreWorkGate';
 
 export function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
-  return restoreWork.run(
+  return runRestoreWork(
     () => applyBackupRestoreWork(current, input),
-    () => { throw new Error('POS restore is temporarily paused for safe storage maintenance.'); },
+    'POS restore is temporarily paused for safe storage maintenance.',
   );
 }
 
@@ -143,8 +139,8 @@ async function completeRestoreWork(): Promise<void> {
 }
 
 export function completeRestore(): Promise<void> {
-  return restoreWork.run(
+  return runRestoreWork(
     completeRestoreWork,
-    () => { throw new Error('POS restore checkpoint cleanup is temporarily paused for safe storage maintenance.'); },
+    'POS restore checkpoint cleanup is temporarily paused for safe storage maintenance.',
   );
 }
