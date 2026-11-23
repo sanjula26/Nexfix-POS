@@ -345,8 +345,8 @@ async function checkIndexedDBQuotaAfterWrite(): Promise<void> {
   lastIndexedDBQuotaCheckAt = now;
   try {
     const estimate = await estimateIndexedDBQuota();
-    if (estimate.status === 'available' && estimate.nearLimit) {
-      notifyIndexedDBQuotaWarning('near_quota', estimate.usage, estimate.quota, estimate.ratio);
+    if (estimate.status === 'available' && estimate.nearQuota) {
+      notifyIndexedDBQuotaWarning('near_quota', estimate.usage, estimate.quota, estimate.usageRatio);
     }
   } catch {
     // Quota estimation is advisory; QuotaExceededError remains authoritative.
