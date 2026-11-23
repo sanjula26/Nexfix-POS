@@ -107,10 +107,12 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
       )), timeoutMs);
     });
 
+    let flushInProgress: Promise<void> | null = null;
     try {
       await Promise.race([waitForIdle(), timeout]);
       if (options.flushPendingState) {
-        await Promise.race([Promise.resolve().then(options.flushPendingState), timeout]);
+        flushInProgress = Promise.resolve().then(options.flushPendingState);
+        await Promise.race([flushInProgress, timeout]);
       }
 
       let released = false;
@@ -122,8 +124,18 @@ export function createPOSWriteQuiescenceCoordinator(): POSWriteQuiescenceCoordin
         },
       };
     } catch (error) {
-      // A failed barrier never hands a migration lease to the caller.
-      paused = false;
+      // A failed barrier never hands a migration lease to the caller. If the
+      // privileged flush itself timed out, keep the gate closed until that
+      // already-started IndexedDB write settles; otherwise a late stale flush
+      // could race a newly accepted POS mutation.
+      if (flushInProgress) {
+        void flushInProgress.then(
+          () => { paused = false; },
+          () => { paused = false; },
+        );
+      } else {
+        paused = false;
+      }
       throw error;
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
