@@ -95,6 +95,10 @@ test('trusted IPC supports choose, discover, create, encrypted read/write, lock 
 
   const found = await ctx.call('pos-profile:discover', { storageRoot: ctx.root });
   assert.equal(found.available.length, 1);
+  const autoUnlocked = await ctx.call('pos-profile:unlock-os', { directory: created.profile.directory });
+  assert.equal(autoUnlocked.ok, true);
+  assert.equal((await ctx.call('pos-profile:status')).unlocked, true);
+  await ctx.call('pos-profile:lock');
   const unlocked = await ctx.call('pos-profile:unlock-passphrase', {
     directory: created.profile.directory,
     secret: 'Nexfix-IPC-Lock-2026',
