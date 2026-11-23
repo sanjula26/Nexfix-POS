@@ -422,6 +422,10 @@ type OverflowFolderStatus = {
   configured?: boolean;
   available?: boolean;
   folderPath?: string | null;
+  storageMode?: 'indexeddb' | 'folder_primary' | 'unknown';
+  profileDirectoryName?: string | null;
+  profileId?: string | null;
+  profileDirectory?: string | null;
   error?: string;
   canceled?: boolean;
 };
@@ -476,12 +480,62 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
 
   if (!desktopApi?.isDesktop) return <>{children}</>;
   if (loading) return <RouteFallback />;
-  if (folderStatus?.ok && folderStatus.configured && folderStatus.available) return <>{children}</>;
 
-  // No folder-backed writes or quota migration exist yet: IndexedDB remains the
-  // only active POS store. A disconnected overflow destination must not stop
-  // sales until a future migration manifest explicitly records folder-only data.
-  if (folderStatus?.ok && folderStatus.configured && !folderStatus.available) {
+  // Never fall back to IndexedDB after the durable config says the folder is
+  // primary. The file-backed DB adapter/startup unlock must be ready first.
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.storageMode === 'folder_primary') {
+    if (!folderStatus.available) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-red-600" />
+            <h1 className="text-xl font-black">Primary POS storage folder is disconnected</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Nexfix has already marked the selected folder as the primary data location. POS is paused to protect your latest sales. Reconnect the original drive, or select a folder containing the same verified POS profile.
+            </p>
+            {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
+            <button type="button" onClick={() => void chooseFolder()} disabled={choosing || !desktopApi?.choosePOSOverflowFolder}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {choosing ? 'Verifying original storage…' : 'Reconnect original storage folder'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+        <div className="w-full max-w-xl rounded-2xl border border-amber-300 bg-white p-6 shadow-xl dark:border-amber-300/20 dark:bg-[#101a2d] sm:p-8">
+          <AlertTriangle size={28} className="mb-4 text-amber-600" />
+          <h1 className="text-xl font-black">Primary storage needs recovery startup</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            The selected folder contains the primary POS profile. This app build does not yet have the verified folder-primary database startup adapter, so POS is paused instead of opening an older IndexedDB copy.
+          </p>
+          <p className="mt-3 text-xs text-slate-500">Storage profile: {folderStatus.profileId || 'identity unavailable'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.storageMode === 'unknown') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+        <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+          <AlertTriangle size={28} className="mb-4 text-red-600" />
+          <h1 className="text-xl font-black">POS storage configuration needs repair</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            Nexfix cannot safely determine which storage location is primary. POS is paused to avoid opening a stale database copy.
+          </p>
+          {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.available && folderStatus.storageMode === 'indexeddb') return <>{children}</>;
+
+  // Before cutover, IndexedDB remains primary, so a disconnected overflow
+  // destination is a warning only and POS can continue safely.
+  if (folderStatus?.ok && folderStatus.configured && !folderStatus.available && folderStatus.storageMode === 'indexeddb') {
     return (
       <>
         <div role="alert" className="fixed inset-x-0 top-0 z-[300] flex flex-wrap items-center justify-center gap-3 border-b border-amber-300 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900 shadow-sm dark:border-amber-300/20 dark:bg-amber-950 dark:text-amber-100">
