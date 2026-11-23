@@ -172,6 +172,8 @@ interface StoreCtx {
   /** Phase 2: connectivity + backup */
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
+  /** Pause debounced state persistence, drain active writes, and flush the latest state for safe storage maintenance. */
+  pauseStatePersistence: () => Promise<() => void>;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
@@ -4098,6 +4100,11 @@ const deletePurchase = useCallback((id: string) => {
     scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
+  const pauseStorageStatePersistence = useCallback(
+    () => pauseStatePersistence(() => stateRef.current),
+    [],
+  );
+
   const runManualBackup = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     if (!user || !can('act:export')) {
       pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
@@ -4180,7 +4187,7 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
+    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
