@@ -7,8 +7,8 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbSetMetaDetailed, idbListQueue, type BackupMeta } from './db';
-import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, type BackupMeta } from './db';
+import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
@@ -4110,7 +4110,13 @@ const deletePurchase = useCallback((id: string) => {
       pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
       return false;
     }
-    const result = await idbSetMetaDetailed({ autoBackupHours: Math.max(0, hours) });
+    let result: Awaited<ReturnType<typeof saveAutoBackupHours>>;
+    try {
+      result = await saveAutoBackupHours(hours);
+    } catch (error) {
+      console.error('[Backup] auto-backup interval could not be saved:', error instanceof Error ? error.message : error);
+      return false;
+    }
     if (!result.ok) {
       console.error('[Backup] auto-backup interval could not be saved:', result.error.message);
       return false;
