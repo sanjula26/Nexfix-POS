@@ -629,6 +629,8 @@ app.whenReady().then(()=>{
   posProfileIpc = registerPOSProfileIpc({
     ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer,
     getConfiguredStorageRoot: () => overflowFolderManager.getPreference(),
+    markOverflowFolderPrimary: (profileDirectory, profileId) => overflowFolderManager.markPrimary(profileDirectory, profileId),
+    markOverflowFolderIndexedDBPrimary: (profileId) => overflowFolderManager.markIndexedDBPrimary(profileId),
   });
   app.on('will-quit', () => { try { posProfileIpc?.lock(); } catch {} });
   setupAutoUpdater(); createWindow();
