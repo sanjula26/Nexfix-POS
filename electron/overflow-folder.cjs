@@ -175,10 +175,6 @@ function createOverflowFolderManager(options = {}) {
   }
 
   function assertPrimaryProfileAtRoot(root, profileDirectoryName, profileId) {
-    const marker = readPrimaryMarker(root);
-    if (!marker || marker.profileDirectoryName !== profileDirectoryName || marker.profileId !== profileId) {
-      throw new Error('The primary POS storage marker is missing or points to a different profile.');
-    }
     const profileDirectory = pathApi.join(root, profileDirectoryName);
     let stat;
     try { stat = fsApi.lstatSync(profileDirectory); }
@@ -222,29 +218,9 @@ function createOverflowFolderManager(options = {}) {
       profileDirectoryName: config.profileDirectoryName,
       profileId: config.profileId,
     };
+    let canonical;
     try {
-      const canonical = validateFolder(config.folderPath, { fsApi, pathApi });
-      const marker = readPrimaryMarker(canonical);
-      if (marker) {
-        const profileDirectory = assertPrimaryProfileAtRoot(canonical, marker.profileDirectoryName, marker.profileId);
-        if (config.storageMode !== 'folder_primary' || config.profileId !== marker.profileId) {
-          saveConfig({
-            folderPath: canonical,
-            storageMode: 'folder_primary',
-            profileDirectoryName: marker.profileDirectoryName,
-            profileId: marker.profileId,
-          });
-        }
-        return {
-          ok: true, configured: true, storageMode: 'folder_primary',
-          profileDirectoryName: marker.profileDirectoryName, profileId: marker.profileId,
-          available: true, folderPath: canonical, profileDirectory,
-        };
-      }
-      if (config.storageMode === 'folder_primary') {
-        throw new Error('The primary POS storage marker is missing; refusing to open an older IndexedDB copy.');
-      }
-      return { ...base, available: true, folderPath: canonical, profileDirectory: null };
+      canonical = validateFolder(config.folderPath, { fsApi, pathApi });
     } catch (error) {
       return {
         ...base,
@@ -254,6 +230,43 @@ function createOverflowFolderManager(options = {}) {
           ? pathApi.join(config.folderPath, config.profileDirectoryName)
           : null,
         error: error instanceof Error ? error.message : 'The saved overflow folder is unavailable.',
+      };
+    }
+    try {
+      const marker = readPrimaryMarker(canonical);
+      if (config.storageMode === 'folder_primary') {
+        if (marker && (marker.profileDirectoryName !== config.profileDirectoryName || marker.profileId !== config.profileId)) {
+          throw new Error('The primary POS storage marker points to a different profile.');
+        }
+        const profileDirectory = assertPrimaryProfileAtRoot(canonical, config.profileDirectoryName, config.profileId);
+        if (!marker) writePrimaryMarker(canonical, config.profileDirectoryName, config.profileId);
+        return { ...base, available: true, folderPath: canonical, profileDirectory };
+      }
+      if (marker) {
+        const profileDirectory = assertPrimaryProfileAtRoot(canonical, marker.profileDirectoryName, marker.profileId);
+        saveConfig({
+          folderPath: canonical,
+          storageMode: 'folder_primary',
+          profileDirectoryName: marker.profileDirectoryName,
+          profileId: marker.profileId,
+        });
+        return {
+          ok: true, configured: true, storageMode: 'folder_primary',
+          profileDirectoryName: marker.profileDirectoryName, profileId: marker.profileId,
+          available: true, folderPath: canonical, profileDirectory,
+        };
+      }
+      return { ...base, available: true, folderPath: canonical, profileDirectory: null };
+    } catch (error) {
+      return {
+        ...base,
+        storageMode: config.storageMode === 'folder_primary' ? 'folder_primary' : 'unknown',
+        available: false,
+        folderPath: null,
+        profileDirectory: config.storageMode === 'folder_primary'
+          ? pathApi.join(config.folderPath, config.profileDirectoryName)
+          : null,
+        error: error instanceof Error ? error.message : 'The saved POS storage pointer could not be verified.',
       };
     }
   }
@@ -281,6 +294,7 @@ function createOverflowFolderManager(options = {}) {
         ? current.profileId
         : marker.profileId;
       assertPrimaryProfileAtRoot(folderPath, profileDirectoryName, profileId);
+      if (!marker) writePrimaryMarker(folderPath, profileDirectoryName, profileId);
       saveConfig({ folderPath, storageMode: 'folder_primary', profileDirectoryName, profileId });
     } else {
       saveConfig({ folderPath, storageMode: 'indexeddb' });
@@ -307,24 +321,33 @@ function createOverflowFolderManager(options = {}) {
     }
     const manifest = readProfileManifest(canonicalProfileDirectory);
     if (manifest.profileId !== profileId) throw new Error('The POS profile identity does not match the selected profile.');
-    writePrimaryMarker(root, relative, profileId);
+    // Persist the local fail-closed pointer first. If the process crashes
+    // before the portable marker is written, startup still blocks on the
+    // primary mode and can recreate the marker from the verified manifest.
     saveConfig({
       folderPath: root,
       storageMode: 'folder_primary',
       profileDirectoryName: relative,
       profileId,
     });
+    writePrimaryMarker(root, relative, profileId);
     return getPreference();
   }
 
   function markIndexedDBPrimary(profileId) {
     const current = readConfig();
-    if (!current || current.storageMode !== 'folder_primary' || current.profileId !== profileId) {
+    if (!current?.folderPath) throw new Error('The POS storage folder pointer is unavailable; refusing an unsafe rollback.');
+    if (current.storageMode === 'indexeddb') return getPreference();
+    if (current.storageMode !== 'folder_primary' || current.profileId !== profileId) {
       throw new Error('The primary POS profile pointer changed; refusing an unsafe rollback.');
     }
     const root = validateFolder(current.folderPath, { fsApi, pathApi });
+    const marker = readPrimaryMarker(root);
+    if (marker && marker.profileId !== profileId) {
+      throw new Error('The primary POS marker changed; refusing an unsafe rollback.');
+    }
     saveConfig({ folderPath: root, storageMode: 'indexeddb' });
-    removePrimaryMarker(root, profileId);
+    if (marker) removePrimaryMarker(root, profileId);
     return getPreference();
   }
 
