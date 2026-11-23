@@ -964,7 +964,12 @@ function StorageOverflowController() {
   };
 
   const reconnectFolder = async () => {
-    const api = typeof window !== 'undefined' ? window.nexfixDesktop : undefined;
+    const api = typeof window !== 'undefined'
+      ? (window as Window & { nexfixDesktop?: { choosePOSOverflowFolder?: () => Promise<{
+          ok: boolean; available: boolean; folderPath?: string | null;
+          storageMode?: string; error?: string;
+        }> } }).nexfixDesktop
+      : undefined;
     if (!api?.choosePOSOverflowFolder) {
       setError('The desktop folder chooser is unavailable in this app build.');
       return;
