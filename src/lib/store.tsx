@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
@@ -188,6 +189,8 @@ interface StoreCtx {
   pauseStatePersistence: () => Promise<() => void>;
   /** Pause and drain all public POS business mutation entry points. */
   pausePOSMutationWrites: () => Promise<POSWriteQuiescenceLease>;
+  /** Pause and drain every audited local POS storage writer before a migration snapshot. */
+  pauseStorageMaintenance: () => Promise<() => void>;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
@@ -4135,6 +4138,40 @@ const deletePurchase = useCallback((id: string) => {
     return posMutationCoordinator.pause();
   }, [ready]);
 
+  const pauseStorageMaintenance = useCallback(async (): Promise<() => void> => {
+    if (!ready) throw new Error('POS is still loading; storage maintenance cannot start yet.');
+    const releases: Array<() => void> = [];
+    let released = false;
+    const releaseAll = () => {
+      if (released) return;
+      released = true;
+      for (let index = releases.length - 1; index >= 0; index -= 1) releases[index]();
+    };
+
+    try {
+      // Stop public business mutations first, then independent restore/background
+      // writers. Drain the backup scheduler before its nested backup executor.
+      const mutationLease = await posMutationCoordinator.pause();
+      releases.push(() => mutationLease.release());
+      releases.push(await pauseRestoreWork());
+      releases.push(await pauseBackgroundPOSStateRefresh());
+      flushSync(() => {});
+      releases.push(await pauseAutoBackupWork());
+      releases.push(await pauseBackupExecutionWork());
+
+      // This privileged flush may enqueue an offline state_write, so keep
+      // queue-enqueue admission open until after it has completed.
+      releases.push(await pauseStatePersistence(() => stateRef.current));
+      releases.push(await pauseOfflineQueueMutations());
+      releases.push(await pauseOfflineQueueFlush());
+
+      return releaseAll;
+    } catch (error) {
+      releaseAll();
+      throw error;
+    }
+  }, [ready]);
+
   const pauseStorageStatePersistence = useCallback(
     () => pauseStatePersistence(() => stateRef.current),
     [],
@@ -4222,7 +4259,7 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, pausePOSMutationWrites, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
+    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, pausePOSMutationWrites, pauseStorageMaintenance, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
