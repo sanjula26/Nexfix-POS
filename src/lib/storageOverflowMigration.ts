@@ -145,6 +145,22 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
       stateSavedToIndexedDB: lease.stateSaved,
       queueMarkerSavedToIndexedDB: lease.queueSaved,
     };
+  } catch (error) {
+    // Before a confirmed folder-primary cutover, IndexedDB remains the source
+    // of truth. Persist an explicit recovery state so an interrupted copy is
+    // never mistaken for a completed migration on the next launch.
+    if (!cutoverUncertain(error)) {
+      try {
+        const current = await getDesktopPOSMigrationJournal();
+        if (current && current.phase !== 'folder_primary' && current.phase !== 'blocked_recovery') {
+          await transitionDesktopPOSStorageMigration('blocked_recovery');
+        }
+      } catch {
+        // Preserve the original failure. A later startup can still inspect the
+        // encrypted journal and keep IndexedDB primary.
+      }
+    }
+    throw error;
   } finally {
     if (releaseOnFinish) lease.release();
   }
