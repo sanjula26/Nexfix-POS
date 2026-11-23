@@ -4269,6 +4269,12 @@ const deletePurchase = useCallback((id: string) => {
     saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
 
+  // Keep public wrapper identities stable across state renders (for example,
+  // SessionSecurity depends on signOut). The latest callback implementation is
+  // read from this ref when a wrapper is invoked.
+  const latestStoreValueRef = useRef(value);
+  latestStoreValueRef.current = value;
+  const mutationWrappersRef = useRef(new Map<keyof StoreCtx, unknown>());
   const guardedValue: StoreCtx = { ...value };
   const mutationActions = [
     'signIn', 'createInitialAdmin', 'changePassword', 'changeManagedPassword', 'signOut', 'switchRole',
@@ -4289,11 +4295,22 @@ const deletePurchase = useCallback((id: string) => {
   ] as const satisfies readonly (keyof StoreCtx)[];
 
   for (const actionName of mutationActions) {
-    const action = guardedValue[actionName];
-    if (typeof action !== 'function') throw new Error(`POS mutation action is not callable: ${actionName}`);
-    const invoke = action as unknown as (...args: unknown[]) => unknown;
-    (guardedValue as unknown as Record<string, unknown>)[actionName] = (...args: unknown[]) =>
-      posMutationCoordinator.runMutation(actionName, () => invoke(...args));
+    if (typeof value[actionName] !== 'function') {
+      throw new Error(`POS mutation action is not callable: ${actionName}`);
+    }
+    let wrapper = mutationWrappersRef.current.get(actionName);
+    if (!wrapper) {
+      wrapper = (...args: unknown[]) => {
+        const action = latestStoreValueRef.current[actionName];
+        if (typeof action !== 'function') {
+          throw new Error(`POS mutation action is not callable: ${actionName}`);
+        }
+        const invoke = action as unknown as (...values: unknown[]) => unknown;
+        return posMutationCoordinator.runMutation(actionName, () => invoke(...args));
+      };
+      mutationWrappersRef.current.set(actionName, wrapper);
+    }
+    (guardedValue as unknown as Record<string, unknown>)[actionName] = wrapper;
   }
 
   return <Ctx.Provider value={guardedValue}>{children}</Ctx.Provider>;
