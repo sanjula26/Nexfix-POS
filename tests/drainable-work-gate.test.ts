@@ -62,7 +62,7 @@ test('timed-out drain aborts maintenance and keeps new work blocked until the ac
   assert.equal(await gate.run(() => 'unsafe', () => 'deferred'), 'deferred');
   finish.resolve();
   assert.equal(await active, 'done');
-  await Promise.resolve();
+  await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(gate.isPaused(), false);
   assert.equal(gate.activeCount(), 0);
 });
