@@ -21,6 +21,7 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { createDrainableWorkGate } from './drainableWorkGate';
 import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
@@ -303,8 +304,10 @@ function loadState(): POSState {
   return loadStateFromLocalStorage() || buildSeed();
 }
 
-/** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
-async function persistState(state: POSState): Promise<void> {
+/** Persist the latest POS snapshot to IndexedDB and its offline queue marker. */
+const statePersistenceWork = createDrainableWorkGate();
+
+async function persistStateWork(state: POSState): Promise<boolean> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
@@ -322,7 +325,7 @@ async function persistState(state: POSState): Promise<void> {
           detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
-      return;
+      return false;
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
     // durably persisted locally. This closes the crash window between the
@@ -345,9 +348,10 @@ async function persistState(state: POSState): Promise<void> {
         detail: { message: 'IndexedDB is unavailable on this PC. POS changes cannot be safely saved locally. Do not retry a sale until its status is checked in Sales History/cloud.' },
       }));
     }
-    return;
+    return false;
   }
   // Track write for offline queue (future cloud sync)
+  let queueSaved = true;
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     try {
       await queueWrite('state_write_offline');
@@ -357,6 +361,7 @@ async function persistState(state: POSState): Promise<void> {
         (error.storageFailureKind === 'quota_exceeded' || error.storageFailureKind === 'write_failed')
         ? error.storageFailureKind
         : 'write_failed';
+      queueSaved = false;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
           detail: {
@@ -368,6 +373,34 @@ async function persistState(state: POSState): Promise<void> {
         }));
       }
     }
+  }
+  return queueSaved;
+}
+
+/** Normal debounced writes are tracked so migration can stop and drain them. */
+function persistState(state: POSState): Promise<boolean> {
+  return statePersistenceWork.run(
+    () => persistStateWork(state),
+    () => { throw new Error('POS state persistence is temporarily paused for safe storage maintenance.'); },
+  );
+}
+
+/**
+ * Close the state-persistence gate, drain active writes, then persist the
+ * caller's latest in-memory snapshot through a privileged maintenance path.
+ * Pause top-level POS mutations and restore first. Keep queue-enqueue admission
+ * open until this final flush has finished because offline persistence may
+ * append a state_write operation.
+ */
+export async function pauseStatePersistence(getLatestState: () => POSState): Promise<() => void> {
+  const release = await statePersistenceWork.pause();
+  try {
+    const saved = await persistStateWork(getLatestState());
+    if (!saved) throw new Error('Could not flush the latest POS state before storage maintenance.');
+    return release;
+  } catch (error) {
+    release();
+    throw error;
   }
 }
 
