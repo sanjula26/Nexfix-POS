@@ -52,6 +52,29 @@ export type DesktopPOSProfileDiscovery = {
   error?: string;
 };
 
+export type DesktopPOSMigrationPurpose = 'app_state' | 'sync_queue' | 'meta' | 'restore_checkpoint';
+export type DesktopPOSMigrationPhase =
+  | 'snapshotting' | 'copying' | 'verifying' | 'ready_to_cutover' | 'folder_primary' | 'blocked_recovery';
+export type DesktopPOSMigrationJournal = {
+  version: number;
+  migrationId: string;
+  profileId: string;
+  phase: DesktopPOSMigrationPhase;
+  updatedAt: string;
+  entries: Record<DesktopPOSMigrationPurpose, {
+    status: 'pending' | 'copied' | 'verified';
+    revision?: number;
+    bytes?: number;
+    sha256?: string;
+  }>;
+};
+
+type DesktopPOSMigrationResponse = {
+  ok: boolean;
+  journal?: DesktopPOSMigrationJournal | null;
+  error?: string;
+};
+
 export type DesktopPOSProfileResult = {
   ok: boolean;
   profile?: Pick<DesktopPOSProfileSummary, 'directory' | 'profileId' | 'label'>;
@@ -69,6 +92,11 @@ type DesktopProfileApi = {
   unlockPOSProfileWithRecoveryKey?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
   getPOSProfileStatus?: () => Promise<{ ok: boolean; unlocked: boolean; profile?: DesktopPOSProfileSummary; error?: string }>;
   lockPOSProfile?: () => Promise<{ ok: boolean; locked: boolean; error?: string }>;
+  getPOSMigrationJournal?: () => Promise<DesktopPOSMigrationResponse>;
+  beginPOSStorageMigration?: () => Promise<DesktopPOSMigrationResponse>;
+  transitionPOSStorageMigration?: (nextPhase: DesktopPOSMigrationPhase) => Promise<DesktopPOSMigrationResponse>;
+  recordPOSMigrationCopy?: (purpose: DesktopPOSMigrationPurpose, details: { revision: number; bytes: number; sha256: string }) => Promise<DesktopPOSMigrationResponse>;
+  recordPOSMigrationVerification?: (purpose: DesktopPOSMigrationPurpose, details: { revision: number; bytes: number; sha256: string }) => Promise<DesktopPOSMigrationResponse>;
   readPOSProfileData?: (purpose: DesktopProfilePurpose) => Promise<ProfileReadResponse>;
   writePOSProfileData?: (purpose: DesktopProfilePurpose, payload: string) => Promise<ProfileWriteResponse>;
 };
@@ -230,4 +258,60 @@ export async function lockDesktopPOSProfile(): Promise<void> {
   if (typeof api.lockPOSProfile !== 'function') throw new Error('POS profile lock bridge is unavailable.');
   const result = await api.lockPOSProfile();
   if (!result || result.ok !== true) throw new Error(result?.error || 'Could not lock the POS storage profile.');
+}
+
+
+async function requireMigrationResponse(
+  promise: Promise<DesktopPOSMigrationResponse>,
+  fallback: string,
+): Promise<DesktopPOSMigrationJournal | null> {
+  const result = await promise;
+  if (!result || result.ok !== true) throw new Error(result?.error || fallback);
+  return result.journal ?? null;
+}
+
+export async function getDesktopPOSMigrationJournal(): Promise<DesktopPOSMigrationJournal | null> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.getPOSMigrationJournal !== 'function') throw new Error('POS migration journal bridge is unavailable.');
+  return requireMigrationResponse(api.getPOSMigrationJournal(), 'Could not read the POS migration journal.');
+}
+
+export async function beginDesktopPOSStorageMigration(): Promise<DesktopPOSMigrationJournal> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.beginPOSStorageMigration !== 'function') throw new Error('POS migration journal bridge is unavailable.');
+  const journal = await requireMigrationResponse(api.beginPOSStorageMigration(), 'Could not start the POS storage migration.');
+  if (!journal) throw new Error('POS migration did not return a journal.');
+  return journal;
+}
+
+export async function transitionDesktopPOSStorageMigration(
+  nextPhase: DesktopPOSMigrationPhase,
+): Promise<DesktopPOSMigrationJournal> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.transitionPOSStorageMigration !== 'function') throw new Error('POS migration journal bridge is unavailable.');
+  const journal = await requireMigrationResponse(api.transitionPOSStorageMigration(nextPhase), 'Could not update the POS migration phase.');
+  if (!journal) throw new Error('POS migration phase update returned no journal.');
+  return journal;
+}
+
+export async function recordDesktopPOSMigrationCopy(
+  purpose: DesktopPOSMigrationPurpose,
+  details: { revision: number; bytes: number; sha256: string },
+): Promise<DesktopPOSMigrationJournal> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.recordPOSMigrationCopy !== 'function') throw new Error('POS migration journal bridge is unavailable.');
+  const journal = await requireMigrationResponse(api.recordPOSMigrationCopy(purpose, details), 'Could not record the copied POS data domain.');
+  if (!journal) throw new Error('POS migration copy record returned no journal.');
+  return journal;
+}
+
+export async function recordDesktopPOSMigrationVerification(
+  purpose: DesktopPOSMigrationPurpose,
+  details: { revision: number; bytes: number; sha256: string },
+): Promise<DesktopPOSMigrationJournal> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.recordPOSMigrationVerification !== 'function') throw new Error('POS migration journal bridge is unavailable.');
+  const journal = await requireMigrationResponse(api.recordPOSMigrationVerification(purpose, details), 'Could not record POS migration read-back verification.');
+  if (!journal) throw new Error('POS migration verification returned no journal.');
+  return journal;
 }
