@@ -134,7 +134,14 @@ export function applyBackupRestore(current: POSState, input: unknown): Promise<P
   );
 }
 
-export async function completeRestore(): Promise<void> {
+async function completeRestoreWork(): Promise<void> {
   const cleared = await idbClearRestoreCheckpoint();
   if (!cleared) throw new Error('Could not clear the restore safety checkpoint.');
+}
+
+export function completeRestore(): Promise<void> {
+  return restoreWork.run(
+    completeRestoreWork,
+    () => { throw new Error('POS restore checkpoint cleanup is temporarily paused for safe storage maintenance.'); },
+  );
 }
