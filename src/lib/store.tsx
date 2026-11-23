@@ -381,6 +381,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
   }
   // Track write for offline queue (future cloud sync)
   let queueSaved = true;
+  let queueFailureKind: string | undefined;
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     try {
       await queueWrite('state_write_offline');
@@ -391,6 +392,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
         ? error.storageFailureKind
         : 'write_failed';
       queueSaved = false;
+      queueFailureKind = failureKind;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
           detail: {
@@ -403,7 +405,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
       }
     }
   }
-  return { stateSaved: true, queueSaved };
+  return { stateSaved: true, queueSaved, failureKind: queueFailureKind };
 }
 
 /** Normal debounced writes are tracked so migration can stop and drain them. */
