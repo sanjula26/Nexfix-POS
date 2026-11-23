@@ -27,6 +27,13 @@ test('overflow folder validation accepts a writable existing directory and remov
   }
 });
 
+test('overflow folder validation rejects UNC network locations before filesystem access', () => {
+  assert.throws(
+    () => validateFolder('\\\\server\\share\\nexfix-pos'),
+    /Network folders are not supported/,
+  );
+});
+
 test('overflow folder validation rejects missing paths, files, drive roots and symbolic links', (t) => {
   const root = temporaryDirectory();
   const file = path.join(root, 'file.txt');
