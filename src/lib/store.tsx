@@ -8,7 +8,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -325,6 +325,34 @@ function loadState(): POSState {
 }
 
 /** Persist the latest POS snapshot to IndexedDB and its offline queue marker. */
+let lastIndexedDBQuotaCheckAt = 0;
+let lastIndexedDBQuotaWarningAt = 0;
+
+function notifyIndexedDBQuotaWarning(reason: 'near_quota' | 'quota_exceeded', usage?: number, quota?: number, ratio?: number) {
+  if (typeof window === 'undefined' || isDesktopProfilePrimary()) return;
+  const now = Date.now();
+  if (now - lastIndexedDBQuotaWarningAt < 5 * 60 * 1000) return;
+  lastIndexedDBQuotaWarningAt = now;
+  window.dispatchEvent(new CustomEvent('nexfix:storage-quota-warning', {
+    detail: { reason, usage, quota, ratio },
+  }));
+}
+
+async function checkIndexedDBQuotaAfterWrite(): Promise<void> {
+  if (isDesktopProfilePrimary() || typeof window === 'undefined') return;
+  const now = Date.now();
+  if (now - lastIndexedDBQuotaCheckAt < 60 * 1000) return;
+  lastIndexedDBQuotaCheckAt = now;
+  try {
+    const estimate = await estimateIndexedDBQuota();
+    if (estimate.status === 'available' && estimate.nearLimit) {
+      notifyIndexedDBQuotaWarning('near_quota', estimate.usage, estimate.quota, estimate.ratio);
+    }
+  } catch {
+    // Quota estimation is advisory; QuotaExceededError remains authoritative.
+  }
+}
+
 export type POSStatePersistencePause = StatePersistencePause<POSState>;
 export type POSStorageMaintenanceLease = POSStatePersistencePause;
 
@@ -346,6 +374,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
           detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
+      if (saved.error.kind === 'quota_exceeded') notifyIndexedDBQuotaWarning('quota_exceeded');
       return { stateSaved: false, queueSaved: false, failureKind: saved.error.kind };
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
@@ -397,6 +426,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
       }
     }
   }
+  void checkIndexedDBQuotaAfterWrite();
   return { stateSaved: true, queueSaved, failureKind: queueFailureKind };
 }
 
