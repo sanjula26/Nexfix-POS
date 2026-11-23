@@ -570,7 +570,9 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       setUnlockError('');
       return;
     }
-    setDesktopProfilePrimary(false);
+    // Do not turn the file-backed adapter off during a runtime cutover or
+    // while a primary drive is reconnecting. Only verified rollback to
+    // IndexedDB mode may clear the backend flag.
     setPrimaryReady(false);
     if (!folderStatus.available || !folderStatus.folderPath || !folderStatus.profileDirectory || !folderStatus.profileId) {
       setPrimaryBooting(false);
