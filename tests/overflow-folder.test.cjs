@@ -90,7 +90,7 @@ test('selected overflow folder preference persists across manager instances', as
   }
 });
 
-test('verified profile cutover persists folder-primary mode and can safely roll back before release', () => {
+test('verified profile cutover persists folder-primary mode and can safely roll back before release', async () => {
   const root = temporaryDirectory();
   const userData = path.join(root, 'user-data');
   const selected = path.join(root, 'shop-data');
@@ -101,6 +101,7 @@ test('verified profile cutover persists folder-primary mode and can safely roll 
     BrowserWindow: { getAllWindows: () => [] },
   });
   try {
+    await manager.chooseFolder();
     const profile = createManagedProfileDirectory(selected, 'Nexfix POS Data', {
       profileId: require('node:crypto').randomUUID(),
       label: 'NexFix POS Storage',
@@ -238,7 +239,7 @@ test('primary marker recovers folder-primary mode when the local config file is 
   }
 });
 
-test('primary mode fails closed if its durable folder marker disappears', () => {
+test('primary mode fails closed if its durable folder marker disappears', async () => {
   const root = temporaryDirectory();
   const userData = path.join(root, 'user-data');
   const selected = path.join(root, 'shop-data');
@@ -249,7 +250,7 @@ test('primary mode fails closed if its durable folder marker disappears', () => 
     BrowserWindow: { getAllWindows: () => [] },
   });
   try {
-    manager.chooseFolder();
+    await manager.chooseFolder();
     const profile = createManagedProfileDirectory(selected, 'Nexfix POS Data', {
       profileId: require('node:crypto').randomUUID(),
       label: 'NexFix POS Storage',
