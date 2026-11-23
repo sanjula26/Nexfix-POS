@@ -115,6 +115,15 @@ export function downloadBackup(
   );
 }
 
+
+/** Persist backup interval settings inside the same drainable backup boundary. */
+export function saveAutoBackupHours(hours: number) {
+  return backupExecutionWork.run(
+    () => idbSetMetaDetailed({ autoBackupHours: Math.max(0, hours) }),
+    () => { throw new Error('POS backup settings are temporarily paused for safe storage maintenance.'); },
+  );
+}
+
 type GoogleBackupReason = 'settings' | 'sale' | 'interval' | 'manual';
 
 let cloudBackupQueue: Promise<void> = Promise.resolve();
