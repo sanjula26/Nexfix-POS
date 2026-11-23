@@ -830,7 +830,6 @@ function StorageOverflowController() {
   const [phase, setPhase] = useState<'warning' | 'create' | 'unlock' | 'recovery' | 'copying' | 'error'>('warning');
   const [folderPath, setFolderPath] = useState('');
   const [profileDirectory, setProfileDirectory] = useState('');
-  const [profileId, setProfileId] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [unlockMode, setUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
@@ -891,7 +890,6 @@ function StorageOverflowController() {
       }
       const profile = discovery.available[0];
       setProfileDirectory(profile.directory);
-      setProfileId(profile.profileId);
       const active = await getDesktopPOSProfileStatus();
       if (active.unlocked && active.profile?.profileId !== profile.profileId) {
         throw new Error('A different encrypted POS profile is already open. Close and reopen Nexfix before migrating.');
@@ -938,7 +936,6 @@ function StorageOverflowController() {
         passphrase,
       });
       setProfileDirectory(created.profile.directory);
-      setProfileId(created.profile.profileId);
       setRecoveryKey(created.recoveryKey);
       setPhase('recovery');
     } catch (cause) {
@@ -1080,6 +1077,8 @@ function StorageOverflowController() {
               <button type="button" onClick={() => void runMigration()} disabled={busy}
                 className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Retry migration</button>
             )}
+            <button type="button" onClick={() => void reconnectFolder()} disabled={busy}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Reconnect / choose storage folder</button>
             {!profileDirectory && (
               <button type="button" onClick={() => setPhase('warning')} disabled={busy}
                 className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Back</button>
