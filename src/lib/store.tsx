@@ -464,6 +464,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
+  // Keep the live in-memory snapshot aligned with a completed IndexedDB restore.
+  // The maintenance flush reads stateRef synchronously, before React's next render.
+  useEffect(() => {
+    const onRestoreCommitted = (event: Event) => {
+      const restored = (event as CustomEvent<{ state?: POSState }>).detail?.state;
+      if (!restored || !Array.isArray(restored.products) || !Array.isArray(restored.users)) return;
+      stateRef.current = restored;
+      setState(restored);
+    };
+    window.addEventListener('nexfix:restore-committed', onRestoreCommitted);
+    return () => window.removeEventListener('nexfix:restore-committed', onRestoreCommitted);
+  }, []);
+
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
     let cancelled = false;
