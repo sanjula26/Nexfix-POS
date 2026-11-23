@@ -506,7 +506,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (fromIdb) {
           // idbLoadState always repairs the default admin recovery account
           let hydrated = migrate(fromIdb);
-          const local = loadStateFromLocalStorage();
+          const local = isDesktopProfilePrimary() ? null : loadStateFromLocalStorage();
           if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
             hydrated = { ...hydrated, kitItems: local.kitItems };
             await idbSaveState(hydrated);
