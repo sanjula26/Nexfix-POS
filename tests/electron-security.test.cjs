@@ -242,7 +242,7 @@ test('desktop startup gate is outside POSProvider and leaves browser development
 
 test('disconnected overflow folder does not block POS while IndexedDB remains the active store', () => {
   const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
-  assert.match(appSource, /if \(folderStatus\?\.ok && folderStatus\.configured && !folderStatus\.available\)[\s\S]{0,1600}POS is continuing with IndexedDB/);
+  assert.match(appSource, /folderStatus\.storageMode === 'indexeddb'[\s\S]{0,500}POS is continuing with IndexedDB/);
   assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}\{children\}/);
   assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}chooseFolder\(\)/);
   assert.match(appSource, /role="alert"[\s\S]{0,1000}POS is continuing with IndexedDB/);
