@@ -44,7 +44,7 @@ function validateMigrationJournal(value) {
       typeof value.migrationId !== 'string' ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.migrationId) ||
       typeof value.profileId !== 'string' ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.profileId) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.profileId) ||
       !MIGRATION_PHASES.includes(value.phase) ||
       typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt)) ||
       !value.entries || typeof value.entries !== 'object' || Array.isArray(value.entries)) {
