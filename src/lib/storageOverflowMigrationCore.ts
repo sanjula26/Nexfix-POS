@@ -1,7 +1,7 @@
 export type MigrationPurpose = 'app_state' | 'sync_queue' | 'meta' | 'restore_checkpoint';
 
-export type MigrationLease = {
-  latestState: unknown;
+export type MigrationLease<TState = unknown> = {
+  latestState: TState;
   stateSaved: boolean;
   queueSaved: boolean;
   release: () => void;
@@ -10,11 +10,11 @@ export type MigrationLease = {
 export type MigrationSnapshot = unknown;
 export type MigrationJournal = { phase: string };
 
-export type MigrationDependencies<J extends MigrationJournal, S extends MigrationSnapshot> = {
+export type MigrationDependencies<J extends MigrationJournal, S extends MigrationSnapshot, TState = unknown> = {
   getProfileStatus: () => Promise<{ unlocked: boolean; profile?: { profileId?: string } }>;
-  pauseStorageMaintenance: () => Promise<MigrationLease>;
+  pauseStorageMaintenance: () => Promise<MigrationLease<TState>>;
   readSnapshot: () => Promise<S | null>;
-  buildPayloads: (snapshot: S | null, latestState: unknown, queueSaved: boolean) => Record<MigrationPurpose, unknown>;
+  buildPayloads: (snapshot: S | null, latestState: TState, queueSaved: boolean) => Record<MigrationPurpose, unknown>;
   getJournal: () => Promise<J | null>;
   begin: () => Promise<J>;
   transition: (phase: 'copying' | 'verifying' | 'ready_to_cutover' | 'folder_primary' | 'blocked_recovery') => Promise<J>;
@@ -42,8 +42,8 @@ function isCutoverUncertain(error: unknown): boolean {
  * Coordinates the encrypted-folder copy and verified cutover.
  * All side effects are injected so failure/retry behavior can be tested without Electron.
  */
-export async function runEncryptedPOSFolderMigration<J extends MigrationJournal, S extends MigrationSnapshot>(
-  dependencies: MigrationDependencies<J, S>,
+export async function runEncryptedPOSFolderMigration<J extends MigrationJournal, S extends MigrationSnapshot, TState = unknown>(
+  dependencies: MigrationDependencies<J, S, TState>,
 ): Promise<{
   profileId: string;
   journal: J;
