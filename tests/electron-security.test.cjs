@@ -63,8 +63,10 @@ test('preload exposes only narrow POS profile IPC methods', () => {
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
   for (const method of [
     'choosePOSStorageRoot', 'discoverPOSProfiles', 'createPOSProfile',
-    'unlockPOSProfileWithPassphrase', 'unlockPOSProfileWithRecoveryKey',
-    'getPOSProfileStatus', 'lockPOSProfile', 'readPOSProfileData',
+    'unlockPOSProfileWithPassphrase', 'unlockPOSProfileWithRecoveryKey', 'unlockPOSProfileWithOS',
+    'getPOSProfileStatus', 'lockPOSProfile', 'getPOSMigrationJournal',
+    'beginPOSStorageMigration', 'transitionPOSStorageMigration',
+    'recordPOSMigrationCopy', 'recordPOSMigrationVerification', 'readPOSProfileData',
     'writePOSProfileData', 'changePOSProfilePassphrase', 'resetPOSProfilePassphrase',
   ]) {
     assert.match(preloadSource, new RegExp('\\b' + method + ':'));
