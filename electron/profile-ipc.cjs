@@ -89,6 +89,14 @@ function registerPOSProfileIpc(options) {
   unlock('pos-profile:unlock-passphrase', 'passphrase');
   unlock('pos-profile:unlock-recovery', 'recovery');
 
+  register('pos-profile:unlock-os', async (payload) => {
+    const directory = typeof payload?.directory === 'string' ? path.resolve(payload.directory) : '';
+    if (!directory || !discoveredProfiles.has(directory)) {
+      throw new Error('Scan the selected POS storage folder and choose a listed profile first.');
+    }
+    return profileSession.unlockWithOS(directory);
+  });
+
   register('pos-profile:status', () => ({ ok: true, ...profileSession.getStatus() }));
   register('pos-profile:lock', () => profileSession.lock());
 
