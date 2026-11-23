@@ -6,6 +6,7 @@ import { ensureOfflineStateWriteMarker } from './storageOverflowQueue.ts';
 import {
   beginDesktopPOSStorageMigration,
   getDesktopPOSProfileStatus,
+  getDesktopPOSMigrationJournal,
   recordDesktopPOSMigrationCopy,
   recordDesktopPOSMigrationVerification,
   transitionDesktopPOSStorageMigration,
