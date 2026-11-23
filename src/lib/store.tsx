@@ -8,7 +8,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, isDesktopProfilePrimary, type BackupMeta } from './db';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -479,12 +479,29 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      let primaryStorageBlocked = false;
+      const reportPrimaryStorageError = (message: string) => {
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
+            detail: { message },
+          })), 0);
+        }
+      };
       if (!idbAvailable()) {
-        setReady(true);
-        return;
+        if (isDesktopProfilePrimary()) {
+          primaryStorageBlocked = true;
+          reportPrimaryStorageError('The encrypted primary POS folder is not available. IndexedDB fallback is disabled.');
+        } else {
+          setReady(true);
+          return;
+        }
       }
       try {
+        if (primaryStorageBlocked) throw new Error('Primary POS storage bridge is unavailable.');
         const fromIdb = await idbLoadState();
+        if (isDesktopProfilePrimary() && !fromIdb) {
+          throw new Error('The encrypted primary POS state file is missing. IndexedDB fallback is disabled.');
+        }
         if (cancelled) return;
         if (fromIdb) {
           // idbLoadState always repairs the default admin recovery account
@@ -512,7 +529,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           else console.warn('[Backup] local backup metadata could not be loaded during startup:', metaResult.error.message);
           setPendingQueueCount(queued.length);
         }
-      } catch { /* keep localStorage state */ }
+      } catch (error) {
+        if (isDesktopProfilePrimary()) {
+          primaryStorageBlocked = true;
+          reportPrimaryStorageError(error instanceof Error ? error.message : 'The encrypted primary POS storage could not be read.');
+        }
+        // Never load localStorage or seed data when the encrypted folder is primary.
+      }
       // Re-hydrate session from storage AFTER users are loaded so login is not lost
         try {
           const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
@@ -522,7 +545,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             setSession(sess);
           }
         } catch { /* ignore */ }
-        if (!cancelled) setReady(true);
+        if (!cancelled && !primaryStorageBlocked) setReady(true);
       // Register service worker for offline shell
       registerServiceWorker().catch(() => {});
     })();
@@ -3516,6 +3539,9 @@ const deletePurchase = useCallback((id: string) => {
       if (ready) await persistState(current);
 
       const fromIdb = idbAvailable() ? await idbLoadState() : null;
+      if (isDesktopProfilePrimary() && !fromIdb) {
+        throw new Error('The encrypted primary POS state could not be read. IndexedDB fallback is disabled.');
+      }
       let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
 
       if (activeSession) {
@@ -3545,7 +3571,12 @@ const deletePurchase = useCallback((id: string) => {
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
       if (activeSession) setSession(activeSession);
-    } catch {
+    } catch (error) {
+      if (isDesktopProfilePrimary() && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
+          detail: { message: error instanceof Error ? error.message : 'The encrypted primary POS storage could not be read.' },
+        }));
+      }
       // A refresh failure must leave the authenticated POS session untouched.
       setState(current);
       if (activeSession) setSession(activeSession);
