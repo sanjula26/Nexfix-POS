@@ -106,6 +106,9 @@ async function applyBackupRestoreWork(current: POSState, input: unknown): Promis
     if (!saved) throw new Error('Could not persist restored POS state.');
     const checkpointCleared = await idbClearRestoreCheckpoint();
     if (!checkpointCleared) throw new Error('Could not clear the restore safety checkpoint.');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nexfix:restore-committed', { detail: { state: nextState } }));
+    }
     return nextState;
   } catch (error) {
     const rolledBack = await rollbackRestore();
