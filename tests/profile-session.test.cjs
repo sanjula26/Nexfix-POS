@@ -58,6 +58,32 @@ test('creates a locked profile, writes encrypted business data and only reveals 
   assert.equal(session.discover(root).available[0].profileId, created.profile.profileId);
 });
 
+test('unlocks automatically on the same Windows account and falls back to recovery on another device', async (t) => {
+  const root = temporaryRoot(t);
+  const first = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  const created = await first.create({
+    storageRoot: root,
+    directoryName: 'Portable POS',
+    label: 'NexFix Portable Shop',
+    passphrase: PASSWORD,
+  });
+  first.write('app_state', JSON.stringify({ sales: [{ id: 'auto-1' }] }));
+  first.lock();
+
+  const sameDevice = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  const unlocked = await sameDevice.unlockWithOS(created.profile.directory);
+  assert.equal(unlocked.ok, true);
+  assert.equal(sameDevice.read('app_state'), JSON.stringify({ sales: [{ id: 'auto-1' }] }));
+  sameDevice.lock();
+
+  const otherDevice = new POSProfileSession({ safeStorage: safeStorage('windows-b:'), platform: 'linux' });
+  await assert.rejects(otherDevice.unlockWithOS(created.profile.directory), /cannot unlock the profile key/i);
+  const recovered = await otherDevice.unlockWithRecoveryKey(created.profile.directory, created.recoveryKey);
+  assert.equal(recovered.ok, true);
+  assert.equal(otherDevice.read('app_state'), JSON.stringify({ sales: [{ id: 'auto-1' }] }));
+  otherDevice.lock();
+});
+
 test('rejects a wrong passphrase and allows a profile to be moved to a new Windows installation', async (t) => {
   const root = temporaryRoot(t);
   const first = new POSProfileSession({ safeStorage: safeStorage('windows-old:'), platform: 'linux' });
