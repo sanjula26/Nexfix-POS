@@ -7,6 +7,7 @@ const { readProfileManifest } = require('./storage-profile.cjs');
 
 const CONFIG_VERSION = 2;
 const CONFIG_FILE = 'overflow-folder.json';
+const PRIMARY_MARKER_FILE = 'nexfix-pos-primary-storage.json';
 
 function validateFolder(folderPath, options = {}) {
   const fsApi = options.fsApi || fs;
@@ -119,7 +120,65 @@ function createOverflowFolderManager(options = {}) {
     }
   }
 
+  function readPrimaryMarker(root) {
+    const markerPath = pathApi.join(root, PRIMARY_MARKER_FILE);
+    if (!fsApi.existsSync(markerPath)) return null;
+    const stat = fsApi.lstatSync(markerPath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4096) {
+      throw new Error('The primary POS storage marker is not a safe regular file.');
+    }
+    let marker;
+    try { marker = JSON.parse(fsApi.readFileSync(markerPath, 'utf8')); }
+    catch { throw new Error('The primary POS storage marker is unreadable or invalid.'); }
+    if (!marker || marker.version !== 1 || marker.storageMode !== 'folder_primary' ||
+        typeof marker.profileDirectoryName !== 'string' || !marker.profileDirectoryName ||
+        pathApi.isAbsolute(marker.profileDirectoryName) || marker.profileDirectoryName === '.' ||
+        marker.profileDirectoryName === '..' || marker.profileDirectoryName.includes(pathApi.sep) ||
+        typeof marker.profileId !== 'string' || !/^[0-9a-f-]{36}$/i.test(marker.profileId)) {
+      throw new Error('The primary POS storage marker is invalid; refusing an IndexedDB fallback.');
+    }
+    return marker;
+  }
+
+  function writePrimaryMarker(root, profileDirectoryName, profileId) {
+    const markerPath = pathApi.join(root, PRIMARY_MARKER_FILE);
+    const temporaryPath = markerPath + '.' + crypto.randomBytes(8).toString('hex') + '.tmp';
+    const payload = JSON.stringify({
+      version: 1,
+      storageMode: 'folder_primary',
+      profileDirectoryName,
+      profileId,
+    });
+    let descriptor;
+    try {
+      descriptor = fsApi.openSync(temporaryPath, 'wx', 0o600);
+      fsApi.writeFileSync(descriptor, payload, 'utf8');
+      fsApi.fsyncSync(descriptor);
+      fsApi.closeSync(descriptor);
+      descriptor = undefined;
+      try { fsApi.chmodSync(temporaryPath, 0o600); } catch {}
+      fsApi.renameSync(temporaryPath, markerPath);
+    } finally {
+      if (descriptor !== undefined) {
+        try { fsApi.closeSync(descriptor); } catch {}
+      }
+      try { fsApi.unlinkSync(temporaryPath); } catch {}
+    }
+  }
+
+  function removePrimaryMarker(root, profileId) {
+    const marker = readPrimaryMarker(root);
+    if (!marker || marker.profileId !== profileId) {
+      throw new Error('The primary POS storage marker changed; refusing an unsafe rollback.');
+    }
+    fsApi.unlinkSync(pathApi.join(root, PRIMARY_MARKER_FILE));
+  }
+
   function assertPrimaryProfileAtRoot(root, profileDirectoryName, profileId) {
+    const marker = readPrimaryMarker(root);
+    if (!marker || marker.profileDirectoryName !== profileDirectoryName || marker.profileId !== profileId) {
+      throw new Error('The primary POS storage marker is missing or points to a different profile.');
+    }
     const profileDirectory = pathApi.join(root, profileDirectoryName);
     let stat;
     try { stat = fsApi.lstatSync(profileDirectory); }
@@ -165,10 +224,27 @@ function createOverflowFolderManager(options = {}) {
     };
     try {
       const canonical = validateFolder(config.folderPath, { fsApi, pathApi });
-      const profileDirectory = config.storageMode === 'folder_primary'
-        ? assertPrimaryProfileAtRoot(canonical, config.profileDirectoryName, config.profileId)
-        : null;
-      return { ...base, available: true, folderPath: canonical, profileDirectory };
+      const marker = readPrimaryMarker(canonical);
+      if (marker) {
+        const profileDirectory = assertPrimaryProfileAtRoot(canonical, marker.profileDirectoryName, marker.profileId);
+        if (config.storageMode !== 'folder_primary' || config.profileId !== marker.profileId) {
+          saveConfig({
+            folderPath: canonical,
+            storageMode: 'folder_primary',
+            profileDirectoryName: marker.profileDirectoryName,
+            profileId: marker.profileId,
+          });
+        }
+        return {
+          ok: true, configured: true, storageMode: 'folder_primary',
+          profileDirectoryName: marker.profileDirectoryName, profileId: marker.profileId,
+          available: true, folderPath: canonical, profileDirectory,
+        };
+      }
+      if (config.storageMode === 'folder_primary') {
+        throw new Error('The primary POS storage marker is missing; refusing to open an older IndexedDB copy.');
+      }
+      return { ...base, available: true, folderPath: canonical, profileDirectory: null };
     } catch (error) {
       return {
         ...base,
@@ -196,9 +272,16 @@ function createOverflowFolderManager(options = {}) {
       return { ok: true, canceled: true, ...getPreference() };
     }
     const folderPath = validateFolder(result.filePaths[0], { fsApi, pathApi });
-    if (current?.storageMode === 'folder_primary') {
-      assertPrimaryProfileAtRoot(folderPath, current.profileDirectoryName, current.profileId);
-      saveConfig({ ...current, folderPath });
+    const marker = readPrimaryMarker(folderPath);
+    if (current?.storageMode === 'folder_primary' || marker) {
+      const profileDirectoryName = current?.storageMode === 'folder_primary'
+        ? current.profileDirectoryName
+        : marker.profileDirectoryName;
+      const profileId = current?.storageMode === 'folder_primary'
+        ? current.profileId
+        : marker.profileId;
+      assertPrimaryProfileAtRoot(folderPath, profileDirectoryName, profileId);
+      saveConfig({ folderPath, storageMode: 'folder_primary', profileDirectoryName, profileId });
     } else {
       saveConfig({ folderPath, storageMode: 'indexeddb' });
     }
@@ -224,6 +307,7 @@ function createOverflowFolderManager(options = {}) {
     }
     const manifest = readProfileManifest(canonicalProfileDirectory);
     if (manifest.profileId !== profileId) throw new Error('The POS profile identity does not match the selected profile.');
+    writePrimaryMarker(root, relative, profileId);
     saveConfig({
       folderPath: root,
       storageMode: 'folder_primary',
@@ -238,7 +322,9 @@ function createOverflowFolderManager(options = {}) {
     if (!current || current.storageMode !== 'folder_primary' || current.profileId !== profileId) {
       throw new Error('The primary POS profile pointer changed; refusing an unsafe rollback.');
     }
-    saveConfig({ folderPath: current.folderPath, storageMode: 'indexeddb' });
+    const root = validateFolder(current.folderPath, { fsApi, pathApi });
+    saveConfig({ folderPath: root, storageMode: 'indexeddb' });
+    removePrimaryMarker(root, profileId);
     return getPreference();
   }
 
@@ -269,6 +355,7 @@ function registerOverflowFolderIpc(options = {}) {
 module.exports = {
   CONFIG_VERSION,
   CONFIG_FILE,
+  PRIMARY_MARKER_FILE,
   validateFolder,
   createOverflowFolderManager,
   registerOverflowFolderIpc,
