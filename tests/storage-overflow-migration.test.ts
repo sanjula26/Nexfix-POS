@@ -6,6 +6,7 @@ type Journal = MigrationJournal & { phase: string; sequence: number };
 const purposes: MigrationPurpose[] = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
 
 function harness(failAt?: string) {
+  let activeFailure = failAt;
   const files = new Map<MigrationPurpose, string>();
   const verified: MigrationPurpose[] = [];
   const copied: MigrationPurpose[] = [];
@@ -30,7 +31,7 @@ function harness(failAt?: string) {
     begin: async () => { phase = 'snapshotting'; return journal(); },
     transition: async next => {
       transitions.push(next);
-      if (failAt === `transition:${next}`) {
+      if (activeFailure === `transition:${next}`) {
         const error = new Error('injected transition failure') as Error & { code?: string };
         if (next === 'folder_primary') error.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
         throw error;
@@ -41,20 +42,20 @@ function harness(failAt?: string) {
     recordCopy: async purpose => { copied.push(purpose); return journal(); },
     recordVerification: async purpose => { verified.push(purpose); return journal(); },
     writePayload: async (purpose, serialized) => {
-      if (failAt === `write:${purpose}`) throw new Error('injected write failure');
+      if (activeFailure === `write:${purpose}`) throw new Error('injected write failure');
       files.set(purpose, serialized);
       return { revision: 1, bytes: new TextEncoder().encode(serialized).byteLength };
     },
     readPayload: async purpose => {
-      if (failAt === `read:${purpose}`) return '{"tampered":true}';
+      if (activeFailure === `read:${purpose}`) return '{"tampered":true}';
       return files.get(purpose) ?? null;
     },
     setFolderPrimary: () => {
-      if (failAt === 'activate-primary') throw new Error('adapter activation failed');
+      if (activeFailure === 'activate-primary') throw new Error('adapter activation failed');
       primary = true;
     },
   };
-  return { dependencies, files, copied, verified, transitions, lease, get released() { return released; }, get primary() { return primary; }, get phase() { return phase; } };
+  return { dependencies, files, copied, verified, transitions, lease, setFailure: (next?: string) => { activeFailure = next; }, get released() { return released; }, get primary() { return primary; }, get phase() { return phase; } };
 }
 
 test('copies and verifies all four domains before switching folder storage primary', async () => {
@@ -111,4 +112,19 @@ test('refuses to start without an unlocked encrypted profile and does not acquir
   await assert.rejects(runEncryptedPOSFolderMigration(h.dependencies), /Unlock the encrypted POS profile/);
   assert.equal(h.released, 0);
   assert.equal(h.transitions.length, 0);
+});
+
+
+test('retries from a blocked recovery journal using a fresh verified snapshot', async () => {
+  const h = harness('write:sync_queue');
+  await assert.rejects(runEncryptedPOSFolderMigration(h.dependencies), /injected write failure/);
+  assert.equal(h.phase, 'blocked_recovery');
+  assert.equal(h.released, 1);
+
+  h.setFailure(undefined);
+  const result = await runEncryptedPOSFolderMigration(h.dependencies);
+  assert.equal(result.journal.phase, 'folder_primary');
+  assert.equal(h.phase, 'folder_primary');
+  assert.equal(h.primary, true);
+  assert.equal(h.released, 2);
 });
