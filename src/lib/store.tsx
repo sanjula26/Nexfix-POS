@@ -331,8 +331,11 @@ let lastIndexedDBQuotaWarningAt = 0;
 function notifyIndexedDBQuotaWarning(reason: 'near_quota' | 'quota_exceeded', usage?: number, quota?: number, ratio?: number) {
   if (typeof window === 'undefined' || isDesktopProfilePrimary()) return;
   const now = Date.now();
-  if (now - lastIndexedDBQuotaWarningAt < 5 * 60 * 1000) return;
-  lastIndexedDBQuotaWarningAt = now;
+  // A real quota failure must never be hidden by a recently shown advisory warning.
+  if (reason === 'near_quota') {
+    if (now - lastIndexedDBQuotaWarningAt < 5 * 60 * 1000) return;
+    lastIndexedDBQuotaWarningAt = now;
+  }
   window.dispatchEvent(new CustomEvent('nexfix:storage-quota-warning', {
     detail: { reason, usage, quota, ratio },
   }));
@@ -414,6 +417,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
         : 'write_failed';
       queueSaved = false;
       queueFailureKind = failureKind;
+      if (failureKind === 'quota_exceeded') notifyIndexedDBQuotaWarning('quota_exceeded');
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
           detail: {
