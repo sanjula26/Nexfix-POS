@@ -186,7 +186,7 @@ interface StoreCtx {
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
   /** Pause debounced state persistence, drain active writes, and flush the latest state for safe storage maintenance. */
-  pauseStatePersistence: () => Promise<() => void>;
+  pauseStatePersistence: () => Promise<POSStatePersistencePause>;
   /** Pause and drain all public POS business mutation entry points. */
   pausePOSMutationWrites: () => Promise<POSWriteQuiescenceLease>;
   /** Pause and drain every audited local POS storage writer before a migration snapshot. */
@@ -326,7 +326,17 @@ function loadState(): POSState {
 /** Persist the latest POS snapshot to IndexedDB and its offline queue marker. */
 const statePersistenceWork = createDrainableWorkGate();
 
-async function persistStateWork(state: POSState): Promise<boolean> {
+export type POSStatePersistencePause = {
+  release: () => void;
+  latestState: POSState;
+  stateSaved: boolean;
+  queueSaved: boolean;
+  failureKind?: string;
+};
+
+export type POSStorageMaintenanceLease = POSStatePersistencePause;
+
+async function persistStateWork(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
@@ -344,7 +354,7 @@ async function persistStateWork(state: POSState): Promise<boolean> {
           detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
-      return false;
+      return { stateSaved: false, queueSaved: false, failureKind: saved.error.kind };
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
     // durably persisted locally. This closes the crash window between the
@@ -367,7 +377,7 @@ async function persistStateWork(state: POSState): Promise<boolean> {
         detail: { message: 'IndexedDB is unavailable on this PC. POS changes cannot be safely saved locally. Do not retry a sale until its status is checked in Sales History/cloud.' },
       }));
     }
-    return false;
+    return { stateSaved: false, queueSaved: false, failureKind: 'unavailable' };
   }
   // Track write for offline queue (future cloud sync)
   let queueSaved = true;
@@ -393,11 +403,11 @@ async function persistStateWork(state: POSState): Promise<boolean> {
       }
     }
   }
-  return queueSaved;
+  return { stateSaved: true, queueSaved };
 }
 
 /** Normal debounced writes are tracked so migration can stop and drain them. */
-function persistState(state: POSState): Promise<boolean> {
+function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
   return statePersistenceWork.run(
     () => persistStateWork(state),
     () => { throw new Error('POS state persistence is temporarily paused for safe storage maintenance.'); },
@@ -411,12 +421,18 @@ function persistState(state: POSState): Promise<boolean> {
  * open until this final flush has finished because offline persistence may
  * append a state_write operation.
  */
-export async function pauseStatePersistence(getLatestState: () => POSState): Promise<() => void> {
+export async function pauseStatePersistence(getLatestState: () => POSState): Promise<POSStatePersistencePause> {
   const release = await statePersistenceWork.pause();
   try {
-    const saved = await persistStateWork(getLatestState());
-    if (!saved) throw new Error('Could not flush the latest POS state before storage maintenance.');
-    return release;
+    const latestState = getLatestState();
+    const result = await persistStateWork(latestState);
+    // QuotaExceededError is the exact condition this migration path is meant
+    // to recover from. Keep the in-memory snapshot and let the folder migration
+    // copy it; other failures abort because the IndexedDB source may be unreadable.
+    if (!result.stateSaved && result.failureKind !== 'quota_exceeded') {
+      throw new Error('Could not safely read or flush POS state before storage maintenance.');
+    }
+    return { ...result, latestState, release };
   } catch (error) {
     release();
     throw error;
@@ -4138,7 +4154,7 @@ const deletePurchase = useCallback((id: string) => {
     return posMutationCoordinator.pause();
   }, [ready]);
 
-  const pauseStorageMaintenance = useCallback(async (): Promise<() => void> => {
+  const pauseStorageMaintenance = useCallback(async (): Promise<POSStorageMaintenanceLease> => {
     if (!ready) throw new Error('POS is still loading; storage maintenance cannot start yet.');
     const releases: Array<() => void> = [];
     let released = false;
@@ -4165,10 +4181,17 @@ const deletePurchase = useCallback((id: string) => {
 
       // This privileged flush may enqueue an offline state_write, so keep
       // queue-enqueue admission open until after it has completed.
-      releases.push(await pauseStatePersistence(() => stateRef.current));
+      const statePause = await pauseStatePersistence(() => stateRef.current);
+      releases.push(statePause.release);
       releases.push(await pauseOfflineQueueMutations());
 
-      return releaseAll;
+      return {
+        release: releaseAll,
+        latestState: statePause.latestState,
+        stateSaved: statePause.stateSaved,
+        queueSaved: statePause.queueSaved,
+        failureKind: statePause.failureKind,
+      };
     } catch (error) {
       releaseAll();
       throw error;
