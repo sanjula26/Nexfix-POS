@@ -31,6 +31,10 @@ export type DesktopOverflowFolderStatus = {
   configured: boolean;
   available: boolean;
   folderPath: string | null;
+  storageMode: 'indexeddb' | 'folder_primary' | 'unknown';
+  profileDirectoryName: string | null;
+  profileId: string | null;
+  profileDirectory: string | null;
   error?: string;
 };
 
