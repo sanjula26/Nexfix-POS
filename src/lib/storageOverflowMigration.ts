@@ -121,7 +121,19 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
       throw error;
     }
 
-    setDesktopProfilePrimary(true);
+    try {
+      setDesktopProfilePrimary(true);
+    } catch (error) {
+      releaseOnFinish = false;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
+          detail: { message: 'Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.' },
+        }));
+      }
+      const uncertain = new Error('Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.') as Error & { code?: string };
+      uncertain.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
+      throw uncertain;
+    }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('nexfix:storage-primary-committed'));
     }
