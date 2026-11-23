@@ -10,6 +10,7 @@ const {
   createOverflowFolderManager,
   registerOverflowFolderIpc,
 } = require('../electron/overflow-folder.cjs');
+const { createManagedProfileDirectory } = require('../electron/storage-profile.cjs');
 
 function temporaryDirectory() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-overflow-test-'));
@@ -76,9 +77,85 @@ test('selected overflow folder preference persists across manager instances', as
     assert.deepEqual(afterRestart.getPreference(), {
       ok: true,
       configured: true,
+      storageMode: 'indexeddb',
+      profileDirectoryName: null,
+      profileId: null,
       available: true,
       folderPath: fs.realpathSync(selected),
+      profileDirectory: null,
     });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('verified profile cutover persists folder-primary mode and can safely roll back before release', () => {
+  const root = temporaryDirectory();
+  const userData = path.join(root, 'user-data');
+  const selected = path.join(root, 'shop-data');
+  fs.mkdirSync(selected);
+  const manager = createOverflowFolderManager({
+    app: { getPath: () => userData },
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [selected] }) },
+    BrowserWindow: { getAllWindows: () => [] },
+  });
+  try {
+    const profile = createManagedProfileDirectory(selected, 'Nexfix POS Data', {
+      profileId: require('node:crypto').randomUUID(),
+      label: 'NexFix POS Storage',
+    });
+    const primary = manager.markPrimary(profile.directory, profile.manifest.profileId);
+    assert.equal(primary.storageMode, 'folder_primary');
+    assert.equal(primary.profileId, profile.manifest.profileId);
+    assert.equal(primary.profileDirectoryName, 'Nexfix POS Data');
+    assert.equal(primary.profileDirectory, profile.directory);
+
+    const restarted = createOverflowFolderManager({
+      app: { getPath: () => userData },
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [selected] }) },
+      BrowserWindow: { getAllWindows: () => [] },
+    });
+    assert.equal(restarted.getPreference().storageMode, 'folder_primary');
+    assert.equal(restarted.getPreference().profileId, profile.manifest.profileId);
+
+    const rolledBack = restarted.markIndexedDBPrimary(profile.manifest.profileId);
+    assert.equal(rolledBack.storageMode, 'indexeddb');
+    assert.equal(rolledBack.profileId, null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('primary folder can only be rebound to a folder containing the same verified profile', async () => {
+  const root = temporaryDirectory();
+  const userData = path.join(root, 'user-data');
+  const selected = path.join(root, 'shop-data');
+  const replacement = path.join(root, 'replacement-drive');
+  const wrong = path.join(root, 'wrong-drive');
+  fs.mkdirSync(selected);
+  fs.mkdirSync(replacement);
+  fs.mkdirSync(wrong);
+  const profile = createManagedProfileDirectory(selected, 'Nexfix POS Data', {
+    profileId: require('node:crypto').randomUUID(),
+    label: 'NexFix POS Storage',
+  });
+  fs.cpSync(profile.directory, path.join(replacement, 'Nexfix POS Data'), { recursive: true });
+  let nextSelection = wrong;
+  const manager = createOverflowFolderManager({
+    app: { getPath: () => userData },
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [nextSelection] }) },
+    BrowserWindow: { getAllWindows: () => [] },
+  });
+  try {
+    await manager.chooseFolder();
+    manager.markPrimary(profile.directory, profile.manifest.profileId);
+    await assert.rejects(manager.chooseFolder(), /different POS profile/);
+    assert.equal(manager.getPreference().storageMode, 'folder_primary');
+    nextSelection = replacement;
+    const reconnected = await manager.chooseFolder();
+    assert.equal(reconnected.storageMode, 'folder_primary');
+    assert.equal(reconnected.profileId, profile.manifest.profileId);
+    assert.equal(reconnected.folderPath, fs.realpathSync(replacement));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
