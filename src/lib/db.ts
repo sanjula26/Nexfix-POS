@@ -1,5 +1,39 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
+import {
+  hasDesktopProfileRuntime,
+  readDesktopProfileJson,
+  writeDesktopProfileJson,
+  type DesktopProfilePurpose,
+} from './desktopProfileStorage';
+
+let desktopProfilePrimary = false;
+const profileWriteQueues = new Map<DesktopProfilePurpose, Promise<unknown>>();
+
+export function setDesktopProfilePrimary(enabled: boolean): void {
+  if (enabled && !hasDesktopProfileRuntime()) {
+    throw new Error('Encrypted POS folder storage is not available in this desktop runtime.');
+  }
+  desktopProfilePrimary = enabled;
+}
+
+export function isDesktopProfilePrimary(): boolean {
+  return desktopProfilePrimary;
+}
+
+function withProfileWriteLock<T>(purpose: DesktopProfilePurpose, operation: () => Promise<T>): Promise<T> {
+  const previous = profileWriteQueues.get(purpose) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  profileWriteQueues.set(purpose, next);
+  return next.finally(() => {
+    if (profileWriteQueues.get(purpose) === next) profileWriteQueues.delete(purpose);
+  });
+}
+
+function profileWriteFailure(error: unknown): IndexedDBWriteFailure {
+  const message = error instanceof Error ? error.message : 'Encrypted POS folder write failed.';
+  return { kind: 'write_failed', message };
+}
 
 const DB_NAME = 'nexfix_pos_db';
 const DB_VERSION = 1;
@@ -125,20 +159,33 @@ export type ExistingPOSStateInspection =
  * its schema. Profile recovery must use this before the normal boot path, because
  * an absent state row can mean an incomplete/old profile rather than a new shop.
  */
-export async function idbInspectExistingState(factory: IDBFactory = indexedDB): Promise<ExistingPOSStateInspection> {
-  if (!factory || typeof factory.databases !== 'function') {
+export async function idbInspectExistingState(factory?: IDBFactory): Promise<ExistingPOSStateInspection> {
+  if (desktopProfilePrimary) {
+    try {
+      const state = await readDesktopProfileJson<POSState>('app_state');
+      if (!state) return { status: 'missing_state' };
+      if (!Array.isArray(state.products) || !Array.isArray(state.users) || !Array.isArray(state.sales)) {
+        return { status: 'invalid_state', reason: 'The encrypted POS profile state is incomplete or unsupported.' };
+      }
+      return { status: 'present', state };
+    } catch (error) {
+      return { status: 'unavailable', reason: error instanceof Error ? error.message : 'Encrypted POS profile inspection failed.' };
+    }
+  }
+  const activeFactory = factory ?? (typeof indexedDB !== 'undefined' ? indexedDB : undefined);
+  if (!activeFactory || typeof activeFactory.databases !== 'function') {
     return { status: 'unavailable', reason: 'This runtime cannot safely enumerate existing IndexedDB databases.' };
   }
 
   let db: IDBDatabase | null = null;
   try {
-    const existingDatabases = await factory.databases();
+    const existingDatabases = await activeFactory.databases();
     if (!existingDatabases.some(info => info.name === DB_NAME)) {
       return { status: 'missing_database' };
     }
 
     db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open(DB_NAME);
+      const request = activeFactory.open(DB_NAME);
       let unexpectedUpgrade = false;
       request.onupgradeneeded = () => {
         // The database disappeared between enumeration and open. Abort rather
@@ -234,18 +281,22 @@ export type LegacyPOSProfileSnapshotResult =
  * profile migration; callers must verify the encrypted copy before changing
  * the legacy database.
  */
-export async function idbReadLegacyProfileSnapshot(factory: IDBFactory = indexedDB): Promise<LegacyPOSProfileSnapshotResult> {
-  if (!factory || typeof factory.databases !== 'function') {
+export async function idbReadLegacyProfileSnapshot(factory?: IDBFactory): Promise<LegacyPOSProfileSnapshotResult> {
+  if (desktopProfilePrimary) {
+    return { status: 'unavailable', reason: 'IndexedDB is no longer the primary POS store; refusing to snapshot a stale database.' };
+  }
+  const activeFactory = factory ?? (typeof indexedDB !== 'undefined' ? indexedDB : undefined);
+  if (!activeFactory || typeof activeFactory.databases !== 'function') {
     return { status: 'unavailable', reason: 'This runtime cannot safely enumerate existing IndexedDB databases.' };
   }
 
   let db: IDBDatabase | null = null;
   try {
-    const existingDatabases = await factory.databases();
+    const existingDatabases = await activeFactory.databases();
     if (!existingDatabases.some(info => info.name === DB_NAME)) return { status: 'missing_database' };
 
     db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open(DB_NAME);
+      const request = activeFactory.open(DB_NAME);
       let unexpectedUpgrade = false;
       request.onupgradeneeded = () => {
         unexpectedUpgrade = true;
@@ -328,6 +379,10 @@ export async function idbReadLegacyProfileSnapshot(factory: IDBFactory = indexed
 }
 
 export async function idbLoadState():Promise<POSState|null>{
+  if (desktopProfilePrimary) {
+    try { return await readDesktopProfileJson<POSState>('app_state'); }
+    catch { return null; }
+  }
   try {
     const db=await getDB();
     const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('main'));
@@ -346,6 +401,12 @@ export async function idbLoadState():Promise<POSState|null>{
   }
 }
 export async function idbSaveStateDetailed(state: POSState): Promise<IndexedDBWriteResult> {
+  if (desktopProfilePrimary) {
+    try {
+      await withProfileWriteLock('app_state', () => writeDesktopProfileJson('app_state', state).then(() => undefined));
+      return { ok: true };
+    } catch (error) { return { ok: false, error: profileWriteFailure(error) }; }
+  }
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_STATE, 'readwrite');
@@ -360,6 +421,12 @@ export async function idbSaveState(state: POSState): Promise<boolean> {
   return (await idbSaveStateDetailed(state)).ok;
 }
 export async function idbSaveRestoreCheckpointDetailed(state: POSState): Promise<IndexedDBWriteResult> {
+  if (desktopProfilePrimary) {
+    try {
+      await withProfileWriteLock('restore_checkpoint', () => writeDesktopProfileJson('restore_checkpoint', state).then(() => undefined));
+      return { ok: true };
+    } catch (error) { return { ok: false, error: profileWriteFailure(error) }; }
+  }
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_STATE, 'readwrite');
@@ -373,14 +440,24 @@ export async function idbSaveRestoreCheckpointDetailed(state: POSState): Promise
 export async function idbSaveRestoreCheckpoint(state: POSState): Promise<boolean> {
   return (await idbSaveRestoreCheckpointDetailed(state)).ok;
 }
-export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
-export async function idbClearRestoreCheckpoint():Promise<boolean>{try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
+export async function idbLoadRestoreCheckpoint():Promise<POSState|null>{if(desktopProfilePrimary){try{return await readDesktopProfileJson<POSState>('restore_checkpoint');}catch{return null;}}try{const db=await getDB();const row=await idbReq<{key:string;value:POSState}|undefined>(db.transaction(STORE_STATE,'readonly').objectStore(STORE_STATE).get('restore_checkpoint'));return row?.value??null;}catch{return null;}}
+export async function idbClearRestoreCheckpoint():Promise<boolean>{if(desktopProfilePrimary){try{await withProfileWriteLock('restore_checkpoint',()=>writeDesktopProfileJson('restore_checkpoint',null).then(()=>undefined));return true;}catch{return false;}}try{const db=await getDB();const tx=db.transaction(STORE_STATE,'readwrite');tx.objectStore(STORE_STATE).delete('restore_checkpoint');await idbTransactionComplete(tx,'Restore checkpoint cleanup failed');return true;}catch{return false;}}
 
 type QueueInput={type:QueueOp['type'];id?:string;ts?:string;note?:string;payload?:string};
 export async function idbEnqueueDetailed(op: QueueInput): Promise<IndexedDBWriteResult> {
+  const entry = { id: op.id || (crypto.randomUUID?.() || String(Date.now())), ts: op.ts || new Date().toISOString(), ...op } as QueueOp;
+  if (desktopProfilePrimary) {
+    try {
+      await withProfileWriteLock('sync_queue', async () => {
+        const queue = (await readDesktopProfileJson<QueueOp[]>('sync_queue')) || [];
+        queue.push(entry);
+        await writeDesktopProfileJson('sync_queue', queue);
+      });
+      return { ok: true };
+    } catch (error) { return { ok: false, error: profileWriteFailure(error) }; }
+  }
   try {
     const db = await getDB();
-    const entry = { id: op.id || (crypto.randomUUID?.() || String(Date.now())), ts: op.ts || new Date().toISOString(), ...op } as QueueOp;
     const tx = db.transaction(STORE_QUEUE, 'readwrite');
     tx.objectStore(STORE_QUEUE).put(entry);
     await idbTransactionComplete(tx, 'Offline queue write failed');
@@ -392,12 +469,12 @@ export async function idbEnqueueDetailed(op: QueueInput): Promise<IndexedDBWrite
 export async function idbEnqueue(op: QueueInput): Promise<boolean> {
   return (await idbEnqueueDetailed(op)).ok;
 }
-export async function idbListQueue():Promise<QueueOp[]>{if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
-export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
-export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
+export async function idbListQueue():Promise<QueueOp[]>{if(desktopProfilePrimary){const all=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];return all.sort((a,b)=>a.ts.localeCompare(b.ts));}if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
+export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];const remove=new Set(ids);await writeDesktopProfileJson('sync_queue',queue.filter(op=>!remove.has(op.id)));});}catch{/* keep unacknowledged queue entries safe */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
+export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];await writeDesktopProfileJson('sync_queue',queue.filter(op=>op.id!==id));});}catch{/* best-effort cleanup */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
-export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
+export async function idbGetMeta():Promise<BackupMeta>{if(desktopProfilePrimary){try{return{...DEFAULT_META,...((await readDesktopProfileJson<BackupMeta>('meta'))||{})};}catch{return{...DEFAULT_META};}}try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
 export type IndexedDBMetaReadResult =
   | { ok: true; value: BackupMeta }
   | { ok: false; error: IndexedDBWriteFailure };
@@ -408,6 +485,10 @@ export type IndexedDBMetaWriteResult =
 
 /** Read backup metadata without silently substituting defaults after a storage failure. */
 export async function idbGetMetaDetailed(): Promise<IndexedDBMetaReadResult> {
+  if (desktopProfilePrimary) {
+    try { return { ok: true, value: { ...DEFAULT_META, ...((await readDesktopProfileJson<BackupMeta>('meta')) || {}) } }; }
+    catch (error) { return { ok: false, error: profileWriteFailure(error) }; }
+  }
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_META, 'readonly');
@@ -430,6 +511,18 @@ export async function idbSetMetaDetailed(
   patch: Partial<BackupMeta> | ((current: BackupMeta) => Partial<BackupMeta>),
 ): Promise<IndexedDBMetaWriteResult> {
   let next: BackupMeta | undefined;
+  if (desktopProfilePrimary) {
+    try {
+      next = await withProfileWriteLock('meta', async () => {
+        const current = { ...DEFAULT_META, ...((await readDesktopProfileJson<BackupMeta>('meta')) || {}) };
+        const resolvedPatch = typeof patch === 'function' ? patch(current) : patch;
+        const updated = { ...current, ...resolvedPatch };
+        await writeDesktopProfileJson('meta', updated);
+        return updated;
+      });
+      return { ok: true, value: next };
+    } catch (error) { return { ok: false, error: profileWriteFailure(error), ...(next ? { value: next } : {}) }; }
+  }
   try {
     const db = await getDB();
     const tx = db.transaction(STORE_META, 'readwrite');
@@ -458,4 +551,4 @@ export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta
   const result = await idbSetMetaDetailed(patch);
   return result.value ?? idbGetMeta();
 }
-export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
+export function idbAvailable():boolean{return desktopProfilePrimary ? hasDesktopProfileRuntime() : typeof indexedDB!=='undefined';}
