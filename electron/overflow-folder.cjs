@@ -321,6 +321,11 @@ function createOverflowFolderManager(options = {}) {
     }
     const manifest = readProfileManifest(canonicalProfileDirectory);
     if (manifest.profileId !== profileId) throw new Error('The POS profile identity does not match the selected profile.');
+    const existingMarker = readPrimaryMarker(root);
+    if (existingMarker &&
+        (existingMarker.profileId !== profileId || existingMarker.profileDirectoryName !== relative)) {
+      throw new Error('A different POS profile is already marked as primary in this folder.');
+    }
     // Persist the local fail-closed pointer first. If the process crashes
     // before the portable marker is written, startup still blocks on the
     // primary mode and can recreate the marker from the verified manifest.
@@ -330,7 +335,7 @@ function createOverflowFolderManager(options = {}) {
       profileDirectoryName: relative,
       profileId,
     });
-    writePrimaryMarker(root, relative, profileId);
+    if (!existingMarker) writePrimaryMarker(root, relative, profileId);
     return getPreference();
   }
 
