@@ -71,7 +71,9 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
       try {
         setDesktopProfilePrimary(true);
       } catch {
-        throw new Error('Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.') as Error & { code?: string };
+        const error = new Error('Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.') as Error & { code?: string };
+        error.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
+        throw error;
       }
     },
     onCutoverUncertain: message => {
