@@ -63,7 +63,8 @@ function registerPOSProfileIpc(options) {
       try {
         return await handler(payload);
       } catch (error) {
-        return { ok: false, error: safeMessage(error) };
+        const code = error && typeof error.code === 'string' ? error.code : undefined;
+        return { ok: false, error: safeMessage(error), ...(code ? { code } : {}) };
       }
     });
   };
