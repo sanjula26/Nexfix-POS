@@ -4,6 +4,7 @@
  */
 
 import type { POSState } from './types';
+import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbGetMetaDetailed, idbSetMetaDetailed } from './db';
 import { downloadFile, dkey } from './utils';
 import { backupStateToGoogle, getGoogleScriptUrl, isGoogleSyncEnabled } from './driveSync';
@@ -131,10 +132,13 @@ export function scheduleGoogleBackup(
   // Keep this function as a compatibility hook for existing callers.
 }
 
+const autoBackupWork = createDrainableWorkGate();
+export function pauseAutoBackupWork(): Promise<() => void> { return autoBackupWork.pause(); }
+
 export function startAutoBackup(getState: () => POSState, onBackup?: (at: string) => void | Promise<void>): () => void {
   let running = false;
   const RETRY_DELAY_MS = 60_000;
-  const tick = async (force = false) => {
+  const tickWork = async (force = false) => {
     if (running) return;
     try {
       const metaResult = await idbGetMetaDetailed();
@@ -207,6 +211,7 @@ export function startAutoBackup(getState: () => POSState, onBackup?: (at: string
       await onBackup?.(new Date().toISOString());
     } finally { running = false; }
   };
+  const tick = (force = false) => autoBackupWork.run(() => tickWork(force), async () => undefined);
   // Re-check the normal due/pending rules after reconnect; do not force
   // an immediate upload when the configured interval has not elapsed.
   const onOnline = () => { void tick(false); };

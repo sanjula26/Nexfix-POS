@@ -1,5 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
+import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState } from './db';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
@@ -90,11 +91,13 @@ export async function queueSaleReversalRejection(requestId:string,note?:string):
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
+const offlineQueueWork = createDrainableWorkGate();
+export function pauseOfflineQueueFlush(): Promise<() => void> { return offlineQueueWork.pause(); }
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
   if(flushInFlight) return flushInFlight;
-  flushInFlight=(async()=>{
+  flushInFlight=offlineQueueWork.run(async()=>{
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
@@ -320,7 +323,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }, 0);
     }
     return {flushed,pending:remaining.length,synced:false,conflict:result.status==='conflict'};
-  })().finally(()=>{flushInFlight=null;});
+  }, async()=>({flushed:0,pending:(await idbListQueue()).length,synced:false,conflict:false})).finally(()=>{flushInFlight=null;});
   return flushInFlight;
 }
 
