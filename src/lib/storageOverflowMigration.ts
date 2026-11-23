@@ -123,7 +123,7 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
 
     try {
       setDesktopProfilePrimary(true);
-    } catch (error) {
+    } catch {
       releaseOnFinish = false;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
