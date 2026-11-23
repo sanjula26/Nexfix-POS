@@ -62,6 +62,15 @@ function registerPOSProfileIpc(options) {
   };
 
   register('pos-profile:choose-storage-root', async () => {
+    const preference = getConfiguredStoragePreference();
+    if (preference?.configured === true) {
+      if (preference.ok !== true || preference.available !== true || typeof preference.folderPath !== 'string') {
+        throw new Error('Reconnect the selected POS overflow folder or choose a replacement in POS storage setup.');
+      }
+      const root = path.resolve(preference.folderPath);
+      selectedRoots.add(root);
+      return { ok: true, canceled: false, storageRoot: root, reusedConfiguredFolder: true };
+    }
     const window = BrowserWindow.getAllWindows()[0];
     const result = await dialog.showOpenDialog(window || undefined, {
       title: 'Choose Nexfix POS storage folder',
@@ -71,7 +80,7 @@ function registerPOSProfileIpc(options) {
     if (result.canceled || !result.filePaths?.[0]) return { ok: true, canceled: true };
     const root = path.resolve(result.filePaths[0]);
     selectedRoots.add(root);
-    return { ok: true, canceled: false, storageRoot: root };
+    return { ok: true, canceled: false, storageRoot: root, reusedConfiguredFolder: false };
   });
 
   register('pos-profile:discover', (payload) => {
