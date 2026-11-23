@@ -34,8 +34,8 @@ export function createStatePersistenceGate<T>(
       try {
         const latestState = getLatestState();
         const result = await persist(latestState);
-        if (!result.stateSaved && result.failureKind !== 'quota_exceeded') {
-          throw new Error('Could not safely read or flush POS state before storage maintenance.');
+        if ((!result.stateSaved || !result.queueSaved) && result.failureKind !== 'quota_exceeded') {
+          throw new Error('Could not safely read, flush POS state and confirm its offline queue before storage maintenance.');
         }
         return { ...result, latestState, release };
       } catch (error) {

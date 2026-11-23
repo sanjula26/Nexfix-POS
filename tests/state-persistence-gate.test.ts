@@ -42,6 +42,20 @@ test('non-quota storage failures abort maintenance and reopen the gate', async (
   assert.equal((await gate.persist(8)).failureKind, 'write_failed');
 });
 
+
+test('non-quota offline queue failures abort maintenance even when the state write succeeded', async () => {
+  const gate = createStatePersistenceGate<number>(async () => ({
+    stateSaved: true,
+    queueSaved: false,
+    failureKind: 'write_failed',
+  }));
+  await assert.rejects(
+    gate.pauseAndFlush(() => 11),
+    /confirm its offline queue/,
+  );
+  assert.equal((await gate.persist(12)).stateSaved, true);
+});
+
 test('unavailable IndexedDB aborts maintenance rather than copying an incomplete snapshot', async () => {
   const gate = createStatePersistenceGate<number>(async () => ({
     stateSaved: false,

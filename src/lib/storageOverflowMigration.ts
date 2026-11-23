@@ -2,6 +2,7 @@ import {
   idbReadLegacyProfileSnapshot,
   type LegacyPOSProfileSnapshot,
 } from './db';
+import { ensureOfflineStateWriteMarker } from './storageOverflowQueue.ts';
 import {
   beginDesktopPOSStorageMigration,
   getDesktopPOSProfileStatus,
@@ -32,10 +33,11 @@ async function sha256Hex(value: string): Promise<string> {
 function buildPayloads(
   snapshot: LegacyPOSProfileSnapshot | null,
   latestState: POSStorageMaintenanceLease['latestState'],
+  queueMarkerSaved: boolean,
 ): MigrationPayloads {
   return {
     app_state: latestState,
-    sync_queue: snapshot?.queue ?? [],
+    sync_queue: ensureOfflineStateWriteMarker(snapshot?.queue ?? [], queueMarkerSaved),
     meta: snapshot?.meta ?? { autoBackupHours: 6, backupCount: 0 },
     restore_checkpoint: snapshot?.restoreCheckpoint ?? null,
   };
@@ -71,7 +73,7 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
         : 'The existing IndexedDB data could not be read safely.');
     }
 
-    const payloads = buildPayloads(snapshot, lease.latestState);
+    const payloads = buildPayloads(snapshot, lease.latestState, lease.queueSaved);
     const serialized = {} as Record<DesktopPOSMigrationPurpose, string>;
     const copied = {} as Record<DesktopPOSMigrationPurpose, { revision: number; bytes: number; sha256: string }>;
     const purposes: DesktopPOSMigrationPurpose[] = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
