@@ -14,6 +14,11 @@ import {
   idbSaveRestoreCheckpoint,
   idbSaveState,
   idbSaveStateDetailed,
+  idbGetMetaDetailed,
+  idbSetMetaDetailed,
+  idbInspectExistingState,
+  idbAvailable,
+  setDesktopProfilePrimary,
   estimateIndexedDBQuota,
   classifyIndexedDBWriteFailure,
 } from '../src/lib/db.ts';
@@ -27,6 +32,60 @@ before(async () => {
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+});
+
+test('folder-primary backend routes POS domains to encrypted profile and never falls back to IndexedDB', async () => {
+  const payloads = new Map<string, string>();
+  const revisions = new Map<string, number>();
+  const fakeApi = {
+    isDesktop: true,
+    readPOSProfileData: async (purpose: string) => ({
+      ok: true,
+      found: payloads.has(purpose),
+      payload: payloads.get(purpose),
+    }),
+    writePOSProfileData: async (purpose: string, payload: string) => {
+      const revision = (revisions.get(purpose) || 0) + 1;
+      revisions.set(purpose, revision);
+      payloads.set(purpose, payload);
+      return { ok: true, revision, bytes: new TextEncoder().encode(payload).byteLength };
+    },
+  };
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { nexfixDesktop: fakeApi },
+  });
+  setDesktopProfilePrimary(true);
+  try {
+    const state = { products: [], users: [], sales: [] } as unknown as POSState;
+    payloads.set('meta', JSON.stringify({ autoBackupHours: 6, backupCount: 0 }));
+    payloads.set('sync_queue', '[]');
+    payloads.set('restore_checkpoint', 'null');
+
+    assert.equal(idbAvailable(), true);
+    assert.deepEqual(await idbSaveStateDetailed(state), { ok: true });
+    assert.deepEqual(await idbLoadState(), state);
+    assert.equal(await idbEnqueue({ type: 'state_write', id: 'folder-queue-1', ts: '2026-11-23T01:00:00.000Z' }), true);
+    assert.equal((await idbListQueue()).some(item => item.id === 'folder-queue-1'), true);
+    assert.equal(await idbSaveRestoreCheckpoint(state), true);
+    assert.deepEqual(await idbLoadRestoreCheckpoint(), state);
+    assert.equal(await idbClearRestoreCheckpoint(), true);
+    assert.equal(await idbLoadRestoreCheckpoint(), null);
+    assert.equal((await idbGetMetaDetailed()).ok, true);
+    const metaWrite = await idbSetMetaDetailed({ autoBackupHours: 3 });
+    assert.equal(metaWrite.ok, true);
+    assert.equal((await idbGetMetaDetailed()).value?.autoBackupHours, 3);
+    assert.equal((await idbInspectExistingState()).status, 'present');
+    assert.equal((await idbReadLegacyProfileSnapshot()).status, 'unavailable');
+
+    payloads.delete('app_state');
+    await assert.rejects(idbLoadState(), /missing required app_state data/);
+  } finally {
+    setDesktopProfilePrimary(false);
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
 });
 
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
