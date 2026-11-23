@@ -52,7 +52,7 @@ test('development navigation is limited to the configured origin', () => {
 test('encrypted POS profile IPC is registered before renderer startup and locked on quit', () => {
   assert.match(mainSource, /require\('\.\/profile-ipc\.cjs'\)/);
   const ready = mainSource.indexOf("app.whenReady().then(()=>");
-  const register = mainSource.indexOf("registerPOSProfileIpc({ ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer })");
+  const register = mainSource.indexOf("posProfileIpc = registerPOSProfileIpc({", ready);
   const create = mainSource.indexOf("setupAutoUpdater(); createWindow();", ready);
   assert.ok(ready >= 0 && register > ready && create > register,
     'profile IPC must be registered before the renderer window is created');
