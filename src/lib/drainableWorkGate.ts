@@ -5,7 +5,7 @@
  */
 export interface DrainableWorkGate {
   run<T>(operation: () => Promise<T> | T, whenPaused: () => Promise<T> | T): Promise<T>;
-  pause(): Promise<() => void>;
+  pause(options?: { timeoutMs?: number }): Promise<() => void>;
   isPaused(): boolean;
   activeCount(): number;
 }
@@ -23,12 +23,34 @@ export function createDrainableWorkGate(): DrainableWorkGate {
       task.then(remove, remove);
       return task;
     },
-    async pause(): Promise<() => void> {
+    async pause(options: { timeoutMs?: number } = {}): Promise<() => void> {
       if (paused || pausePending) throw new Error('Background work is already paused.');
+      const timeoutMs = options.timeoutMs ?? 15_000;
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000) {
+        throw new RangeError('Background work drain timeout must be between 1 and 120000 milliseconds.');
+      }
       paused = true;
       pausePending = true;
-      try { await Promise.allSettled(Array.from(active)); }
-      finally { pausePending = false; }
+      const pending = Promise.allSettled(Array.from(active)).then(() => undefined);
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+              reject(new Error(`Background work did not drain within ${timeoutMs} ms; storage maintenance was cancelled.`));
+            }, timeoutMs);
+          }),
+        ]);
+      } catch (error) {
+        // Keep admission closed until the existing work really settles. The
+        // caller receives no lease and must not take a storage snapshot.
+        void pending.then(() => { paused = false; });
+        throw error;
+      } finally {
+        if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+        pausePending = false;
+      }
       let released = false;
       return () => { if (released) return; released = true; paused = false; };
     },
