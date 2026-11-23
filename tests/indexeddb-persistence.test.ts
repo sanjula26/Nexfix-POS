@@ -10,6 +10,7 @@ import {
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
+  idbReadLegacyProfileSnapshot,
   idbSaveRestoreCheckpoint,
   idbSaveState,
   idbSaveStateDetailed,
@@ -297,4 +298,45 @@ test('detailed backup metadata reads report storage failures instead of returnin
   } finally {
     IDBDatabase.prototype.transaction = originalTransaction;
   }
+});
+
+
+test('legacy POS profile snapshot captures state, restore checkpoint, queue and metadata', async () => {
+  await idbClearQueue();
+  await idbClearRestoreCheckpoint();
+
+  const state = {
+    products: [{ id: 'snapshot-product' }],
+    users: [{ id: 'snapshot-user' }],
+    sales: [{ id: 'snapshot-sale' }],
+  } as unknown as POSState;
+  const checkpoint = {
+    products: [{ id: 'checkpoint-product' }],
+    users: [{ id: 'checkpoint-user' }],
+    sales: [],
+  } as unknown as POSState;
+
+  assert.equal(await idbSaveState(state), true);
+  assert.equal(await idbSaveRestoreCheckpoint(checkpoint), true);
+  assert.equal(await idbEnqueue({
+    type: 'state_write',
+    id: 'snapshot-queue-entry',
+    ts: '2026-11-23T01:00:00.000Z',
+  }), true);
+
+  const metadata = await (await import('../src/lib/db.ts')).idbSetMetaDetailed({
+    autoBackupHours: 12,
+    backupCount: 5,
+  });
+  assert.equal(metadata.ok, true);
+
+  const result = await idbReadLegacyProfileSnapshot();
+  assert.equal(result.status, 'present');
+  if (result.status !== 'present') return;
+  assert.deepEqual(result.snapshot.state, state);
+  assert.deepEqual(result.snapshot.restoreCheckpoint, checkpoint);
+  assert.deepEqual(result.snapshot.queue.map((item) => item.id), ['snapshot-queue-entry']);
+  assert.equal(result.snapshot.meta.autoBackupHours, 12);
+  assert.equal(result.snapshot.meta.backupCount, 5);
+  assert.equal(result.snapshot.hasAnyBusinessData, true);
 });
