@@ -2,6 +2,7 @@ import type { POSState } from './types';
 import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint, idbSaveState } from './db';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
 import { isCloudSafeBackup } from './driveSync';
+import { createDrainableWorkGate } from './drainableWorkGate';
 
 const SESSION_KEY = 'nexfix_session_v1';
 
@@ -25,12 +26,12 @@ function requireAdminRestoreAccess(state: POSState): void {
   }
 }
 
-export async function prepareRestore(current: POSState): Promise<void> {
+async function prepareRestore(current: POSState): Promise<void> {
   const saved = await idbSaveRestoreCheckpoint(current);
   if (!saved) throw new Error('Could not create restore checkpoint. Restore cancelled.');
 }
 
-export async function rollbackRestore(): Promise<boolean> {
+async function rollbackRestore(): Promise<boolean> {
   const checkpoint = await idbLoadRestoreCheckpoint();
   if (!checkpoint) return false;
   const restored = await idbSaveState(checkpoint);
@@ -94,7 +95,7 @@ function restoreLocalAuthentication(current: POSState, restored: POSState): POSS
  * secrets. A cloud restore therefore cannot create, modify, erase or replace
  * device credentials.
  */
-export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
+async function applyBackupRestoreWork(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
   const cloudSafe = isCloudSafeBackup(input);
   const backup = await restoreBackup(asRestoreEnvelope(input));
@@ -113,6 +114,24 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
     }
     throw error;
   }
+}
+
+
+/**
+ * A restore is one indivisible storage operation: checkpoint, replacement,
+ * checkpoint cleanup, and any rollback must finish before a migration snapshot.
+ */
+const restoreWork = createDrainableWorkGate();
+
+export function pauseRestoreWork(): Promise<() => void> {
+  return restoreWork.pause();
+}
+
+export function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
+  return restoreWork.run(
+    () => applyBackupRestoreWork(current, input),
+    () => { throw new Error('POS restore is temporarily paused for safe storage maintenance.'); },
+  );
 }
 
 export async function completeRestore(): Promise<void> {
