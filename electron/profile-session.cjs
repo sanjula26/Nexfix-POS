@@ -15,7 +15,7 @@ const {
   rebindProfileDeviceKeyWithRecoveryKey,
   rebindProfileDeviceKeyWithPassphrase,
 } = require('./profile-key-store.cjs');
-const { unwrapDataKeyWithPassphrase, unwrapDataKeyWithRecoveryKey, validateLockPassphrase } = require('./profile-crypto.cjs');
+const { unwrapDataKeyWithOS, unwrapDataKeyWithPassphrase, unwrapDataKeyWithRecoveryKey, validateLockPassphrase } = require('./profile-crypto.cjs');
 const { EncryptedProfileStorage } = require('./profile-storage.cjs');
 const { applyWindowsProfileAcl, isValidWindowsSid } = require('./profile-acl.cjs');
 
@@ -150,6 +150,29 @@ class POSProfileSession {
     } catch (error) {
       if (dataKey) dataKey.fill(0);
       recoveryKey = '';
+      throw error;
+    }
+  }
+
+  async unlockWithOS(directory) {
+    if (this.active) throw new Error('Lock the currently open POS profile before selecting another profile.');
+    this.assertSafeStorage();
+    const manifest = readProfileManifest(directory);
+    const envelope = readProfileKeyEnvelope(directory, manifest.profileId);
+    const dataKey = await unwrapDataKeyWithOS(envelope.osWrappedKey, manifest.profileId, this.safeStorage);
+    try {
+      await this.secureDirectory(directory);
+      const storage = new EncryptedProfileStorage(directory, manifest.profileId, dataKey);
+      dataKey.fill(0);
+      this.active = {
+        directory: fs.realpathSync(directory),
+        profileId: manifest.profileId,
+        label: manifest.label,
+        storage,
+      };
+      return { ok: true, profile: this.getStatus().profile };
+    } catch (error) {
+      dataKey.fill(0);
       throw error;
     }
   }
