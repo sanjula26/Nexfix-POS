@@ -27,6 +27,25 @@ function registerPOSProfileIpc(options) {
   const selectedRoots = new Set();
   const discoveredProfiles = new Set();
 
+  function getConfiguredStorageRoot() {
+    if (typeof options.getConfiguredStorageRoot !== 'function') return null;
+    const preference = options.getConfiguredStorageRoot();
+    if (!preference || preference.ok !== true || preference.configured !== true ||
+        preference.available !== true || typeof preference.folderPath !== 'string') return null;
+    return path.resolve(preference.folderPath);
+  }
+
+  function isSelectedStorageRoot(root) {
+    const configuredRoot = getConfiguredStorageRoot();
+    const matchesConfigured = configuredRoot && (
+      process.platform === 'win32'
+        ? configuredRoot.toLowerCase() === root.toLowerCase()
+        : configuredRoot === root
+    );
+    if (matchesConfigured) selectedRoots.add(root);
+    return selectedRoots.has(root);
+  }
+
   const register = (channel, handler) => {
     ipcMain.handle(channel, async (event, payload) => {
       if (!isTrustedRenderer(event)) return { ok: false, error: 'Untrusted renderer.' };
@@ -53,7 +72,7 @@ function registerPOSProfileIpc(options) {
 
   register('pos-profile:discover', (payload) => {
     const root = typeof payload?.storageRoot === 'string' ? path.resolve(payload.storageRoot) : '';
-    if (!root || !selectedRoots.has(root)) throw new Error('Choose the POS storage folder inside Nexfix before scanning it.');
+    if (!root || !isSelectedStorageRoot(root)) throw new Error('Choose the POS storage folder inside Nexfix before scanning it.');
     const result = profileSession.discover(root);
     for (const item of result.available) discoveredProfiles.add(item.directory);
     for (const group of result.duplicates) {
@@ -67,7 +86,7 @@ function registerPOSProfileIpc(options) {
     const directoryName = typeof payload?.directoryName === 'string' ? payload.directoryName : '';
     const label = typeof payload?.label === 'string' ? payload.label : '';
     const passphrase = typeof payload?.passphrase === 'string' ? payload.passphrase : '';
-    if (!selectedRoots.has(storageRoot)) throw new Error('Choose the POS storage folder inside Nexfix before creating a profile.');
+    if (!isSelectedStorageRoot(storageRoot)) throw new Error('Choose the POS storage folder inside Nexfix before creating a profile.');
     if (!passphrase || passphrase.length > MAX_PASSPHRASE_LENGTH) throw new Error('A valid folder-lock passphrase is required.');
     const result = await profileSession.create({ storageRoot, directoryName, label, passphrase });
     discoveredProfiles.add(result.profile.directory);
