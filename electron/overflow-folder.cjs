@@ -13,7 +13,11 @@ function validateFolder(folderPath, options = {}) {
   if (typeof folderPath !== 'string' || !folderPath.trim()) {
     throw new Error('Choose a folder for future POS storage overflow.');
   }
-  const requested = pathApi.resolve(folderPath.trim());
+  const selectedPath = folderPath.trim();
+  if (/^(?:\\\\\\?\\UNC\\|\\\\[^\\]+\\[^\\]+)/i.test(selectedPath)) {
+    throw new Error('Network folders are not supported for POS overflow storage. Choose an internal drive or attached external drive.');
+  }
+  const requested = pathApi.resolve(selectedPath);
   let stat;
   try {
     stat = fsApi.lstatSync(requested);
