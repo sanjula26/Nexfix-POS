@@ -4,8 +4,11 @@ import { buildNormalizedCatalogSyncFingerprint } from './lib/cloudSyncFingerprin
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { setDesktopProfilePrimary } from './lib/db';
+import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
 import {
+  createDesktopPOSProfile,
   discoverDesktopPOSProfiles,
+  getConfiguredPOSOverflowFolder,
   getDesktopPOSMigrationJournal,
   getDesktopPOSProfileStatus,
   readDesktopProfilePayload,
@@ -545,16 +548,18 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       setPrimaryStorageError(message || 'The encrypted primary POS storage could not be read.');
       setPrimaryReady(false);
     };
-    const onPrimaryStorageCommitted = () => {
+    const reloadFolderStatus = () => {
       void desktopApi?.getPOSOverflowFolder?.().then(setFolderStatus).catch(() => {
-        setPrimaryStorageError('The new primary POS storage location could not be reloaded.');
+        setPrimaryStorageError('The POS storage location could not be reloaded.');
       });
     };
     window.addEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-    window.addEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+    window.addEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+    window.addEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     return () => {
       window.removeEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-      window.removeEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+      window.removeEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+      window.removeEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     };
   }, [desktopApi]);
 
