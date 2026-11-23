@@ -8,10 +8,7 @@ export type MigrationLease = {
 };
 
 export type MigrationSnapshot = unknown;
-export type MigrationJournal = {
-  phase: string;
-  [key: string]: unknown;
-};
+export type MigrationJournal = { phase: string };
 
 export type MigrationDependencies<J extends MigrationJournal, S extends MigrationSnapshot> = {
   getProfileStatus: () => Promise<{ unlocked: boolean; profile?: { profileId?: string } }>;
