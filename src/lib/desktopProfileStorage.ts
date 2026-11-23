@@ -40,14 +40,15 @@ export type DesktopPOSProfileSummary = {
   label: string;
   createdAt?: string;
   updatedAt?: string;
+  status?: string;
 };
 
 export type DesktopPOSProfileDiscovery = {
   ok: boolean;
   root: string;
   available: DesktopPOSProfileSummary[];
-  duplicates: Array<{ profileId: string; copies: DesktopPOSProfileSummary[] }>;
-  invalid: Array<{ directory: string; error: string }>;
+  duplicates: Array<{ profileId: string; status: string; copies: Array<{ directory: string; label: string }> }>;
+  invalid: Array<{ directory: string; status: string; reason: string }>;
   error?: string;
 };
 
