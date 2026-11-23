@@ -453,7 +453,7 @@ async function sha256Hex(value: string): Promise<string> {
 
 async function verifyAndActivatePrimaryProfile(status: OverflowFolderStatus, directory: string): Promise<void> {
   const active = await getDesktopPOSProfileStatus();
-  if (!active.unlocked || active.profile?.profileId !== status.profileId) {
+  if (!active.unlocked || active.profile?.profileId !== status.profileId || active.profile?.directory !== directory) {
     throw new Error('The unlocked encrypted profile does not match the configured primary POS profile.');
   }
   let journal = await getDesktopPOSMigrationJournal();
@@ -515,6 +515,14 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   const [choosing, setChoosing] = useState(false);
   const [folderStatus, setFolderStatus] = useState<OverflowFolderStatus | null>(null);
   const [error, setError] = useState('');
+  const [primaryBooting, setPrimaryBooting] = useState(false);
+  const [primaryReady, setPrimaryReady] = useState(false);
+  const [primaryUnlockRequired, setPrimaryUnlockRequired] = useState(false);
+  const [primaryDirectory, setPrimaryDirectory] = useState('');
+  const [unlockMode, setUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
+  const [unlockSecret, setUnlockSecret] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  const [primaryStorageError, setPrimaryStorageError] = useState('');
 
   useEffect(() => {
     if (!desktopApi?.isDesktop || !desktopApi.getPOSOverflowFolder) return;
@@ -530,6 +538,109 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
     });
     return () => { active = false; };
   }, [desktopApi]);
+
+  useEffect(() => {
+    const onPrimaryStorageError = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      setPrimaryStorageError(message || 'The encrypted primary POS storage could not be read.');
+      setPrimaryReady(false);
+    };
+    const onPrimaryStorageCommitted = () => {
+      void desktopApi?.getPOSOverflowFolder?.().then(setFolderStatus).catch(() => {
+        setPrimaryStorageError('The new primary POS storage location could not be reloaded.');
+      });
+    };
+    window.addEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
+    window.addEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+    return () => {
+      window.removeEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
+      window.removeEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!folderStatus) return;
+    if (folderStatus.storageMode !== 'folder_primary') {
+      setDesktopProfilePrimary(false);
+      setPrimaryReady(false);
+      setPrimaryBooting(false);
+      setPrimaryUnlockRequired(false);
+      setPrimaryDirectory('');
+      setPrimaryStorageError('');
+      setUnlockError('');
+      return;
+    }
+    setDesktopProfilePrimary(false);
+    setPrimaryReady(false);
+    if (!folderStatus.available || !folderStatus.folderPath || !folderStatus.profileDirectory || !folderStatus.profileId) {
+      setPrimaryBooting(false);
+      return;
+    }
+    let active = true;
+    setPrimaryBooting(true);
+    setPrimaryUnlockRequired(false);
+    setPrimaryStorageError('');
+    setUnlockError('');
+    void (async () => {
+      const discovery = await discoverDesktopPOSProfiles(folderStatus.folderPath!);
+      if (discovery.available.length !== 1 || discovery.duplicates.length > 0 || discovery.invalid.length > 0) {
+        throw new Error('The selected folder must contain exactly one valid encrypted POS profile. No data was changed.');
+      }
+      const profile = discovery.available.find(item =>
+        item.profileId === folderStatus.profileId && item.directory === folderStatus.profileDirectory,
+      );
+      if (!profile) throw new Error('The configured primary POS profile was not found in the selected folder.');
+      if (active) setPrimaryDirectory(profile.directory);
+      try {
+        await unlockDesktopPOSProfileWithOS(profile.directory);
+      } catch {
+        if (active) {
+          setPrimaryUnlockRequired(true);
+          setUnlockError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
+        }
+        return;
+      }
+      await verifyAndActivatePrimaryProfile(folderStatus, profile.directory);
+      if (active) {
+        setPrimaryReady(true);
+        setPrimaryUnlockRequired(false);
+        setUnlockSecret('');
+      }
+    })().catch(error => {
+      if (active) setPrimaryStorageError(error instanceof Error ? error.message : 'Primary POS storage verification failed.');
+    }).finally(() => {
+      if (active) setPrimaryBooting(false);
+    });
+    return () => { active = false; };
+  }, [folderStatus]);
+
+  const unlockPrimaryProfile = async () => {
+    if (!primaryDirectory || !folderStatus || !unlockSecret.trim() || primaryBooting) return;
+    setPrimaryBooting(true);
+    setUnlockError('');
+    try {
+      if (unlockMode === 'passphrase') {
+        await unlockDesktopPOSProfileWithPassphrase(primaryDirectory, unlockSecret);
+      } else {
+        await unlockDesktopPOSProfileWithRecoveryKey(primaryDirectory, unlockSecret);
+      }
+    } catch (error) {
+      setUnlockError(error instanceof Error ? error.message : 'The profile could not be unlocked.');
+      setPrimaryBooting(false);
+      return;
+    }
+    try {
+      await verifyAndActivatePrimaryProfile(folderStatus, primaryDirectory);
+      setPrimaryReady(true);
+      setPrimaryUnlockRequired(false);
+      setUnlockSecret('');
+      setUnlockError('');
+    } catch (error) {
+      setPrimaryStorageError(error instanceof Error ? error.message : 'Primary POS storage verification failed.');
+    } finally {
+      setPrimaryBooting(false);
+    }
+  };
 
   const chooseFolder = async () => {
     if (!desktopApi?.choosePOSOverflowFolder || choosing) return;
@@ -575,18 +686,47 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
         </div>
       );
     }
-    return (
-      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
-        <div className="w-full max-w-xl rounded-2xl border border-amber-300 bg-white p-6 shadow-xl dark:border-amber-300/20 dark:bg-[#101a2d] sm:p-8">
-          <AlertTriangle size={28} className="mb-4 text-amber-600" />
-          <h1 className="text-xl font-black">Primary storage needs recovery startup</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-            The selected folder contains the primary POS profile. This app build does not yet have the verified folder-primary database startup adapter, so POS is paused instead of opening an older IndexedDB copy.
-          </p>
-          <p className="mt-3 text-xs text-slate-500">Storage profile: {folderStatus.profileId || 'identity unavailable'}</p>
+    if (primaryStorageError) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-red-600" />
+            <h1 className="text-xl font-black">Primary POS storage verification failed</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Nexfix has stopped POS instead of opening an older IndexedDB copy. Reconnect the original folder or restore the verified profile before continuing.
+            </p>
+            <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{primaryStorageError}</p>
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
+    if (primaryBooting || (!primaryReady && !primaryUnlockRequired)) return <RouteFallback />;
+    if (primaryUnlockRequired) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-amber-300 bg-white p-6 shadow-xl dark:border-amber-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-amber-600" />
+            <h1 className="text-xl font-black">Unlock primary POS storage</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              The original encrypted POS profile is present. This Windows account cannot unlock it automatically, so use the profile passphrase or recovery key. This is separate from your normal POS login.
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button type="button" onClick={() => setUnlockMode('passphrase')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'passphrase' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Passphrase</button>
+              <button type="button" onClick={() => setUnlockMode('recovery')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'recovery' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Recovery key</button>
+            </div>
+            <input type="password" value={unlockSecret} onChange={event => setUnlockSecret(event.target.value)}
+              placeholder={unlockMode === 'passphrase' ? 'POS profile passphrase' : 'POS profile recovery key'}
+              className="mt-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-cyan-500" />
+            {unlockError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{unlockError}</p>}
+            <button type="button" onClick={() => void unlockPrimaryProfile()} disabled={primaryBooting || !unlockSecret.trim()}
+              className="mt-5 w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {primaryBooting ? 'Verifying encrypted data…' : 'Unlock and verify POS data'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <>{children}</>;
   }
 
   if (folderStatus?.storageMode === 'unknown' || (folderStatus?.ok === false && folderStatus.configured)) {
