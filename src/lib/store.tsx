@@ -4153,6 +4153,10 @@ const deletePurchase = useCallback((id: string) => {
       // writers. Drain the backup scheduler before its nested backup executor.
       const mutationLease = await posMutationCoordinator.pause();
       releases.push(() => mutationLease.release());
+
+      // Stop queue sync early so no new network flush starts during the local
+      // snapshot window. Existing work is drained before restore/state reads.
+      releases.push(await pauseOfflineQueueFlush());
       releases.push(await pauseRestoreWork());
       releases.push(await pauseBackgroundPOSStateRefresh());
       flushSync(() => {});
@@ -4163,7 +4167,6 @@ const deletePurchase = useCallback((id: string) => {
       // queue-enqueue admission open until after it has completed.
       releases.push(await pauseStatePersistence(() => stateRef.current));
       releases.push(await pauseOfflineQueueMutations());
-      releases.push(await pauseOfflineQueueFlush());
 
       return releaseAll;
     } catch (error) {
