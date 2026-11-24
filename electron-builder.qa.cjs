@@ -15,7 +15,7 @@ module.exports = {
     app: '.',
     output: path.join(__dirname, 'release-qa'),
   },
-  files: ['**/*', '!**/node_modules/**'],
+  files: ['main.cjs', 'preload.cjs', 'package.json', 'prepare-qa-folder.cjs', 'folder-guard.cjs', 'dist/**/*'],
   npmRebuild: false,
   asar: true,
 };
