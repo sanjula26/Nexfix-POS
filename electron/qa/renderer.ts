@@ -136,7 +136,7 @@ async function migrateQaFixtureToEncryptedFolder(): Promise<void> {
       readSnapshot: async () => snapshot,
       buildPayloads: (current, state, queueSaved) => ({
         app_state: state,
-        sync_queue: { items: current?.queue ?? [], queueSaved },
+        sync_queue: current?.queue ?? [],
         meta: current?.meta ?? null,
         restore_checkpoint: current?.restoreCheckpoint ?? null,
       }),
@@ -299,10 +299,10 @@ injectButton.addEventListener('click', async () => {
     await new Promise<void>((resolve, reject) => {
       const transaction = database!.transaction('records', 'readwrite');
       const store = transaction.objectStore('records');
-      store.put({ id: 'app_state', value: { sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
+      store.put({ id: 'app_state', value: { products: [], users: [], sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
       store.put({ id: 'sync_queue', value: [{ id: 'QA-QUEUE-' + runId, kind: 'sale' }] });
-      store.put({ id: 'meta', value: { backupCount: 1, lastBackupAt: 'QA-' + runId } });
-      store.put({ id: 'restore_checkpoint', value: { checkpointId: 'QA-RESTORE-' + runId, status: 'verified' } });
+      store.put({ id: 'meta', value: { autoBackupHours: 6, backupCount: 1, lastBackupAt: 'QA-' + runId } });
+      store.put({ id: 'restore_checkpoint', value: null });
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error || new Error('Could not seed QA migration domains.'));
       transaction.onabort = () => reject(transaction.error || new Error('QA migration fixture seed was aborted.'));
