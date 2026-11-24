@@ -310,6 +310,35 @@ injectButton.addEventListener('click', async () => {
     await injectOneShotQuotaFailure(database, runId);
     if (!quotaEventReceived || !migrationPromise) throw new Error('The shared quota-warning event did not start migration.');
     await migrationPromise;
+
+    // Match the production startup gate's four-domain schema checks after
+    // cutover, so this QA run catches fixture drift before a profile is reused.
+    const migratedState = JSON.parse((await readDesktopProfilePayload('app_state')) || 'null');
+    if (!migratedState || !Array.isArray(migratedState.products) ||
+        !Array.isArray(migratedState.users) || !Array.isArray(migratedState.sales)) {
+      throw new Error('The encrypted QA app-state payload does not match the production startup schema.');
+    }
+    const migratedQueue = JSON.parse((await readDesktopProfilePayload('sync_queue')) || 'null');
+    if (!Array.isArray(migratedQueue)) {
+      throw new Error('The encrypted QA offline queue does not match the production startup schema.');
+    }
+    const migratedMeta = JSON.parse((await readDesktopProfilePayload('meta')) || 'null');
+    if (!migratedMeta || !Number.isFinite(migratedMeta.autoBackupHours) ||
+        !Number.isFinite(migratedMeta.backupCount)) {
+      throw new Error('The encrypted QA backup metadata does not match the production startup schema.');
+    }
+    const migratedCheckpoint = JSON.parse((await readDesktopProfilePayload('restore_checkpoint')) || 'null');
+    if (migratedCheckpoint !== null &&
+        (!Array.isArray(migratedCheckpoint.products) || !Array.isArray(migratedCheckpoint.users) ||
+         !Array.isArray(migratedCheckpoint.sales))) {
+      throw new Error('The encrypted QA restore checkpoint does not match the production startup schema.');
+    }
+    const completedJournal = await getDesktopPOSMigrationJournal();
+    if (!completedJournal || completedJournal.phase !== 'folder_primary' ||
+        Object.values(completedJournal.entries).some(entry => entry.status !== 'verified')) {
+      throw new Error('The encrypted QA migration journal is not fully verified and folder-primary.');
+    }
+
     const sourceState = await readQaRecord(database, 'app_state');
     if (!sourceState || (sourceState as { sales?: unknown[] }).sales?.length !== 1) throw new Error('The IndexedDB source fixture was not preserved after migration.');
   } catch (error) {
