@@ -217,3 +217,82 @@ test('IPC refuses arbitrary paths and does not permit multiple active profiles',
   assert.match(second.error, /Lock the currently open/);
   assert.equal(created.ok, true);
 });
+
+
+test('reopening an interrupted pre-cutover profile starts a fresh journal from the IndexedDB source', async (t) => {
+  const purposes = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
+  const details = { revision: 1, bytes: 12, sha256: 'a'.repeat(64) };
+
+  for (const interruptedPhase of ['snapshotting', 'copying', 'verifying', 'ready_to_cutover']) {
+    const ctx = setup(t);
+    await ctx.call('pos-profile:choose-storage-root');
+    const created = await ctx.call('pos-profile:create', {
+      storageRoot: ctx.root,
+      directoryName: 'Interrupted ' + interruptedPhase,
+      label: 'Disposable interrupted migration',
+      passphrase: 'Nexfix-IPC-Lock-2026',
+    });
+    assert.equal(created.ok, true, interruptedPhase);
+
+    const started = await ctx.call('pos-profile:migration:begin');
+    assert.equal(started.ok, true, interruptedPhase);
+    if (interruptedPhase !== 'snapshotting') {
+      await ctx.call('pos-profile:migration:transition', { nextPhase: 'copying' });
+      const copyCount = interruptedPhase === 'copying' ? 1 : purposes.length;
+      for (const purpose of purposes.slice(0, copyCount)) {
+        const copied = await ctx.call('pos-profile:migration:record-copy', { purpose, details });
+        assert.equal(copied.ok, true, interruptedPhase + ':' + purpose);
+      }
+    }
+    if (interruptedPhase === 'verifying' || interruptedPhase === 'ready_to_cutover') {
+      await ctx.call('pos-profile:migration:transition', { nextPhase: 'verifying' });
+      const verificationCount = interruptedPhase === 'verifying' ? 1 : purposes.length;
+      for (const purpose of purposes.slice(0, verificationCount)) {
+        const verified = await ctx.call('pos-profile:migration:record-verification', { purpose, details });
+        assert.equal(verified.ok, true, interruptedPhase + ':' + purpose);
+      }
+    }
+    if (interruptedPhase === 'ready_to_cutover') {
+      await ctx.call('pos-profile:migration:transition', { nextPhase: 'ready_to_cutover' });
+    }
+
+    // Simulate process shutdown: lock and clear the old IPC/session state.
+    ctx.api.clearSelections();
+
+    // Simulate a new Electron main-process registration against the same
+    // disposable folder. The encrypted profile/journal files remain on disk.
+    const handlers = new Map();
+    const restartedApi = registerPOSProfileIpc({
+      ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [ctx.root] }) },
+      BrowserWindow: { getAllWindows: () => [] },
+      safeStorage: safeStorage(),
+      isTrustedRenderer: () => true,
+      platform: 'linux',
+      markOverflowFolderPrimary: (directory, profileId) => ({
+        ok: true, available: true, storageMode: 'folder_primary', profileId, profileDirectory: directory,
+      }),
+      markOverflowFolderIndexedDBPrimary: () => ({ ok: true, storageMode: 'indexeddb' }),
+    });
+    const event = { sender: { mainFrame: {} }, senderFrame: {} };
+    const callAfterRestart = (channel, payload) => handlers.get(channel)(event, payload);
+
+    const selected = await callAfterRestart('pos-profile:choose-storage-root');
+    assert.equal(selected.ok, true, interruptedPhase);
+    const discovered = await callAfterRestart('pos-profile:discover', { storageRoot: ctx.root });
+    assert.equal(discovered.available.length, 1, interruptedPhase);
+    const unlocked = await callAfterRestart('pos-profile:unlock-passphrase', {
+      directory: discovered.available[0].directory,
+      secret: 'Nexfix-IPC-Lock-2026',
+    });
+    assert.equal(unlocked.ok, true, interruptedPhase);
+
+    const retried = await callAfterRestart('pos-profile:migration:begin');
+    assert.equal(retried.ok, true, interruptedPhase);
+    assert.equal(retried.journal.phase, 'snapshotting', interruptedPhase);
+    for (const purpose of purposes) {
+      assert.deepEqual(retried.journal.entries[purpose], { status: 'pending' }, interruptedPhase + ':' + purpose);
+    }
+    restartedApi.clearSelections();
+  }
+});
