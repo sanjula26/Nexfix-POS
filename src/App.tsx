@@ -9,6 +9,8 @@ import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigra
 import { subscribeToStorageQuotaWarnings, type StorageQuotaWarning } from './lib/storageOverflowEvents';
 import {
   createDesktopPOSProfile,
+  finalizeDesktopPOSProfileCreation,
+  getPendingDesktopPOSProfileCreation,
   discoverDesktopPOSProfiles,
   getConfiguredPOSOverflowFolder,
   getDesktopPOSMigrationJournal,
@@ -530,6 +532,7 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   const [primaryStorageError, setPrimaryStorageError] = useState('');
   const [profileSetupPhase, setProfileSetupPhase] = useState<'idle' | 'checking' | 'create' | 'recovery' | 'unlock' | 'ready' | 'error'>('idle');
   const [profileSetupDirectory, setProfileSetupDirectory] = useState('');
+  const [profileSetupPendingId, setProfileSetupPendingId] = useState('');
   const [profileSetupPassphrase, setProfileSetupPassphrase] = useState('');
   const [profileSetupConfirm, setProfileSetupConfirm] = useState('');
   const [profileSetupRecoveryKey, setProfileSetupRecoveryKey] = useState('');
@@ -549,6 +552,19 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
     setProfileSetupPhase('checking');
     setProfileSetupError('');
     void (async () => {
+      const pending = await getPendingDesktopPOSProfileCreation();
+      if (pending.pending && pending.pendingId && pending.profile && pending.recoveryKey) {
+        if (active) {
+          setProfileSetupPendingId(pending.pendingId);
+          setProfileSetupDirectory(pending.profile.directory);
+          setProfileSetupRecoveryKey(pending.recoveryKey);
+          setProfileSetupRecoveryAcknowledged(false);
+          setProfileSetupPassphrase('');
+          setProfileSetupConfirm('');
+          setProfileSetupPhase('recovery');
+        }
+        return;
+      }
       const discovery = await discoverDesktopPOSProfiles(folderStatus.folderPath!);
       if (discovery.duplicates.length > 0 || discovery.invalid.length > 0 || discovery.available.length > 1) {
         throw new Error('The selected folder must contain exactly one valid encrypted POS profile. No profile was changed.');
@@ -737,6 +753,7 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
         passphrase: profileSetupPassphrase,
       });
       setProfileSetupDirectory(created.profile.directory);
+      setProfileSetupPendingId(created.pendingId);
       setProfileSetupRecoveryKey(created.recoveryKey);
       setProfileSetupRecoveryAcknowledged(false);
       setProfileSetupPhase('recovery');
@@ -766,12 +783,31 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
     }
   };
 
-  const finishOverflowProfileSetup = () => {
-    if (!profileSetupRecoveryAcknowledged || !profileSetupRecoveryKey) return;
-    setProfileSetupRecoveryKey('');
-    setProfileSetupPassphrase('');
-    setProfileSetupConfirm('');
-    setProfileSetupPhase('ready');
+  const finishOverflowProfileSetup = async () => {
+    if (!profileSetupRecoveryAcknowledged || !profileSetupRecoveryKey || !profileSetupPendingId) return;
+    if (!profileSetupPassphrase) {
+      setProfileSetupError('Re-enter the storage passphrase to finalize this setup. The profile has not been saved yet.');
+      return;
+    }
+    setProfileSetupBusy(true);
+    setProfileSetupError('');
+    try {
+      const profile = await finalizeDesktopPOSProfileCreation({
+        pendingId: profileSetupPendingId,
+        passphrase: profileSetupPassphrase,
+        acknowledged: true,
+      });
+      setProfileSetupDirectory(profile.directory);
+      setProfileSetupPendingId('');
+      setProfileSetupRecoveryKey('');
+      setProfileSetupPassphrase('');
+      setProfileSetupConfirm('');
+      setProfileSetupPhase('ready');
+    } catch (cause) {
+      setProfileSetupError(cause instanceof Error ? cause.message : 'Could not finish encrypted POS profile setup.');
+    } finally {
+      setProfileSetupBusy(false);
+    }
   };
 
   const chooseFolder = async () => {
@@ -909,13 +945,16 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
             <div className="mt-6 space-y-3">
               <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. Nexfix shows it only once during profile creation.</p>
               <pre className="select-all break-all rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm text-slate-900 dark:border-white/15 dark:bg-black/30 dark:text-white">{profileSetupRecoveryKey}</pre>
+              <input type="password" value={profileSetupPassphrase} onChange={event => setProfileSetupPassphrase(event.target.value)}
+                placeholder="Re-enter storage passphrase to finish" autoComplete="new-password"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
               <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
                 <input type="checkbox" checked={profileSetupRecoveryAcknowledged} onChange={event => setProfileSetupRecoveryAcknowledged(event.target.checked)} className="mt-1" />
                 I saved the recovery key somewhere safe.
               </label>
-              <button type="button" onClick={finishOverflowProfileSetup} disabled={!profileSetupRecoveryAcknowledged}
+              <button type="button" onClick={() => void finishOverflowProfileSetup()} disabled={!profileSetupRecoveryAcknowledged || profileSetupBusy || !profileSetupPassphrase}
                 className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
-                Finish storage setup
+                {profileSetupBusy ? 'Verifying and saving profile…' : 'Finish storage setup'}
               </button>
             </div>
           )}
