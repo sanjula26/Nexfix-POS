@@ -82,6 +82,16 @@ type DesktopPOSMigrationResponse = {
 
 export type DesktopPOSProfileResult = {
   ok: boolean;
+  pendingId?: string;
+  profile?: Pick<DesktopPOSProfileSummary, 'directory' | 'profileId' | 'label'>;
+  recoveryKey?: string;
+  error?: string;
+};
+
+type PendingDesktopPOSProfileCreation = {
+  ok: boolean;
+  pending: boolean;
+  pendingId?: string;
   profile?: Pick<DesktopPOSProfileSummary, 'directory' | 'profileId' | 'label'>;
   recoveryKey?: string;
   error?: string;
@@ -92,6 +102,8 @@ type DesktopProfileApi = {
   getPOSOverflowFolder?: () => Promise<DesktopOverflowFolderStatus>;
   discoverPOSProfiles?: (storageRoot: string) => Promise<DesktopPOSProfileDiscovery>;
   createPOSProfile?: (payload: { storageRoot: string; directoryName: string; label: string; passphrase: string }) => Promise<DesktopPOSProfileResult>;
+  getPendingPOSProfileCreation?: () => Promise<PendingDesktopPOSProfileCreation>;
+  finalizePOSProfileCreation?: (payload: { pendingId: string; passphrase: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithOS?: (directory: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithPassphrase?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithRecoveryKey?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
@@ -219,14 +231,46 @@ export async function createDesktopPOSProfile(input: {
   directoryName: string;
   label: string;
   passphrase: string;
-}): Promise<{ profile: NonNullable<DesktopPOSProfileResult['profile']>; recoveryKey: string }> {
+}): Promise<{ pendingId: string; profile: NonNullable<DesktopPOSProfileResult['profile']>; recoveryKey: string }> {
   const api = requireDesktopProfileApi();
   if (typeof api.createPOSProfile !== 'function') throw new Error('POS profile creation bridge is unavailable.');
   const result = await api.createPOSProfile(input);
-  if (!result || result.ok !== true || !result.profile || typeof result.recoveryKey !== 'string') {
-    throw new Error(result?.error || 'Could not create the encrypted POS storage profile.');
+  if (!result || result.ok !== true || !result.pendingId || !result.profile || typeof result.recoveryKey !== 'string') {
+    throw new Error(result?.error || 'Could not prepare the encrypted POS storage profile.');
   }
-  return { profile: result.profile, recoveryKey: result.recoveryKey };
+  return { pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
+}
+
+export async function getPendingDesktopPOSProfileCreation(): Promise<{
+  pending: boolean;
+  pendingId?: string;
+  profile?: NonNullable<DesktopPOSProfileResult['profile']>;
+  recoveryKey?: string;
+}> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.getPendingPOSProfileCreation !== 'function') throw new Error('Pending POS profile setup bridge is unavailable.');
+  const result = await api.getPendingPOSProfileCreation();
+  if (!result || result.ok !== true) throw new Error(result?.error || 'Could not resume pending POS profile setup.');
+  return {
+    pending: result.pending === true,
+    pendingId: result.pendingId,
+    profile: result.profile,
+    recoveryKey: result.recoveryKey,
+  };
+}
+
+export async function finalizeDesktopPOSProfileCreation(input: {
+  pendingId: string;
+  passphrase: string;
+  acknowledged: boolean;
+}): Promise<NonNullable<DesktopPOSProfileResult['profile']>> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.finalizePOSProfileCreation !== 'function') throw new Error('POS profile acknowledgement bridge is unavailable.');
+  const result = await api.finalizePOSProfileCreation(input);
+  if (!result || result.ok !== true || !result.profile) {
+    throw new Error(result?.error || 'Could not finish encrypted POS profile setup.');
+  }
+  return result.profile;
 }
 
 export async function unlockDesktopPOSProfileWithOS(directory: string): Promise<void> {
