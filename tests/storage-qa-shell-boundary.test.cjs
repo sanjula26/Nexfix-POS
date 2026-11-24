@@ -19,7 +19,7 @@ function withoutComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
-test('QA main process keeps isolated identity, local-only navigation and loads only its bundled renderer', () => {
+test('QA main process keeps isolated identity, sentinel checks and trusted production profile IPC', () => {
   assert.match(qaMain, /app\.setName\(QA_APP_NAME\)/);
   assert.match(qaMain, /app\.setPath\('userData'/);
   assert.match(qaMain, /webRequest\.onBeforeRequest/);
@@ -29,18 +29,27 @@ test('QA main process keeps isolated identity, local-only navigation and loads o
   assert.match(qaMain, /nodeIntegration: false/);
   assert.match(qaMain, /sandbox: true/);
   assert.match(qaMain, /webSecurity: true/);
-  assert.match(qaMain, /ipcMain\.handle\(QA_FOLDER_CHANNEL/);
+  assert.match(qaMain, /createOverflowFolderManager/);
+  assert.match(qaMain, /registerPOSProfileIpc/);
+  assert.match(qaMain, /getConfiguredStorageRoot: getFolderPreference/);
+  assert.match(qaMain, /markOverflowFolderPrimary/);
+  assert.match(qaMain, /verifyQaFolderSentinel/);
   assert.match(qaMain, /event\.sender !== mainWindow\.webContents/);
   assert.match(qaMain, /prepareQaFolder/);
   assert.match(qaMain, /dist', 'index\.html/);
   assert.doesNotMatch(withoutComments(qaMain), /electron-updater|supabase|fetch\s*\(/i);
 });
 
-test('QA preload exposes only identity and disposable-folder selection', () => {
+test('QA preload exposes only the profile/storage bridge and QA folder action', () => {
   const executable = withoutComments(qaPreload);
+  assert.match(executable, /exposeInMainWorld\('nexfixDesktop'/);
   assert.match(executable, /exposeInMainWorld\('nexfixStorageQA'/);
+  assert.match(executable, /getPOSOverflowFolder/);
+  assert.match(executable, /createPOSProfile/);
+  assert.match(executable, /writePOSProfileData/);
+  assert.match(executable, /recordPOSMigrationVerification/);
   assert.match(executable, /chooseFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke/);
-  assert.doesNotMatch(executable, /send\s*\(|fetch\s*\(|supabase|updater/i);
+  assert.doesNotMatch(executable, /send\s*\(|fetch\s*\(|supabase|electron-updater|autoUpdater/i);
 });
 
 test('QA folder helper canonicalizes paths, rejects links, creates a new child and exclusive sentinel', () => {
@@ -52,30 +61,35 @@ test('QA folder helper canonicalizes paths, rejects links, creates a new child a
   assert.match(qaFolder, /assertOutsideProtectedPaths/);
 });
 
-test('QA renderer injects once into its isolated IndexedDB and uses the shared production event contract', () => {
+test('QA renderer uses production encrypted-profile APIs before one-shot isolated quota injection', () => {
   assert.match(qaHtml, /default-src 'none'/);
   assert.match(qaHtml, /script-src 'self'/);
   assert.match(qaHtml, /connect-src 'none'/);
-  assert.match(qaHtml, /type="module" src="\.\/renderer\.ts"/);
-  assert.match(qaRenderer, /from '\.\.\/\.\.\/src\/lib\/storageOverflowEvents\.ts'/);
+  assert.match(qaHtml, /id="create-profile"/);
+  assert.match(qaRenderer, /from '\.\.\/\.\.\/src\/lib\/desktopProfileStorage\.ts'/);
+  assert.match(qaRenderer, /createDesktopPOSProfile/);
+  assert.match(qaRenderer, /unlockDesktopPOSProfileWithOS/);
+  assert.match(qaRenderer, /writeDesktopProfilePayload/);
+  assert.match(qaRenderer, /readDesktopProfilePayload/);
   assert.match(qaRenderer, /nexfix_storage_qa_fixture_v1/);
   assert.match(qaRenderer, /new DOMException\([^\n]*QuotaExceededError/);
   assert.match(qaRenderer, /transaction\.abort\(\)/);
   assert.match(qaRenderer, /dispatchStorageQuotaWarning\(window/);
   assert.match(qaRenderer, /subscribeToStorageQuotaWarnings\(window/);
   assert.match(qaRenderer, /injectionUsed/);
-  assert.doesNotMatch(qaRenderer, /require\s*\(|process\.|ipcRenderer|fetch\s*\(|nexfixDesktop|supabase|electron-updater/i);
+  assert.doesNotMatch(qaRenderer, /require\s*\(|process\.|ipcRenderer|fetch\s*\(|supabase|electron-updater/i);
 });
 
-test('QA builder and Vite config package only the isolated compiled renderer', () => {
+test('QA builder and Vite config package only reviewed isolated QA and profile runtime assets', () => {
+  assert.match(qaBuilder, /'profile-runtime\/\*\*'/);
   assert.match(qaBuilder, /'dist\/\*\*\/\*'/);
-  assert.match(qaBuilder, /'main\.cjs'/);
   assert.match(qaVite, /outDir: path\.join\(root, 'electron\/qa\/dist'\)/);
   assert.match(qaVite, /entryFileNames: 'assets\/qa-renderer\.js'/);
 });
 
 test('QA Windows workflow builds renderer and isolated package without cloud config or publishing', () => {
   assert.match(workflow, /npm run build:qa:renderer/);
+  assert.match(workflow, /storage-qa-profile-runtime-parity\.test\.cjs/);
   assert.match(workflow, /--projectDir "\$env:GITHUB_WORKSPACE\/electron\/qa"/);
   assert.match(workflow, /verify:qa:asar/);
   assert.doesNotMatch(workflow, /upload-artifact|VITE_SUPABASE|SUPABASE_URL|R2|wrangler/i);
