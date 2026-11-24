@@ -67,7 +67,7 @@ test('QA renderer injects once into its isolated IndexedDB and uses the shared p
 });
 
 test('QA builder and Vite config package only the isolated compiled renderer', () => {
-  assert.match(qaBuilder, /'dist\/\*\*'/);
+  assert.match(qaBuilder, /'dist\/\*\*\/\*'/);
   assert.match(qaBuilder, /'main\.cjs'/);
   assert.match(qaVite, /outDir: path\.join\(root, 'electron\/qa\/dist'\)/);
   assert.match(qaVite, /entryFileNames: 'assets\/qa-renderer\.js'/);
