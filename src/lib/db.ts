@@ -1,5 +1,6 @@
 // Durable IndexedDB state and sync queue for Nexfix POS.
 import type { POSState } from './types';
+import { dispatchStorageQuotaWarning } from './storageOverflowEvents.ts';
 import {
   hasDesktopProfileRuntime,
   readDesktopProfileJson,
@@ -132,6 +133,15 @@ export function classifyIndexedDBWriteFailure(error: unknown): IndexedDBWriteFai
     return { kind: 'quota_exceeded', message: 'IndexedDB storage quota has been exceeded.' };
   }
   return { kind: 'write_failed', message: 'IndexedDB could not commit the requested data.' };
+}
+
+/** Report a real IndexedDB quota failure so the storage controller can migrate. */
+function reportIndexedDBWriteFailure(error: unknown): IndexedDBWriteFailure {
+  const failure = classifyIndexedDBWriteFailure(error);
+  if (failure.kind === 'quota_exceeded' && !desktopProfilePrimary && typeof window !== 'undefined') {
+    dispatchStorageQuotaWarning(window, { reason: 'quota_exceeded' });
+  }
+  return failure;
 }
 
 function idbTransactionComplete(tx: IDBTransaction, message: string): Promise<void> {
@@ -420,7 +430,7 @@ export async function idbSaveStateDetailed(state: POSState): Promise<IndexedDBWr
     await idbTransactionComplete(tx, 'State save failed');
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+    return { ok: false, error: reportIndexedDBWriteFailure(error) };
   }
 }
 export async function idbSaveState(state: POSState): Promise<boolean> {
@@ -440,7 +450,7 @@ export async function idbSaveRestoreCheckpointDetailed(state: POSState): Promise
     await idbTransactionComplete(tx, 'Restore checkpoint failed');
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+    return { ok: false, error: reportIndexedDBWriteFailure(error) };
   }
 }
 export async function idbSaveRestoreCheckpoint(state: POSState): Promise<boolean> {
@@ -469,7 +479,7 @@ export async function idbEnqueueDetailed(op: QueueInput): Promise<IndexedDBWrite
     await idbTransactionComplete(tx, 'Offline queue write failed');
     return { ok: true };
   } catch (error) {
-    return { ok: false, error: classifyIndexedDBWriteFailure(error) };
+    return { ok: false, error: reportIndexedDBWriteFailure(error) };
   }
 }
 export async function idbEnqueue(op: QueueInput): Promise<boolean> {
@@ -550,7 +560,7 @@ export async function idbSetMetaDetailed(
     }
     return { ok: true, value: next };
   } catch (error) {
-    return { ok: false, error: classifyIndexedDBWriteFailure(error), ...(next ? { value: next } : {}) };
+    return { ok: false, error: reportIndexedDBWriteFailure(error), ...(next ? { value: next } : {}) };
   }
 }
 export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta> {

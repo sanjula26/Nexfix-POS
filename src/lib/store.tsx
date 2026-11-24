@@ -376,7 +376,6 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
           detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
-      if (saved.error.kind === 'quota_exceeded') notifyIndexedDBQuotaWarning('quota_exceeded');
       return { stateSaved: false, queueSaved: false, failureKind: saved.error.kind };
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
@@ -416,7 +415,6 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
         : 'write_failed';
       queueSaved = false;
       queueFailureKind = failureKind;
-      if (failureKind === 'quota_exceeded') notifyIndexedDBQuotaWarning('quota_exceeded');
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
           detail: {

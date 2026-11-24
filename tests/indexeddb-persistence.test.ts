@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
+import { subscribeToStorageQuotaWarnings } from '../src/lib/storageOverflowEvents.ts';
 import {
   idbAcknowledgeQueue,
   idbClearQueue,
@@ -398,4 +399,44 @@ test('legacy POS profile snapshot captures state, restore checkpoint, queue and 
   assert.equal(result.snapshot.meta.autoBackupHours, 12);
   assert.equal(result.snapshot.meta.backupCount, 5);
   assert.equal(result.snapshot.hasAnyBusinessData, true);
+});
+
+
+test('all detailed IndexedDB write domains emit the quota warning used by automatic folder migration', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?quota-warning-handoff=${Date.now()}`);
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const target = new EventTarget();
+  const warnings: Array<{ reason: string }> = [];
+  const unsubscribe = subscribeToStorageQuotaWarnings(target, detail => warnings.push(detail));
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: target });
+
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = Array.isArray(args[0]) ? args[0] : [args[0]];
+    const isWrite = args[1] === 'readwrite';
+    if (isWrite && stores.some(name => ['app_state', 'sync_queue', 'meta'].includes(String(name)))) {
+      throw new DOMException('Injected quota failure', 'QuotaExceededError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    const state = { products: [], users: [], sales: [] } as unknown as POSState;
+    const results = await Promise.all([
+      reopenedDb.idbSaveStateDetailed(state),
+      reopenedDb.idbSaveRestoreCheckpointDetailed(state),
+      reopenedDb.idbEnqueueDetailed({ type: 'state_write', id: 'quota-warning-queue-test' }),
+      reopenedDb.idbSetMetaDetailed({ backupCount: 1 }),
+    ]);
+    assert.equal(results.every(result => !result.ok && result.error.kind === 'quota_exceeded'), true);
+    assert.equal(warnings.length, 4);
+    assert.deepEqual(warnings.map(item => item.reason), [
+      'quota_exceeded', 'quota_exceeded', 'quota_exceeded', 'quota_exceeded',
+    ]);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    unsubscribe();
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else delete (globalThis as { window?: unknown }).window;
+  }
 });
