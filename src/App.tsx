@@ -1026,6 +1026,7 @@ function StorageOverflowController() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const autoMigrationAttemptedRef = useRef(false);
+  const prepareMigrationRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
     const onQuotaWarning = (event: Event) => {
@@ -1086,10 +1087,12 @@ function StorageOverflowController() {
     }
   };
 
+  prepareMigrationRef.current = prepareMigration;
+
   useEffect(() => {
     if (warning?.reason !== 'quota_exceeded' || autoMigrationAttemptedRef.current) return;
     autoMigrationAttemptedRef.current = true;
-    void prepareMigration();
+    void prepareMigrationRef.current();
   }, [warning]);
 
   const createProfile = async () => {
