@@ -44,6 +44,6 @@ test('rejects a drive root and relative paths', () => {
 });
 
 test('fails closed when protected paths are missing or malformed', () => {
-  assert.throws(() => assertOutsideProtectedPaths('D:\\QA', [], win), /absolute/);
+  assert.throws(() => assertOutsideProtectedPaths('D:\\\\QA', [], win), /Protected POS storage locations are required/);
   assert.throws(() => assertOutsideProtectedPaths('D:\\QA', ['not-absolute'], win), /could not be validated/);
 });
