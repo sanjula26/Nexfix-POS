@@ -116,9 +116,15 @@ function registerPOSProfileIpc(options) {
 
   register('pos-profile:finalize-create', async (payload) => {
     const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
+    const storageRoot = typeof payload?.storageRoot === 'string' ? path.resolve(payload.storageRoot) : '';
     const passphrase = typeof payload?.passphrase === 'string' ? payload.passphrase : '';
-    if (!pendingId || pendingId.length > 128 || !passphrase || passphrase.length > MAX_PASSPHRASE_LENGTH) {
-      throw new Error('The pending POS profile confirmation is incomplete.');
+    const pending = profileSession.getPendingCreation();
+    const pendingRoot = pending.pending && pending.profile?.directory
+      ? path.dirname(pending.profile.directory)
+      : '';
+    if (!pendingId || pendingId.length > 128 || !storageRoot || storageRoot !== pendingRoot ||
+        !isSelectedStorageRoot(storageRoot) || !passphrase || passphrase.length > MAX_PASSPHRASE_LENGTH) {
+      throw new Error('The selected POS storage folder changed or the pending profile confirmation is incomplete. Re-select the original folder and try again.');
     }
     const result = await profileSession.finalizeCreate({
       pendingId,
