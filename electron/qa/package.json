@@ -1,0 +1,7 @@
+{
+  "name": "nexfix-pos-storage-qa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated offline-only Nexfix POS storage QA shell",
+  "main": "main.cjs"
+}

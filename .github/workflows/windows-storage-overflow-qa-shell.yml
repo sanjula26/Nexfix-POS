@@ -1,0 +1,52 @@
+name: Windows Storage Overflow QA Shell (No Publish)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'electron/qa/**'
+      - 'electron-builder.qa.cjs'
+      - 'scripts/verify-qa-asar.mjs'
+      - 'tests/production-package-boundary.test.cjs'
+      - 'tests/storage-qa-shell-boundary.test.cjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-storage-overflow-qa-shell.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: storage-overflow-qa-shell-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qa-shell:
+    name: Build isolated offline QA shell without publishing
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify production package boundary
+        run: npm run verify:boundaries
+
+      - name: Run domain and package-boundary tests
+        run: npm run test:domain
+
+      - name: Build isolated Windows QA shell without publishing
+        run: npx electron-builder --config electron-builder.qa.cjs --win --dir --publish never
+
+      - name: Verify QA ASAR contains only isolated shell files
+        run: npm run verify:qa:asar -- release-qa/win-unpacked/resources/app.asar

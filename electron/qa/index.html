@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Nexfix POS Storage QA</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f7fa; color: #172033; }
+    main { width: min(680px, calc(100% - 48px)); padding: 36px; border: 1px solid #d9e0ea; border-radius: 16px; background: #fff; box-shadow: 0 12px 36px rgba(20, 35, 60, .08); }
+    h1 { margin-top: 0; font-size: 26px; }
+    .status { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #e8f5ed; color: #17643a; font-size: 13px; font-weight: 600; }
+    p { line-height: 1.6; }
+    .notice { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #b7791f; background: #fff8e8; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="status">Offline-only QA shell</span>
+    <h1>Nexfix POS Storage QA</h1>
+    <p>This is a separate test application. It does not open the production POS profile, connect to cloud services, or contain the production POS renderer.</p>
+    <p>Dedicated test data directory: <code>%APPDATA%\Nexfix POS Storage QA</code></p>
+    <div class="notice">Storage migration controls are not enabled in this shell yet. Do not use real shop data or the production POS storage folder.</div>
+  </main>
+</body>
+</html>
