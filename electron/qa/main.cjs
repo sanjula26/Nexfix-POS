@@ -110,6 +110,13 @@ function createQaDialogAdapter() {
         return { canceled: true, filePaths: [] };
       }
 
+      const current = overflowFolderManager?.getPreference();
+      if (current?.storageMode === 'folder_primary') {
+        const reconnectPath = fs.realpathSync(selection.filePaths[0]);
+        verifyQaFolderSentinel(reconnectPath);
+        return { canceled: false, filePaths: [reconnectPath] };
+      }
+
       const prepared = await prepareQaFolder({
         selectedPath: selection.filePaths[0],
         protectedRoots: protectedStorageRoots(),
@@ -127,9 +134,7 @@ function registerQaStorageIpc() {
     if (!isTrustedQaRenderer(event)) return { ok: false, error: 'Untrusted QA renderer.' };
     const current = getFolderPreference();
     if (current.configured && current.available) return { ...current, canceled: false };
-    if (current.storageMode === 'folder_primary') {
-      return { ...current, ok: false, error: current.error || 'Reconnect the existing QA primary folder; do not replace it.' };
-    }
+    if (current.storageMode === 'folder_primary' && current.available) return current;
     const selected = await overflowFolderManager.chooseFolder();
     if (selected.ok && selected.available && selected.folderPath) {
       verifyQaFolderSentinel(selected.folderPath);
