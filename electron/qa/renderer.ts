@@ -100,6 +100,11 @@ async function refreshFolderStatus(): Promise<void> {
       profileButton.disabled = true;
       injectButton.disabled = true;
       result.textContent = folder.error || 'The QA primary folder is unavailable. Choose the same existing QA folder to reconnect it.';
+    } else {
+      chooseButton.disabled = false;
+      profileButton.disabled = true;
+      injectButton.disabled = true;
+      if (folder.configured) result.textContent = folder.error || 'The saved QA folder is unavailable. Choose a new disposable QA folder.';
     }
   } catch (error) {
     result.textContent = error instanceof Error ? error.message : 'Could not read the QA folder status.';
@@ -110,6 +115,9 @@ chooseButton.addEventListener('click', async () => {
   chooseButton.disabled = true;
   result.textContent = 'Waiting for folder selection and safety checks…';
   folderPathElement.textContent = '';
+  profileReady = false;
+  profileButton.disabled = true;
+  injectButton.disabled = true;
   try {
     const selection = await window.nexfixStorageQA.chooseFolder();
     if (selection.canceled) {
@@ -120,6 +128,8 @@ chooseButton.addEventListener('click', async () => {
   } catch (error) {
     result.textContent = error instanceof Error ? error.message : 'Folder selection failed safety validation.';
     chooseButton.disabled = false;
+  } finally {
+    if (!selectedFolder) chooseButton.disabled = false;
   }
 });
 
@@ -186,7 +196,7 @@ profileButton.addEventListener('click', async () => {
     try { await lockDesktopPOSProfile(); } catch { /* keep the QA profile locked after a failed test */ }
     result.textContent = 'Encrypted profile QA failed: ' + (error instanceof Error ? error.message : 'unknown error');
   } finally {
-    profileButton.disabled = false;
+    profileButton.disabled = profileReady;
   }
 });
 
