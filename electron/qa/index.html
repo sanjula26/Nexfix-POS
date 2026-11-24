@@ -30,7 +30,7 @@
     <button id="inject-quota" type="button" disabled>Run one-shot quota event test</button>
     <p id="result" role="status" aria-live="polite">No QA folder selected.</p>
     <code id="folder-path"></code>
-    <div class="notice">The encrypted-profile test uses the reviewed production profile/session and OS-unlock modules against disposable QA data. The quota test still uses a synthetic error and transaction abort; it does not fill a disk or run the migration coordinator yet.</div>
+    <div class="notice">The encrypted-profile test uses the reviewed production profile/session and OS-unlock modules against disposable QA data. The one-shot synthetic quota event invokes the automatic migration coordinator and verifies encrypted copy/read-back for all four data domains. It does not fill a disk or test process interruption/restart recovery yet.</div>
   </main>
   <script type="module" src="./renderer.ts"></script>
 </body>
