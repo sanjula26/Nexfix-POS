@@ -77,7 +77,7 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 
   // Load only the local QA shell. No production renderer or remote URL is used.
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, 'dist', 'index.html'));
 }
 
 app.whenReady().then(() => {
