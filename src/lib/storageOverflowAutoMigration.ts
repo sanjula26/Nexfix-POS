@@ -24,12 +24,13 @@ export type AutomaticOverflowDependencies = {
   }>;
   getProfileStatus: () => Promise<AutomaticOverflowProfileStatus>;
   unlockWithOS: (directory: string) => Promise<void>;
-  migrate: () => Promise<void>;
+  migrate: () => Promise<void | boolean>;
 };
 
 export type AutomaticOverflowResult =
   | { status: 'migrated'; profileId: string }
-  | { status: 'unlock_required'; profileDirectory: string };
+  | { status: 'unlock_required'; profileDirectory: string }
+  | { status: 'failed' };
 
 /**
  * Validate the pre-provisioned encrypted folder profile and migrate without
@@ -63,6 +64,7 @@ export async function runAutomaticPOSOverflowMigration(
     }
   }
 
-  await dependencies.migrate();
+  const migrationResult = await dependencies.migrate();
+  if (migrationResult === false) return { status: 'failed' };
   return { status: 'migrated', profileId: profile.profileId };
 }
