@@ -7,7 +7,7 @@ const entries = (await listPackage(archivePath)).map((entry) => entry
   .replace(/^\/+/, ''));
 
 for (const required of ['main.cjs', 'preload.cjs', 'index.html', 'package.json']) {
-  assert.ok(entries.includes(required), \`QA ASAR must contain \${required}.\`);
+  assert.ok(entries.includes(required), 'QA ASAR must contain ' + required + '.');
 }
 
 assert.equal(entries.some((entry) => entry.startsWith('node_modules/')), false,
@@ -20,4 +20,4 @@ assert.equal(entries.some((entry) => entry === 'electron/main.cjs' ||
   entry.endsWith('/electron/preload.cjs')), false,
   'The isolated QA shell must not package production Electron entrypoints.');
 
-console.log(\`QA ASAR boundary verified: \${archivePath} (\${entries.length} entries; isolated shell only).\`);
+console.log('QA ASAR boundary verified: ' + archivePath + ' (' + entries.length + ' entries; isolated shell only).');
