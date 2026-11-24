@@ -66,6 +66,16 @@ test('new POS profile is not persisted until recovery-key acknowledgement and pa
   assert.equal(pending.pending, true);
   assert.equal(pending.recoveryKey, prepared.recoveryKey);
 
+  const changedFolder = await ctx.call('pos-profile:finalize-create', {
+    pendingId: prepared.pendingId,
+    storageRoot: path.dirname(ctx.root),
+    passphrase: 'Nexfix-IPC-Lock-2026',
+    acknowledged: true,
+  });
+  assert.equal(changedFolder.ok, false);
+  assert.match(changedFolder.error, /storage folder changed/);
+  assert.equal(fs.existsSync(prepared.profile.directory), false);
+
   const noAck = await ctx.call('pos-profile:finalize-create', {
     pendingId: prepared.pendingId,
     storageRoot: ctx.root,
