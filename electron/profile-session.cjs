@@ -191,6 +191,12 @@ class POSProfileSession {
     };
   }
 
+  discardPendingCreation() {
+    if (this.pendingCreation) this.pendingCreation.recoveryKey = '';
+    this.pendingCreation = null;
+    return { ok: true };
+  }
+
   getPendingCreation() {
     const pending = this.pendingCreation;
     if (!pending) return { ok: true, pending: false };
@@ -220,6 +226,10 @@ class POSProfileSession {
     let directory = path.join(pending.storageRoot, pending.directoryName);
     try {
       if (fs.existsSync(directory)) {
+        const directoryStat = fs.lstatSync(directory);
+        if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+          throw new Error('The pending POS profile folder must be a real directory, not a link.');
+        }
         const existingManifest = readProfileManifest(directory);
         if (existingManifest.profileId !== pending.profileId) {
           throw new Error('The selected POS profile folder was created by another setup. No existing data was changed.');
