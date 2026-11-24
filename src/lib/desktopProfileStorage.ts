@@ -103,7 +103,7 @@ type DesktopProfileApi = {
   discoverPOSProfiles?: (storageRoot: string) => Promise<DesktopPOSProfileDiscovery>;
   createPOSProfile?: (payload: { storageRoot: string; directoryName: string; label: string; passphrase: string }) => Promise<DesktopPOSProfileResult>;
   getPendingPOSProfileCreation?: () => Promise<PendingDesktopPOSProfileCreation>;
-  finalizePOSProfileCreation?: (payload: { pendingId: string; passphrase: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
+  finalizePOSProfileCreation?: (payload: { pendingId: string; storageRoot: string; passphrase: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithOS?: (directory: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithPassphrase?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithRecoveryKey?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
@@ -261,6 +261,7 @@ export async function getPendingDesktopPOSProfileCreation(): Promise<{
 
 export async function finalizeDesktopPOSProfileCreation(input: {
   pendingId: string;
+  storageRoot: string;
   passphrase: string;
   acknowledged: boolean;
 }): Promise<NonNullable<DesktopPOSProfileResult['profile']>> {
