@@ -1041,7 +1041,7 @@ function StorageOverflowController() {
     return () => window.removeEventListener('nexfix:storage-quota-warning', onQuotaWarning);
   }, []);
 
-  const runMigration = async () => {
+  const runMigration = async (): Promise<boolean> => {
     setBusy(true);
     setPhase('copying');
     setError('');
@@ -1054,9 +1054,11 @@ function StorageOverflowController() {
       setWarning(null);
       setBlocking(false);
       autoMigrationAttemptedRef.current = false;
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Encrypted POS storage migration failed.');
       setPhase('error');
+      return false;
     } finally {
       setBusy(false);
     }
