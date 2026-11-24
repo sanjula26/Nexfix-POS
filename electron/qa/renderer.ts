@@ -300,11 +300,11 @@ injectButton.addEventListener('click', async () => {
   let database: IDBDatabase | null = null;
   try {
     database = await openQaDatabase();
-    await database.transaction('records', 'readwrite').objectStore('records').put({ id: 'app_state', value: { sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
     await writeBaseline(database, runId);
     await new Promise<void>((resolve, reject) => {
       const transaction = database!.transaction('records', 'readwrite');
       const store = transaction.objectStore('records');
+      store.put({ id: 'app_state', value: { sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
       store.put({ id: 'sync_queue', value: [{ id: 'QA-QUEUE-' + runId, kind: 'sale' }] });
       store.put({ id: 'meta', value: { backupCount: 1, lastBackupAt: 'QA-' + runId } });
       store.put({ id: 'restore_checkpoint', value: { checkpointId: 'QA-RESTORE-' + runId, status: 'verified' } });
