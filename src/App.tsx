@@ -1025,6 +1025,7 @@ function StorageOverflowController() {
   const [recoveryKey, setRecoveryKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const autoMigrationAttemptedRef = useRef(false);
 
   useEffect(() => {
     const onQuotaWarning = (event: Event) => {
@@ -1051,6 +1052,7 @@ function StorageOverflowController() {
       setUnlockSecret('');
       setWarning(null);
       setBlocking(false);
+      autoMigrationAttemptedRef.current = false;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Encrypted POS storage migration failed.');
       setPhase('error');
@@ -1063,36 +1065,19 @@ function StorageOverflowController() {
     setBusy(true);
     setError('');
     try {
-      const folder = await getConfiguredPOSOverflowFolder();
-      if (!folder.ok || !folder.available || folder.storageMode !== 'indexeddb' || !folder.folderPath) {
-        throw new Error(folder.error || 'Reconnect the selected POS storage folder before migrating data.');
+      const result = await runAutomaticPOSOverflowMigration({
+        getFolder: getConfiguredPOSOverflowFolder,
+        discoverProfiles: discoverDesktopPOSProfiles,
+        getProfileStatus: getDesktopPOSProfileStatus,
+        unlockWithOS: unlockDesktopPOSProfileWithOS,
+        migrate: runMigration,
+      });
+      if (result.status === 'unlock_required') {
+        setProfileDirectory(result.profileDirectory);
+        setUnlockMode('passphrase');
+        setPhase('unlock');
+        setError('Windows could not unlock the encrypted profile automatically. Enter the storage passphrase or recovery key to continue.');
       }
-      setFolderPath(folder.folderPath);
-      const discovery = await discoverDesktopPOSProfiles(folder.folderPath);
-      if (discovery.duplicates.length > 0 || discovery.invalid.length > 0 || discovery.available.length > 1) {
-        throw new Error('The selected folder has multiple or invalid POS profiles. No profile was deleted or overwritten.');
-      }
-      if (discovery.available.length === 0) {
-        setPhase('create');
-        return;
-      }
-      const profile = discovery.available[0];
-      setProfileDirectory(profile.directory);
-      const active = await getDesktopPOSProfileStatus();
-      if (active.unlocked && active.profile?.profileId !== profile.profileId) {
-        throw new Error('A different encrypted POS profile is already open. Close and reopen Nexfix before migrating.');
-      }
-      if (!active.unlocked) {
-        try {
-          await unlockDesktopPOSProfileWithOS(profile.directory);
-        } catch {
-          setUnlockMode('passphrase');
-          setPhase('unlock');
-          setError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
-          return;
-        }
-      }
-      await runMigration();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not prepare the encrypted POS folder.');
       setPhase('error');
@@ -1100,6 +1085,12 @@ function StorageOverflowController() {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (warning?.reason !== 'quota_exceeded' || autoMigrationAttemptedRef.current) return;
+    autoMigrationAttemptedRef.current = true;
+    void prepareMigration();
+  }, [warning]);
 
   const createProfile = async () => {
     if (passphrase.length < 12 || !/[A-Za-z]/.test(passphrase) || !/[0-9]/.test(passphrase)) {
@@ -1266,10 +1257,8 @@ function StorageOverflowController() {
         {phase === 'error' && (
           <div className="mt-6 space-y-3">
             <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>
-            {profileDirectory && (
-              <button type="button" onClick={() => void runMigration()} disabled={busy}
-                className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Retry migration</button>
-            )}
+            <button type="button" onClick={() => void prepareMigration()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Retry safe migration</button>
             <button type="button" onClick={() => void reconnectFolder()} disabled={busy}
               className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Reconnect / choose storage folder</button>
             {!profileDirectory && (
