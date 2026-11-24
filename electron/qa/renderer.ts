@@ -1,7 +1,7 @@
 import {
   dispatchStorageQuotaWarning,
   subscribeToStorageQuotaWarnings,
-} from '../../../src/lib/storageOverflowEvents.ts';
+} from '../../src/lib/storageOverflowEvents.ts';
 
 const chooseButton = document.getElementById('choose-folder') as HTMLButtonElement;
 const injectButton = document.getElementById('inject-quota') as HTMLButtonElement;
