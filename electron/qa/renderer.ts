@@ -1,4 +1,19 @@
+import { runAutomaticPOSOverflowMigration } from '../../src/lib/storageOverflowAutoMigration.ts';
 import {
+  runEncryptedPOSFolderMigration,
+  type MigrationDependencies,
+} from '../../src/lib/storageOverflowMigrationCore.ts';
+import {
+  beginDesktopPOSStorageMigration,
+  getDesktopPOSMigrationJournal,
+  getDesktopPOSProfileStatus,
+  lockDesktopPOSProfile,
+  readDesktopProfilePayload,
+  recordDesktopPOSMigrationCopy,
+  recordDesktopPOSMigrationVerification,
+  transitionDesktopPOSStorageMigration,
+  unlockDesktopPOSProfileWithOS,
+  writeDesktopProfilePayload,
   createDesktopPOSProfile,
   discoverDesktopPOSProfiles,
   getConfiguredPOSOverflowFolder,
@@ -24,11 +39,34 @@ let selectedFolder: string | null = null;
 let profileReady = false;
 let injectionUsed = false;
 let quotaEventReceived = false;
+let migrationPromise: Promise<void> | null = null;
 
 subscribeToStorageQuotaWarnings(window, detail => {
-  if (detail.reason !== 'quota_exceeded') return;
+  if (detail.reason !== 'quota_exceeded' || migrationPromise) return;
   quotaEventReceived = true;
-  result.textContent = 'PASS: the shared production quota-warning event was received. The encrypted migration coordinator is not wired yet.';
+  result.textContent = 'Quota warning received. Starting the real automatic encrypted-folder migration coordinator…';
+  migrationPromise = runAutomaticPOSOverflowMigration({
+    getFolder: getConfiguredPOSOverflowFolder,
+    discoverProfiles: async root => {
+      const found = await discoverDesktopPOSProfiles(root);
+      return { available: found.available, duplicates: found.duplicates, invalid: found.invalid };
+    },
+    getProfileStatus: getDesktopPOSProfileStatus,
+    unlockWithOS: unlockDesktopPOSProfileWithOS,
+    migrate: async () => { await migrateQaFixtureToEncryptedFolder(); },
+  }).then(async outcome => {
+    if (outcome.status === 'migrated') {
+      result.textContent = 'PASS: automatic migration completed for profile ' + outcome.profileId + '. All four encrypted domains were read back and verified; IndexedDB fixture remains intact.';
+      await refreshFolderStatus();
+    } else if (outcome.status === 'unlock_required') {
+      result.textContent = 'BLOCKED: Windows OS unlock is unavailable. Manual passphrase/recovery-key unlock is required for ' + outcome.profileDirectory + '.';
+    } else {
+      throw new Error('The automatic encrypted-folder migration did not complete.');
+    }
+  }).catch(error => {
+    result.textContent = 'Migration QA failed safely: ' + (error instanceof Error ? error.message : 'unknown error');
+    throw error;
+  });
 });
 
 function openQaDatabase(): Promise<IDBDatabase> {
@@ -71,6 +109,58 @@ function injectOneShotQuotaFailure(database: IDBDatabase, runId: string): Promis
     }, { once: true });
     transaction.abort();
   });
+}
+
+function readQaRecord(database: IDBDatabase, id: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('records', 'readonly');
+    const request = transaction.objectStore('records').get(id);
+    request.onsuccess = () => resolve(request.result?.value ?? null);
+    request.onerror = () => reject(request.error || new Error('Could not read the disposable QA fixture.'));
+  });
+}
+
+async function migrateQaFixtureToEncryptedFolder(): Promise<void> {
+  const database = await openQaDatabase();
+  try {
+    const latestState = await readQaRecord(database, 'app_state');
+    if (!latestState || typeof latestState !== 'object') throw new Error('The QA app-state fixture is missing.');
+    const snapshot = {
+      queue: await readQaRecord(database, 'sync_queue'),
+      meta: await readQaRecord(database, 'meta'),
+      restoreCheckpoint: await readQaRecord(database, 'restore_checkpoint'),
+    };
+    const dependencies: MigrationDependencies<{ phase: string }, typeof snapshot, unknown> = {
+      getProfileStatus: getDesktopPOSProfileStatus,
+      pauseStorageMaintenance: async () => ({
+        latestState,
+        stateSaved: false,
+        queueSaved: false,
+        release: () => undefined,
+      }),
+      readSnapshot: async () => snapshot,
+      buildPayloads: (current, state, queueSaved) => ({
+        app_state: state,
+        sync_queue: { items: current?.queue ?? [], queueSaved },
+        meta: current?.meta ?? null,
+        restore_checkpoint: current?.restoreCheckpoint ?? null,
+      }),
+      getJournal: getDesktopPOSMigrationJournal,
+      begin: beginDesktopPOSStorageMigration,
+      transition: transitionDesktopPOSStorageMigration,
+      recordCopy: recordDesktopPOSMigrationCopy,
+      recordVerification: recordDesktopPOSMigrationVerification,
+      writePayload: writeDesktopProfilePayload,
+      readPayload: readDesktopProfilePayload,
+      // The trusted migration:folder_primary IPC transition commits the QA
+      // folder marker and encrypted journal atomically before this callback.
+      setFolderPrimary: () => undefined,
+      onCutoverUncertain: message => { result.textContent = message; },
+    };
+    await runEncryptedPOSFolderMigration(dependencies);
+  } finally {
+    database.close();
+  }
 }
 
 function createEphemeralPassphrase(): string {
@@ -187,8 +277,8 @@ profileButton.addEventListener('click', async () => {
     await unlockDesktopPOSProfileWithOS(profileDirectory);
     const osUnlockedRead = await readDesktopProfilePayload('app_state');
     if (osUnlockedRead !== sample) throw new Error('Windows OS unlock did not restore the encrypted QA profile payload.');
-    await lockDesktopPOSProfile();
-
+    // Keep the disposable QA profile unlocked so the quota event can exercise
+    // the same OS-unlocked automatic migration path used by the desktop app.
     profileReady = true;
     injectButton.disabled = false;
     result.textContent = 'PASS: encrypted profile round-trip and Windows OS unlock verified for QA profile ' + profileId + '. Recovery key was not displayed or saved.';
@@ -210,10 +300,23 @@ injectButton.addEventListener('click', async () => {
   let database: IDBDatabase | null = null;
   try {
     database = await openQaDatabase();
+    await database.transaction('records', 'readwrite').objectStore('records').put({ id: 'app_state', value: { sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
     await writeBaseline(database, runId);
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database!.transaction('records', 'readwrite');
+      const store = transaction.objectStore('records');
+      store.put({ id: 'sync_queue', value: [{ id: 'QA-QUEUE-' + runId, kind: 'sale' }] });
+      store.put({ id: 'meta', value: { backupCount: 1, lastBackupAt: 'QA-' + runId } });
+      store.put({ id: 'restore_checkpoint', value: { checkpointId: 'QA-RESTORE-' + runId, status: 'verified' } });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('Could not seed QA migration domains.'));
+      transaction.onabort = () => reject(transaction.error || new Error('QA migration fixture seed was aborted.'));
+    });
     await injectOneShotQuotaFailure(database, runId);
-    if (!quotaEventReceived) throw new Error('The shared quota-warning event was not received.');
-    result.textContent = 'PASS — QA run ' + runId + ': transaction abort and shared quota event verified. Encrypted profile round-trip passed; migration is not yet wired.';
+    if (!quotaEventReceived || !migrationPromise) throw new Error('The shared quota-warning event did not start migration.');
+    await migrationPromise;
+    const sourceState = await readQaRecord(database, 'app_state');
+    if (!sourceState || (sourceState as { sales?: unknown[] }).sales?.length !== 1) throw new Error('The IndexedDB source fixture was not preserved after migration.');
   } catch (error) {
     result.textContent = 'QA test failed: ' + (error instanceof Error ? error.message : 'unknown error');
   } finally {
