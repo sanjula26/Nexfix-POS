@@ -1,10 +1,12 @@
 'use strict';
 
 const path = require('node:path');
-const { app, BrowserWindow, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
+const { prepareQaFolder } = require('./prepare-qa-folder.cjs');
 
 const QA_APP_NAME = 'Nexfix POS Storage QA';
 const QA_USER_DATA_DIRECTORY = 'Nexfix POS Storage QA';
+const QA_FOLDER_CHANNEL = 'nexfix-storage-qa:choose-folder';
 
 // Set a dedicated app name and user-data directory before Electron becomes ready.
 // This prevents the QA shell from opening or modifying the production POS profile.
@@ -12,6 +14,42 @@ app.setName(QA_APP_NAME);
 app.setPath('userData', path.join(app.getPath('appData'), QA_USER_DATA_DIRECTORY));
 
 let mainWindow = null;
+
+function protectedStorageRoots() {
+  // Production POS userData is under appData; protecting appData protects it
+  // even when the production profile directory has not been created yet.
+  const roots = [
+    app.getPath('appData'),
+    path.dirname(app.getPath('exe')),
+    process.env.SystemRoot || process.env.WINDIR,
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+  ];
+  return [...new Set(roots.filter((entry) => typeof entry === 'string' && entry.trim()))];
+}
+
+function registerQaFolderPicker() {
+  ipcMain.handle(QA_FOLDER_CHANNEL, async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('QA folder selection is available only to the isolated QA window.');
+    }
+
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose a disposable Nexfix Storage QA parent folder',
+      buttonLabel: 'Use this folder for QA',
+      properties: ['openDirectory'],
+    });
+    if (selection.canceled || selection.filePaths.length !== 1) {
+      return { cancelled: true };
+    }
+
+    const prepared = await prepareQaFolder({
+      selectedPath: selection.filePaths[0],
+      protectedRoots: protectedStorageRoots(),
+    });
+    return { cancelled: false, folderPath: prepared.folderPath };
+  });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -56,6 +94,7 @@ app.whenReady().then(() => {
     contents.on('will-attach-webview', (event) => event.preventDefault());
   });
 
+  registerQaFolderPicker();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

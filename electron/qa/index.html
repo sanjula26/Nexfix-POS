@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Nexfix POS Storage QA</title>
   <style>
     :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
@@ -13,16 +13,23 @@
     .status { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #e8f5ed; color: #17643a; font-size: 13px; font-weight: 600; }
     p { line-height: 1.6; }
     .notice { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #b7791f; background: #fff8e8; }
-    code { overflow-wrap: anywhere; }
+    button { padding: 10px 16px; border: 0; border-radius: 8px; background: #174ea6; color: white; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    code { display: block; margin-top: 12px; overflow-wrap: anywhere; }
+    #result { min-height: 24px; }
   </style>
 </head>
 <body>
   <main>
     <span class="status">Offline-only QA shell</span>
     <h1>Nexfix POS Storage QA</h1>
-    <p>This is a separate test application. It does not open the production POS profile, connect to cloud services, or contain the production POS renderer.</p>
-    <p>Dedicated test data directory: <code>%APPDATA%\Nexfix POS Storage QA</code></p>
-    <div class="notice">Storage migration controls are not enabled in this shell yet. Do not use real shop data or the production POS storage folder.</div>
+    <p>This separate test application does not open the production POS profile or connect to cloud services.</p>
+    <p>Choose a parent folder used only for disposable QA data. The app creates a new child folder and an exclusive QA sentinel; it never clears or reuses existing folder contents.</p>
+    <button id="choose-folder" type="button">Choose disposable QA folder</button>
+    <p id="result" role="status" aria-live="polite">No QA folder selected.</p>
+    <code id="folder-path"></code>
+    <div class="notice">Folder safety selection only. Quota injection, storage migration, and interruption testing are not enabled yet. Never choose real shop data or the production POS storage folder.</div>
   </main>
+  <script src="./renderer.cjs"></script>
 </body>
 </html>

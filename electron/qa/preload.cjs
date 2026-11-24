@@ -1,10 +1,11 @@
 'use strict';
 
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
-// Identity-only bridge for the isolated shell. No filesystem, IPC, quota,
-// migration, profile, updater, cloud or production POS methods are exposed.
+// Expose one narrowly scoped QA-only folder selection operation.
+// No production POS, profile, updater, cloud, or migration APIs are exposed.
 contextBridge.exposeInMainWorld('nexfixStorageQA', Object.freeze({
   appName: 'Nexfix POS Storage QA',
-  mode: 'offline-only-shell',
+  mode: 'offline-only-folder-safety',
+  chooseFolder: () => ipcRenderer.invoke('nexfix-storage-qa:choose-folder'),
 }));
