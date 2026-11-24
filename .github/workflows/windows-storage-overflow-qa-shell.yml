@@ -5,12 +5,15 @@ on:
     branches: [main]
     paths:
       - 'electron/qa/**'
+      - 'vite.config.qa.ts'
+      - 'src/lib/storageOverflowEvents.ts'
       - 'electron-builder.qa.cjs'
       - 'scripts/verify-qa-asar.mjs'
       - 'tests/production-package-boundary.test.cjs'
       - 'tests/storage-qa-shell-boundary.test.cjs'
       - 'tests/storage-qa-folder-guard.test.cjs'
       - 'tests/storage-qa-folder-picker.test.cjs'
+      - 'tests/storage-qa-quota-injection.test.ts'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/windows-storage-overflow-qa-shell.yml'
@@ -40,6 +43,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Build isolated QA renderer
+        run: npm run build:qa:renderer
 
       - name: Verify production package boundary
         run: npm run verify:boundaries
