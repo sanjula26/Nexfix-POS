@@ -9,6 +9,7 @@ on:
       - 'scripts/verify-qa-asar.mjs'
       - 'tests/production-package-boundary.test.cjs'
       - 'tests/storage-qa-shell-boundary.test.cjs'
+      - 'tests/storage-qa-folder-guard.test.cjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/windows-storage-overflow-qa-shell.yml'
