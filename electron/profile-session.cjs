@@ -278,6 +278,21 @@ class POSProfileSession {
       pending.recoveryKey = '';
       this.pendingCreation = null;
       return { ok: true, profile };
+    } catch (error) {
+      // If finalization failed before the encrypted key envelope was saved,
+      // remove only the manifest-only directory created for this pending ID.
+      // A complete profile is preserved so an acknowledged key can recover it.
+      try {
+        if (directory && fs.existsSync(directory)) {
+          const manifest = readProfileManifest(directory);
+          const names = fs.readdirSync(directory);
+          if (manifest.profileId === pending.profileId &&
+              names.length === 1 && names[0] === 'nexfix-profile.json') {
+            fs.rmdirSync(directory);
+          }
+        }
+      } catch { /* leave uncertain filesystem state visible; never delete unknown files */ }
+      throw error;
     } finally {
       if (dataKey) dataKey.fill(0);
       if (this.pendingCreation === pending) pending.finalizing = false;
