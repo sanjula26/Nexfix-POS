@@ -5,6 +5,9 @@ import {
 } from '../../src/lib/storageOverflowMigrationCore.ts';
 import {
   beginDesktopPOSStorageMigration,
+  createDesktopPOSProfile,
+  discoverDesktopPOSProfiles,
+  getConfiguredPOSOverflowFolder,
   getDesktopPOSMigrationJournal,
   getDesktopPOSProfileStatus,
   lockDesktopPOSProfile,
@@ -12,14 +15,6 @@ import {
   recordDesktopPOSMigrationCopy,
   recordDesktopPOSMigrationVerification,
   transitionDesktopPOSStorageMigration,
-  unlockDesktopPOSProfileWithOS,
-  writeDesktopProfilePayload,
-  createDesktopPOSProfile,
-  discoverDesktopPOSProfiles,
-  getConfiguredPOSOverflowFolder,
-  getDesktopPOSProfileStatus,
-  lockDesktopPOSProfile,
-  readDesktopProfilePayload,
   unlockDesktopPOSProfileWithOS,
   writeDesktopProfilePayload,
 } from '../../src/lib/desktopProfileStorage.ts';
