@@ -3,7 +3,7 @@ import { listPackage } from '@electron/asar';
 
 const archivePath = process.argv[2] || 'release/win-unpacked/resources/app.asar';
 const entries = await listPackage(archivePath);
-const normalized = entries.map((entry) => entry.split(String.fromCharCode(92)).join('/').replace(/^\\/+/, ''));
+const normalized = entries.map((entry) => entry.split(String.fromCharCode(92)).join('/'));
 
 assert.ok(normalized.includes('electron/main.cjs'), 'Production ASAR must contain the production Electron main entry.');
 assert.ok(normalized.includes('electron/preload.cjs'), 'Production ASAR must contain the production preload.');
