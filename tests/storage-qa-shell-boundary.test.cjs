@@ -34,7 +34,7 @@ test('QA main process keeps isolated identity, sentinel checks and trusted produ
   assert.match(qaMain, /getConfiguredStorageRoot: getFolderPreference/);
   assert.match(qaMain, /markOverflowFolderPrimary/);
   assert.match(qaMain, /verifyQaFolderSentinel/);
-  assert.match(qaMain, /event\.sender !== mainWindow\.webContents/);
+  assert.match(qaMain, /event\?\.sender === mainWindow\.webContents/);
   assert.match(qaMain, /prepareQaFolder/);
   assert.match(qaMain, /dist', 'index\.html/);
   assert.doesNotMatch(withoutComments(qaMain), /electron-updater|supabase|fetch\s*\(/i);
@@ -81,7 +81,7 @@ test('QA renderer uses production encrypted-profile APIs before one-shot isolate
 });
 
 test('QA builder and Vite config package only reviewed isolated QA and profile runtime assets', () => {
-  assert.match(qaBuilder, /'profile-runtime\/\*\*'/);
+  assert.match(qaBuilder, /'profile-runtime\/\*\*\/\*'/);
   assert.match(qaBuilder, /'dist\/\*\*\/\*'/);
   assert.match(qaVite, /outDir: path\.join\(root, 'electron\/qa\/dist'\)/);
   assert.match(qaVite, /entryFileNames: 'assets\/qa-renderer\.js'/);
