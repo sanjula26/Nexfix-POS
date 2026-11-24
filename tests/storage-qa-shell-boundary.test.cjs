@@ -47,6 +47,8 @@ test('QA preload exposes only the profile/storage bridge and QA folder action', 
   assert.match(executable, /getPOSOverflowFolder/);
   assert.match(executable, /createPOSProfile/);
   assert.match(executable, /writePOSProfileData/);
+  assert.match(executable, /isDesktop: true/);
+  assert.doesNotMatch(executable, /unlockPOSProfileWithPassphrase|unlockPOSProfileWithRecoveryKey|changePOSProfilePassphrase|resetPOSProfilePassphrase|choosePOSStorageRoot/);
   assert.match(executable, /recordPOSMigrationVerification/);
   assert.match(executable, /chooseFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke/);
   assert.doesNotMatch(executable, /send\s*\(|fetch\s*\(|supabase|electron-updater|autoUpdater/i);
