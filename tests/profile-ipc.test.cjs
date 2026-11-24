@@ -303,7 +303,7 @@ test('persists interrupted migration journal across independent process exit and
   const parentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-process-restart-'));
   t.after(() => fs.rmSync(parentRoot, { recursive: true, force: true }));
   const phases = ['snapshotting', 'copying', 'verifying', 'ready_to_cutover'];
-  const childScript = String.raw\`
+  const childScript = String.raw`
     'use strict';
     const { registerPOSProfileIpc } = require('./electron/profile-ipc.cjs');
     const [root, phase, mode] = process.argv.slice(1);
@@ -402,7 +402,7 @@ test('persists interrupted migration journal across independent process exit and
       process.stderr.write(error instanceof Error ? error.stack : String(error));
       process.exitCode = 1;
     });
-  \`;
+  `;
 
   for (const phase of phases) {
     const root = path.join(parentRoot, phase);
