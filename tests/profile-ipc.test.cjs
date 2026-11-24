@@ -306,7 +306,6 @@ test('persists interrupted migration journal across independent process exit and
   const childScript = String.raw\`
     'use strict';
     const { registerPOSProfileIpc } = require('./electron/profile-ipc.cjs');
-    const { createMigrationJournal } = require('./electron/profile-migration.cjs');
     const [root, phase, mode] = process.argv.slice(1);
     const handlers = new Map();
     const api = registerPOSProfileIpc({
