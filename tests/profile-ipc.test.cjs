@@ -383,6 +383,10 @@ test('persists interrupted migration journal across independent process exit and
         secret: passphrase,
       });
       if (!unlocked.ok) throw new Error(unlocked.error);
+      const persisted = await call('pos-profile:migration:status');
+      if (!persisted.ok || persisted.journal?.phase !== phase) {
+        throw new Error('The interrupted migration phase was not persisted across process exit.');
+      }
       const retried = await call('pos-profile:migration:begin');
       if (!retried.ok || retried.journal.phase !== 'snapshotting') {
         throw new Error('Interrupted migration did not restart from the IndexedDB source.');
