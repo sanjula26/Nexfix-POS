@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const { createManagedProfileDirectory, readProfileManifest, classifyProfileCandidates } = require('./storage-profile.cjs');
+const { createManagedProfileDirectory, createProfileManifest, readProfileManifest, classifyProfileCandidates } = require('./storage-profile.cjs');
 const {
   createInitialProfileKeyEnvelope,
   persistNewProfileKeyEnvelope,
@@ -54,6 +54,7 @@ class POSProfileSession {
     this.resolveUserSid = options.resolveUserSid || resolveCurrentWindowsUserSid;
     this.applyAcl = options.applyAcl || applyWindowsProfileAcl;
     this.active = null;
+    this.pendingCreation = null;
   }
 
   assertSafeStorage() {
@@ -151,6 +152,121 @@ class POSProfileSession {
       if (dataKey) dataKey.fill(0);
       recoveryKey = '';
       throw error;
+    }
+  }
+
+  async prepareCreate({ storageRoot, directoryName, label, passphrase }) {
+    if (this.active) throw new Error('Lock the currently open POS profile before creating another profile.');
+    if (this.pendingCreation) throw new Error('Finish or restart the pending POS profile recovery-key acknowledgement first.');
+    this.assertSafeStorage();
+    validateLockPassphrase(passphrase);
+    if (typeof directoryName !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(directoryName) ||
+        directoryName === '.' || directoryName === '..') {
+      throw new Error('The POS profile folder name contains unsupported characters.');
+    }
+    const safeStorageRoot = resolveStorageRoot(storageRoot);
+    const profileId = crypto.randomUUID();
+    const manifest = createProfileManifest({ profileId, label, dataSchemaVersion: 1 });
+    const directory = path.join(safeStorageRoot, directoryName);
+    if (fs.existsSync(directory)) {
+      throw new Error('A folder with this POS profile name already exists. Choose or reconnect the correct profile folder.');
+    }
+    const keyMaterial = await createInitialProfileKeyEnvelope(profileId, this.safeStorage, passphrase);
+    const pendingId = crypto.randomBytes(32).toString('base64url');
+    this.pendingCreation = {
+      pendingId,
+      storageRoot: safeStorageRoot,
+      directoryName,
+      profileId,
+      manifest,
+      envelope: keyMaterial.envelope,
+      recoveryKey: keyMaterial.recoveryKey,
+    };
+    return {
+      ok: true,
+      pendingId,
+      profile: { directory, profileId, label: manifest.label },
+      recoveryKey: keyMaterial.recoveryKey,
+    };
+  }
+
+  getPendingCreation() {
+    const pending = this.pendingCreation;
+    if (!pending) return { ok: true, pending: false };
+    return {
+      ok: true,
+      pending: true,
+      pendingId: pending.pendingId,
+      profile: {
+        directory: path.join(pending.storageRoot, pending.directoryName),
+        profileId: pending.profileId,
+        label: pending.manifest.label,
+      },
+      recoveryKey: pending.recoveryKey,
+    };
+  }
+
+  async finalizeCreate({ pendingId, passphrase, acknowledged }) {
+    const pending = this.pendingCreation;
+    if (!pending || typeof pendingId !== 'string' || pendingId !== pending.pendingId) {
+      throw new Error('The pending POS profile setup expired. Start profile setup again.');
+    }
+    if (acknowledged !== true) throw new Error('Confirm that the recovery key has been saved before finishing POS profile setup.');
+    if (this.active) throw new Error('Lock the currently open POS profile before finishing profile setup.');
+    this.assertSafeStorage();
+    validateLockPassphrase(passphrase);
+    const dataKey = await unwrapDataKeyWithPassphrase(pending.envelope.passphraseWrappedKey, passphrase, pending.profileId);
+    let directory = path.join(pending.storageRoot, pending.directoryName);
+    try {
+      if (fs.existsSync(directory)) {
+        const existingManifest = readProfileManifest(directory);
+        if (existingManifest.profileId !== pending.profileId) {
+          throw new Error('The selected POS profile folder was created by another setup. No existing data was changed.');
+        }
+        const names = fs.readdirSync(directory).sort();
+        if (names.includes('nexfix-key-envelope.json')) {
+          const existingEnvelope = readProfileKeyEnvelope(directory, pending.profileId);
+          if (JSON.stringify(existingEnvelope) !== JSON.stringify(pending.envelope)) {
+            throw new Error('The pending POS profile key does not match the folder already on disk.');
+          }
+        } else if (names.length === 1 && names[0] === 'nexfix-profile.json') {
+          // This is only the manifest from this pending setup; no profile data
+          // or key envelope exists yet, so safely retry the exclusive creation.
+          fs.rmSync(directory, { recursive: false });
+          directory = '';
+        } else {
+          throw new Error('The pending POS profile folder contains unexpected files. No existing data was changed.');
+        }
+      }
+      if (!directory || !fs.existsSync(directory)) {
+        const created = createManagedProfileDirectory(pending.storageRoot, pending.directoryName, {
+          profileId: pending.profileId,
+          label: pending.manifest.label,
+          dataSchemaVersion: 1,
+        });
+        directory = created.directory;
+        persistNewProfileKeyEnvelope(directory, pending.envelope);
+      }
+      const envelope = readProfileKeyEnvelope(directory, pending.profileId);
+      const verifiedKey = await unwrapDataKeyWithPassphrase(envelope.passphraseWrappedKey, passphrase, pending.profileId);
+      const sameKey = verifiedKey.equals(dataKey);
+      verifiedKey.fill(0);
+      if (!sameKey) throw new Error('The saved POS profile key did not match the verified passphrase.');
+      await this.secureDirectory(directory);
+      const storage = new EncryptedProfileStorage(directory, pending.profileId, dataKey);
+      this.active = {
+        directory: fs.realpathSync(directory),
+        profileId: pending.profileId,
+        label: pending.manifest.label,
+        storage,
+      };
+      const profile = { directory: this.active.directory, profileId: pending.profileId, label: pending.manifest.label };
+      pending.recoveryKey = '';
+      this.pendingCreation = null;
+      return { ok: true, profile };
+    } finally {
+      dataKey.fill(0);
     }
   }
 
