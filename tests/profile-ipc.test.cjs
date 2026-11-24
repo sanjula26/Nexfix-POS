@@ -68,6 +68,7 @@ test('new POS profile is not persisted until recovery-key acknowledgement and pa
 
   const noAck = await ctx.call('pos-profile:finalize-create', {
     pendingId: prepared.pendingId,
+    storageRoot: ctx.root,
     passphrase: 'Nexfix-IPC-Lock-2026',
     acknowledged: false,
   });
@@ -77,6 +78,7 @@ test('new POS profile is not persisted until recovery-key acknowledgement and pa
 
   const wrongPassphrase = await ctx.call('pos-profile:finalize-create', {
     pendingId: prepared.pendingId,
+    storageRoot: ctx.root,
     passphrase: 'Wrong-Storage-Passphrase-2026',
     acknowledged: true,
   });
@@ -85,6 +87,7 @@ test('new POS profile is not persisted until recovery-key acknowledgement and pa
 
   const finalized = await ctx.call('pos-profile:finalize-create', {
     pendingId: prepared.pendingId,
+    storageRoot: ctx.root,
     passphrase: 'Nexfix-IPC-Lock-2026',
     acknowledged: true,
   });
