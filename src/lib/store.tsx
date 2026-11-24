@@ -423,7 +423,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
           detail: {
             kind: failureKind,
             message: failureKind === 'quota_exceeded'
-              ? 'The POS change was saved locally, but the offline sync queue is full. Do not repeat the sale. Reconnect and verify pending sync before continuing; storage overflow setup is not active yet.'
+              ? 'The POS change was saved locally, but the offline sync queue is full. Do not repeat the sale. Reconnect and verify pending sync before continuing; Nexfix is attempting the verified move to your selected encrypted storage folder; verify pending sync after it completes.'
               : 'The POS change was saved locally, but its offline sync queue could not be confirmed. Do not repeat the sale. Reconnect and verify pending sync before continuing.',
           },
         }));
