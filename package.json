@@ -14,7 +14,8 @@
     "test:domain": "node --experimental-strip-types --test tests/domain-invariants.test.ts tests/pos-write-quiescence.test.ts tests/drainable-work-gate.test.ts tests/restore-quiescence.test.ts tests/indexeddb-persistence.test.ts tests/storage-overflow-queue.test.ts tests/storage-overflow-migration.test.ts tests/storage-overflow-auto-migration.test.ts tests/storage-overflow-events.test.ts tests/production-package-boundary.test.cjs tests/electron-security.test.cjs tests/overflow-folder.test.cjs tests/backup-validation.test.ts tests/backup-crypto.test.cjs tests/backup-manifest.test.ts tests/release-retention.test.cjs tests/state-persistence-gate.test.ts",
     "preview": "vite preview",
     "desktop:build": "npm run build && electron-builder --win --publish never",
-    "desktop:dir": "npm run build && electron-builder --win --dir --publish never"
+    "desktop:dir": "npm run build && electron-builder --win --dir --publish never",
+    "verify:production:asar": "node scripts/verify-production-asar.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

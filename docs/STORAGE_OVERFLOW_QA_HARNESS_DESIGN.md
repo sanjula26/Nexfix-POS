@@ -16,8 +16,8 @@ This design closes the gap between the current automated synthetic-quota unit te
 
 1. Build a separate QA-only Windows package with a different Electron `appId`, product name, executable name and user-data directory from production.
 2. Do not enable QA behavior using a runtime environment variable, command-line switch, URL query parameter, localStorage flag, hidden Settings button or user-editable config. A production installation must not be able to turn QA controls on.
-3. Keep every QA-only Electron entry point, preload, renderer panel, fixture and marker file under the dedicated `electron/qa/` directory. Do not add QA methods or QA IPC channels to the production `electron/preload.cjs` API or `electron/main.cjs`.
-4. The production `electron-builder` file list must include an explicit `!electron/qa/**` exclusion after the broad Electron include. The QA packaging configuration must explicitly include only the required files from `electron/qa/`.
+3. Use a separate QA entry point and QA-only preload/renderer bridge. Do not add QA methods to the production `electron/preload.cjs` API.
+4. The normal production packaging configuration must explicitly exclude QA-only entrypoint, preload, renderer panel, fixtures and marker files. The QA packaging configuration must explicitly include only the required QA files.
 5. Give the QA app an offline-only fixture mode. It must not sign in to Supabase, call cloud APIs, register a device, run the updater, or access Google Drive/R2. Network access should be blocked during the acceptance run.
 6. Accept only a freshly created disposable test profile and a test folder chosen by the tester. Require a QA-specific sentinel file and verify the resolved path is not the production POS user-data directory, Windows system directory, app install directory, or a live shop data folder.
 7. Never point the harness at a production profile. Never read, copy, modify or delete production IndexedDB, userData, backup, updater, or Recovery Key files.
