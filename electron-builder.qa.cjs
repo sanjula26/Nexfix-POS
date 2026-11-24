@@ -1,14 +1,21 @@
 'use strict';
 
-// Build from the isolated QA app directory, not the production package root.
-// The QA app directory has its own minimal package.json and no dependencies.
+const path = require('node:path');
+const lock = require('./package-lock.json');
+
+// This config is invoked with --projectDir electron/qa. That makes the QA
+// package.json the only app manifest considered for production dependencies.
+// Electron itself is resolved from the root lockfile used by the build tools.
 module.exports = {
   appId: 'com.nexfixsolution.pos.storageqa',
   productName: 'Nexfix POS Storage QA',
   executableName: 'Nexfix-POS-Storage-QA',
+  electronVersion: lock.packages['node_modules/electron'].version,
   directories: {
-    app: 'electron/qa',
-    output: 'release-qa',
+    app: '.',
+    output: path.join(__dirname, 'release-qa'),
   },
+  files: ['**/*', '!**/node_modules/**'],
+  npmRebuild: false,
   asar: true,
 };

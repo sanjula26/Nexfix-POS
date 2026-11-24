@@ -20,10 +20,13 @@ test('QA app has a separate identity, entry point, user-data directory and minim
   assert.notEqual(qaBuilder.appId, require('../package.json').build.appId);
   assert.equal(qaBuilder.productName, 'Nexfix POS Storage QA');
   assert.equal(qaBuilder.executableName, 'Nexfix-POS-Storage-QA');
-  assert.equal(qaBuilder.directories.app, 'electron/qa');
-  assert.equal(qaBuilder.directories.output, 'release-qa');
+  assert.equal(qaBuilder.directories.app, '.');
+  assert.equal(qaBuilder.directories.output, path.join(root, 'release-qa'));
   assert.equal(qaPackage.main, 'main.cjs');
   assert.deepEqual(qaPackage.dependencies || {}, {});
+  assert.equal(qaBuilder.electronVersion, require('../package-lock.json').packages['node_modules/electron'].version);
+  assert.deepEqual(qaBuilder.files, ['**/*', '!**/node_modules/**']);
+  assert.equal(qaBuilder.npmRebuild, false);
 });
 
 test('QA main process uses a separate userData path and blocks remote navigation and network requests', () => {
@@ -53,7 +56,8 @@ test('QA renderer is a local static page with a restrictive no-network CSP', () 
   assert.doesNotMatch(qaHtml, /<script|https?:\/\/|<iframe|<webview/i);
 });
 
-test('QA Windows workflow builds locally without cloud configuration or artifact upload', () => {
+test('QA Windows workflow builds from the isolated project directory without cloud config or artifact upload', () => {
+  assert.match(workflow, /--projectDir electron\/qa/);
   assert.match(workflow, /electron-builder\.qa\.cjs/);
   assert.match(workflow, /verify:qa:asar/);
   assert.doesNotMatch(workflow, /upload-artifact|VITE_SUPABASE|SUPABASE_URL|R2|wrangler/i);
