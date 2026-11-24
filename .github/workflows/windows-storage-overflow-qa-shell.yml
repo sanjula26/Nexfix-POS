@@ -46,7 +46,7 @@ jobs:
         run: npm run test:domain
 
       - name: Build isolated Windows QA shell without publishing
-        run: npx electron-builder --projectDir electron/qa --config electron-builder.qa.cjs --win --dir --publish never
+        run: npx electron-builder --projectDir "$env:GITHUB_WORKSPACE/electron/qa" --config "$env:GITHUB_WORKSPACE/electron-builder.qa.cjs" --win --dir --publish never
 
       - name: Verify QA ASAR contains only isolated shell files
         run: npm run verify:qa:asar -- release-qa/win-unpacked/resources/app.asar

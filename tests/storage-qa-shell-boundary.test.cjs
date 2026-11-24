@@ -57,8 +57,8 @@ test('QA renderer is a local static page with a restrictive no-network CSP', () 
 });
 
 test('QA Windows workflow builds from the isolated project directory without cloud config or artifact upload', () => {
-  assert.match(workflow, /--projectDir electron\/qa/);
-  assert.match(workflow, /electron-builder\.qa\.cjs/);
+  assert.match(workflow, /--projectDir "\$env:GITHUB_WORKSPACE\/electron\/qa"/);
+  assert.match(workflow, /--config "\$env:GITHUB_WORKSPACE\/electron-builder\.qa\.cjs"/);
   assert.match(workflow, /verify:qa:asar/);
   assert.doesNotMatch(workflow, /upload-artifact|VITE_SUPABASE|SUPABASE_URL|R2|wrangler/i);
 });
