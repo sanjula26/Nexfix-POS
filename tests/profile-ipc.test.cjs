@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const { registerPOSProfileIpc } = require('../electron/profile-ipc.cjs');
 const { createMigrationJournal } = require('../electron/profile-migration.cjs');
 
@@ -370,8 +370,9 @@ test('persists interrupted migration journal across independent process exit and
         }
         const status = await call('pos-profile:migration:status');
         if (!status.ok || status.journal.phase !== phase) throw new Error('Seed phase was not durably recorded.');
-        process.stdout.write(JSON.stringify({ phase: status.journal.phase }));
-        api.clearSelections();
+        process.stdout.write('READY:' + status.journal.phase + '\\n');
+        // Keep the process alive until the parent forcibly terminates it.
+        setInterval(() => {}, 1000);
         return;
       }
 
@@ -421,11 +422,48 @@ test('persists interrupted migration journal across independent process exit and
       return JSON.parse(output);
     };
 
-    const seeded = runChild('seed');
-    assert.deepEqual(seeded, { phase }, phase + ': first process persisted the interrupted phase');
+    // Wait until the child has read back the persisted journal, then forcibly
+    // terminate that independent OS process before starting recovery.
+    const killAfterJournalPersisted = () => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', childScript, root, phase, 'seed'], {
+        cwd: process.cwd(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+      let stdout = '';
+      let stderr = '';
+      let killRequested = false;
+      const timeout = setTimeout(() => {
+        try { child.kill('SIGKILL'); } catch {}
+        reject(new Error(phase + ': timed out waiting for the migration journal to persist. ' + stderr));
+      }, 30000);
+      child.stdout.on('data', chunk => {
+        stdout += chunk.toString('utf8');
+        if (!killRequested && stdout.includes('READY:' + phase + '\\n')) {
+          killRequested = true;
+          child.kill('SIGKILL');
+        }
+      });
+      child.stderr.on('data', chunk => { stderr += chunk.toString('utf8'); });
+      child.once('error', error => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+      child.once('close', () => {
+        clearTimeout(timeout);
+        if (!killRequested) {
+          reject(new Error(phase + ': child exited before the persisted-journal kill point. ' + stderr));
+          return;
+        }
+        resolve(stdout);
+      });
+    });
 
-    // The first OS process has exited. A separate Node process now rediscovers
-    // the encrypted profile from disk and resumes migration from the source.
+    const killedOutput = await killAfterJournalPersisted();
+    assert.ok(killedOutput.includes('READY:' + phase), phase + ': first process persisted the interrupted phase');
+
+    // A separate Node process now rediscovers the encrypted profile from disk
+    // after forced termination and resumes migration from the IndexedDB source.
     const resumed = runChild('resume');
     assert.deepEqual(resumed, { phase: 'snapshotting', pendingEntries: 4 }, phase + ': relaunch recovery');
   }
