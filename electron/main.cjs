@@ -623,8 +623,8 @@ app.whenReady().then(()=>{
   const startupAuthUrl = process.argv.find(value => typeof value === 'string' && value.toLowerCase().startsWith(AUTH_PROTOCOL + '://'));
   if(startupAuthUrl) emitAuthCallback(startupAuthUrl);
   session.defaultSession.setPermissionRequestHandler((webContents,permission,callback)=>callback(permission==='camera'&&isAllowedNavigation(webContents.getURL())));
-  // Register the encrypted profile bridge before the renderer loads. The live POS
-  // store is not switched to this backend until the startup gate/migration lands.
+  // Register the encrypted profile bridge before the renderer loads. The renderer
+  // startup gate is active; IndexedDB remains primary until verified migration cutover.
   const overflowFolderManager = registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer });
   posProfileIpc = registerPOSProfileIpc({
     ipcMain, dialog, BrowserWindow, safeStorage, isTrustedRenderer,
