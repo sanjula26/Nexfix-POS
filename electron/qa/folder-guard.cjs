@@ -24,7 +24,7 @@ function assertOutsideProtectedPaths(candidate, protectedRoots, pathApi = requir
   if (resolvedCandidate === parsed.root) {
     throw new Error('A drive root cannot be used as a disposable QA folder.');
   }
-  if (!Array.isArray(protectedRoots)) {
+  if (!Array.isArray(protectedRoots) || protectedRoots.length === 0) {
     throw new Error('Protected POS storage locations are required.');
   }
 
