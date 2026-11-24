@@ -943,7 +943,7 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
           )}
           {profileSetupPhase === 'recovery' && (
             <div className="mt-6 space-y-3">
-              <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. Nexfix shows it only once during profile creation.</p>
+              <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. The encrypted profile is not written to the selected folder until you confirm saving the key and finish setup.</p>
               <pre className="select-all break-all rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm text-slate-900 dark:border-white/15 dark:bg-black/30 dark:text-white">{profileSetupRecoveryKey}</pre>
               <input type="password" value={profileSetupPassphrase} onChange={event => setProfileSetupPassphrase(event.target.value)}
                 placeholder="Re-enter storage passphrase to finish" autoComplete="new-password"
