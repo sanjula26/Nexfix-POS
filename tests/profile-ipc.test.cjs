@@ -46,6 +46,88 @@ function setup(t, useConfiguredRoot = false, configuredAvailable = true) {
   return { root, handlers, api, call, setTrusted: value => { trusted = value; }, dialogCalls: () => dialogCalls };
 }
 
+test('new POS profile is not persisted until recovery-key acknowledgement and passphrase verification', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const prepared = await ctx.call('pos-profile:prepare-create', {
+    storageRoot: ctx.root,
+    directoryName: 'Acknowledged POS',
+    label: 'NexFix Acknowledged Shop',
+    passphrase: 'Nexfix-IPC-Lock-2026',
+  });
+  assert.equal(prepared.ok, true);
+  assert.match(prepared.pendingId, /^[A-Za-z0-9_-]{40,}$/);
+  assert.match(prepared.recoveryKey, /^[A-Za-z0-9_-]{40,}$/);
+  assert.equal(fs.existsSync(prepared.profile.directory), false);
+
+  const discoveryBeforeAck = await ctx.call('pos-profile:discover', { storageRoot: ctx.root });
+  assert.equal(discoveryBeforeAck.available.length, 0);
+  const pending = await ctx.call('pos-profile:pending-create');
+  assert.equal(pending.pending, true);
+  assert.equal(pending.recoveryKey, prepared.recoveryKey);
+
+  const noAck = await ctx.call('pos-profile:finalize-create', {
+    pendingId: prepared.pendingId,
+    passphrase: 'Nexfix-IPC-Lock-2026',
+    acknowledged: false,
+  });
+  assert.equal(noAck.ok, false);
+  assert.match(noAck.error, /Confirm that the recovery key has been saved/);
+  assert.equal(fs.existsSync(prepared.profile.directory), false);
+
+  const wrongPassphrase = await ctx.call('pos-profile:finalize-create', {
+    pendingId: prepared.pendingId,
+    passphrase: 'Wrong-Storage-Passphrase-2026',
+    acknowledged: true,
+  });
+  assert.equal(wrongPassphrase.ok, false);
+  assert.equal(fs.existsSync(prepared.profile.directory), false);
+
+  const finalized = await ctx.call('pos-profile:finalize-create', {
+    pendingId: prepared.pendingId,
+    passphrase: 'Nexfix-IPC-Lock-2026',
+    acknowledged: true,
+  });
+  assert.equal(finalized.ok, true);
+  assert.equal(finalized.profile.profileId, prepared.profile.profileId);
+  assert.equal(fs.existsSync(path.join(prepared.profile.directory, 'nexfix-profile.json')), true);
+  assert.equal(fs.existsSync(path.join(prepared.profile.directory, 'nexfix-key-envelope.json')), true);
+  assert.equal((await ctx.call('pos-profile:status')).unlocked, true);
+  assert.equal((await ctx.call('pos-profile:pending-create')).pending, false);
+});
+
+test('interrupted unacknowledged profile setup leaves no unusable profile on disk', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const prepared = await ctx.call('pos-profile:prepare-create', {
+    storageRoot: ctx.root,
+    directoryName: 'Interrupted Setup',
+    label: 'NexFix Interrupted Setup',
+    passphrase: 'Nexfix-IPC-Lock-2026',
+  });
+  assert.equal(prepared.ok, true);
+  assert.equal(fs.existsSync(prepared.profile.directory), false);
+  ctx.api.clearSelections();
+
+  const handlers = new Map();
+  registerPOSProfileIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [ctx.root] }) },
+    BrowserWindow: { getAllWindows: () => [] },
+    safeStorage: safeStorage(),
+    isTrustedRenderer: () => true,
+    platform: 'linux',
+  });
+  const event = { sender: { mainFrame: {} }, senderFrame: {} };
+  const callAfterRestart = (channel, payload) => handlers.get(channel)(event, payload);
+  await callAfterRestart('pos-profile:choose-storage-root');
+  const discovered = await callAfterRestart('pos-profile:discover', { storageRoot: ctx.root });
+  assert.equal(discovered.ok, true);
+  assert.equal(discovered.available.length, 0);
+  assert.deepEqual(fs.readdirSync(ctx.root), []);
+  assert.equal((await callAfterRestart('pos-profile:pending-create')).pending, false);
+});
+
 test('registers only scoped profile operations and rejects untrusted renderer frames', async (t) => {
   const ctx = setup(t);
   assert.ok(ctx.handlers.has('pos-profile:choose-storage-root'));
