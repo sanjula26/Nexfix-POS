@@ -220,11 +220,14 @@ class POSProfileSession {
     }
     if (acknowledged !== true) throw new Error('Confirm that the recovery key has been saved before finishing POS profile setup.');
     if (this.active) throw new Error('Lock the currently open POS profile before finishing profile setup.');
+    if (pending.finalizing) throw new Error('POS profile setup is already being finalized.');
     this.assertSafeStorage();
     validateLockPassphrase(passphrase);
-    const dataKey = await unwrapDataKeyWithPassphrase(pending.envelope.passphraseWrappedKey, passphrase, pending.profileId);
+    pending.finalizing = true;
+    let dataKey = null;
     let directory = path.join(pending.storageRoot, pending.directoryName);
     try {
+      dataKey = await unwrapDataKeyWithPassphrase(pending.envelope.passphraseWrappedKey, passphrase, pending.profileId);
       if (fs.existsSync(directory)) {
         const directoryStat = fs.lstatSync(directory);
         if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
@@ -235,7 +238,7 @@ class POSProfileSession {
           throw new Error('The selected POS profile folder was created by another setup. No existing data was changed.');
         }
         const names = fs.readdirSync(directory).sort();
-        if (names.includes('nexfix-key-envelope.json')) {
+        if (names.length === 2 && names[0] === 'nexfix-key-envelope.json' && names[1] === 'nexfix-profile.json') {
           const existingEnvelope = readProfileKeyEnvelope(directory, pending.profileId);
           if (JSON.stringify(existingEnvelope) !== JSON.stringify(pending.envelope)) {
             throw new Error('The pending POS profile key does not match the folder already on disk.');
@@ -276,7 +279,8 @@ class POSProfileSession {
       this.pendingCreation = null;
       return { ok: true, profile };
     } finally {
-      dataKey.fill(0);
+      if (dataKey) dataKey.fill(0);
+      if (this.pendingCreation === pending) pending.finalizing = false;
     }
   }
 
