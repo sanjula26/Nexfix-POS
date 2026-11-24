@@ -6,7 +6,7 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { setDesktopProfilePrimary } from './lib/db';
 import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
 import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigration';
-import { subscribeToStorageQuotaWarnings } from './lib/storageOverflowEvents';
+import { subscribeToStorageQuotaWarnings, type StorageQuotaWarning } from './lib/storageOverflowEvents';
 import {
   createDesktopPOSProfile,
   discoverDesktopPOSProfiles,
