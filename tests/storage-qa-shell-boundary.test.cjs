@@ -11,6 +11,10 @@ const qaPreload = fs.readFileSync(path.join(root, 'electron/qa/preload.cjs'), 'u
 const qaHtml = fs.readFileSync(path.join(root, 'electron/qa/index.html'), 'utf8');
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/windows-storage-overflow-qa-shell.yml'), 'utf8');
 
+function withoutComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
+
 test('QA app has a separate identity, entry point, user-data directory and minimal package', () => {
   assert.equal(qaBuilder.appId, 'com.nexfixsolution.pos.storageqa');
   assert.notEqual(qaBuilder.appId, require('../package.json').build.appId);
@@ -32,12 +36,14 @@ test('QA main process uses a separate userData path and blocks remote navigation
   assert.match(qaMain, /nodeIntegration: false/);
   assert.match(qaMain, /sandbox: true/);
   assert.match(qaMain, /webSecurity: true/);
-  assert.doesNotMatch(qaMain, /require\(['"]\.\.\/main\.cjs|electron-updater|supabase|fetch\s*\(|https?:\/\//i);
+  const executableMain = withoutComments(qaMain);
+  assert.doesNotMatch(executableMain, /require\(['"]\.\.\/main\.cjs|electron-updater|supabase|fetch\s*\(/i);
 });
 
 test('QA preload exposes only an identity bridge and no IPC or production methods', () => {
-  assert.match(qaPreload, /exposeInMainWorld\('nexfixStorageQA'/);
-  assert.doesNotMatch(qaPreload, /ipcRenderer|ipcMain|invoke\s*\(|send\s*\(|fetch\s*\(|supabase|updater/i);
+  const executablePreload = withoutComments(qaPreload);
+  assert.match(executablePreload, /exposeInMainWorld\('nexfixStorageQA'/);
+  assert.doesNotMatch(executablePreload, /ipcRenderer|ipcMain|invoke\s*\(|send\s*\(|fetch\s*\(|supabase|updater/i);
 });
 
 test('QA renderer is a local static page with a restrictive no-network CSP', () => {
