@@ -237,7 +237,7 @@ test('desktop startup gate is outside POSProvider and leaves browser development
   assert.match(appRoot, /<DesktopOverflowFolderSetup>[\s\S]*?<POSApplication\s*\/>/,
     'folder selection must wrap the POS application before POSProvider mounts');
   assert.match(appSource, /if\s*\(!desktopApi\?\.isDesktop\)\s*return\s*<>\{children\}<\/>/);
-  assert.match(appSource, /IndexedDB will continue to store your normal POS data first/);
+  assert.match(appSource, /IndexedDB remains the normal POS database/);
 });
 
 test('disconnected overflow folder does not block POS while IndexedDB remains the active store', () => {
