@@ -792,8 +792,12 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
     setProfileSetupBusy(true);
     setProfileSetupError('');
     try {
+      if (!folderStatus?.folderPath) {
+        throw new Error('Reconnect the original POS storage folder before finishing setup.');
+      }
       const profile = await finalizeDesktopPOSProfileCreation({
         pendingId: profileSetupPendingId,
+        storageRoot: folderStatus.folderPath,
         passphrase: profileSetupPassphrase,
         acknowledged: true,
       });
