@@ -11,7 +11,9 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   // Encrypted POS profile operations. Main-process IPC validates every caller.
   choosePOSStorageRoot: () => ipcRenderer.invoke('pos-profile:choose-storage-root'),
   discoverPOSProfiles: (storageRoot) => ipcRenderer.invoke('pos-profile:discover', { storageRoot }),
-  createPOSProfile: (payload) => ipcRenderer.invoke('pos-profile:create', payload),
+  createPOSProfile: (payload) => ipcRenderer.invoke('pos-profile:prepare-create', payload),
+  getPendingPOSProfileCreation: () => ipcRenderer.invoke('pos-profile:pending-create'),
+  finalizePOSProfileCreation: (payload) => ipcRenderer.invoke('pos-profile:finalize-create', payload),
   unlockPOSProfileWithPassphrase: (directory, secret) => ipcRenderer.invoke('pos-profile:unlock-passphrase', { directory, secret }),
   unlockPOSProfileWithOS: (directory) => ipcRenderer.invoke('pos-profile:unlock-os', { directory }),
   unlockPOSProfileWithRecoveryKey: (directory, secret) => ipcRenderer.invoke('pos-profile:unlock-recovery', { directory, secret }),
