@@ -102,6 +102,33 @@ function registerPOSProfileIpc(options) {
     return { ok: true, ...result };
   });
 
+  register('pos-profile:prepare-create', async (payload) => {
+    const storageRoot = typeof payload?.storageRoot === 'string' ? path.resolve(payload.storageRoot) : '';
+    const directoryName = typeof payload?.directoryName === 'string' ? payload.directoryName : '';
+    const label = typeof payload?.label === 'string' ? payload.label : '';
+    const passphrase = typeof payload?.passphrase === 'string' ? payload.passphrase : '';
+    if (!isSelectedStorageRoot(storageRoot)) throw new Error('Choose the POS storage folder inside Nexfix before creating a profile.');
+    if (!passphrase || passphrase.length > MAX_PASSPHRASE_LENGTH) throw new Error('A valid folder-lock passphrase is required.');
+    return profileSession.prepareCreate({ storageRoot, directoryName, label, passphrase });
+  });
+
+  register('pos-profile:pending-create', () => profileSession.getPendingCreation());
+
+  register('pos-profile:finalize-create', async (payload) => {
+    const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
+    const passphrase = typeof payload?.passphrase === 'string' ? payload.passphrase : '';
+    if (!pendingId || pendingId.length > 128 || !passphrase || passphrase.length > MAX_PASSPHRASE_LENGTH) {
+      throw new Error('The pending POS profile confirmation is incomplete.');
+    }
+    const result = await profileSession.finalizeCreate({
+      pendingId,
+      passphrase,
+      acknowledged: payload?.acknowledged === true,
+    });
+    discoveredProfiles.add(result.profile.directory);
+    return result;
+  });
+
   register('pos-profile:create', async (payload) => {
     const storageRoot = typeof payload?.storageRoot === 'string' ? path.resolve(payload.storageRoot) : '';
     const directoryName = typeof payload?.directoryName === 'string' ? payload.directoryName : '';
@@ -259,6 +286,7 @@ function registerPOSProfileIpc(options) {
       selectedRoots.clear();
       discoveredProfiles.clear();
       profileSession.lock();
+      profileSession.discardPendingCreation();
     },
   };
 }
