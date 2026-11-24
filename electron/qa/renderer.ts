@@ -96,8 +96,10 @@ async function refreshFolderStatus(): Promise<void> {
         result.textContent = 'This QA folder is already marked primary. Do not inject another quota event.';
       }
     } else if (folder.storageMode === 'folder_primary') {
-      chooseButton.disabled = true;
-      result.textContent = folder.error || 'The QA primary folder is unavailable. Reconnect it before continuing.';
+      chooseButton.disabled = folder.available === true;
+      profileButton.disabled = true;
+      injectButton.disabled = true;
+      result.textContent = folder.error || 'The QA primary folder is unavailable. Choose the same existing QA folder to reconnect it.';
     }
   } catch (error) {
     result.textContent = error instanceof Error ? error.message : 'Could not read the QA folder status.';
