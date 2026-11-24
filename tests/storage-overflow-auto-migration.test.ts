@@ -78,3 +78,10 @@ test('refuses to use a different profile already unlocked in this app session', 
   await assert.rejects(runAutomaticPOSOverflowMigration(h.dependencies), /different encrypted POS profile/);
   assert.deepEqual(h.calls, []);
 });
+
+test('does not report automatic migration as complete when the migration coordinator returns failure', async () => {
+  const h = harness({ migrate: async () => { h.calls.push('migrate-failed'); return false; } });
+  const result = await runAutomaticPOSOverflowMigration(h.dependencies);
+  assert.deepEqual(result, { status: 'failed' });
+  assert.deepEqual(h.calls, ['migrate-failed']);
+});
