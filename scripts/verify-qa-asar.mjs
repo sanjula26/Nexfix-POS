@@ -5,8 +5,9 @@ const archivePath = process.argv[2] || 'release-qa/win-unpacked/resources/app.as
 const entries = (await listPackage(archivePath)).map((entry) => entry
   .split(String.fromCharCode(92)).join('/')
   .replace(/^\/+/, ''));
-const packagedFiles = entries.filter((entry) => !entry.endsWith('/'));
-const allowedFiles = [
+const allowedEntries = [
+  'dist',
+  'dist/assets',
   'main.cjs',
   'preload.cjs',
   'package.json',
@@ -16,10 +17,10 @@ const allowedFiles = [
   'dist/assets/qa-renderer.js',
 ];
 
-for (const required of allowedFiles) {
-  assert.ok(packagedFiles.includes(required), 'QA ASAR must contain ' + required + '.');
+for (const required of allowedEntries) {
+  assert.ok(entries.includes(required), 'QA ASAR must contain ' + required + '.');
 }
-assert.deepEqual([...packagedFiles].sort(), [...allowedFiles].sort(),
+assert.deepEqual([...entries].sort(), [...allowedEntries].sort(),
   'QA ASAR must contain only the reviewed isolated QA harness files.');
 assert.equal(entries.some((entry) => entry.startsWith('node_modules/')), false,
   'The isolated QA shell must not package production dependencies.');
@@ -31,4 +32,4 @@ assert.equal(entries.some((entry) => entry === 'electron/main.cjs' ||
   entry.endsWith('/electron/preload.cjs')), false,
   'The isolated QA shell must not package production Electron entrypoints.');
 
-console.log('QA ASAR boundary verified: ' + archivePath + ' (' + packagedFiles.length + ' files; exact isolated QA harness allowlist).');
+console.log('QA ASAR boundary verified: ' + archivePath + ' (' + entries.length + ' entries; exact isolated QA harness allowlist).');
