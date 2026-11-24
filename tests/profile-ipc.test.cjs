@@ -128,6 +128,60 @@ test('interrupted unacknowledged profile setup leaves no unusable profile on dis
   assert.equal((await callAfterRestart('pos-profile:pending-create')).pending, false);
 });
 
+test('a separate Node process can exit before acknowledgement without persisting profile files', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-pending-profile-process-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const childScript = String.raw`
+    'use strict';
+    const fs = require('node:fs');
+    const { registerPOSProfileIpc } = require('./electron/profile-ipc.cjs');
+    const root = process.argv[1];
+    const handlers = new Map();
+    registerPOSProfileIpc({
+      ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [root] }) },
+      BrowserWindow: { getAllWindows: () => [] },
+      safeStorage: {
+        isEncryptionAvailable: () => true,
+        getSelectedStorageBackend: () => 'dpapi',
+        encryptString: value => Buffer.from('dpapi:' + value, 'utf8'),
+        decryptString: value => {
+          const text = Buffer.from(value).toString('utf8');
+          if (!text.startsWith('dpapi:')) throw new Error('wrong device');
+          return text.slice(6);
+        },
+      },
+      isTrustedRenderer: () => true,
+      platform: 'linux',
+    });
+    const event = { sender: { mainFrame: {} }, senderFrame: {} };
+    const call = (channel, payload) => handlers.get(channel)(event, payload);
+    (async () => {
+      await call('pos-profile:choose-storage-root');
+      const prepared = await call('pos-profile:prepare-create', {
+        storageRoot: root,
+        directoryName: 'Process Interrupted',
+        label: 'NexFix Process Interrupted',
+        passphrase: 'Nexfix-IPC-Lock-2026',
+      });
+      if (!prepared.ok) throw new Error(prepared.error);
+      if (fs.existsSync(prepared.profile.directory)) throw new Error('Profile directory exists before acknowledgement.');
+      process.stdout.write('PREPARED_WITHOUT_DISK_PROFILE');
+    })().catch(error => {
+      process.stderr.write(error instanceof Error ? error.stack : String(error));
+      process.exitCode = 1;
+    });
+  `;
+  const output = execFileSync(process.execPath, ['-e', childScript, root], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    timeout: 30000,
+    windowsHide: true,
+  });
+  assert.equal(output, 'PREPARED_WITHOUT_DISK_PROFILE');
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
 test('registers only scoped profile operations and rejects untrusted renderer frames', async (t) => {
   const ctx = setup(t);
   assert.ok(ctx.handlers.has('pos-profile:choose-storage-root'));
