@@ -300,7 +300,7 @@ injectButton.addEventListener('click', async () => {
       const transaction = database!.transaction('records', 'readwrite');
       const store = transaction.objectStore('records');
       store.put({ id: 'app_state', value: { products: [], users: [], sales: [{ id: 'QA-SALE-' + runId, total: 1250 }], customers: [{ id: 'QA-CUSTOMER-001', balance: 0 }] } });
-      store.put({ id: 'sync_queue', value: [{ id: 'QA-QUEUE-' + runId, kind: 'sale' }] });
+      store.put({ id: 'sync_queue', value: [{ id: 'QA-QUEUE-' + runId, ts: new Date().toISOString(), type: 'sale_create', payload: JSON.stringify({ saleId: 'QA-SALE-' + runId }) }] });
       store.put({ id: 'meta', value: { autoBackupHours: 6, backupCount: 1, lastBackupAt: 'QA-' + runId } });
       store.put({ id: 'restore_checkpoint', value: null });
       transaction.oncomplete = () => resolve();
@@ -319,8 +319,9 @@ injectButton.addEventListener('click', async () => {
       throw new Error('The encrypted QA app-state payload does not match the production startup schema.');
     }
     const migratedQueue = JSON.parse((await readDesktopProfilePayload('sync_queue')) || 'null');
-    if (!Array.isArray(migratedQueue)) {
-      throw new Error('The encrypted QA offline queue does not match the production startup schema.');
+    if (!Array.isArray(migratedQueue) || migratedQueue.some(entry =>
+        !entry || typeof entry.id !== 'string' || typeof entry.ts !== 'string' || typeof entry.type !== 'string')) {
+      throw new Error('The encrypted QA offline queue does not match the production QueueOp schema.');
     }
     const migratedMeta = JSON.parse((await readDesktopProfilePayload('meta')) || 'null');
     if (!migratedMeta || !Number.isFinite(migratedMeta.autoBackupHours) ||
