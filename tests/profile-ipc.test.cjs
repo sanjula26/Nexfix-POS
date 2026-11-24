@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { execFileSync } = require('node:child_process');
 const { registerPOSProfileIpc } = require('../electron/profile-ipc.cjs');
 const { createMigrationJournal } = require('../electron/profile-migration.cjs');
 
@@ -294,5 +295,135 @@ test('reopening an interrupted pre-cutover profile starts a fresh journal from t
       assert.deepEqual(retried.journal.entries[purpose], { status: 'pending' }, interruptedPhase + ':' + purpose);
     }
     restartedApi.clearSelections();
+  }
+});
+
+
+test('persists interrupted migration journal across independent process exit and relaunch', async (t) => {
+  const parentRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexfix-process-restart-'));
+  t.after(() => fs.rmSync(parentRoot, { recursive: true, force: true }));
+  const phases = ['snapshotting', 'copying', 'verifying', 'ready_to_cutover'];
+  const childScript = String.raw\`
+    'use strict';
+    const { registerPOSProfileIpc } = require('./electron/profile-ipc.cjs');
+    const { createMigrationJournal } = require('./electron/profile-migration.cjs');
+    const [root, phase, mode] = process.argv.slice(1);
+    const handlers = new Map();
+    const api = registerPOSProfileIpc({
+      ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+      dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [root] }) },
+      BrowserWindow: { getAllWindows: () => [] },
+      safeStorage: {
+        isEncryptionAvailable: () => true,
+        getSelectedStorageBackend: () => 'dpapi',
+        encryptString: value => Buffer.from('dpapi:' + value, 'utf8'),
+        decryptString: value => {
+          const text = Buffer.from(value).toString('utf8');
+          if (!text.startsWith('dpapi:')) throw new Error('wrong device');
+          return text.slice(6);
+        },
+      },
+      isTrustedRenderer: () => true,
+      platform: 'linux',
+      markOverflowFolderPrimary: (directory, profileId) => ({
+        ok: true, available: true, storageMode: 'folder_primary', profileId, profileDirectory: directory,
+      }),
+      markOverflowFolderIndexedDBPrimary: () => ({ ok: true, storageMode: 'indexeddb' }),
+    });
+    const event = { sender: { mainFrame: {} }, senderFrame: {} };
+    const call = (channel, payload) => handlers.get(channel)(event, payload);
+    const passphrase = 'Nexfix-IPC-Lock-2026';
+    const purposes = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
+    const details = { revision: 1, bytes: 12, sha256: 'a'.repeat(64) };
+    async function run() {
+      if (mode === 'seed') {
+        await call('pos-profile:choose-storage-root');
+        const created = await call('pos-profile:create', {
+          storageRoot: root,
+          directoryName: 'Restart ' + phase,
+          label: 'Disposable process restart profile',
+          passphrase,
+        });
+        if (!created.ok) throw new Error(created.error);
+        const started = await call('pos-profile:migration:begin');
+        if (!started.ok) throw new Error(started.error);
+        if (phase !== 'snapshotting') {
+          const copying = await call('pos-profile:migration:transition', { nextPhase: 'copying' });
+          if (!copying.ok) throw new Error(copying.error);
+          const copyCount = phase === 'copying' ? 1 : purposes.length;
+          for (const purpose of purposes.slice(0, copyCount)) {
+            const copied = await call('pos-profile:migration:record-copy', { purpose, details });
+            if (!copied.ok) throw new Error(copied.error);
+          }
+        }
+        if (phase === 'verifying' || phase === 'ready_to_cutover') {
+          const verifying = await call('pos-profile:migration:transition', { nextPhase: 'verifying' });
+          if (!verifying.ok) throw new Error(verifying.error);
+          const verifyCount = phase === 'verifying' ? 1 : purposes.length;
+          for (const purpose of purposes.slice(0, verifyCount)) {
+            const verified = await call('pos-profile:migration:record-verification', { purpose, details });
+            if (!verified.ok) throw new Error(verified.error);
+          }
+        }
+        if (phase === 'ready_to_cutover') {
+          const ready = await call('pos-profile:migration:transition', { nextPhase: 'ready_to_cutover' });
+          if (!ready.ok) throw new Error(ready.error);
+        }
+        const status = await call('pos-profile:migration:status');
+        if (!status.ok || status.journal.phase !== phase) throw new Error('Seed phase was not durably recorded.');
+        process.stdout.write(JSON.stringify({ phase: status.journal.phase }));
+        api.clearSelections();
+        return;
+      }
+
+      await call('pos-profile:choose-storage-root');
+      const discovered = await call('pos-profile:discover', { storageRoot: root });
+      if (!discovered.ok || discovered.available.length !== 1) throw new Error('Persisted profile was not rediscovered.');
+      const unlocked = await call('pos-profile:unlock-passphrase', {
+        directory: discovered.available[0].directory,
+        secret: passphrase,
+      });
+      if (!unlocked.ok) throw new Error(unlocked.error);
+      const retried = await call('pos-profile:migration:begin');
+      if (!retried.ok || retried.journal.phase !== 'snapshotting') {
+        throw new Error('Interrupted migration did not restart from the IndexedDB source.');
+      }
+      for (const purpose of purposes) {
+        if (retried.journal.entries[purpose].status !== 'pending') {
+          throw new Error('Interrupted migration retained an unverified copy for ' + purpose);
+        }
+      }
+      process.stdout.write(JSON.stringify({
+        phase: retried.journal.phase,
+        pendingEntries: Object.keys(retried.journal.entries).filter(key => retried.journal.entries[key].status === 'pending').length,
+      }));
+      api.clearSelections();
+    }
+    run().catch(error => {
+      process.stderr.write(error instanceof Error ? error.stack : String(error));
+      process.exitCode = 1;
+    });
+  \`;
+
+  for (const phase of phases) {
+    const root = path.join(parentRoot, phase);
+    fs.mkdirSync(root);
+    const runChild = (mode) => {
+      const output = execFileSync(process.execPath, ['-e', childScript, root, phase, mode], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        timeout: 30000,
+        windowsHide: true,
+      });
+      return JSON.parse(output);
+    };
+
+    const seeded = runChild('seed');
+    assert.deepEqual(seeded, { phase }, phase + ': first process persisted the interrupted phase');
+
+    // The first OS process has exited. A separate Node process now rediscovers
+    // the encrypted profile from disk and resumes migration from the source.
+    const resumed = runChild('resume');
+    assert.deepEqual(resumed, { phase: 'snapshotting', pendingEntries: 4 }, phase + ': relaunch recovery');
   }
 });
