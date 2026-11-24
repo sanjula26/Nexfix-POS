@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'electron/qa/**'
+      - 'tests/storage-qa-profile-runtime-parity.test.cjs'
       - 'vite.config.qa.ts'
       - 'src/lib/storageOverflowEvents.ts'
       - 'electron-builder.qa.cjs'
