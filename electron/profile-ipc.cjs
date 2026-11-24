@@ -286,6 +286,7 @@ function registerPOSProfileIpc(options) {
       selectedRoots.clear();
       discoveredProfiles.clear();
       profileSession.lock();
+      profileSession.discardPendingCreation();
     },
   };
 }
