@@ -57,6 +57,7 @@ test('QA renderer injects once into its isolated IndexedDB and uses the shared p
   assert.match(qaHtml, /script-src 'self'/);
   assert.match(qaHtml, /connect-src 'none'/);
   assert.match(qaHtml, /type="module" src="\.\/renderer\.ts"/);
+  assert.match(qaRenderer, /from '\.\.\/\.\.\/src\/lib\/storageOverflowEvents\.ts'/);
   assert.match(qaRenderer, /nexfix_storage_qa_fixture_v1/);
   assert.match(qaRenderer, /new DOMException\([^\n]*QuotaExceededError/);
   assert.match(qaRenderer, /transaction\.abort\(\)/);
