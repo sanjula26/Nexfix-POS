@@ -75,3 +75,12 @@ The before/after cutover cases are especially important: if the primary marker a
 The current branch has synthetic `QuotaExceededError` unit tests and migration-core dependency-injection tests, but no operator-accessible packaged QA trigger or named-phase process-stop harness. The physical acceptance scenarios therefore remain **BLOCKED / NOT RUN**.
 
 Implement this design in small steps, first proving production-package exclusion and QA app isolation, then adding quota injection, then interruption/restart controls. Do not merge PR #292 or publish an EXE/R2 release until the separate Windows acceptance checklist is completed and signed off.
+
+
+## Existing Windows workflows are not the offline QA harness
+
+The current `.github/workflows/windows-no-publish-qa.yml` workflow is a non-publishing production-app build/regression workflow, not the isolated storage-overflow QA package described above. It builds the normal Vite renderer and invokes the normal production Electron Builder configuration. Its renderer build supplies the public Supabase project URL and publishable anon key as build-time configuration. The workflow does not provide a packaged quota injector, named-phase interruption controls, or a disposable offline-only QA app. Therefore its green result proves production packaging/regression checks only; it must not be reported as physical storage-overflow QA acceptance.
+
+Likewise, `scripts/build-windows-test.ps1` explicitly configures the live Supabase project and prompts the operator to confirm a live-cloud test. Do not reuse that script for the offline harness or run it as part of offline acceptance.
+
+Implementation gate: create a distinct QA builder configuration and entry point with a separate app identity/user-data path. The QA build must not reuse the production renderer build command, production main process, updater initialization, or cloud-connected test script. Add explicit automated assertions for the QA app identity, offline-only bridge and production-package exclusion before adding any quota or interruption controls.
