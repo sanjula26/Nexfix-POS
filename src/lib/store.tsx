@@ -9,6 +9,7 @@ import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
 import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
@@ -336,9 +337,7 @@ function notifyIndexedDBQuotaWarning(reason: 'near_quota' | 'quota_exceeded', us
     if (now - lastIndexedDBQuotaWarningAt < 5 * 60 * 1000) return;
     lastIndexedDBQuotaWarningAt = now;
   }
-  window.dispatchEvent(new CustomEvent('nexfix:storage-quota-warning', {
-    detail: { reason, usage, quota, ratio },
-  }));
+  dispatchStorageQuotaWarning(window, { reason, usage, quota, ratio });
 }
 
 async function checkIndexedDBQuotaAfterWrite(): Promise<void> {

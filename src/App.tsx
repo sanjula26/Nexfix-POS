@@ -6,6 +6,7 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { setDesktopProfilePrimary } from './lib/db';
 import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
 import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigration';
+import { subscribeToStorageQuotaWarnings } from './lib/storageOverflowEvents';
 import {
   createDesktopPOSProfile,
   discoverDesktopPOSProfiles,
@@ -998,13 +999,6 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
   );
 }
 
-type StorageQuotaWarning = {
-  reason: 'near_quota' | 'quota_exceeded';
-  usage?: number;
-  quota?: number;
-  ratio?: number;
-};
-
 function formatStorageBytes(value?: number): string {
   if (!Number.isFinite(value) || value === undefined || value < 0) return 'Unknown';
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
@@ -1029,16 +1023,12 @@ function StorageOverflowController() {
   const prepareMigrationRef = useRef<() => Promise<void>>(async () => {});
 
   useEffect(() => {
-    const onQuotaWarning = (event: Event) => {
-      const detail = (event as CustomEvent<StorageQuotaWarning>).detail;
-      if (!detail || (detail.reason !== 'near_quota' && detail.reason !== 'quota_exceeded')) return;
+    return subscribeToStorageQuotaWarnings(window, detail => {
       setWarning(detail);
       setBlocking(detail.reason === 'quota_exceeded');
       setPhase('warning');
       setError('');
-    };
-    window.addEventListener('nexfix:storage-quota-warning', onQuotaWarning);
-    return () => window.removeEventListener('nexfix:storage-quota-warning', onQuotaWarning);
+    });
   }, []);
 
   const runMigration = async (): Promise<boolean> => {
