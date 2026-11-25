@@ -35,9 +35,11 @@ The renderer must not clear the displayed key or report success before finalizat
 - Wrong old key, malformed key, wrong profile, missing acknowledgement, changed selected folder, changed envelope, failed preflight, or failed temporary write: do not intentionally replace the old wrapper.
 - Crash before atomic rename: old wrapper remains valid; pending in-memory key is lost; restart rotation.
 - Crash after atomic rename: user has already acknowledged saving the new key. The new key must unlock the persisted wrapper.
-- If the same process retries after rename but before receiving completion, detect the exact pending replacement wrapper on disk, verify it with the pending key, and finish idempotently rather than overwriting it again.
+- If the same process retries after rename but before receiving completion, detect the exact pending replacement wrapper on disk and finish idempotently rather than overwriting it again.
+- After the first successful read-back, immediately blank the raw Recovery Key and zero the retained data-key buffer. Keep only a non-secret, in-memory completion receipt (pending ID, profile/folder binding, expected envelope hash, and exact replacement wrapper) until the next rotation or profile lock. A repeated finalize is accepted only if the exact replacement wrapper is still on disk; a changed wrapper fails closed.
+- A finalized receipt is not exposed as a pending key after renderer reload, and cancellation is refused because the disk update has already committed. A subsequent new rotation may clear the old non-secret receipt and start normally.
 - Never attempt to roll back to the old wrapper after acknowledgement and successful replacement; doing so could invalidate the key the user has just saved.
-- Clear pending key state on successful completion, explicit cancel, profile lock/switch, and any trust-boundary failure. Do not put recovery secrets in persistent logs or audit notes.
+- Clear raw pending key material on successful completion, explicit cancel, profile lock/switch, and any trust-boundary failure. Do not put recovery secrets in persistent logs or audit notes.
 
 ## Required regression tests before enabling the feature
 
@@ -59,7 +61,7 @@ This design does not change existing profile unlock, passphrase reset, Windows d
 ## Implementation checkpoint — 2026-11-25
 
 - Low-level prepare/finalize helpers now exist in `electron/profile-key-store.cjs`; finalize retry is idempotent only when the on-disk recovery wrapper exactly matches the pending replacement and decrypts to the retained data key.
-- Main-process `POSProfileSession` now owns pending rotation state in memory, binds it to the active profile and canonical directory, supports renderer-reload retrieval, explicit acknowledgement/finalization and cancellation, and clears pending key material on lock or passphrase-wrapper changes.
+- Main-process `POSProfileSession` owns pending rotation state in memory, binds it to the active profile and canonical directory, supports renderer-reload retrieval, explicit acknowledgement/finalization and cancellation, and clears pending key material on lock or passphrase-wrapper changes. After a successful finalize it now zeroes the data-key copy and blanks the raw Recovery Key while retaining only a non-secret completion receipt for same-process retries after a lost IPC response; a finalized receipt cannot be cancelled and is not re-displayed after renderer reload.
 - Trusted IPC and preload bridge operations exist for prepare, retrieve, finalize and cancel. IPC requires the active profile to be discovered under a currently selected/authorized storage root.
 - Typed renderer bridge helpers are added, but no user-facing Settings UI is wired yet. Do not expose rotation to operators until the UI displays the replacement key, persists/re-displays pending state after renderer reload, and only reports success after finalize returns.
 - Production and QA runtime copies of `profile-session.cjs` and `profile-ipc.cjs` were fetched back and confirmed byte-identical.
