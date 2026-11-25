@@ -348,7 +348,22 @@ function finalizeProfileRecoveryKeyRotation(profileDirectory, pending) {
   const originalBytes = fs.readFileSync(destination);
   const actualHash = crypto.createHash('sha256').update(originalBytes).digest('hex');
   if (actualHash !== pending.expectedEnvelopeSha256) {
-    throw new Error('POS profile key envelope changed during Recovery Key rotation. No update was applied.');
+    // A previous finalize call may have completed the atomic rename but lost
+    // its IPC response. Accept only the exact pending replacement wrapper;
+    // unrelated envelope changes must continue to fail closed.
+    const currentAfterRetry = readProfileKeyEnvelope(profileDirectory, pending.profileId);
+    const exactReplacement = JSON.stringify(currentAfterRetry.recoveryWrappedKey) ===
+      JSON.stringify(pending.recoveryWrappedKey);
+    if (!exactReplacement) {
+      throw new Error('POS profile key envelope changed during Recovery Key rotation. No update was applied.');
+    }
+    const retryVerificationKey = unwrapDataKeyWithRecoveryKey(
+      currentAfterRetry.recoveryWrappedKey, pending.recoveryKey, pending.profileId,
+    );
+    const retrySameKey = retryVerificationKey.equals(pending.dataKey);
+    retryVerificationKey.fill(0);
+    if (!retrySameKey) throw new Error('Saved POS Recovery Key failed retry verification.');
+    return currentAfterRetry;
   }
   const current = readProfileKeyEnvelope(profileDirectory, pending.profileId);
   const nextEnvelope = {
