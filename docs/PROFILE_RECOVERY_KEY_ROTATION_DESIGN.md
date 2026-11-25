@@ -55,3 +55,14 @@ The renderer must not clear the displayed key or report success before finalizat
 ## Scope boundary
 
 This design does not change existing profile unlock, passphrase reset, Windows device-key rebind, IndexedDB-first storage, migration journal, POS login, updater, backup/restore, or Supabase behavior. Do not enable rotation until the full main-process session, trusted IPC, preload bridge, renderer acknowledgement UI, QA mirror, and CI tests are implemented and verified together.
+
+## Implementation checkpoint — 2026-11-25
+
+- Low-level prepare/finalize helpers now exist in `electron/profile-key-store.cjs`; finalize retry is idempotent only when the on-disk recovery wrapper exactly matches the pending replacement and decrypts to the retained data key.
+- Main-process `POSProfileSession` now owns pending rotation state in memory, binds it to the active profile and canonical directory, supports renderer-reload retrieval, explicit acknowledgement/finalization and cancellation, and clears pending key material on lock or passphrase-wrapper changes.
+- Trusted IPC and preload bridge operations exist for prepare, retrieve, finalize and cancel. IPC requires the active profile to be discovered under a currently selected/authorized storage root.
+- Typed renderer bridge helpers are added, but no user-facing Settings UI is wired yet. Do not expose rotation to operators until the UI displays the replacement key, persists/re-displays pending state after renderer reload, and only reports success after finalize returns.
+- Production and QA runtime copies of `profile-session.cjs` and `profile-ipc.cjs` were fetched back and confirmed byte-identical.
+- Regression coverage now includes key-store prepare/no-write, wrong old key, successful wrapper replacement, envelope CAS failure, idempotent finalize retry, IPC acknowledgement gating, renderer-reload retrieval, old-key invalidation, lock cleanup, and explicit cancellation. These tests have not yet been executed; no CI success is claimed.
+- Draft PR [#293](https://github.com/sanjula26/Nexfix-POS/pull/293) targets the existing profile-storage feature branch solely to obtain review/CI evidence. It remains OPEN / Draft / Unmerged. The latest head is `ff132b857596b59d6c51a1c353fc9696a7c93c8a` at the time of this checkpoint; later commits may advance it.
+- No merge, Supabase operation, R2 upload, production publish, or physical Windows test occurred.
