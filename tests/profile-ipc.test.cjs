@@ -665,6 +665,10 @@ test('stages Recovery Key rotation in trusted IPC and finalizes only after ackno
   });
   assert.equal(completed.ok, true);
   assert.equal(completed.recoveryKeyUpdated, true);
+  const completedReceipt = await ctx.call('pos-profile:pending-recovery-rotation');
+  assert.equal(completedReceipt.pending, false);
+  assert.equal(completedReceipt.finalized, true);
+  assert.equal(completedReceipt.recoveryKey, undefined);
   const updatedEnvelope = readProfileKeyEnvelope(directory, finalized.profile.profileId);
   assert.notDeepEqual(updatedEnvelope.recoveryWrappedKey, oldEnvelope.recoveryWrappedKey);
   const newDataKey = unwrapDataKeyWithRecoveryKey(
