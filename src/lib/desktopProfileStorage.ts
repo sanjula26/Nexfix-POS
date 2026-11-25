@@ -279,6 +279,53 @@ export async function finalizeDesktopPOSProfileCreation(input: {
   return result.profile;
 }
 
+export async function prepareDesktopPOSRecoveryKeyRotation(currentRecoveryKey: string): Promise<{
+  pendingId: string;
+  profile: NonNullable<DesktopPOSProfileResult['profile']>;
+  recoveryKey: string;
+}> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.preparePOSRecoveryKeyRotation !== 'function') throw new Error('POS Recovery Key rotation bridge is unavailable.');
+  const result = await api.preparePOSRecoveryKeyRotation(currentRecoveryKey);
+  if (!result || result.ok !== true || result.pending !== true ||
+      !result.pendingId || !result.profile || typeof result.recoveryKey !== 'string') {
+    throw new Error(result?.error || 'Could not prepare POS Recovery Key rotation.');
+  }
+  return { pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
+}
+
+export async function getPendingDesktopPOSRecoveryKeyRotation(): Promise<{
+  pending: boolean;
+  pendingId?: string;
+  profile?: NonNullable<DesktopPOSProfileResult['profile']>;
+  recoveryKey?: string;
+}> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.getPendingPOSRecoveryKeyRotation !== 'function') throw new Error('Pending POS Recovery Key rotation bridge is unavailable.');
+  const result = await api.getPendingPOSRecoveryKeyRotation();
+  if (!result || result.ok !== true) throw new Error(result?.error || 'Could not resume POS Recovery Key rotation.');
+  return { pending: result.pending === true, pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
+}
+
+export async function finalizeDesktopPOSRecoveryKeyRotation(input: {
+  pendingId: string;
+  acknowledged: boolean;
+}): Promise<void> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.finalizePOSRecoveryKeyRotation !== 'function') throw new Error('POS Recovery Key rotation acknowledgement bridge is unavailable.');
+  const result = await api.finalizePOSRecoveryKeyRotation(input);
+  if (!result || result.ok !== true || result.recoveryKeyUpdated !== true) {
+    throw new Error(result?.error || 'Could not finish POS Recovery Key rotation.');
+  }
+}
+
+export async function cancelDesktopPOSRecoveryKeyRotation(pendingId: string): Promise<void> {
+  const api = requireDesktopProfileApi();
+  if (typeof api.cancelPOSRecoveryKeyRotation !== 'function') throw new Error('POS Recovery Key rotation cancellation bridge is unavailable.');
+  const result = await api.cancelPOSRecoveryKeyRotation(pendingId);
+  if (!result || result.ok !== true) throw new Error(result?.error || 'Could not cancel POS Recovery Key rotation.');
+}
+
 export async function unlockDesktopPOSProfileWithOS(directory: string): Promise<void> {
   const api = requireDesktopProfileApi();
   if (typeof api.unlockPOSProfileWithOS !== 'function') throw new Error('Automatic POS profile unlock is unavailable.');
