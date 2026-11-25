@@ -337,7 +337,9 @@ function finalizeProfileRecoveryKeyRotation(profileDirectory, pending) {
   if (!pending || typeof pending.profileId !== 'string' ||
       typeof pending.expectedEnvelopeSha256 !== 'string' ||
       !/^[a-f0-9]{64}$/.test(pending.expectedEnvelopeSha256) ||
-      typeof pending.recoveryKey !== 'string' || !Buffer.isBuffer(pending.dataKey)) {
+      typeof pending.recoveryWrappedKey !== 'object' || !pending.recoveryWrappedKey ||
+      (pending.finalized !== true &&
+        (typeof pending.recoveryKey !== 'string' || !Buffer.isBuffer(pending.dataKey)))) {
     throw new Error('Pending POS recovery-key rotation is invalid.');
   }
   const destination = path.join(profileDirectory, KEY_ENVELOPE_FILE);
@@ -347,6 +349,17 @@ function finalizeProfileRecoveryKeyRotation(profileDirectory, pending) {
   }
   const originalBytes = fs.readFileSync(destination);
   const actualHash = crypto.createHash('sha256').update(originalBytes).digest('hex');
+  if (pending.finalized === true) {
+    // The first finalize completed and the session has already zeroed the raw
+    // Recovery Key and data-key copy. A same-process retry is safe only while
+    // the exact replacement wrapper remains on disk.
+    const completedEnvelope = readProfileKeyEnvelope(profileDirectory, pending.profileId);
+    if (actualHash === pending.expectedEnvelopeSha256 ||
+        JSON.stringify(completedEnvelope.recoveryWrappedKey) !== JSON.stringify(pending.recoveryWrappedKey)) {
+      throw new Error('Completed POS Recovery Key rotation no longer matches the saved profile envelope.');
+    }
+    return completedEnvelope;
+  }
   if (actualHash !== pending.expectedEnvelopeSha256) {
     // A previous finalize call may have completed the atomic rename but lost
     // its IPC response. Accept only the exact pending replacement wrapper;
