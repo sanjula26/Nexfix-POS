@@ -14,6 +14,8 @@ const {
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
   rebindProfileDeviceKeyWithPassphrase,
+  prepareProfileRecoveryKeyRotation,
+  finalizeProfileRecoveryKeyRotation,
 } = require('./profile-key-store.cjs');
 const { unwrapDataKeyWithOS, unwrapDataKeyWithPassphrase, unwrapDataKeyWithRecoveryKey, validateLockPassphrase } = require('./profile-crypto.cjs');
 const { EncryptedProfileStorage } = require('./profile-storage.cjs');
@@ -55,6 +57,7 @@ class POSProfileSession {
     this.applyAcl = options.applyAcl || applyWindowsProfileAcl;
     this.active = null;
     this.pendingCreation = null;
+    this.pendingRecoveryKeyRotation = null;
   }
 
   assertSafeStorage() {
@@ -299,6 +302,93 @@ class POSProfileSession {
     }
   }
 
+  clearPendingRecoveryKeyRotation() {
+    const pending = this.pendingRecoveryKeyRotation;
+    if (pending) {
+      pending.recoveryKey = '';
+      if (Buffer.isBuffer(pending.dataKey)) pending.dataKey.fill(0);
+    }
+    this.pendingRecoveryKeyRotation = null;
+    return { ok: true };
+  }
+
+  prepareRecoveryKeyRotation(currentRecoveryKey) {
+    const active = this.requireActive();
+    if (this.pendingRecoveryKeyRotation) {
+      throw new Error('Finish or cancel the pending POS Recovery Key rotation first.');
+    }
+    if (typeof currentRecoveryKey !== 'string' || !currentRecoveryKey || currentRecoveryKey.length > 256) {
+      throw new Error('Enter the current POS Recovery Key to continue.');
+    }
+    const prepared = prepareProfileRecoveryKeyRotation(
+      active.directory, active.profileId, currentRecoveryKey,
+    );
+    const pendingId = crypto.randomBytes(32).toString('base64url');
+    this.pendingRecoveryKeyRotation = {
+      pendingId,
+      directory: fs.realpathSync(active.directory),
+      profileId: active.profileId,
+      recoveryKey: prepared.recoveryKey,
+      expectedEnvelopeSha256: prepared.expectedEnvelopeSha256,
+      recoveryWrappedKey: prepared.recoveryWrappedKey,
+      dataKey: prepared.dataKey,
+    };
+    return {
+      ok: true,
+      pending: true,
+      pendingId,
+      profile: { directory: active.directory, profileId: active.profileId, label: active.label },
+      recoveryKey: prepared.recoveryKey,
+    };
+  }
+
+  cancelRecoveryKeyRotation(pendingId) {
+    const pending = this.pendingRecoveryKeyRotation;
+    if (!pending) return { ok: true, canceled: false };
+    if (typeof pendingId !== 'string' || pendingId !== pending.pendingId) {
+      throw new Error('The pending POS Recovery Key rotation does not match this profile.');
+    }
+    this.clearPendingRecoveryKeyRotation();
+    return { ok: true, canceled: true };
+  }
+
+  getPendingRecoveryKeyRotation() {
+    const pending = this.pendingRecoveryKeyRotation;
+    if (!pending) return { ok: true, pending: false };
+    const active = this.requireActive();
+    if (active.profileId !== pending.profileId ||
+        fs.realpathSync(active.directory) !== pending.directory) {
+      this.clearPendingRecoveryKeyRotation();
+      return { ok: true, pending: false };
+    }
+    return {
+      ok: true,
+      pending: true,
+      pendingId: pending.pendingId,
+      profile: { directory: active.directory, profileId: active.profileId, label: active.label },
+      recoveryKey: pending.recoveryKey,
+    };
+  }
+
+  finalizeRecoveryKeyRotation({ pendingId, acknowledged }) {
+    const pending = this.pendingRecoveryKeyRotation;
+    if (!pending || typeof pendingId !== 'string' || pendingId !== pending.pendingId) {
+      throw new Error('The pending POS Recovery Key rotation expired. Start rotation again.');
+    }
+    if (acknowledged !== true) {
+      throw new Error('Confirm that the new Recovery Key has been saved before finishing rotation.');
+    }
+    const active = this.requireActive();
+    if (active.profileId !== pending.profileId ||
+        fs.realpathSync(active.directory) !== pending.directory) {
+      this.clearPendingRecoveryKeyRotation();
+      throw new Error('The active POS profile changed during Recovery Key rotation. Start again.');
+    }
+    finalizeProfileRecoveryKeyRotation(active.directory, pending);
+    this.clearPendingRecoveryKeyRotation();
+    return { ok: true, profile: this.getStatus().profile, recoveryKeyUpdated: true };
+  }
+
   async unlockWithOS(directory) {
     if (this.active) throw new Error('Lock the currently open POS profile before selecting another profile.');
     this.assertSafeStorage();
@@ -372,6 +462,7 @@ class POSProfileSession {
   }
 
   lock() {
+    this.clearPendingRecoveryKeyRotation();
     if (!this.active) return { ok: true, locked: true };
     this.active.storage.destroy();
     this.active = null;
@@ -393,11 +484,13 @@ class POSProfileSession {
 
   async changePassphrase(currentPassphrase, nextPassphrase) {
     const active = this.requireActive();
+    this.clearPendingRecoveryKeyRotation();
     return changeProfileLockPassphrase(active.directory, active.profileId, currentPassphrase, nextPassphrase);
   }
 
   async resetPassphrase(recoveryKey, nextPassphrase) {
     const active = this.requireActive();
+    this.clearPendingRecoveryKeyRotation();
     return resetProfileLockPassphraseWithRecoveryKey(active.directory, active.profileId, recoveryKey, nextPassphrase);
   }
 
