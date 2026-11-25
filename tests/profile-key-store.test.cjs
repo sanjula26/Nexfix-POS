@@ -210,8 +210,11 @@ test('rejects wrong old recovery key without changing the envelope', async (t) =
   persistNewProfileKeyEnvelope(directory, created.envelope);
   const file = path.join(directory, KEY_ENVELOPE_FILE);
   const beforeBytes = fs.readFileSync(file);
+  const wrongButWellFormedKey = (created.recoveryKey[0] === 'A' ? 'B' : 'A') +
+    created.recoveryKey.slice(1);
+  assert.equal(wrongButWellFormedKey.length, created.recoveryKey.length);
   assert.throws(
-    () => prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, 'wrong-recovery-key'),
+    () => prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, wrongButWellFormedKey),
     /authentication failed/,
   );
   assert.deepEqual(fs.readFileSync(file), beforeBytes);
