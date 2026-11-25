@@ -675,6 +675,22 @@ test('stages Recovery Key rotation in trusted IPC and finalizes only after ackno
     /authentication failed/,
   );
   newDataKey.fill(0);
+
+  // Simulate the main process committing the wrapper while the renderer misses
+  // the IPC response. Retrying the same acknowledged request must be idempotent.
+  const retried = await ctx.call('pos-profile:finalize-recovery-rotation', {
+    pendingId: prepared.pendingId,
+    acknowledged: true,
+  });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.recoveryKeyUpdated, true);
+  assert.deepEqual(readProfileKeyEnvelope(directory, finalized.profile.profileId), updatedEnvelope);
+
+  const cancelAfterFinalize = await ctx.call('pos-profile:cancel-recovery-rotation', {
+    pendingId: prepared.pendingId,
+  });
+  assert.equal(cancelAfterFinalize.ok, false);
+  assert.match(cancelAfterFinalize.error, /already been finalized and cannot be cancelled/);
   assert.equal((await ctx.call('pos-profile:pending-recovery-rotation')).pending, false);
 });
 
