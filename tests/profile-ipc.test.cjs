@@ -706,3 +706,31 @@ test('locking a profile discards a pending Recovery Key rotation secret', async 
   const envelope = readProfileKeyEnvelope(finalized.profile.directory, finalized.profile.profileId);
   assert.doesNotThrow(() => unwrapDataKeyWithRecoveryKey(envelope.recoveryWrappedKey, created.recoveryKey, finalized.profile.profileId));
 });
+
+test('explicit cancellation discards a pending Recovery Key rotation without changing disk', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const created = await ctx.call('pos-profile:prepare-create', {
+    storageRoot: ctx.root,
+    directoryName: 'Rotation Cancel POS',
+    label: 'NexFix Rotation Cancel Shop',
+    passphrase: 'Rotation-Test-Passphrase-2026',
+  });
+  const finalized = await ctx.call('pos-profile:finalize-create', {
+    pendingId: created.pendingId,
+    storageRoot: ctx.root,
+    passphrase: 'Rotation-Test-Passphrase-2026',
+    acknowledged: true,
+  });
+  const before = readProfileKeyEnvelope(finalized.profile.directory, finalized.profile.profileId);
+  const prepared = await ctx.call('pos-profile:prepare-recovery-rotation', {
+    currentRecoveryKey: created.recoveryKey,
+  });
+  const canceled = await ctx.call('pos-profile:cancel-recovery-rotation', { pendingId: prepared.pendingId });
+  assert.deepEqual(canceled, { ok: true, canceled: true });
+  assert.deepEqual(
+    readProfileKeyEnvelope(finalized.profile.directory, finalized.profile.profileId),
+    before,
+  );
+  assert.equal((await ctx.call('pos-profile:pending-recovery-rotation')).pending, false);
+});
