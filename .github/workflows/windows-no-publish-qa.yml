@@ -4,7 +4,7 @@ name: Windows Desktop QA (No Publish)
 # changes updater metadata, creates tags/releases, or deletes old releases.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/local-pos-data-profile-20261122]
     paths:
       - 'src/**'
       - 'tests/**'

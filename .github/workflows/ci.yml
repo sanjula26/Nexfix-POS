@@ -2,7 +2,7 @@ name: Nexfix POS CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/local-pos-data-profile-20261122]
   pull_request:
     branches: [main]
   workflow_dispatch:
