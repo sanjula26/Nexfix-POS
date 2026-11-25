@@ -265,3 +265,25 @@ test('refuses finalization when the envelope changes after rotation preparation'
   stillOld.fill(0);
   pending.dataKey.fill(0);
 });
+
+test('retries an already-applied Recovery Key rotation idempotently after a lost response', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+
+  const first = finalizeProfileRecoveryKeyRotation(directory, pending);
+  const bytesAfterFirstFinalize = fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE));
+  const retried = finalizeProfileRecoveryKeyRotation(directory, pending);
+
+  assert.deepEqual(retried, first);
+  assert.deepEqual(fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE)), bytesAfterFirstFinalize);
+  const recovered = unwrapDataKeyWithRecoveryKey(retried.recoveryWrappedKey, pending.recoveryKey, PROFILE_ID);
+  assert.deepEqual(recovered, pending.dataKey);
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(retried.recoveryWrappedKey, created.recoveryKey, PROFILE_ID),
+    /authentication failed/,
+  );
+  recovered.fill(0);
+  pending.dataKey.fill(0);
+});
