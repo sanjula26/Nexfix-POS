@@ -1257,7 +1257,7 @@ export default function Settings() {
                 </Field>
               ) : (
                 <div className="space-y-3">
-                  <Field label="New desktop Recovery Key" hint="Save this key in a secure place outside this PC. It is held temporarily in memory until you finish or cancel.">
+                  <Field label="New desktop Recovery Key" hint="Save this key in a secure place outside this PC. It is held temporarily in memory until you finish or cancel. If Nexfix closes first, the pending key is discarded and the previous key remains valid.">
                     <div className="flex flex-col sm:flex-row gap-2">
                       <input type="text" readOnly spellCheck={false} className="input flex-1 font-mono text-xs" value={desktopRotationNewKey} />
                       <button type="button" className="btn btn-soft shrink-0" disabled={!desktopRotationNewKey}
@@ -1304,7 +1304,7 @@ export default function Settings() {
                   </div>
                 </div>
               )}
-              {desktopRotationMessage && <p className={`text-[12px] font-medium mt-3 ${/successfully|copied|cancelled|saved/i.test(desktopRotationMessage) ? 'text-emerald-600' : /failed|could not|error|refused/i.test(desktopRotationMessage) ? 'text-rose-500' : 'text-sky-600'}`}>{desktopRotationMessage}</p>}
+              {desktopRotationMessage && <p className={`text-[12px] font-medium mt-3 ${/updated successfully|copied|rotation cancelled/i.test(desktopRotationMessage) ? 'text-emerald-600' : /failed|could not|error|refused/i.test(desktopRotationMessage) ? 'text-rose-500' : 'text-sky-600'}`}>{desktopRotationMessage}</p>}
             </div>
           )}
 
