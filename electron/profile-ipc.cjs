@@ -144,6 +144,12 @@ function registerPOSProfileIpc(options) {
     return profileSession.getPendingRecoveryKeyRotation();
   });
 
+  register('pos-profile:cancel-recovery-rotation', (payload) => {
+    assertActiveProfileSelected();
+    const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
+    return profileSession.cancelRecoveryKeyRotation(pendingId);
+  });
+
   register('pos-profile:finalize-recovery-rotation', (payload) => {
     assertActiveProfileSelected();
     const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
