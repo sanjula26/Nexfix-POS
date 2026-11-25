@@ -85,6 +85,7 @@ export type DesktopPOSProfileResult = {
   pendingId?: string;
   profile?: Pick<DesktopPOSProfileSummary, 'directory' | 'profileId' | 'label'>;
   recoveryKey?: string;
+  recoveryKeyUpdated?: boolean;
   error?: string;
 };
 
@@ -104,6 +105,10 @@ type DesktopProfileApi = {
   createPOSProfile?: (payload: { storageRoot: string; directoryName: string; label: string; passphrase: string }) => Promise<DesktopPOSProfileResult>;
   getPendingPOSProfileCreation?: () => Promise<PendingDesktopPOSProfileCreation>;
   finalizePOSProfileCreation?: (payload: { pendingId: string; storageRoot: string; passphrase: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
+  preparePOSRecoveryKeyRotation?: (currentRecoveryKey: string) => Promise<DesktopPOSProfileResult>;
+  getPendingPOSRecoveryKeyRotation?: () => Promise<DesktopPOSProfileResult & { pending: boolean }>;
+  finalizePOSRecoveryKeyRotation?: (payload: { pendingId: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
+  cancelPOSRecoveryKeyRotation?: (pendingId: string) => Promise<{ ok: boolean; canceled?: boolean; error?: string }>;
   unlockPOSProfileWithOS?: (directory: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithPassphrase?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
   unlockPOSProfileWithRecoveryKey?: (directory: string, secret: string) => Promise<DesktopPOSProfileResult>;
