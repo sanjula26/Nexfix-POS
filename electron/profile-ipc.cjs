@@ -114,6 +114,48 @@ function registerPOSProfileIpc(options) {
 
   register('pos-profile:pending-create', () => profileSession.getPendingCreation());
 
+  function assertActiveProfileSelected() {
+    const active = profileSession.requireActive();
+    if (!discoveredProfiles.has(active.directory)) {
+      throw new Error('Scan the selected POS storage folder and choose the active profile before rotating its Recovery Key.');
+    }
+    const selected = [...selectedRoots].some((root) => {
+      if (!isSelectedStorageRoot(root)) return false;
+      const relative = path.relative(root, active.directory);
+      return relative === '' || (relative !== '..' &&
+        !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+    });
+    if (!selected) throw new Error('Reconnect and select the original POS storage folder before rotating its Recovery Key.');
+    return active;
+  }
+
+  register('pos-profile:prepare-recovery-rotation', (payload) => {
+    assertActiveProfileSelected();
+    const currentRecoveryKey = typeof payload?.currentRecoveryKey === 'string'
+      ? payload.currentRecoveryKey : '';
+    if (!currentRecoveryKey || currentRecoveryKey.length > MAX_RECOVERY_KEY_LENGTH) {
+      throw new Error('Enter a valid current POS Recovery Key.');
+    }
+    return profileSession.prepareRecoveryKeyRotation(currentRecoveryKey);
+  });
+
+  register('pos-profile:pending-recovery-rotation', () => {
+    assertActiveProfileSelected();
+    return profileSession.getPendingRecoveryKeyRotation();
+  });
+
+  register('pos-profile:finalize-recovery-rotation', (payload) => {
+    assertActiveProfileSelected();
+    const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
+    if (!pendingId || pendingId.length > 128) {
+      throw new Error('The pending POS Recovery Key rotation is invalid. Start again.');
+    }
+    return profileSession.finalizeRecoveryKeyRotation({
+      pendingId,
+      acknowledged: payload?.acknowledged === true,
+    });
+  });
+
   register('pos-profile:finalize-create', async (payload) => {
     const pendingId = typeof payload?.pendingId === 'string' ? payload.pendingId : '';
     const storageRoot = typeof payload?.storageRoot === 'string' ? path.resolve(payload.storageRoot) : '';
