@@ -342,6 +342,16 @@ class POSProfileSession {
     };
   }
 
+  cancelRecoveryKeyRotation(pendingId) {
+    const pending = this.pendingRecoveryKeyRotation;
+    if (!pending) return { ok: true, canceled: false };
+    if (typeof pendingId !== 'string' || pendingId !== pending.pendingId) {
+      throw new Error('The pending POS Recovery Key rotation does not match this profile.');
+    }
+    this.clearPendingRecoveryKeyRotation();
+    return { ok: true, canceled: true };
+  }
+
   getPendingRecoveryKeyRotation() {
     const pending = this.pendingRecoveryKeyRotation;
     if (!pending) return { ok: true, pending: false };
@@ -374,7 +384,7 @@ class POSProfileSession {
       this.clearPendingRecoveryKeyRotation();
       throw new Error('The active POS profile changed during Recovery Key rotation. Start again.');
     }
-    const saved = finalizeProfileRecoveryKeyRotation(active.directory, pending);
+    finalizeProfileRecoveryKeyRotation(active.directory, pending);
     this.clearPendingRecoveryKeyRotation();
     return { ok: true, profile: this.getStatus().profile, recoveryKeyUpdated: true };
   }
