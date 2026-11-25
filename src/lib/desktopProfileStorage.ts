@@ -82,6 +82,7 @@ type DesktopPOSMigrationResponse = {
 
 export type DesktopPOSProfileResult = {
   ok: boolean;
+  pending?: boolean;
   pendingId?: string;
   profile?: Pick<DesktopPOSProfileSummary, 'directory' | 'profileId' | 'label'>;
   recoveryKey?: string;
