@@ -12,6 +12,8 @@ const {
   unwrapDataKeyWithPassphrase,
   unwrapDataKeyWithRecoveryKey,
   unwrapDataKeyWithOS,
+  createRecoveryKey,
+  wrapDataKeyWithRecoveryKey,
 } = require('./profile-crypto.cjs');
 
 const KEY_ENVELOPE_FILE = 'nexfix-key-envelope.json';
@@ -292,6 +294,78 @@ async function rebindProfileDeviceKeyWithPassphrase(profileDirectory, profileId,
   }
 }
 
+
+/**
+ * Prepare a Recovery Key rotation without changing the on-disk envelope.
+ * The returned buffers/secrets are caller-owned and must remain in main-process
+ * memory only until the user acknowledges saving the replacement key.
+ */
+function prepareProfileRecoveryKeyRotation(profileDirectory, profileId, currentRecoveryKey) {
+  const destination = path.join(profileDirectory, KEY_ENVELOPE_FILE);
+  const stat = fs.lstatSync(destination);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('POS profile key envelope must be a regular file.');
+  }
+  const originalBytes = fs.readFileSync(destination);
+  const expectedEnvelopeSha256 = crypto.createHash('sha256').update(originalBytes).digest('hex');
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  const dataKey = unwrapDataKeyWithRecoveryKey(current.recoveryWrappedKey, currentRecoveryKey, profileId);
+  let recoveryKey = '';
+  try {
+    recoveryKey = createRecoveryKey();
+    const recoveryWrappedKey = wrapDataKeyWithRecoveryKey(dataKey, recoveryKey, profileId);
+    const verified = unwrapDataKeyWithRecoveryKey(recoveryWrappedKey, recoveryKey, profileId);
+    const sameKey = verified.equals(dataKey);
+    verified.fill(0);
+    if (!sameKey) throw new Error('New POS recovery-key wrapper failed preflight verification.');
+    return {
+      profileId,
+      expectedEnvelopeSha256,
+      recoveryKey,
+      recoveryWrappedKey,
+      dataKey,
+    };
+  } catch (error) {
+    dataKey.fill(0);
+    recoveryKey = '';
+    throw error;
+  }
+}
+
+/** Apply a prepared rotation only after the caller has obtained user acknowledgement. */
+function finalizeProfileRecoveryKeyRotation(profileDirectory, pending) {
+  if (!pending || typeof pending.profileId !== 'string' ||
+      typeof pending.expectedEnvelopeSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(pending.expectedEnvelopeSha256) ||
+      typeof pending.recoveryKey !== 'string' || !Buffer.isBuffer(pending.dataKey)) {
+    throw new Error('Pending POS recovery-key rotation is invalid.');
+  }
+  const destination = path.join(profileDirectory, KEY_ENVELOPE_FILE);
+  const stat = fs.lstatSync(destination);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error('POS profile key envelope must be a regular file.');
+  }
+  const originalBytes = fs.readFileSync(destination);
+  const actualHash = crypto.createHash('sha256').update(originalBytes).digest('hex');
+  if (actualHash !== pending.expectedEnvelopeSha256) {
+    throw new Error('POS profile key envelope changed during Recovery Key rotation. No update was applied.');
+  }
+  const current = readProfileKeyEnvelope(profileDirectory, pending.profileId);
+  const nextEnvelope = {
+    ...current,
+    recoveryWrappedKey: pending.recoveryWrappedKey,
+    updatedAt: new Date().toISOString(),
+  };
+  const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+  const verificationKey = unwrapDataKeyWithRecoveryKey(
+    saved.recoveryWrappedKey, pending.recoveryKey, pending.profileId,
+  );
+  const sameKey = verificationKey.equals(pending.dataKey);
+  verificationKey.fill(0);
+  if (!sameKey) throw new Error('Saved POS Recovery Key failed read-back verification.');
+  return saved;
+}
+
 module.exports = {
   KEY_ENVELOPE_FILE,
   KEY_ENVELOPE_FORMAT,
@@ -304,4 +378,6 @@ module.exports = {
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
   rebindProfileDeviceKeyWithPassphrase,
+  prepareProfileRecoveryKeyRotation,
+  finalizeProfileRecoveryKeyRotation,
 };
