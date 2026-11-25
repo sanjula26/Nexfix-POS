@@ -12,6 +12,7 @@ const {
   readProfileKeyEnvelope,
   validateProfileKeyEnvelope,
   changeProfileLockPassphrase,
+  rotateProfileRecoveryKey,
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
 } = require('../electron/profile-key-store.cjs');
@@ -109,6 +110,46 @@ test('rejects tampered envelopes, wrong profile IDs and symlinked key files', as
     fs.symlinkSync(outside, path.join(directory, KEY_ENVELOPE_FILE));
     assert.throws(() => readProfileKeyEnvelope(directory, PROFILE_ID), /symbolic link/);
   }
+});
+
+test('rotates the portable recovery key only after authenticating the current key and verifies the persisted replacement', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const before = readProfileKeyEnvelope(directory, PROFILE_ID);
+
+  await assert.rejects(
+    rotateProfileRecoveryKey(directory, PROFILE_ID, 'invalid-recovery-key'),
+  );
+  assert.deepEqual(readProfileKeyEnvelope(directory, PROFILE_ID), before);
+
+  const rotated = await rotateProfileRecoveryKey(directory, PROFILE_ID, created.recoveryKey);
+  assert.equal(validateProfileKeyEnvelope(rotated.envelope, PROFILE_ID).valid, true);
+  assert.equal(typeof rotated.recoveryKey, 'string');
+  assert.notEqual(rotated.recoveryKey, created.recoveryKey);
+  assert.equal(JSON.stringify(rotated.envelope).includes(rotated.recoveryKey), false);
+  assert.deepEqual(rotated.envelope.osWrappedKey, before.osWrappedKey);
+  assert.deepEqual(rotated.envelope.passphraseWrappedKey, before.passphraseWrappedKey);
+  assert.deepEqual(readProfileKeyEnvelope(directory, PROFILE_ID), rotated.envelope);
+
+  await assert.rejects(
+    unwrapDataKeyWithRecoveryKey(rotated.envelope.recoveryWrappedKey, created.recoveryKey, PROFILE_ID),
+    /authentication failed/,
+  );
+  const newRecoveryDataKey = unwrapDataKeyWithRecoveryKey(
+    rotated.envelope.recoveryWrappedKey, rotated.recoveryKey, PROFILE_ID,
+  );
+  const passphraseDataKey = await unwrapDataKeyWithPassphrase(
+    rotated.envelope.passphraseWrappedKey, PASSPHRASE, PROFILE_ID,
+  );
+  const deviceDataKey = await unwrapDataKeyWithOS(
+    rotated.envelope.osWrappedKey, PROFILE_ID, makeSafeStorage(),
+  );
+  assert.deepEqual(newRecoveryDataKey, passphraseDataKey);
+  assert.deepEqual(newRecoveryDataKey, deviceDataKey);
+  newRecoveryDataKey.fill(0);
+  passphraseDataKey.fill(0);
+  deviceDataKey.fill(0);
 });
 
 test('changes the folder-lock passphrase without changing the profile data key', async (t) => {
