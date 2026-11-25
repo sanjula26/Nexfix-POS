@@ -314,6 +314,11 @@ class POSProfileSession {
 
   prepareRecoveryKeyRotation(currentRecoveryKey) {
     const active = this.requireActive();
+    if (this.pendingRecoveryKeyRotation?.finalized === true) {
+      // The completion receipt contains no raw key material and exists only
+      // so a lost IPC response can be retried idempotently in this process.
+      this.clearPendingRecoveryKeyRotation();
+    }
     if (this.pendingRecoveryKeyRotation) {
       throw new Error('Finish or cancel the pending POS Recovery Key rotation first.');
     }
@@ -348,6 +353,9 @@ class POSProfileSession {
     if (typeof pendingId !== 'string' || pendingId !== pending.pendingId) {
       throw new Error('The pending POS Recovery Key rotation does not match this profile.');
     }
+    if (pending.finalized === true) {
+      throw new Error('This Recovery Key rotation has already been finalized and cannot be cancelled.');
+    }
     this.clearPendingRecoveryKeyRotation();
     return { ok: true, canceled: true };
   }
@@ -360,6 +368,11 @@ class POSProfileSession {
         fs.realpathSync(active.directory) !== pending.directory) {
       this.clearPendingRecoveryKeyRotation();
       return { ok: true, pending: false };
+    }
+    if (pending.finalized === true) {
+      // The user already acknowledged and saved the key. Do not re-display it
+      // after a renderer reload; retain only the non-secret retry receipt.
+      return { ok: true, pending: false, finalized: true };
     }
     return {
       ok: true,
@@ -385,7 +398,14 @@ class POSProfileSession {
       throw new Error('The active POS profile changed during Recovery Key rotation. Start again.');
     }
     finalizeProfileRecoveryKeyRotation(active.directory, pending);
-    this.clearPendingRecoveryKeyRotation();
+    if (pending.finalized !== true) {
+      // Keep a non-secret receipt so a renderer that missed the IPC response
+      // can retry. Raw key material is cleared immediately after disk verify.
+      pending.finalized = true;
+      pending.recoveryKey = '';
+      if (Buffer.isBuffer(pending.dataKey)) pending.dataKey.fill(0);
+      pending.dataKey = null;
+    }
     return { ok: true, profile: this.getStatus().profile, recoveryKeyUpdated: true };
   }
 
