@@ -8,6 +8,8 @@ const test = require('node:test');
 const { execFileSync, spawn } = require('node:child_process');
 const { registerPOSProfileIpc } = require('../electron/profile-ipc.cjs');
 const { createMigrationJournal } = require('../electron/profile-migration.cjs');
+const { readProfileKeyEnvelope } = require('../electron/profile-key-store.cjs');
+const { unwrapDataKeyWithRecoveryKey } = require('../electron/profile-crypto.cjs');
 
 function safeStorage(prefix = 'dpapi:') {
   return {
@@ -616,4 +618,91 @@ test('persists interrupted migration journal across independent process exit and
     const resumed = runChild('resume');
     assert.deepEqual(resumed, { phase: 'snapshotting', pendingEntries: 4 }, phase + ': relaunch recovery');
   }
+});
+
+test('stages Recovery Key rotation in trusted IPC and finalizes only after acknowledgement', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const created = await ctx.call('pos-profile:prepare-create', {
+    storageRoot: ctx.root,
+    directoryName: 'Rotation POS',
+    label: 'NexFix Rotation Shop',
+    passphrase: 'Rotation-Test-Passphrase-2026',
+  });
+  const finalized = await ctx.call('pos-profile:finalize-create', {
+    pendingId: created.pendingId,
+    storageRoot: ctx.root,
+    passphrase: 'Rotation-Test-Passphrase-2026',
+    acknowledged: true,
+  });
+  assert.equal(finalized.ok, true);
+  const directory = finalized.profile.directory;
+  const oldEnvelope = readProfileKeyEnvelope(directory, finalized.profile.profileId);
+
+  const prepared = await ctx.call('pos-profile:prepare-recovery-rotation', {
+    currentRecoveryKey: created.recoveryKey,
+  });
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.pending, true);
+  assert.notEqual(prepared.recoveryKey, created.recoveryKey);
+  assert.deepEqual(readProfileKeyEnvelope(directory, finalized.profile.profileId), oldEnvelope);
+
+  const pendingAfterRendererReload = await ctx.call('pos-profile:pending-recovery-rotation');
+  assert.equal(pendingAfterRendererReload.pending, true);
+  assert.equal(pendingAfterRendererReload.recoveryKey, prepared.recoveryKey);
+
+  const refused = await ctx.call('pos-profile:finalize-recovery-rotation', {
+    pendingId: prepared.pendingId,
+    acknowledged: false,
+  });
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /Confirm that the new Recovery Key has been saved/);
+  assert.deepEqual(readProfileKeyEnvelope(directory, finalized.profile.profileId), oldEnvelope);
+
+  const completed = await ctx.call('pos-profile:finalize-recovery-rotation', {
+    pendingId: prepared.pendingId,
+    acknowledged: true,
+  });
+  assert.equal(completed.ok, true);
+  assert.equal(completed.recoveryKeyUpdated, true);
+  const updatedEnvelope = readProfileKeyEnvelope(directory, finalized.profile.profileId);
+  assert.notDeepEqual(updatedEnvelope.recoveryWrappedKey, oldEnvelope.recoveryWrappedKey);
+  const newDataKey = unwrapDataKeyWithRecoveryKey(
+    updatedEnvelope.recoveryWrappedKey, prepared.recoveryKey, finalized.profile.profileId,
+  );
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(updatedEnvelope.recoveryWrappedKey, created.recoveryKey, finalized.profile.profileId),
+    /authentication failed/,
+  );
+  newDataKey.fill(0);
+  assert.equal((await ctx.call('pos-profile:pending-recovery-rotation')).pending, false);
+});
+
+test('locking a profile discards a pending Recovery Key rotation secret', async (t) => {
+  const ctx = setup(t);
+  await ctx.call('pos-profile:choose-storage-root');
+  const created = await ctx.call('pos-profile:prepare-create', {
+    storageRoot: ctx.root,
+    directoryName: 'Rotation Lock POS',
+    label: 'NexFix Rotation Lock Shop',
+    passphrase: 'Rotation-Test-Passphrase-2026',
+  });
+  const finalized = await ctx.call('pos-profile:finalize-create', {
+    pendingId: created.pendingId,
+    storageRoot: ctx.root,
+    passphrase: 'Rotation-Test-Passphrase-2026',
+    acknowledged: true,
+  });
+  const prepared = await ctx.call('pos-profile:prepare-recovery-rotation', {
+    currentRecoveryKey: created.recoveryKey,
+  });
+  assert.equal(prepared.ok, true);
+  await ctx.call('pos-profile:lock');
+  const status = await ctx.call('pos-profile:status');
+  assert.equal(status.unlocked, false);
+  const pending = await ctx.call('pos-profile:pending-recovery-rotation');
+  assert.equal(pending.ok, false);
+  assert.match(pending.error, /No POS profile is unlocked/);
+  const envelope = readProfileKeyEnvelope(finalized.profile.directory, finalized.profile.profileId);
+  assert.doesNotThrow(() => unwrapDataKeyWithRecoveryKey(envelope.recoveryWrappedKey, created.recoveryKey, finalized.profile.profileId));
 });
