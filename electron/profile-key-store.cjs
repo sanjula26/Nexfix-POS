@@ -7,6 +7,8 @@ const {
   PROFILE_CRYPTO_FORMAT,
   PROFILE_CRYPTO_VERSION,
   createProfileKeyMaterial,
+  createRecoveryKey,
+  wrapDataKeyWithRecoveryKey,
   wrapDataKeyWithPassphrase,
   wrapDataKeyWithOS,
   unwrapDataKeyWithPassphrase,
@@ -206,6 +208,36 @@ function replaceProfileKeyEnvelope(profileDirectory, currentEnvelope, nextEnvelo
   }
 }
 
+async function rotateProfileRecoveryKey(profileDirectory, profileId, currentRecoveryKey) {
+  const current = readProfileKeyEnvelope(profileDirectory, profileId);
+  const dataKey = unwrapDataKeyWithRecoveryKey(current.recoveryWrappedKey, currentRecoveryKey, profileId);
+  let nextRecoveryKey = '';
+  try {
+    nextRecoveryKey = createRecoveryKey();
+    const nextRecoveryWrappedKey = wrapDataKeyWithRecoveryKey(dataKey, nextRecoveryKey, profileId);
+    const preflightKey = unwrapDataKeyWithRecoveryKey(nextRecoveryWrappedKey, nextRecoveryKey, profileId);
+    const preflightValid = preflightKey.equals(dataKey);
+    preflightKey.fill(0);
+    if (!preflightValid) throw new Error('New POS recovery key failed pre-write verification.');
+
+    const nextEnvelope = {
+      ...current,
+      recoveryWrappedKey: nextRecoveryWrappedKey,
+      updatedAt: new Date().toISOString(),
+    };
+    const saved = replaceProfileKeyEnvelope(profileDirectory, current, nextEnvelope);
+    const verificationKey = unwrapDataKeyWithRecoveryKey(
+      saved.recoveryWrappedKey, nextRecoveryKey, profileId,
+    );
+    const valid = verificationKey.equals(dataKey);
+    verificationKey.fill(0);
+    if (!valid) throw new Error('New POS recovery key failed persisted-envelope verification.');
+    return { envelope: saved, recoveryKey: nextRecoveryKey };
+  } finally {
+    dataKey.fill(0);
+  }
+}
+
 async function changeProfileLockPassphrase(profileDirectory, profileId, currentPassphrase, nextPassphrase) {
   const current = readProfileKeyEnvelope(profileDirectory, profileId);
   if (!current.passphraseWrappedKey) throw new Error('This POS profile does not have a folder-lock passphrase.');
@@ -301,6 +333,7 @@ module.exports = {
   persistNewProfileKeyEnvelope,
   readProfileKeyEnvelope,
   changeProfileLockPassphrase,
+  rotateProfileRecoveryKey,
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
   rebindProfileDeviceKeyWithPassphrase,
