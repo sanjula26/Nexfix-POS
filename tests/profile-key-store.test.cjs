@@ -250,7 +250,7 @@ test('refuses finalization when the envelope changes after rotation preparation'
     ...readProfileKeyEnvelope(directory, PROFILE_ID),
     updatedAt: new Date(Date.now() + 1000).toISOString(),
   };
-  fs.writeFileSync(path.join(directory, KEY_ENVELOPE_FILE), JSON.stringify(changed, null, 2) + '\\n', 'utf8');
+  fs.writeFileSync(path.join(directory, KEY_ENVELOPE_FILE), JSON.stringify(changed, null, 2) + '\n', 'utf8');
   const beforeFinalize = fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE));
   assert.throws(
     () => finalizeProfileRecoveryKeyRotation(directory, pending),
