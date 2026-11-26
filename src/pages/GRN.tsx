@@ -80,6 +80,8 @@ export default function GRN() {
   const workingDraftKey = `${GRN_WORKING_DRAFT_KEY}:${encodeURIComponent(getCloudShopId() || state.settings.shopName.trim().toLowerCase() || 'local-shop')}:${encodeURIComponent(state.settings.branchId || 'local')}`;
   const [workingDraft, setWorkingDraft] = useState<GRNWorkingDraft | null>(null);
   const [recoveryLoaded, setRecoveryLoaded] = useState(false);
+  const [recoveryLoadError, setRecoveryLoadError] = useState('');
+  const [recoveryRetry, setRecoveryRetry] = useState(0);
   const [draftSaveStatus, setDraftSaveStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
   const [confirmWorkingDraftDiscard, setConfirmWorkingDraftDiscard] = useState(false);
   const draftIdRef = useRef('');
@@ -105,6 +107,7 @@ export default function GRN() {
     let cancelled = false;
     setWorkingDraft(null);
     setRecoveryLoaded(false);
+    setRecoveryLoadError('');
     setDraftSaveStatus('loading');
     void idbGetMetaValue<GRNWorkingDraft>(workingDraftKey).then(saved => {
       if (cancelled) return;
@@ -115,9 +118,14 @@ export default function GRN() {
         setDraftSaveStatus('saved');
       }
       setRecoveryLoaded(true);
+    }).catch(() => {
+      if (cancelled) return;
+      setWorkingDraft(null);
+      setDraftSaveStatus('error');
+      setRecoveryLoadError('Could not check unfinished GRN recovery data in local storage. Retry this check before creating or editing a GRN.');
     });
     return () => { cancelled = true; };
-  }, [workingDraftKey]);
+  }, [workingDraftKey, recoveryRetry]);
   useBarcodeScanner(code => {
     const match = state.products.find(p => p.barcode.trim().toLowerCase() === code.trim().toLowerCase());
     if (!match || actionRunning || formMode !== 'receive' || view !== 'form') return;
@@ -258,7 +266,7 @@ export default function GRN() {
   };
 
   const startNew = () => {
-    if (workingDraft) return;
+    if (workingDraft || !recoveryLoaded || recoveryLoadError) return;
     draftIdRef.current = createDraftId();
     setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setInvoiceOverrideReason(''); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setBarcodeScanCount(0); setLastBarcodeUndo(null); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
   };
@@ -278,7 +286,7 @@ export default function GRN() {
       return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0, unitIds: [] };
     }));
   };
-  const edit = (p: Purchase) => { if (workingDraft) return; draftIdRef.current = createDraftId(); setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setBarcodeScanCount(0); setLastBarcodeUndo(null); setFormMode('receive'); setView('form'); };
+  const edit = (p: Purchase) => { if (workingDraft || !recoveryLoaded || recoveryLoadError) return; draftIdRef.current = createDraftId(); setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setBarcodeScanCount(0); setLastBarcodeUndo(null); setFormMode('receive'); setView('form'); };
 
   useEffect(() => {
     if (!recoveryLoaded || view !== 'form' || formMode !== 'receive') return;
@@ -475,8 +483,18 @@ export default function GRN() {
         chipTone="blue"
         title="Goods Received Notes"
         sub={processed.length + ' processed · ' + drafts.length + ' drafts'}
-        actions={<button className="btn btn-primary" onClick={startNew} disabled={!!workingDraft || !recoveryLoaded}><Plus size={15} /> New GRN</button>}
+        actions={<button className="btn btn-primary" onClick={startNew} disabled={!!workingDraft || !recoveryLoaded || !!recoveryLoadError}><Plus size={15} /> New GRN</button>}
       />
+
+      {recoveryLoadError && (
+        <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-4 mb-5">
+          <p className="text-sm font-semibold text-rose-600">Local GRN recovery check failed</p>
+          <p className="text-sm text-sub mt-1">{recoveryLoadError} Existing saved work will not be replaced.</p>
+          <button className="btn btn-soft mt-3" onClick={() => { setDraftSaveStatus('loading'); setRecoveryLoadError(''); setRecoveryRetry(value => value + 1); }}>
+            Retry local recovery check
+          </button>
+        </div>
+      )}
 
       {receivedForTags.length > 0 && <div className="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-emerald-500/30 bg-emerald-500/[0.05]"><div><div className="font-bold text-ink">GRN processed successfully</div><div className="text-sm text-sub mt-1">Print product price labels for {receivedForTags.length} received product line(s). Received quantities will be preselected as label copies.</div></div>{can('page:pricetags') && <button className="btn btn-primary" onClick={() => { try { sessionStorage.setItem('nexfix_grn_price_tags_v1', JSON.stringify({ items: receivedForTags })); } catch { setFormError('Could not prepare the price-tag selection. Open Price Tags and select products manually.'); return; } navigate('/price-tags'); }}><Printer size={15}/> Print price tags for these items</button>}</div>}
 
