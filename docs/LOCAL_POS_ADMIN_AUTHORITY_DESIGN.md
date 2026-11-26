@@ -294,3 +294,24 @@ A compatibility experiment established that the existing renderer password verif
 2. Compatibility-and-rehash: implement a strictly scoped verifier for the exact historical custom algorithm, validate it with fixed known-answer vectors and performance/lockout tests, and immediately rehash a successfully verified password into a versioned standard format. Do not continue using the custom algorithm for new credentials.
 
 The second path carries extra code and review risk; neither path is approved by this note. The legacy SHA-256-only account format and Admin PIN format remain separate unresolved migrations. No renderer or main-process verifier was wired into production in this step.
+
+## 15. Windows key-envelope replacement durability — 2026-11-26
+
+The active Electron runtime and its Windows rename implementation were checked against the repository lockfile:
+
+- `package-lock.json` pins Electron `44.11.4`. Electron's release record identifies bundled Node.js `24.22.3` ([Electron 44.11.4 release](https://releases.electronjs.org/release/v44.11.4)).
+- Node.js tag `v24.22.3` includes libuv `1.52.1` in `deps/uv/include/uv/version.h` ([version header](https://github.com/nodejs/node/blob/v24.22.3/deps/uv/include/uv/version.h)).
+- libuv `v1.52.1` Windows `fs__rename` calls `MoveFileExW(source, destination, MOVEFILE_REPLACE_EXISTING)` without `MOVEFILE_WRITE_THROUGH`; its `fsync` implementation calls `FlushFileBuffers` on the file handle ([libuv Windows source](https://github.com/libuv/libuv/blob/v1.52.1/src/win/fs.c)).
+- Current `replaceProfileKeyEnvelope` writes a same-directory temporary file, calls `fs.fsyncSync`, closes it, re-checks the original envelope hash, calls `fs.renameSync`, and performs read-back validation. This is a good process-error/normal-I/O design, but a flushed temporary file plus successful read-back does not, by itself, demonstrate that the destination-name metadata is durable after sudden power loss.
+
+Windows API findings:
+
+- `MoveFileExW` provides `MOVEFILE_WRITE_THROUGH`; Microsoft says the call does not return until the file is actually moved on disk, and explicitly guarantees flushing for a move performed as copy+delete. Its documentation does not give a separately testable, hardware-independent power-cut guarantee for this exact same-volume replacement use case. Treat it as a stronger candidate to evaluate, not proof on its own ([Microsoft MoveFileExW docs](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)).
+- `FILE_FLAG_WRITE_THROUGH` documentation says NTFS flushes metadata changes including rename operations, but hardware support for write-through to persistent media is not universal. A native implementation would need to be reviewed for the exact handle/rename sequence and tested on supported Windows filesystems and storage ([Microsoft CreateFile docs](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea)).
+- `ReplaceFileW` is not a shortcut for this guarantee: Microsoft's `REPLACEFILE_WRITE_THROUGH` flag is explicitly unsupported ([Microsoft ReplaceFileW docs](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)).
+
+Existing regression coverage verifies a rename failure leaves the old envelope and pending rotation intact, and verifies retry after the rename committed but the IPC response was lost. It does not simulate abrupt power loss or a storage device that lies about flush completion.
+
+A new regression test, `preserves the previous key envelope and permits retry when the temp-file fsync fails`, injects an `EIO` at the temporary-file flush boundary. It asserts that the old envelope bytes remain unchanged, the temporary file is cleaned up, the old key remains valid, the new key is not yet committed, and retry after restoring the flush call succeeds. This is a fault-injection test, **not** a power-loss durability test.
+
+**Decision:** no change to production replacement code in this step. Do not describe Windows key-envelope rotation as proven power-loss durable. Before closing this blocker, evaluate a small native Windows commit helper using documented write-through flags or a versioned/two-generation recovery protocol; preserve a recoverable previous envelope until the new commit is durably selected; then run controlled crash/power-cut tests on actual supported Windows filesystems and operator machines. Do not assume the API flag alone proves behavior across removable media, storage-controller caches or every device.
