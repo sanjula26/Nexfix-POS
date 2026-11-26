@@ -46,6 +46,7 @@ export default function GRN() {
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
   const [search, setSearch] = useState('');
+  const [lookupError, setLookupError] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [priceChanges, setPriceChanges] = useState<Array<{ name: string; old: number; next: number }>>([]);
@@ -80,6 +81,15 @@ export default function GRN() {
     setSelectedGrn(match);
     navigate('/grn', { replace: true });
   }, [requestedGrnId, state.purchases, navigate]);
+
+  const findGrn = () => {
+    const term = search.trim().toLowerCase();
+    if (!term) { setLookupError('Enter a GRN number to find its saved record.'); return; }
+    const match = state.purchases.find(p => p.poNo.trim().toLowerCase() === term);
+    if (!match) { setLookupError('No saved GRN matches that number. Check the GRN number and try again.'); return; }
+    setLookupError('');
+    setSelectedGrn(match);
+  };
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
     if (i !== index) return r;
@@ -509,10 +519,14 @@ export default function GRN() {
       ) : (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-line">
-            <div className="relative max-w-md">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-              <input className="input pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search GRN, supplier or invoice..." />
+            <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+              <div className="relative flex-1">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
+                <input className="input pl-9" value={search} onChange={e => { setSearch(e.target.value); setLookupError(""); }} onKeyDown={e => { if (e.key === "Enter") findGrn(); }} placeholder="Search GRN, supplier or invoice..." />
+              </div>
+              <button type="button" className="btn btn-primary" onClick={findGrn} disabled={actionRunning}>Find GRN</button>
             </div>
+            {lookupError && <p role="alert" className="text-xs text-rose-600 mt-2">{lookupError}</p>}
           </div>
           {list.length === 0 ? (
             <EmptyState icon={<ClipboardCheck size={26} />} title="No GRNs found" sub="Create a GRN draft to record incoming stock." />
