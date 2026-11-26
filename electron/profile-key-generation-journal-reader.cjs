@@ -57,14 +57,14 @@ function assertDirectoryUnchanged(fsApi, directoryPath, before, label) {
   try {
     after = fsApi.lstatSync(directoryPath);
   } catch {
-    throw new Error(`\${label} changed while it was being read.`);
+    throw new Error(`${label} changed while it was being read.`);
   }
   if (after.isSymbolicLink() || !after.isDirectory() ||
       after.dev !== before.dev ||
       after.ino !== before.ino ||
       after.mtimeMs !== before.mtimeMs ||
       after.ctimeMs !== before.ctimeMs) {
-    throw new Error(`\${label} changed while it was being read.`);
+    throw new Error(`${label} changed while it was being read.`);
   }
 }
 
