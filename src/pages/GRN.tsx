@@ -78,7 +78,8 @@ export default function GRN() {
     if (!match) return;
     setSearch(match.poNo);
     setSelectedGrn(match);
-  }, [requestedGrnId, state.purchases]);
+    navigate('/grn', { replace: true });
+  }, [requestedGrnId, state.purchases, navigate]);
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
     if (i !== index) return r;
