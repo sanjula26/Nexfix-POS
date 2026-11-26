@@ -343,7 +343,7 @@ export default function GRN() {
         draftIdRef.current = '';
       } else if (savedId) {
         const recoveryCopy = { ...makeWorkingDraft(), editingId: savedId };
-        const preserved = await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, recoveryCopy);
+        const preserved = await idbPutMetaValue(workingDraftKey, recoveryCopy);
         if (preserved) setWorkingDraft(recoveryCopy);
         setDraftSaveStatus('error');
         setFormError('The GRN was saved, but its temporary recovery copy could not be cleared. Use Discard on the recovery banner after confirming the saved GRN.');
@@ -413,7 +413,7 @@ export default function GRN() {
         draftIdRef.current = '';
       } else {
         const staleRecovery = { ...makeWorkingDraft(), editingId: confirmId };
-        if (await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, staleRecovery)) setWorkingDraft(staleRecovery);
+        if (await idbPutMetaValue(workingDraftKey, staleRecovery)) setWorkingDraft(staleRecovery);
         setDraftSaveStatus('error');
       }
       setReceivedForTags(purchase.items.map(item => ({ productId: item.productId, qty: Math.max(1, Math.floor(item.qty || 1)) })));
