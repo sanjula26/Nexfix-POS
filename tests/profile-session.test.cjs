@@ -268,6 +268,70 @@ test('reopens a finalized Recovery Key rotation with a fresh session', async (t)
   restarted.lock();
 });
 
+test('recognizes a committed rotation when the finalize IPC response is lost', async (t) => {
+  const root = temporaryRoot(t);
+  const session = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  const created = await session.create({
+    storageRoot: root,
+    directoryName: 'Lost Finalize Response POS',
+    label: 'NexFix Lost Finalize Response',
+    passphrase: PASSWORD,
+  });
+  const state = JSON.stringify({ sales: [{ id: 'lost-finalize-response-sale' }] });
+  session.write('app_state', state);
+  const prepared = session.prepareRecoveryKeyRotation(created.recoveryKey);
+
+  const originalRenameSync = fs.renameSync;
+  let replacementCommitted = false;
+  fs.renameSync = function commitThenLoseResponse(source, destination, ...args) {
+    const result = originalRenameSync.call(this, source, destination, ...args);
+    if (!replacementCommitted) {
+      replacementCommitted = true;
+      const error = new Error('simulated finalize IPC response loss after disk commit');
+      error.code = 'EIO';
+      throw error;
+    }
+    return result;
+  };
+
+  try {
+    assert.throws(
+      () => session.finalizeRecoveryKeyRotation({
+        pendingId: prepared.pendingId,
+        acknowledged: true,
+      }),
+      /simulated finalize IPC response loss after disk commit/,
+    );
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.equal(replacementCommitted, true);
+  const recoveredPending = session.getPendingRecoveryKeyRotation(prepared.recoveryKey);
+  assert.deepEqual(recoveredPending, { ok: true, pending: false, finalized: true });
+  assert.equal(recoveredPending.recoveryKey, undefined);
+
+  // Retrying the original finalize request remains idempotent after the
+  // renderer has recovered the completion receipt.
+  const retried = session.finalizeRecoveryKeyRotation({
+    pendingId: prepared.pendingId,
+    acknowledged: true,
+  });
+  assert.equal(retried.ok, true);
+  assert.equal(retried.recoveryKeyUpdated, true);
+  session.lock();
+
+  const restarted = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  await assert.rejects(
+    restarted.unlockWithRecoveryKey(created.profile.directory, created.recoveryKey),
+    /authentication failed/,
+  );
+  const reopened = await restarted.unlockWithRecoveryKey(created.profile.directory, prepared.recoveryKey);
+  assert.equal(reopened.ok, true);
+  assert.equal(restarted.read('app_state'), state);
+  restarted.lock();
+});
+
 
 test('keeps the old Recovery Key and pending rotation intact when envelope rename fails', async (t) => {
   const root = temporaryRoot(t);
