@@ -73,6 +73,8 @@ export interface BackupMeta {
   autoBackupFailureCount?: number;
   autoBackupHours: number;
   backupCount: number;
+  /** Local feature metadata that must follow the encrypted profile on quota migration. */
+  grnWorkingDrafts?: Record<string, unknown>;
 }
 
 function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{ const req=indexedDB.open(DB_NAME,DB_VERSION); req.onerror=()=>reject(req.error||new Error('IDB open failed')); req.onsuccess=()=>resolve(req.result); req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});if(!db.objectStoreNames.contains(STORE_QUEUE)){const q=db.createObjectStore(STORE_QUEUE,{keyPath:'id'});q.createIndex('ts','ts',{unique:false});}if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});};}); }
@@ -567,4 +569,31 @@ export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta
   const result = await idbSetMetaDetailed(patch);
   return result.value ?? idbGetMeta();
 }
+/** Store feature-specific local metadata inside the migratable metadata domain. */
+export async function idbGetMetaValue<T>(key: string): Promise<T | null> {
+  if (!key) return null;
+  const result = await idbGetMetaDetailed();
+  if (!result.ok) throw new Error(result.error.message);
+  const value = result.value.grnWorkingDrafts?.[key];
+  return value === undefined ? null : value as T;
+}
+
+export async function idbPutMetaValue<T>(key: string, value: T): Promise<boolean> {
+  if (!key) return false;
+  const result = await idbSetMetaDetailed(current => ({
+    grnWorkingDrafts: { ...(current.grnWorkingDrafts || {}), [key]: value },
+  }));
+  return result.ok;
+}
+
+export async function idbDeleteMetaValue(key: string): Promise<boolean> {
+  if (!key) return false;
+  const result = await idbSetMetaDetailed(current => {
+    const drafts = { ...(current.grnWorkingDrafts || {}) };
+    delete drafts[key];
+    return { grnWorkingDrafts: drafts };
+  });
+  return result.ok;
+}
+
 export function idbAvailable():boolean{return desktopProfilePrimary ? hasDesktopProfileRuntime() : typeof indexedDB!=='undefined';}

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import type { POSState } from '../src/lib/types.ts';
+import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride, validatePurchaseUnitIdentifiers } from '../src/lib/purchaseReconciliation.ts';
+import type { POSState, Product, Purchase, PurchaseReturn } from '../src/lib/types.ts';
+import { buildPurchaseCostHistoryRows, buildSupplierReturnReportRows } from '../src/lib/grnReports.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -412,6 +414,32 @@ test('inventory ledger state builder records only a pending-to-received purchase
   assert.equal(unchanged.inventoryTransactions?.length, 1);
 });
 
+test('inventory ledger records supplier returns as negative stock movements exactly once', () => {
+  const previous = ledgerState({ purchaseReturns: [] });
+  const returned = {
+    id: 'return-1',
+    dnNo: 'DN-0001',
+    purchaseId: 'purchase-1',
+    poNo: 'GRN-0001',
+    items: [{ itemIdx: 0, productId: 'product-1', name: 'Test product', qty: 2, cost: 100, total: 200 }],
+    total: 200,
+    reason: 'Damaged',
+  };
+  const next = ledgerState({ purchaseReturns: [returned] });
+
+  const updated = applyInventoryLedger(previous, next, 'PURCHASE_REVERSAL', 'Admin');
+
+  assert.equal(updated.inventoryTransactions?.length, 1);
+  assert.equal(updated.inventoryTransactions?.[0].type, 'PURCHASE_REVERSAL');
+  assert.equal(updated.inventoryTransactions?.[0].quantity, -2);
+  assert.equal(updated.inventoryTransactions?.[0].referenceId, 'return-1');
+  assert.equal(updated.inventoryTransactions?.[0].referenceNo, 'DN-0001');
+  assert.equal(updated.inventoryTransactions?.[0].by, 'Admin');
+
+  const retried = applyInventoryLedger(previous, updated, 'PURCHASE_REVERSAL', 'Admin');
+  assert.equal(retried.inventoryTransactions?.length, 1);
+});
+
 test('updater reauthorization clears both native credentials before retrying', async () => {
   const calls: string[] = [];
   const result = await clearUpdaterCredentialsForRecovery(
@@ -618,4 +646,278 @@ test('Adjust Stock and Stock Take pass verified online quantities to the store',
   assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
   assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
   assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
+});
+
+
+test('supplier invoice duplicate detection is supplier-scoped, normalized and excludes the current GRN', () => {
+  const purchases: Purchase[] = [
+    { id: 'pending-match', poNo: 'GRN-001', date: '2026-11-20T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: ' inv / 2026 - 001 ', items: [], total: 0, status: 'pending' },
+    { id: 'received-match', poNo: 'GRN-002', date: '2026-11-21T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: 'INV/2026-001', items: [], total: 0, status: 'received' },
+    { id: 'other-supplier', poNo: 'GRN-003', date: '2026-11-22T10:00:00.000Z', supplierId: 'supplier-2', supplierName: 'Supplier 2', supplierInvoiceNo: 'INV/2026-001', items: [], total: 0, status: 'received' },
+    { id: 'different-invoice', poNo: 'GRN-004', date: '2026-11-23T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: 'INV/2026-002', items: [], total: 0, status: 'received' },
+  ];
+
+  assert.equal(normalizeSupplierInvoiceNumber(' inv / 2026 - 001 '), 'INV/2026-001');
+  assert.deepEqual(
+    findDuplicateSupplierInvoices('supplier-1', 'INV/2026-001', purchases).map(purchase => purchase.id),
+    ['pending-match', 'received-match'],
+  );
+  assert.deepEqual(
+    findDuplicateSupplierInvoices('supplier-1', 'INV/2026-001', purchases, 'pending-match').map(purchase => purchase.id),
+    ['received-match'],
+  );
+  assert.deepEqual(findDuplicateSupplierInvoices('supplier-3', 'INV/2026-001', purchases), []);
+  assert.deepEqual(findDuplicateSupplierInvoices('supplier-1', '   ', purchases), []);
+});
+
+test('duplicate supplier invoice override requires Admin/Manager but the reason is optional', () => {
+  const duplicate: Purchase[] = [{
+    id: 'existing-grn',
+    poNo: 'GRN-010',
+    date: '2026-11-20T10:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    supplierInvoiceNo: 'INV-010',
+    items: [],
+    total: 0,
+    status: 'received',
+  }];
+
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride([], 'cashier'), { ok: true });
+  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'cashier').ok, false);
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin'), { ok: true });
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager'), { ok: true });
+});
+
+
+test('GRN barcode scans increment an existing product line before filling or appending', () => {
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: 'product-1', qty: 2 },
+      { productId: '', qty: 1 },
+    ], 'product-1'),
+    { type: 'increment', index: 0 },
+  );
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: '', qty: 1 },
+      { productId: 'product-2', qty: 4 },
+    ], 'product-1'),
+    { type: 'fill', index: 0 },
+  );
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: 'product-2', qty: 4 },
+    ], 'product-1'),
+    { type: 'append' },
+  );
+});
+
+
+test('tracked IMEI and Serial values reserved by another pending GRN are rejected before receiving', () => {
+  const products: Product[] = [{
+    id: 'phone-1',
+    name: 'Tracked phone',
+    sku: 'PHONE-1',
+    barcode: '12345',
+    category: 'Phones',
+    brand: 'Example',
+    cost: 100,
+    price: 150,
+    stock: 0,
+    reorderLevel: 0,
+    trackImei: true,
+    trackSerial: true,
+    active: true,
+    createdAt: '2026-11-26T00:00:00.000Z',
+  }];
+  const current: Purchase = {
+    id: 'current',
+    poNo: 'GRN-020',
+    date: '2026-11-26T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-1', name: 'Tracked phone', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'IMEI-ABC', serial: 'SER-ABC' }] }],
+    total: 100,
+    status: 'pending',
+  };
+  const reserved: Purchase = {
+    id: 'reserved',
+    poNo: 'GRN-019',
+    date: '2026-11-25T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-1', name: 'Tracked phone', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'imei-abc', serial: 'ser-other' }] }],
+    total: 100,
+    status: 'pending',
+  };
+
+  const imeiConflict = validatePurchaseUnitIdentifiers(current, products, [], [reserved]);
+  assert.equal(imeiConflict.ok, false);
+  assert.match(imeiConflict.error || '', /IMEI imei-abc is already listed on another pending GRN GRN-019/i);
+
+  const serialConflict = validatePurchaseUnitIdentifiers({
+    ...current,
+    items: [{ ...current.items[0], unitIdentifiers: [{ imei: 'IMEI-OTHER', serial: 'ser-OTHER' }] }],
+  }, products, [], [{
+    ...reserved,
+    items: [{ ...reserved.items[0], unitIdentifiers: [{ imei: 'IMEI-RESERVED', serial: 'SER-OTHER' }] }],
+  }]);
+  assert.equal(serialConflict.ok, false);
+  assert.match(serialConflict.error || '', /Serial ser-OTHER is already listed on another pending GRN GRN-019/i);
+});
+
+test('pending GRN unit reservations exclude the current GRN and ignore already received GRNs', () => {
+  const products: Product[] = [{
+    id: 'phone-2',
+    name: 'Tracked phone 2',
+    sku: 'PHONE-2',
+    barcode: '67890',
+    category: 'Phones',
+    brand: 'Example',
+    cost: 100,
+    price: 150,
+    stock: 0,
+    reorderLevel: 0,
+    trackImei: true,
+    trackSerial: false,
+    active: true,
+    createdAt: '2026-11-26T00:00:00.000Z',
+  }];
+  const current: Purchase = {
+    id: 'self',
+    poNo: 'GRN-021',
+    date: '2026-11-26T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-2', name: 'Tracked phone 2', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'IMEI-SELF' }] }],
+    total: 100,
+    status: 'pending',
+  };
+  const existing = [current];
+  const selfCheck = validatePurchaseUnitIdentifiers(current, products, [], existing);
+  assert.deepEqual(selfCheck, { ok: true });
+
+  const receivedCopy: Purchase = {
+    ...current,
+    id: 'already-received',
+    poNo: 'GRN-018',
+    status: 'received',
+  };
+  const receivedCheck = validatePurchaseUnitIdentifiers(current, products, [], [receivedCopy]);
+  assert.deepEqual(receivedCheck, { ok: true });
+});
+
+
+test('purchase cost history uses processed GRN costs and subtracts partial supplier returns', () => {
+  const purchases: Purchase[] = [
+    {
+      id: 'received-1',
+      poNo: 'GRN-030',
+      date: '2026-11-20T10:00:00.000Z',
+      processedAt: '2026-11-20T12:00:00.000Z',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      supplierInvoiceNo: 'INV-030',
+      items: [
+        { productId: 'phone-1', name: 'Phone X', qty: 10, cost: 120 },
+        { productId: 'charger-1', name: 'Charger', qty: 3, cost: 50 },
+      ],
+      total: 1350,
+      status: 'received',
+    },
+    {
+      id: 'pending-1',
+      poNo: 'GRN-031',
+      date: '2026-11-21T10:00:00.000Z',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      items: [{ productId: 'phone-1', name: 'Phone X', qty: 99, cost: 110 }],
+      total: 10890,
+      status: 'pending',
+    },
+  ];
+  const returns: PurchaseReturn[] = [
+    {
+      id: 'return-1',
+      dnNo: 'DN-001',
+      purchaseId: 'received-1',
+      poNo: 'GRN-030',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      date: '2026-11-22T10:00:00.000Z',
+      items: [{ itemIdx: 0, productId: 'phone-1', name: 'Phone X', qty: 2, cost: 120, total: 240 }],
+      total: 240,
+      reason: 'Damaged on arrival',
+      by: 'Manager',
+    },
+    {
+      id: 'return-2',
+      dnNo: 'DN-002',
+      purchaseId: 'received-1',
+      poNo: 'GRN-030',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      date: '2026-11-23T10:00:00.000Z',
+      items: [
+        { itemIdx: 0, productId: 'phone-1', name: 'Phone X', qty: 1, cost: 120, total: 120 },
+        { itemIdx: 1, productId: 'charger-1', name: 'Charger', qty: 3, cost: 50, total: 150 },
+      ],
+      total: 270,
+      reason: 'Supplier approved return',
+      by: 'Admin',
+    },
+  ];
+
+  const rows = buildPurchaseCostHistoryRows(purchases, returns);
+  assert.equal(rows.length, 2);
+  const phone = rows.find(row => row.productId === 'phone-1');
+  assert.ok(phone);
+  assert.equal(phone.date, '2026-11-20T12:00:00.000Z');
+  assert.equal(phone.purchaseQty, 10);
+  assert.equal(phone.returnedQty, 3);
+  assert.equal(phone.netQty, 7);
+  assert.equal(phone.unitCost, 120);
+  assert.equal(phone.purchaseValue, 1200);
+  assert.equal(phone.returnedValue, 360);
+  assert.equal(phone.netValue, 840);
+
+  const charger = rows.find(row => row.productId === 'charger-1');
+  assert.ok(charger);
+  assert.equal(charger.returnedQty, 3);
+  assert.equal(charger.netQty, 0);
+  assert.equal(charger.netValue, 0);
+  assert.equal(rows.some(row => row.purchaseId === 'pending-1'), false);
+});
+
+test('supplier return report exposes debit note, source GRN, item values and audit details', () => {
+  const returns: PurchaseReturn[] = [{
+    id: 'return-3',
+    dnNo: 'DN-003',
+    purchaseId: 'received-3',
+    poNo: 'GRN-033',
+    supplierId: 'supplier-3',
+    supplierName: 'Supplier Three',
+    date: '2026-11-24T10:00:00.000Z',
+    items: [
+      { itemIdx: 0, productId: 'phone-3', name: 'Phone Z', qty: 1, cost: 250, total: 250 },
+      { itemIdx: 1, productId: 'case-3', name: 'Phone Case', qty: 2, cost: 20, total: 40 },
+    ],
+    total: 290,
+    reason: 'Wrong model supplied',
+    by: 'Manager',
+  }];
+
+  const rows = buildSupplierReturnReportRows(returns);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].dnNo, 'DN-003');
+  assert.equal(rows[0].poNo, 'GRN-033');
+  assert.equal(rows[0].supplierName, 'Supplier Three');
+  assert.equal(rows[0].productName, 'Phone Z');
+  assert.equal(rows[0].qty, 1);
+  assert.equal(rows[0].total, 250);
+  assert.equal(rows[0].reason, 'Wrong model supplied');
+  assert.equal(rows[0].by, 'Manager');
+  assert.equal(rows[1].productName, 'Phone Case');
+  assert.equal(rows[1].total, 40);
 });

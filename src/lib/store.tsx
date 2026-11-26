@@ -17,7 +17,7 @@ import {
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
-import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
+import { buildPurchaseReceivePlan, canDeletePurchase, findDuplicateSupplierInvoices, validateDuplicateSupplierInvoiceOverride, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
@@ -158,8 +158,8 @@ interface StoreCtx {
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
   saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => { ok: boolean; purchase?: Purchase; error?: string };
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
-  receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
-  processGRN: (id: string, processorName: string) => Promise<{ ok: boolean; error?: string }>;
+  receivePurchase: (id: string, processorName?: string, duplicateInvoiceOverrideReason?: string) => Promise<{ ok: boolean; error?: string }>;
+  processGRN: (id: string, processorName: string, duplicateInvoiceOverrideReason?: string) => Promise<{ ok: boolean; error?: string }>;
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }) => Promise<PurchaseReturn | null>;
   deletePurchase: (id: string) => void;
   // expenses
@@ -2720,7 +2720,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit, user, can]);
 
-  const receivePurchase = useCallback(async (id: string, processorName?: string): Promise<{ ok: boolean; error?: string }> => {
+  const receivePurchase = useCallback(async (id: string, processorName?: string, duplicateInvoiceOverrideReason = ''): Promise<{ ok: boolean; error?: string }> => {
     if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
@@ -2738,6 +2738,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const po = stateRef.current.purchases.find(x => x.id === id);
     if (!po) return { ok: false, error: 'GRN draft was not found.' };
     if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
+    const duplicateInvoiceMatches = findDuplicateSupplierInvoices(po.supplierId, po.supplierInvoiceNo || '', stateRef.current.purchases, po.id);
+    const overrideCheck = validateDuplicateSupplierInvoiceOverride(duplicateInvoiceMatches, user.role);
+    if (!overrideCheck.ok) {
+      pushAudit('DENIED', 'GRN', 'Blocked duplicate supplier invoice on ' + po.poNo);
+      return { ok: false, error: overrideCheck.error || 'Duplicate supplier invoice requires approval.' };
+    }
+    const approvedOverrideReason = duplicateInvoiceMatches.length ? duplicateInvoiceOverrideReason.trim() : '';
     const purchaseBranchId = effectiveBranch(po.branchId);
     if (multipleBranches && effectiveBranch(selectedBranchId) !== purchaseBranchId) {
       pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this draft belongs to a different branch. Switch this POS to the GRN branch first.');
@@ -2747,7 +2754,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const planResult = buildPurchaseReceivePlan(po, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
 
     purchaseReceiveLockRef.current = true;
@@ -2787,7 +2794,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           applyError = currentPlanResult.error || 'GRN validation failed before processing.';
           return s;
         }
-        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || []);
+        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || [], s.purchases);
         if (!currentUnitResult.ok) {
           applyError = currentUnitResult.error || 'IMEI/Serial validation failed before processing.';
           return s;
@@ -2827,6 +2834,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (branchId !== 'local-main') applyBranchStockDeltas(branchId, deltas);
       }
       pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units' + (cloudEnabled ? ' · cloud-authoritative receive' : ''));
+      if (duplicateInvoiceMatches.length) {
+        const auditReason = approvedOverrideReason ? '; reason: ' + approvedOverrideReason : '; reason: not provided';
+        pushAudit('OVERRIDE', 'GRN', 'Admin/Manager approved duplicate supplier invoice "' + (po.supplierInvoiceNo || '').trim() + '" for ' + po.poNo + '; existing GRNs: ' + duplicateInvoiceMatches.map(match => match.poNo).join(', ') + auditReason);
+      }
       return { ok: true };
     } finally {
       purchaseReceiveLockRef.current = false;
@@ -2846,7 +2857,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
     const planResult = buildPurchaseReceivePlan(validation, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     const created: Purchase = { ...p, branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId || p.branchId), id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
@@ -2865,14 +2876,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
     const planResult = buildPurchaseReceivePlan(next, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
     pushAudit('EDIT', 'GRN', 'Updated draft ' + current.poNo);
     return { ok: true };
   }, [pushAudit, user, can]);
 
-  const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
+  const processGRN = useCallback((id: string, processorName: string, duplicateInvoiceOverrideReason?: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName, duplicateInvoiceOverrideReason), [receivePurchase]);
 
   const createPurchaseReturn = useCallback(async (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): Promise<PurchaseReturn | null> => {
     if (purchaseReturnLockRef.current) return null;

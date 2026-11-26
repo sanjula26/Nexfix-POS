@@ -19,6 +19,9 @@ import {
   idbSetMetaDetailed,
   idbInspectExistingState,
   idbAvailable,
+  idbGetMetaValue,
+  idbPutMetaValue,
+  idbDeleteMetaValue,
   setDesktopProfilePrimary,
   estimateIndexedDBQuota,
   classifyIndexedDBWriteFailure,
@@ -77,6 +80,16 @@ test('folder-primary backend routes POS domains to encrypted profile and never f
     const metaWrite = await idbSetMetaDetailed({ autoBackupHours: 3 });
     assert.equal(metaWrite.ok, true);
     assert.equal((await idbGetMetaDetailed()).value?.autoBackupHours, 3);
+
+    const folderDraftKey = 'grn_working_draft_v1:profile-test';
+    const folderDraft = { id: 'folder-draft-1', supplierId: 'supplier-1', rows: [{ productId: 'product-1', qty: 2 }] };
+    assert.equal(await idbPutMetaValue(folderDraftKey, folderDraft), true);
+    assert.deepEqual(await idbGetMetaValue<typeof folderDraft>(folderDraftKey), folderDraft);
+    assert.deepEqual(JSON.parse(payloads.get('meta') || '{}').grnWorkingDrafts?.[folderDraftKey], folderDraft);
+    assert.equal((await idbGetMetaDetailed()).value?.autoBackupHours, 3);
+    assert.equal(await idbDeleteMetaValue(folderDraftKey), true);
+    assert.equal(await idbGetMetaValue(folderDraftKey), null);
+
     assert.equal((await idbInspectExistingState()).status, 'present');
     assert.equal((await idbReadLegacyProfileSnapshot()).status, 'unavailable');
 
@@ -86,6 +99,46 @@ test('folder-primary backend routes POS domains to encrypted profile and never f
     setDesktopProfilePrimary(false);
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test('GRN recovery metadata round-trips in the IndexedDB metadata domain', async () => {
+  const key = 'grn_working_draft_v1:indexeddb-test';
+  const baseline = await idbGetMetaDetailed();
+  assert.equal(baseline.ok, true);
+  const draft = {
+    id: 'indexeddb-draft-1',
+    editingId: null,
+    supplierId: 'supplier-1',
+    invoiceNo: 'INV-PARTIAL',
+    notes: 'Saved before quota migration',
+    rows: [{ productId: 'product-1', qty: 3, cost: 120, unitText: 'IMEI-PARTIAL' }],
+    savedAt: '2026-11-26T11:00:00.000Z',
+  };
+
+  assert.equal(await idbPutMetaValue(key, draft), true);
+  assert.deepEqual(await idbGetMetaValue<typeof draft>(key), draft);
+  const afterSave = await idbGetMetaDetailed();
+  assert.equal(afterSave.ok, true);
+  if (afterSave.ok && baseline.ok) {
+    assert.equal(afterSave.value.autoBackupHours, baseline.value.autoBackupHours);
+    assert.equal(afterSave.value.backupCount, baseline.value.backupCount);
+  }
+  assert.equal(await idbDeleteMetaValue(key), true);
+  assert.equal(await idbGetMetaValue(key), null);
+});
+
+test('GRN recovery metadata read failures are not mistaken for missing drafts', async () => {
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'meta') throw new DOMException('Injected metadata read failure', 'InvalidStateError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    await assert.rejects(idbGetMetaValue('grn_working_draft_v1:read-failure'), /could not commit the requested data/i);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
   }
 });
 
