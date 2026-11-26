@@ -412,6 +412,32 @@ test('inventory ledger state builder records only a pending-to-received purchase
   assert.equal(unchanged.inventoryTransactions?.length, 1);
 });
 
+test('inventory ledger records supplier returns as negative stock movements exactly once', () => {
+  const previous = ledgerState({ purchaseReturns: [] });
+  const returned = {
+    id: 'return-1',
+    dnNo: 'DN-0001',
+    purchaseId: 'purchase-1',
+    poNo: 'GRN-0001',
+    items: [{ itemIdx: 0, productId: 'product-1', name: 'Test product', qty: 2, cost: 100, total: 200 }],
+    total: 200,
+    reason: 'Damaged',
+  };
+  const next = ledgerState({ purchaseReturns: [returned] });
+
+  const updated = applyInventoryLedger(previous, next, 'PURCHASE_REVERSAL', 'Admin');
+
+  assert.equal(updated.inventoryTransactions?.length, 1);
+  assert.equal(updated.inventoryTransactions?.[0].type, 'PURCHASE_REVERSAL');
+  assert.equal(updated.inventoryTransactions?.[0].quantity, -2);
+  assert.equal(updated.inventoryTransactions?.[0].referenceId, 'return-1');
+  assert.equal(updated.inventoryTransactions?.[0].referenceNo, 'DN-0001');
+  assert.equal(updated.inventoryTransactions?.[0].by, 'Admin');
+
+  const retried = applyInventoryLedger(previous, updated, 'PURCHASE_REVERSAL', 'Admin');
+  assert.equal(retried.inventoryTransactions?.length, 1);
+});
+
 test('updater reauthorization clears both native credentials before retrying', async () => {
   const calls: string[] = [];
   const result = await clearUpdaterCredentialsForRecovery(
