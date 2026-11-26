@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride } from '../src/lib/purchaseReconciliation.ts';
-import type { POSState, Purchase } from '../src/lib/types.ts';
+import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride, validatePurchaseUnitIdentifiers } from '../src/lib/purchaseReconciliation.ts';
+import type { POSState, Product, Purchase } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -712,4 +712,99 @@ test('GRN barcode scans increment an existing product line before filling or app
     ], 'product-1'),
     { type: 'append' },
   );
+});
+
+
+test('tracked IMEI and Serial values reserved by another pending GRN are rejected before receiving', () => {
+  const products: Product[] = [{
+    id: 'phone-1',
+    name: 'Tracked phone',
+    sku: 'PHONE-1',
+    barcode: '12345',
+    category: 'Phones',
+    brand: 'Example',
+    cost: 100,
+    price: 150,
+    stock: 0,
+    reorderLevel: 0,
+    trackImei: true,
+    trackSerial: true,
+    active: true,
+    createdAt: '2026-11-26T00:00:00.000Z',
+  }];
+  const current: Purchase = {
+    id: 'current',
+    poNo: 'GRN-020',
+    date: '2026-11-26T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-1', name: 'Tracked phone', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'IMEI-ABC', serial: 'SER-ABC' }] }],
+    total: 100,
+    status: 'pending',
+  };
+  const reserved: Purchase = {
+    id: 'reserved',
+    poNo: 'GRN-019',
+    date: '2026-11-25T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-1', name: 'Tracked phone', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'imei-abc', serial: 'ser-other' }] }],
+    total: 100,
+    status: 'pending',
+  };
+
+  const imeiConflict = validatePurchaseUnitIdentifiers(current, products, [], [reserved]);
+  assert.equal(imeiConflict.ok, false);
+  assert.match(imeiConflict.error || '', /IMEI imei-abc is already listed on another pending GRN GRN-019/i);
+
+  const serialConflict = validatePurchaseUnitIdentifiers({
+    ...current,
+    items: [{ ...current.items[0], unitIdentifiers: [{ imei: 'IMEI-OTHER', serial: 'ser-OTHER' }] }],
+  }, products, [], [{
+    ...reserved,
+    items: [{ ...reserved.items[0], unitIdentifiers: [{ imei: 'IMEI-RESERVED', serial: 'SER-OTHER' }] }],
+  }]);
+  assert.equal(serialConflict.ok, false);
+  assert.match(serialConflict.error || '', /Serial ser-OTHER is already listed on another pending GRN GRN-019/i);
+});
+
+test('pending GRN unit reservations exclude the current GRN and ignore already received GRNs', () => {
+  const products: Product[] = [{
+    id: 'phone-2',
+    name: 'Tracked phone 2',
+    sku: 'PHONE-2',
+    barcode: '67890',
+    category: 'Phones',
+    brand: 'Example',
+    cost: 100,
+    price: 150,
+    stock: 0,
+    reorderLevel: 0,
+    trackImei: true,
+    trackSerial: false,
+    active: true,
+    createdAt: '2026-11-26T00:00:00.000Z',
+  }];
+  const current: Purchase = {
+    id: 'self',
+    poNo: 'GRN-021',
+    date: '2026-11-26T00:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    items: [{ productId: 'phone-2', name: 'Tracked phone 2', qty: 1, cost: 100, unitIdentifiers: [{ imei: 'IMEI-SELF' }] }],
+    total: 100,
+    status: 'pending',
+  };
+  const existing = [current];
+  const selfCheck = validatePurchaseUnitIdentifiers(current, products, [], existing);
+  assert.deepEqual(selfCheck, { ok: true });
+
+  const receivedCopy: Purchase = {
+    ...current,
+    id: 'already-received',
+    poNo: 'GRN-018',
+    status: 'received',
+  };
+  const receivedCheck = validatePurchaseUnitIdentifiers(current, products, [], [receivedCopy]);
+  assert.deepEqual(receivedCheck, { ok: true });
 });

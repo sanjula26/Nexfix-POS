@@ -349,7 +349,7 @@ export default function GRN() {
       }
     }
     const validationPurchase: Purchase = { id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), supplierId, supplierName: state.suppliers.find(s => s.id === supplierId)?.name || '', items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0), status: 'pending' };
-    const result = validatePurchaseUnitIdentifiers(validationPurchase, state.products, state.units || []);
+    const result = validatePurchaseUnitIdentifiers(validationPurchase, state.products, state.units || [], state.purchases.filter(p => p.id !== editingId));
     if (!result.ok) return result.error || 'IMEI/Serial validation failed.';
     return '';
   };
@@ -433,7 +433,7 @@ export default function GRN() {
       setFormError('This GRN is no longer available as a pending draft. Refresh the page and try again.');
       return;
     }
-    const unitValidation = validatePurchaseUnitIdentifiers(purchase, state.products, state.units || []);
+    const unitValidation = validatePurchaseUnitIdentifiers(purchase, state.products, state.units || [], state.purchases);
     if (!unitValidation.ok) {
       setConfirmId(null); setPriceChanges([]); setEditingId(purchase.id); setSupplierId(purchase.supplierId); setInvoiceNo(purchase.supplierInvoiceNo || ''); setNotes(purchase.notes || '');
       setRows(purchase.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') })));
@@ -806,7 +806,7 @@ export default function GRN() {
                               className="btn btn-outline-emerald !py-1.5 !px-2.5 !text-xs"
                               disabled={actionRunning}
                               onClick={() => {
-                                const validation = validatePurchaseUnitIdentifiers(p, state.products, state.units || []);
+                                const validation = validatePurchaseUnitIdentifiers(p, state.products, state.units || [], state.purchases);
                                 if (!validation.ok) {
                                   setFormError(validation.error || 'This GRN has invalid IMEI/Serial values. Edit the draft and correct them before processing.');
                                   setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || '');

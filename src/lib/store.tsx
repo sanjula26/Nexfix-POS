@@ -2613,7 +2613,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const planResult = buildPurchaseReceivePlan(po, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
 
     purchaseReceiveLockRef.current = true;
@@ -2653,7 +2653,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           applyError = currentPlanResult.error || 'GRN validation failed before processing.';
           return s;
         }
-        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || []);
+        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || [], s.purchases);
         if (!currentUnitResult.ok) {
           applyError = currentUnitResult.error || 'IMEI/Serial validation failed before processing.';
           return s;
@@ -2715,7 +2715,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
     const planResult = buildPurchaseReceivePlan(validation, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     const created: Purchase = { ...p, branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId || p.branchId), id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
@@ -2734,7 +2734,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
     const planResult = buildPurchaseReceivePlan(next, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
     pushAudit('EDIT', 'GRN', 'Updated draft ' + current.poNo);

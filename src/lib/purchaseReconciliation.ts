@@ -77,9 +77,27 @@ export function validatePurchaseUnitIdentifiers(
   po: Purchase,
   products: readonly Product[],
   existingUnits: readonly InventoryUnit[] = [],
+  pendingPurchases: readonly Purchase[] = [],
 ): PurchaseValidationResult {
   if (!po || !Array.isArray(po.items)) return { ok: false, error: 'GRN items are invalid.' };
   const productById = new Map(products.map(p => [p.id, p]));
+  const pendingImeiOwners = new Map<string, string>();
+  const pendingSerialOwners = new Map<string, string>();
+  for (const pendingPurchase of pendingPurchases) {
+    if (pendingPurchase.id === po.id || pendingPurchase.status !== 'pending') continue;
+    for (const pendingItem of pendingPurchase.items || []) {
+      const pendingProduct = productById.get(pendingItem.productId);
+      if (!pendingProduct) continue;
+      for (const unit of pendingItem.unitIdentifiers || []) {
+        if (pendingProduct.trackImei && unit.imei?.trim()) {
+          pendingImeiOwners.set(unit.imei.trim().toLowerCase(), pendingPurchase.poNo);
+        }
+        if (pendingProduct.trackSerial && unit.serial?.trim()) {
+          pendingSerialOwners.set(unit.serial.trim().toLowerCase(), pendingPurchase.poNo);
+        }
+      }
+    }
+  }
   const seenImei = new Set<string>();
   const seenSerial = new Set<string>();
   for (const unit of existingUnits) {
@@ -110,12 +128,16 @@ export function validatePurchaseUnitIdentifiers(
       if (!trackedSerial && serial) return { ok: false, error: item.name + ': Serial number was entered but this product does not track Serial.' };
       if (imei) {
         const key = imei.toLowerCase();
-        if (seenImei.has(key)) return { ok: false, error: 'IMEI ' + imei + ' already exists in stock.' };
+        if (seenImei.has(key)) return { ok: false, error: 'IMEI ' + imei + ' already exists in stock or is duplicated in this GRN.' };
+        const pendingOwner = pendingImeiOwners.get(key);
+        if (pendingOwner) return { ok: false, error: 'IMEI ' + imei + ' is already listed on another pending GRN ' + pendingOwner + '. Resolve that draft before receiving this GRN.' };
         seenImei.add(key);
       }
       if (serial) {
         const key = serial.toLowerCase();
-        if (seenSerial.has(key)) return { ok: false, error: 'Serial ' + serial + ' already exists in stock.' };
+        if (seenSerial.has(key)) return { ok: false, error: 'Serial ' + serial + ' already exists in stock or is duplicated in this GRN.' };
+        const pendingOwner = pendingSerialOwners.get(key);
+        if (pendingOwner) return { ok: false, error: 'Serial ' + serial + ' is already listed on another pending GRN ' + pendingOwner + '. Resolve that draft before receiving this GRN.' };
         seenSerial.add(key);
       }
     }
