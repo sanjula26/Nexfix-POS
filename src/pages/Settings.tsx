@@ -22,6 +22,14 @@ import { getMachineIdentity } from '../lib/machine';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../lib/updaterErrors';
 import { buildPhoneSalesLink, copyText, openExternalUrl } from '../lib/publicApp';
 import { uid } from '../lib/utils';
+import {
+  hasDesktopProfileRuntime,
+  getDesktopPOSProfileStatus,
+  getPendingDesktopPOSRecoveryKeyRotation,
+  prepareDesktopPOSRecoveryKeyRotation,
+  finalizeDesktopPOSRecoveryKeyRotation,
+  cancelDesktopPOSRecoveryKeyRotation,
+} from '../lib/desktopProfileStorage';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -373,7 +381,37 @@ export default function Settings() {
   const [recoveryKeyMsg, setRecoveryKeyMsg] = useState('');
   const [recoveryKeyReady, setRecoveryKeyReady] = useState(() => hasRecoveryKey(recoveryScope));
   const [recoveryKeyCopied, setRecoveryKeyCopied] = useState(false);
+  const [desktopProfileForRotation, setDesktopProfileForRotation] = useState<{ directory: string; profileId: string; label: string } | null>(null);
+  const [desktopRotationCurrentKey, setDesktopRotationCurrentKey] = useState('');
+  const [desktopRotationPendingId, setDesktopRotationPendingId] = useState('');
+  const [desktopRotationNewKey, setDesktopRotationNewKey] = useState('');
+  const [desktopRotationAcknowledged, setDesktopRotationAcknowledged] = useState(false);
+  const [desktopRotationBusy, setDesktopRotationBusy] = useState(false);
+  const [desktopRotationMessage, setDesktopRotationMessage] = useState('');
   const recoveryKeyFileRef = useRef<HTMLInputElement>(null);
+
+  // This profile key is distinct from the Google Drive backup Recovery Key.
+  // The main process requires the previous key again before revealing a
+  // pending replacement after renderer reload.
+  useEffect(() => {
+    if (user?.role !== 'admin') {
+      setDesktopProfileForRotation(null);
+      setDesktopRotationCurrentKey('');
+      setDesktopRotationPendingId('');
+      setDesktopRotationNewKey('');
+      setDesktopRotationAcknowledged(false);
+      setDesktopRotationMessage('');
+      return;
+    }
+    if (!hasDesktopProfileRuntime()) return;
+    let active = true;
+    void getDesktopPOSProfileStatus().then(status => {
+      if (active && status.unlocked && status.profile) setDesktopProfileForRotation(status.profile);
+    }).catch(error => {
+      if (active) setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not check desktop POS profile status.');
+    });
+    return () => { active = false; };
+  }, [user?.role]);
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1178,6 +1216,112 @@ export default function Settings() {
               <input type="number" min={1} max={120} className="input max-w-[180px]" value={form.securityIdleMinutes} onChange={num('securityIdleMinutes')} />
             </Field>
           </div>
+
+          {user?.role === 'admin' && desktopProfileForRotation && (
+            <div className="card p-6 border border-sky-500/20">
+              <h3 className="font-bold text-ink flex items-center gap-2 mb-2">
+                <span className="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-600 flex items-center justify-center"><ShieldCheck size={15} /></span>
+                Encrypted POS Storage Recovery Key
+              </h3>
+              <p className="text-xs text-faint mb-3">This key unlocks this Windows desktop POS storage profile. It is different from the Google Drive backup Recovery Key below.</p>
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/[0.06] px-3.5 py-3 text-[12px] text-faint mb-4">
+                Profile: <b className="text-ink">{desktopProfileForRotation.label}</b>
+                <span className="block font-mono break-all mt-1">{desktopProfileForRotation.profileId}</span>
+              </div>
+              {!desktopRotationPendingId ? (
+                <Field label="Current desktop Recovery Key" hint="Enter the existing key to prove access before a replacement key is prepared.">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input type="password" autoComplete="off" spellCheck={false} className="input flex-1 font-mono text-xs"
+                      value={desktopRotationCurrentKey}
+                      onChange={event => { setDesktopRotationCurrentKey(event.target.value.trim()); setDesktopRotationMessage(''); }}
+                      placeholder="Paste current desktop Recovery Key" maxLength={64} />
+                    <button type="button" className="btn btn-primary shrink-0"
+                      disabled={desktopRotationBusy || desktopRotationCurrentKey.trim().length !== 43}
+                      onClick={async () => {
+                        if (!(await confirmSensitiveAdmin('desktop POS Recovery Key rotation'))) {
+                          setDesktopRotationMessage('Administrator confirmation cancelled. No key was changed.');
+                          return;
+                        }
+                        setDesktopRotationBusy(true);
+                        setDesktopRotationMessage('Verifying the current key…');
+                        try {
+                          const currentKey = desktopRotationCurrentKey.trim();
+                          const pending = await getPendingDesktopPOSRecoveryKeyRotation(currentKey);
+                          if (pending.pending && pending.pendingId && pending.recoveryKey) {
+                            setDesktopRotationPendingId(pending.pendingId);
+                            setDesktopRotationNewKey(pending.recoveryKey);
+                            setDesktopRotationAcknowledged(false);
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('Previous key verified. The pending replacement is restored; save it before finishing.');
+                          } else if (pending.finalized) {
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('This Recovery Key rotation was already completed. The replacement key is not displayed again.');
+                          } else {
+                            const prepared = await prepareDesktopPOSRecoveryKeyRotation(currentKey);
+                            setDesktopRotationPendingId(prepared.pendingId);
+                            setDesktopRotationNewKey(prepared.recoveryKey);
+                            setDesktopRotationAcknowledged(false);
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('New key prepared. Copy and save it outside this PC before acknowledging.');
+                          }
+                        } catch (error) {
+                          setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not verify or prepare a desktop Recovery Key rotation.');
+                        } finally { setDesktopRotationBusy(false); }
+                      }}>{desktopRotationBusy ? 'Checking…' : 'Verify / resume / prepare'}</button>
+                  </div>
+                </Field>
+              ) : (
+                <div className="space-y-3">
+                  <Field label="New desktop Recovery Key" hint="Save this key in a secure place outside this PC. It is held temporarily in memory until you finish or cancel. If Nexfix closes first, the pending key is discarded and the previous key remains valid.">
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input type="text" readOnly spellCheck={false} className="input flex-1 font-mono text-xs" value={desktopRotationNewKey} />
+                      <button type="button" className="btn btn-soft shrink-0" disabled={!desktopRotationNewKey}
+                        onClick={async () => {
+                          const copied = await copyText(desktopRotationNewKey);
+                          setDesktopRotationMessage(copied ? 'New desktop Recovery Key copied. Store it safely before continuing.' : 'Copy failed. Select the key field and copy it manually.');
+                        }}><Copy size={15} /> Copy new key</button>
+                    </div>
+                  </Field>
+                  <label className="flex items-start gap-2.5 text-xs text-ink">
+                    <input type="checkbox" className="mt-0.5" checked={desktopRotationAcknowledged}
+                      onChange={event => setDesktopRotationAcknowledged(event.target.checked)} />
+                    <span>I have saved this new desktop Recovery Key somewhere safe and can retrieve it if this PC is lost.</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="btn btn-primary"
+                      disabled={desktopRotationBusy || !desktopRotationAcknowledged || !desktopRotationPendingId}
+                      onClick={async () => {
+                        setDesktopRotationBusy(true);
+                        setDesktopRotationMessage('Verifying the saved-key acknowledgement and updating the encrypted profile…');
+                        try {
+                          await finalizeDesktopPOSRecoveryKeyRotation({ pendingId: desktopRotationPendingId, acknowledged: true });
+                          setDesktopRotationPendingId('');
+                          setDesktopRotationNewKey('');
+                          setDesktopRotationAcknowledged(false);
+                          setDesktopRotationMessage('Desktop POS Recovery Key updated successfully. Keep the saved new key safe; the previous key will no longer unlock this profile.');
+                        } catch (error) {
+                          setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not finish desktop Recovery Key rotation. Keep the displayed key and retry.');
+                        } finally { setDesktopRotationBusy(false); }
+                      }}>{desktopRotationBusy ? 'Finishing…' : 'I saved it — finish rotation'}</button>
+                    <button type="button" className="btn btn-soft" disabled={desktopRotationBusy}
+                      onClick={async () => {
+                        setDesktopRotationBusy(true);
+                        try {
+                          await cancelDesktopPOSRecoveryKeyRotation(desktopRotationPendingId);
+                          setDesktopRotationPendingId('');
+                          setDesktopRotationNewKey('');
+                          setDesktopRotationAcknowledged(false);
+                          setDesktopRotationMessage('Rotation cancelled. The previous desktop Recovery Key remains valid.');
+                        } catch (error) {
+                          setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not cancel pending rotation. Keep the displayed new key until the pending state is resolved.');
+                        } finally { setDesktopRotationBusy(false); }
+                      }}>Cancel rotation</button>
+                  </div>
+                </div>
+              )}
+              {desktopRotationMessage && <p className={`text-[12px] font-medium mt-3 ${/updated successfully|copied|rotation cancelled/i.test(desktopRotationMessage) ? 'text-emerald-600' : /failed|could not|error|refused/i.test(desktopRotationMessage) ? 'text-rose-500' : 'text-sky-600'}`}>{desktopRotationMessage}</p>}
+            </div>
+          )}
 
           <div className="card p-6 border border-emerald-500/20">
             <h3 className="font-bold text-ink flex items-center gap-2 mb-2"><span className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center"><ShieldCheck size={15} /></span>Google Backup Encryption</h3>

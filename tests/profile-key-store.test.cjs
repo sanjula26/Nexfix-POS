@@ -14,6 +14,8 @@ const {
   changeProfileLockPassphrase,
   resetProfileLockPassphraseWithRecoveryKey,
   rebindProfileDeviceKeyWithRecoveryKey,
+  prepareProfileRecoveryKeyRotation,
+  finalizeProfileRecoveryKeyRotation,
 } = require('../electron/profile-key-store.cjs');
 const {
   unwrapDataKeyWithRecoveryKey,
@@ -180,4 +182,181 @@ test('rebinds the device-specific wrapper after Windows reinstall using the reco
   newDeviceKey.fill(0);
   recoveryKeyData.fill(0);
   passphraseData.fill(0);
+});
+
+
+test('prepares a replacement recovery key without changing the on-disk envelope', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const file = path.join(directory, KEY_ENVELOPE_FILE);
+  const beforeBytes = fs.readFileSync(file);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+  assert.deepEqual(fs.readFileSync(file), beforeBytes);
+  const unchanged = readProfileKeyEnvelope(directory, PROFILE_ID);
+  const oldKeyData = unwrapDataKeyWithRecoveryKey(unchanged.recoveryWrappedKey, created.recoveryKey, PROFILE_ID);
+  const pendingKeyData = unwrapDataKeyWithRecoveryKey(pending.recoveryWrappedKey, pending.recoveryKey, PROFILE_ID);
+  assert.deepEqual(pendingKeyData, oldKeyData);
+  assert.deepEqual(pending.dataKey, oldKeyData);
+  assert.notEqual(pending.recoveryKey, created.recoveryKey);
+  oldKeyData.fill(0);
+  pendingKeyData.fill(0);
+  pending.dataKey.fill(0);
+});
+
+test('rejects wrong old recovery key without changing the envelope', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const file = path.join(directory, KEY_ENVELOPE_FILE);
+  const beforeBytes = fs.readFileSync(file);
+  const wrongButWellFormedKey = (created.recoveryKey[0] === 'A' ? 'B' : 'A') +
+    created.recoveryKey.slice(1);
+  assert.equal(wrongButWellFormedKey.length, created.recoveryKey.length);
+  assert.throws(
+    () => prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, wrongButWellFormedKey),
+    /authentication failed/,
+  );
+  assert.deepEqual(fs.readFileSync(file), beforeBytes);
+});
+
+test('finalizes recovery-key rotation with envelope CAS and preserves other wrappers', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+  const saved = finalizeProfileRecoveryKeyRotation(directory, pending);
+  assert.deepEqual(saved.osWrappedKey, created.envelope.osWrappedKey);
+  assert.deepEqual(saved.passphraseWrappedKey, created.envelope.passphraseWrappedKey);
+  const newKeyData = unwrapDataKeyWithRecoveryKey(saved.recoveryWrappedKey, pending.recoveryKey, PROFILE_ID);
+  const passphraseData = await unwrapDataKeyWithPassphrase(saved.passphraseWrappedKey, PASSPHRASE, PROFILE_ID);
+  const deviceData = await unwrapDataKeyWithOS(saved.osWrappedKey, PROFILE_ID, makeSafeStorage());
+  assert.deepEqual(newKeyData, pending.dataKey);
+  assert.deepEqual(passphraseData, pending.dataKey);
+  assert.deepEqual(deviceData, pending.dataKey);
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(saved.recoveryWrappedKey, created.recoveryKey, PROFILE_ID),
+    /authentication failed/,
+  );
+  newKeyData.fill(0);
+  passphraseData.fill(0);
+  deviceData.fill(0);
+  pending.dataKey.fill(0);
+});
+
+test('refuses finalization when the envelope changes after rotation preparation', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+  const changed = {
+    ...readProfileKeyEnvelope(directory, PROFILE_ID),
+    updatedAt: new Date(Date.now() + 1000).toISOString(),
+  };
+  fs.writeFileSync(path.join(directory, KEY_ENVELOPE_FILE), JSON.stringify(changed, null, 2) + '\n', 'utf8');
+  const beforeFinalize = fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE));
+  assert.throws(
+    () => finalizeProfileRecoveryKeyRotation(directory, pending),
+    /envelope changed during Recovery Key rotation/,
+  );
+  assert.deepEqual(fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE)), beforeFinalize);
+  const stillOld = unwrapDataKeyWithRecoveryKey(
+    readProfileKeyEnvelope(directory, PROFILE_ID).recoveryWrappedKey,
+    created.recoveryKey,
+    PROFILE_ID,
+  );
+  stillOld.fill(0);
+  pending.dataKey.fill(0);
+});
+
+test('retries an already-applied Recovery Key rotation idempotently after a lost response', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+
+  const first = finalizeProfileRecoveryKeyRotation(directory, pending);
+  const bytesAfterFirstFinalize = fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE));
+  const retried = finalizeProfileRecoveryKeyRotation(directory, pending);
+
+  assert.deepEqual(retried, first);
+  assert.deepEqual(fs.readFileSync(path.join(directory, KEY_ENVELOPE_FILE)), bytesAfterFirstFinalize);
+  const recovered = unwrapDataKeyWithRecoveryKey(retried.recoveryWrappedKey, pending.recoveryKey, PROFILE_ID);
+  assert.deepEqual(recovered, pending.dataKey);
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(retried.recoveryWrappedKey, created.recoveryKey, PROFILE_ID),
+    /authentication failed/,
+  );
+  recovered.fill(0);
+  pending.dataKey.fill(0);
+});
+
+test('preserves the previous key envelope and permits retry when the temp-file fsync fails', async (t) => {
+  const directory = temporaryDirectory(t);
+  const created = await createInitialProfileKeyEnvelope(PROFILE_ID, makeSafeStorage(), PASSPHRASE);
+  persistNewProfileKeyEnvelope(directory, created.envelope);
+  const envelopePath = path.join(directory, KEY_ENVELOPE_FILE);
+  const originalBytes = fs.readFileSync(envelopePath);
+  const pending = prepareProfileRecoveryKeyRotation(directory, PROFILE_ID, created.recoveryKey);
+
+  const originalFsyncSync = fs.fsyncSync;
+  let injectedFailure = false;
+  fs.fsyncSync = function failFirstEnvelopeFlush(descriptor, ...args) {
+    if (!injectedFailure) {
+      injectedFailure = true;
+      const error = new Error('simulated temporary key-envelope fsync failure');
+      error.code = 'EIO';
+      throw error;
+    }
+    return originalFsyncSync.call(this, descriptor, ...args);
+  };
+
+  try {
+    assert.throws(
+      () => finalizeProfileRecoveryKeyRotation(directory, pending),
+      /simulated temporary key-envelope fsync failure/,
+    );
+  } finally {
+    fs.fsyncSync = originalFsyncSync;
+  }
+
+  assert.equal(injectedFailure, true);
+  assert.deepEqual(fs.readFileSync(envelopePath), originalBytes);
+  const temporaryFiles = fs.readdirSync(directory)
+    .filter(name => name.startsWith('.nexfix-key-envelope.json.') && name.endsWith('.tmp'));
+  assert.deepEqual(temporaryFiles, []);
+
+  const oldKeyData = unwrapDataKeyWithRecoveryKey(
+    readProfileKeyEnvelope(directory, PROFILE_ID).recoveryWrappedKey,
+    created.recoveryKey,
+    PROFILE_ID,
+  );
+  assert.deepEqual(oldKeyData, pending.dataKey);
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(
+      readProfileKeyEnvelope(directory, PROFILE_ID).recoveryWrappedKey,
+      pending.recoveryKey,
+      PROFILE_ID,
+    ),
+    /authentication failed/,
+  );
+  oldKeyData.fill(0);
+
+  const retried = finalizeProfileRecoveryKeyRotation(directory, pending);
+  const newKeyData = unwrapDataKeyWithRecoveryKey(
+    retried.recoveryWrappedKey,
+    pending.recoveryKey,
+    PROFILE_ID,
+  );
+  assert.deepEqual(newKeyData, pending.dataKey);
+  assert.throws(
+    () => unwrapDataKeyWithRecoveryKey(
+      retried.recoveryWrappedKey,
+      created.recoveryKey,
+      PROFILE_ID,
+    ),
+    /authentication failed/,
+  );
+  newKeyData.fill(0);
+  pending.dataKey.fill(0);
 });
