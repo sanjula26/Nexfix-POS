@@ -144,6 +144,17 @@ test('fails closed when a final marker is present but its envelope file is missi
   assert.throws(() => readKeyGenerationJournal(directory, PROFILE_ID), /Committed Recovery Key envelope is missing/);
 });
 
+test('rejects case-variant final marker names instead of falling back to the legacy envelope', (t) => {
+  const directory = temporaryDirectory(t);
+  writeLegacy(directory);
+  const nonCanonicalName = generationCommitFileName(1).toUpperCase();
+  writeExclusive(path.join(directory, nonCanonicalName), Buffer.from('{}'));
+  assert.throws(
+    () => readKeyGenerationJournal(directory, PROFILE_ID),
+    /non-canonical commit marker filename/,
+  );
+});
+
 test('rejects malformed final-marker-like filenames instead of silently ignoring them', (t) => {
   const directory = temporaryDirectory(t);
   writeLegacy(directory);

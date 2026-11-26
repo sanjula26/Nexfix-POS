@@ -186,7 +186,7 @@ function readKeyGenerationJournal(profileDirectory, profileId, options = {}) {
 
   const entries = readBoundedDirectoryEntries(fsApi, canonicalDirectory);
 
-  const markerNames = entries.filter(name => name.startsWith(COMMIT_PREFIX));
+  const markerNames = entries.filter(name => name.toLowerCase().startsWith(COMMIT_PREFIX));
   if (markerNames.length > MAX_COMMIT_MARKERS) {
     throw new Error('Recovery Key journal has too many commit markers.');
   }
