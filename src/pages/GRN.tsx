@@ -307,7 +307,7 @@ export default function GRN() {
     return '';
   };
 
-  const saveDraft = () => {
+  const saveDraft = async () => {
     if (actionRunning) return;
     const supplier = state.suppliers.find(s => s.id === supplierId);
     const items = buildItems();
@@ -318,6 +318,7 @@ export default function GRN() {
     setFormError('');
     try {
       const payload = { supplierId: supplier.id, supplierName: supplier.name, supplierInvoiceNo: invoiceNo.trim() || undefined, notes: notes.trim() || undefined, items, total: items.reduce((sum, i) => sum + i.qty * i.cost, 0) };
+      let savedId = editingId;
       if (editingId) {
         const result = updateGRNDraft(editingId, payload);
         if (!result.ok) { setFormError(result.error || 'Unable to update this GRN draft.'); return; }
@@ -325,11 +326,21 @@ export default function GRN() {
       } else {
         const result = saveGRNDraft(payload);
         if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
+        savedId = result.purchase.id;
         setHighlightedId(result.purchase.id);
       }
-      void idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
-      setWorkingDraft(null);
-      draftIdRef.current = '';
+      if (savedId) setEditingId(savedId);
+      const cleared = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      if (cleared) {
+        setWorkingDraft(null);
+        draftIdRef.current = '';
+      } else if (savedId) {
+        const recoveryCopy = { ...makeWorkingDraft(), editingId: savedId };
+        const preserved = await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, recoveryCopy);
+        if (preserved) setWorkingDraft(recoveryCopy);
+        setDraftSaveStatus('error');
+        setFormError('The GRN was saved, but its temporary recovery copy could not be cleared. Use Discard on the recovery banner after confirming the saved GRN.');
+      }
       setView('list');
     } finally {
       setActionRunning(false);
@@ -357,6 +368,7 @@ export default function GRN() {
       } else {
         const result = saveGRNDraft(payload);
         if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
+        setEditingId(result.purchase.id);
         setConfirmId(result.purchase.id);
       }
     } finally {
@@ -388,9 +400,15 @@ export default function GRN() {
         setView('form');
         return;
       }
-      void idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
-      setWorkingDraft(null);
-      draftIdRef.current = '';
+      const clearedRecovery = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      if (clearedRecovery) {
+        setWorkingDraft(null);
+        draftIdRef.current = '';
+      } else {
+        const staleRecovery = { ...makeWorkingDraft(), editingId: confirmId };
+        if (await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, staleRecovery)) setWorkingDraft(staleRecovery);
+        setDraftSaveStatus('error');
+      }
       setReceivedForTags(purchase.items.map(item => ({ productId: item.productId, qty: Math.max(1, Math.floor(item.qty || 1)) })));
       setConfirmId(null); setPriceChanges([]);
       setFormError(''); setView('list');
