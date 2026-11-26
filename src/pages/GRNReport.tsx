@@ -49,7 +49,8 @@ export default function GRNReport() {
     <>
       <style>{`@media print { body * { visibility: hidden !important; } .grn-report-print, .grn-report-print * { visibility: visible !important; } .grn-report-print { position: absolute; inset: 0; width: 100%; padding: 12mm; background: #fff; color: #111; } .grn-report-controls { display: none !important; } .grn-report-print .card { box-shadow: none !important; border: 0 !important; } }`}</style>
     <div className="grn-report-print">
-      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<div className="flex flex-wrap gap-2"><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button><button className="btn btn-primary print:hidden" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button></div>} />
+      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<div className="flex flex-wrap gap-2 print:hidden"><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button><button className="btn btn-primary print:hidden" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button></div>} />
+      <p className="text-xs text-sub mb-4">Showing {fmtDate(from)} to {fmtDate(to)} · Status: {status === "all" ? "All" : status === "received" ? "Received" : "Pending"}</p>
       <div className="flex flex-wrap gap-2 mb-5 grn-report-controls">
         {PERIODS.map(p => <button key={p.key} className={`btn !text-xs ${period === p.key ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod(p.key)}>{p.label}</button>)}
         <button className={`btn !text-xs ${period === 'custom' ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod('custom')}>Custom</button>
