@@ -391,8 +391,17 @@ export default function Settings() {
   const recoveryKeyFileRef = useRef<HTMLInputElement>(null);
 
   // This profile key is distinct from the Google Drive backup Recovery Key.
-  // Pending rotation is kept in Electron main-process memory and can be resumed.
+  // Never retrieve a pending key into renderer state outside an admin session.
   useEffect(() => {
+    if (user?.role !== 'admin') {
+      setDesktopProfileForRotation(null);
+      setDesktopRotationCurrentKey('');
+      setDesktopRotationPendingId('');
+      setDesktopRotationNewKey('');
+      setDesktopRotationAcknowledged(false);
+      setDesktopRotationMessage('');
+      return;
+    }
     if (!hasDesktopProfileRuntime()) return;
     let active = true;
     void (async () => {
@@ -409,7 +418,7 @@ export default function Settings() {
       if (active) setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not check pending desktop Recovery Key rotation.');
     });
     return () => { active = false; };
-  }, []);
+  }, [user?.role]);
   const [saved, setSaved] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
