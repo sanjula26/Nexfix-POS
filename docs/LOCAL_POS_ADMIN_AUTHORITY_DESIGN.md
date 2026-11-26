@@ -277,14 +277,20 @@ Future authority contract:
 
 Tests must cover at least two active Admin accounts: either Admin can verify by their own exact account identity; wrong password/identifier combinations fail; a cashier cannot pass by supplying another user's ID; disabling/deleting one Admin immediately invalidates that identity; and no behavior depends on users-array ordering.
 
-## 14. Isolated main-process password verifier primitive — 2026-11-26
+## 14. Existing local password verifier is not standard PBKDF2-HMAC-SHA256 — 2026-11-26
 
-A small, deliberately unconnected primitive has been staged to reduce risk in a future authority migration:
+A compatibility experiment established that the existing renderer password verifier must not be replaced with Node's built-in PBKDF2 verifier without a migration plan.
 
-- `electron/local-auth-crypto.cjs` verifies the current local POS verifier format: standard Base64 salt (16 bytes), one separator, and standard Base64 PBKDF2-HMAC-SHA256 digest (32 bytes), using 600,000 iterations.
-- The implementation uses Node's asynchronous `crypto.pbkdf2`, checks canonical Base64 and exact byte lengths before deriving, compares equal-length digests with `timingSafeEqual`, and clears temporary salt/digest buffers after verification.
-- Legacy 64-character SHA-256-style hashes are deliberately rejected by this primitive. Their migration/re-enrollment policy remains unresolved; this does not silently bless the legacy format as a new authority credential.
-- `tests/local-auth-crypto.test.cjs` covers a current-format positive/negative password check, malformed/non-canonical inputs, legacy rejection and invalid argument types. The existing POS CI invokes `npm test`, so the new Node test is discovered without changing the test script.
-- This helper is not imported by production login, renderer state, preload, IPC, backup or restore code. It does not create an authority record, copy credentials, change roles, implement lockout or authorize an operation. No user-facing authentication behavior changed in this step.
+- `src/lib/utils.ts` defines a custom SHA-256 compression implementation and uses it inside a 600,000-iteration PBKDF2-style function. Its SHA-256 round-constant array currently contains `0xab1c7c7c` at K7.
+- The SHA-256 constant sequence specified by [RFC 6234, section 5.1](https://datatracker.ietf.org/doc/html/rfc6234#section-5.1) has `0xab1c5ed5` at that position. The current renderer implementation therefore does not implement the standard SHA-256 primitive, despite the nearby PBKDF2-HMAC-SHA256 comment.
+- A temporary, unconnected Node `crypto.pbkdf2` verifier was tested against a hash produced by the real renderer `hashPassword()` function. The positive compatibility assertion failed (Actions run [45777161380](https://github.com/sanjula26/Nexfix-POS/actions/runs/45777161380), test `verifies password hashes produced by the existing renderer hashPassword helper`). The malformed-input and legacy-format rejection checks passed.
+- This finding explains why a standard Node PBKDF2 verifier cannot be substituted for the existing verifier format. It does not by itself prove that the existing stored hashes are recoverable by a standard library, nor does it establish a safe upgrade procedure.
 
-This is a tested building block only, not a completed main-process Admin authority. The account bootstrap/re-enrollment, multi-Admin identity, PIN policy, profile sidecar migration, backup compatibility, session and restore policies listed above still need explicit decisions and dedicated integration tests before the primitive is connected.
+**Safety decision for this change:** remove the experimental, incompatible helper and its failing test from this PR. Do not change the SHA-256 constant in-place: existing password hashes were generated and checked by the current custom implementation, and silently changing the implementation could lock existing local users out. No production authentication source, login UI, role flow, Admin PIN, backup or restore behavior was changed.
+
+**Before implementing main-process credential authority, resolve one of these migration paths explicitly:**
+
+1. Owner-present re-enrollment: require an existing owner/Admin to prove control through a separately reviewed recovery path, then create a new, explicitly versioned standard verifier. Define what happens when the old verifier cannot be trusted.
+2. Compatibility-and-rehash: implement a strictly scoped verifier for the exact historical custom algorithm, validate it with fixed known-answer vectors and performance/lockout tests, and immediately rehash a successfully verified password into a versioned standard format. Do not continue using the custom algorithm for new credentials.
+
+The second path carries extra code and review risk; neither path is approved by this note. The legacy SHA-256-only account format and Admin PIN format remain separate unresolved migrations. No renderer or main-process verifier was wired into production in this step.
