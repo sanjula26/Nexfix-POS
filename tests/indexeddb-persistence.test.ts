@@ -49,6 +49,24 @@ test('IndexedDB metadata stores, restores and deletes incomplete GRN recovery dr
   assert.equal(await idbGetMetaValue(key), null);
 });
 
+test('IndexedDB metadata read failures are not treated as missing GRN recovery drafts', async () => {
+  const reopenedDb = await import(`../src/lib/db.ts?meta-read-failure=${Date.now()}`);
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'meta') throw new DOMException('Injected metadata read failure', 'InvalidStateError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    await assert.rejects(
+      reopenedDb.idbGetMetaValue('test_grn_read_failure'),
+      /Injected metadata read failure/,
+    );
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
   assert.equal(await idbEnqueue({
     type: 'state_write',
