@@ -420,3 +420,14 @@ The first isolated part of the generation-journal proposal is now staged and tes
 - Windows key-envelope and folder-primary data writes remain **not proven power-loss durable**. Physical power-cut tests on the supported internal/external filesystems and actual target hardware remain required. No production storage/key-store behavior changed in the prototype.
 - Build and QA runs built on separate ephemeral runners. Code signing was skipped because no certificate is configured. Artifact uploads were skipped because the repository is public; the EXEs are not downloadable release assets.
 - PR #293 remains OPEN / Draft / Unmerged. No Supabase operations, merge, R2 upload, production publish or EXE release occurred.
+
+## 19. Bounded filesystem-reader review — 2026-11-26
+
+The read-only journal reader added in commit `30e83e01c673d393d423c145dbda364dbf34c78e` was reviewed. The initial adapter bounded marker count and total file bytes, but used `readdirSync`, which allocated the full directory listing before those limits applied.
+
+A focused follow-up now:
+- Uses Node's synchronous directory-handle iterator (`fs.opendirSync`, `Dir.readSync`, `Dir.closeSync`) and caps the directory listing at **4,096 entries**. This leaves room for the 1,024-generation marker limit, corresponding generation envelopes, legacy envelope and normal profile files while bounding memory spent on directory names. The API is available in the pinned Node 24 runtime ([Node filesystem API](https://nodejs.org/api/fs.html#fsopendirsyncpath-options)).
+- Confirms the directory identity and metadata remain stable across path canonicalization and after all snapshot reads. This detects common concurrent add/remove/replace activity, but is not a lock and cannot defeat a sufficiently timed path/reparse race.
+- Adds regression tests that inject an over-limit directory iterator and verify it reads only one entry beyond the cap and closes the directory handle, and that a directory metadata change during the snapshot fails closed.
+
+**Still not a production-safe Windows filesystem adapter:** path-based `lstatSync` plus `readFileSync` retains TOCTOU windows. On Windows, symlinks, junctions and other reparse-point tags require handle-based inspection. Microsoft documents `FILE_FLAG_OPEN_REPARSE_POINT` for opening the reparse point itself, then checking its attributes/tag via handle APIs ([CreateFileW](https://learn.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-createfilew), [reparse-point operations](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-point-operations), [reparse points and file operations](https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points-and-file-operations)). This reader remains a testable prototype only; it is not wired to production startup, no native handle adapter exists, and power-loss durability remains unproven.

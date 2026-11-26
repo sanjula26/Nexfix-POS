@@ -9,7 +9,7 @@ const path = require('node:path');
 const test = require('node:test');
 const { PROFILE_CRYPTO_FORMAT } = require('../electron/profile-crypto.cjs');
 const { generationEnvelopeFileName, generationCommitFileName } = require('../electron/profile-key-generation-journal.cjs');
-const { readKeyGenerationJournal, MAX_TOTAL_BYTES } = require('../electron/profile-key-generation-journal-reader.cjs');
+const { readKeyGenerationJournal, MAX_TOTAL_BYTES, MAX_DIRECTORY_ENTRIES } = require('../electron/profile-key-generation-journal-reader.cjs');
 
 const PROFILE_ID = 'd9d6f0e1-5b2d-4e21-9e72-0cce0d8c7a10';
 
@@ -297,4 +297,64 @@ test('selects the new generation after a child process exits after final commit 
   assert.equal(child.status, 23, child.stderr);
   const selected = readKeyGenerationJournal(directory, PROFILE_ID);
   assert.equal(selected.generation, 1);
+});
+
+
+test('bounds directory enumeration and closes the directory handle when the limit is exceeded', (t) => {
+  const directory = temporaryDirectory(t);
+  let readCount = 0;
+  let closed = false;
+  const fsApi = {
+    lstatSync: fs.lstatSync.bind(fs),
+    realpathSync: fs.realpathSync.bind(fs),
+    opendirSync: () => ({
+      readSync: () => {
+        readCount += 1;
+        return { name: 'flood-entry-' + readCount };
+      },
+      closeSync: () => { closed = true; },
+    }),
+  };
+
+  assert.throws(
+    () => readKeyGenerationJournal(directory, PROFILE_ID, { fsApi }),
+    /too many entries/,
+  );
+  assert.equal(readCount, MAX_DIRECTORY_ENTRIES + 1);
+  assert.equal(closed, true);
+});
+
+test('rejects a profile directory whose metadata changes during the read snapshot', (t) => {
+  const directory = temporaryDirectory(t);
+  writeLegacy(directory);
+  const canonicalDirectory = fs.realpathSync(directory);
+  const originalLstat = fs.lstatSync.bind(fs);
+  let canonicalChecks = 0;
+  const changeOnCheck = directory === canonicalDirectory ? 3 : 2;
+  const fsApi = {
+    lstatSync: (filePath) => {
+      const stat = originalLstat(filePath);
+      if (filePath === canonicalDirectory) {
+        canonicalChecks += 1;
+        if (canonicalChecks === changeOnCheck) {
+          return new Proxy(stat, {
+            get(target, key) {
+              if (key === 'mtimeMs') return target.mtimeMs + 1;
+              return Reflect.get(target, key, target);
+            },
+          });
+        }
+      }
+      return stat;
+    },
+    realpathSync: fs.realpathSync.bind(fs),
+    opendirSync: fs.opendirSync.bind(fs),
+    readFileSync: fs.readFileSync.bind(fs),
+  };
+
+  assert.throws(
+    () => readKeyGenerationJournal(directory, PROFILE_ID, { fsApi }),
+    /changed while it was being read/,
+  );
+  assert.equal(canonicalChecks, changeOnCheck);
 });

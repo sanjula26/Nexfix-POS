@@ -16,6 +16,7 @@ const LEGACY_ENVELOPE_FILE = 'nexfix-key-envelope.json';
 const COMMIT_PREFIX = 'nexfix-key-envelope.commit.';
 const COMMIT_NAME_PATTERN = /^nexfix-key-envelope\.commit\.g([0-9]{8})\.json$/;
 const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
+const MAX_DIRECTORY_ENTRIES = 4096;
 
 function statRegularFile(fsApi, filePath, label, maxBytes) {
   let stat;
@@ -48,6 +49,70 @@ function assertFileUnchanged(fsApi, filePath, before, label) {
       after.ctimeMs !== before.ctimeMs) {
     throw new Error(`${label} changed while it was being read.`);
   }
+}
+
+
+function assertDirectoryUnchanged(fsApi, directoryPath, before, label) {
+  let after;
+  try {
+    after = fsApi.lstatSync(directoryPath);
+  } catch {
+    throw new Error(`\${label} changed while it was being read.`);
+  }
+  if (after.isSymbolicLink() || !after.isDirectory() ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs) {
+    throw new Error(`\${label} changed while it was being read.`);
+  }
+}
+
+function readBoundedDirectoryEntries(fsApi, directoryPath) {
+  let handle;
+  try {
+    handle = fsApi.opendirSync(directoryPath, { encoding: 'utf8' });
+  } catch {
+    throw new Error('The POS profile journal directory cannot be listed.');
+  }
+  if (!handle || typeof handle.readSync !== 'function' ||
+      typeof handle.closeSync !== 'function') {
+    try { handle?.closeSync?.(); } catch { /* best effort */ }
+    throw new Error('The POS profile journal directory handle is invalid.');
+  }
+
+  const entries = [];
+  let readFailure = null;
+  try {
+    while (true) {
+      let entry;
+      try {
+        entry = handle.readSync();
+      } catch {
+        throw new Error('The POS profile journal directory cannot be read.');
+      }
+      if (entry === null) break;
+      if (!entry || typeof entry.name !== 'string') {
+        throw new Error('The POS profile journal directory listing is invalid.');
+      }
+      if (entries.length >= MAX_DIRECTORY_ENTRIES) {
+        throw new Error('The POS profile journal directory has too many entries.');
+      }
+      entries.push(entry.name);
+    }
+  } catch (error) {
+    readFailure = error;
+    throw error;
+  } finally {
+    try {
+      handle.closeSync();
+    } catch {
+      if (!readFailure) {
+        throw new Error('The POS profile journal directory handle could not be closed.');
+      }
+    }
+  }
+  return entries;
 }
 
 function readRegularFile(fsApi, filePath, label, maxBytes, total) {
@@ -111,19 +176,15 @@ function readKeyGenerationJournal(profileDirectory, profileId, options = {}) {
     throw new Error('The POS profile directory cannot be resolved.');
   }
   const canonicalStat = fsApi.lstatSync(canonicalDirectory);
-  if (canonicalStat.isSymbolicLink() || !canonicalStat.isDirectory()) {
-    throw new Error('The resolved POS profile directory is not a normal folder.');
+  if (canonicalStat.isSymbolicLink() || !canonicalStat.isDirectory() ||
+      canonicalStat.dev !== directoryStat.dev ||
+      canonicalStat.ino !== directoryStat.ino ||
+      canonicalStat.mtimeMs !== directoryStat.mtimeMs ||
+      canonicalStat.ctimeMs !== directoryStat.ctimeMs) {
+    throw new Error('The POS profile directory changed while it was being resolved.');
   }
 
-  let entries;
-  try {
-    entries = fsApi.readdirSync(canonicalDirectory, { encoding: 'utf8' });
-  } catch {
-    throw new Error('The POS profile journal directory cannot be listed.');
-  }
-  if (!Array.isArray(entries) || entries.some(name => typeof name !== 'string')) {
-    throw new Error('The POS profile journal directory listing is invalid.');
-  }
+  const entries = readBoundedDirectoryEntries(fsApi, canonicalDirectory);
 
   const markerNames = entries.filter(name => name.startsWith(COMMIT_PREFIX));
   if (markerNames.length > MAX_COMMIT_MARKERS) {
@@ -176,6 +237,12 @@ function readKeyGenerationJournal(profileDirectory, profileId, options = {}) {
     };
   });
 
+  assertDirectoryUnchanged(
+    fsApi,
+    canonicalDirectory,
+    canonicalStat,
+    'The POS profile journal directory',
+  );
   return selectCommittedKeyGeneration({
     profileId,
     legacyEnvelopeBytes,
@@ -186,5 +253,6 @@ function readKeyGenerationJournal(profileDirectory, profileId, options = {}) {
 
 module.exports = {
   MAX_TOTAL_BYTES,
+  MAX_DIRECTORY_ENTRIES,
   readKeyGenerationJournal,
 };
