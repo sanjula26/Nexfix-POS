@@ -206,3 +206,37 @@ This fixes the required order for a future authority implementation:
 The folder profile and its Recovery Key are therefore not available as the only source for initial Admin authority creation: initial Admin setup happens earlier. A design that waits until profile creation to establish the authority would leave the entire IndexedDB-primary period unprotected.
 
 For existing shops upgraded from a renderer-only credential store, the bootstrap limitation in section 5 still applies. There is no cryptographic proof in the old `app_state` that distinguishes the original Admin hash from a hash substituted before the authority is created. Do not silently promote whichever hash happens to be present at upgrade time.
+
+
+## 11. Backup and restore credential behavior — exact source review — 2026-11-26
+
+A direct read of `src/lib/backup.ts`, `src/lib/driveSync.ts`, `src/lib/restore.ts` and `src/lib/backupValidation.ts` confirms two different current behaviors:
+
+### 11.1 Manual local JSON backup
+
+- `downloadBackupWork` builds the envelope as `{ _meta, state }` from the complete input `POSState`, then downloads `JSON.stringify(payload, null, 2)`.
+- This current local JSON file therefore includes `state.users[].password` hashes and `state.settings.adminPinHash`, as well as the rest of the POS state. It does not plaintext-export the password from those hash fields, but these are still sensitive password verifiers and can be attacked offline if the file leaks.
+- This code path does not call the Google Drive `sanitizeCloudState` helper.
+
+### 11.2 Google Drive backup/restore
+
+- `driveSync.ts:sanitizeCloudState` clones the state with `users: []` and sets `settings.adminPinHash: ''` before encryption/upload.
+- `isCloudSafeBackup` marks the returned Google restore data. `restore.ts:restoreLocalAuthentication` then retains the current complete `users` array and the current `adminPinHash` when applying this cloud-safe business state.
+- This is consistent with device-local POS credentials remaining local and is a useful invariant for a future independent authority.
+
+### 11.3 Current local restore behavior and risk
+
+- `restore.ts:applyBackupRestoreWork` only calls `restoreLocalAuthentication` for a cloud-safe backup. A normal manually downloaded local JSON envelope is not cloud-safe, so the current path applies `backup.state` directly.
+- As a result, a local JSON restore can currently replace the renderer-managed local account list and Admin PIN hash with values from that backup. The restore UI's Admin gate is checked in renderer code by reading the local session's `userId` from localStorage/sessionStorage and looking up its role in the supplied `current` state. This is not a main-process authorization proof.
+- The restore checkpoint also snapshots the full `POSState`. It is used for rollback of the business state and must not become an alternate source for restoring the future main-owned credential authority.
+
+### 11.4 Required future policy
+
+- The new main-process credential authority must never be imported, overwritten, reset or rolled back from a local or Google Drive backup, `restore_checkpoint`, renderer event payload, or restored `POSState`.
+- Treat local POS accounts, password verifiers, Admin unlock verifiers, active state, role and first-login password-change status as device/profile-local authentication data. A future reviewed backup format should exclude those fields from both local-download and Google backups, while preserving business data.
+- When applying either local or Google business backup after authority migration, restore business data only, then reconcile the renderer's local account mirror from the current main authority. Never use a restored `users` array as an Admin source.
+- The restore action itself is currently renderer-gated. Before claiming main-process Admin enforcement for destructive restore, add a dedicated main-process authorization path bound to the active local Admin, current profile, restore operation and short expiry. Do not accept `user.role` or localStorage session claims as proof.
+- A compatibility decision is needed for existing local JSON backups: because they contain account hashes, decide whether older restores simply ignore imported local credentials and retain current device credentials, or require an explicit owner credential migration step. Do not silently replace the new authority with old backup hashes.
+- Regression tests must show that a local backup containing a forged/replaced `users` list and Admin PIN cannot change the main authority or the current local account mirror; that failed restore rollback does not roll back credential revisions; and that cloud-safe restore still leaves local credentials unchanged.
+
+No backup or restore behavior was changed in this design-only pass.
