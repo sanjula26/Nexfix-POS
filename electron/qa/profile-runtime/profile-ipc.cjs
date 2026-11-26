@@ -139,9 +139,11 @@ function registerPOSProfileIpc(options) {
     return profileSession.prepareRecoveryKeyRotation(currentRecoveryKey);
   });
 
-  register('pos-profile:pending-recovery-rotation', () => {
+  register('pos-profile:pending-recovery-rotation', (payload) => {
     assertActiveProfileSelected();
-    return profileSession.getPendingRecoveryKeyRotation();
+    const currentRecoveryKey = typeof payload?.currentRecoveryKey === 'string'
+      ? payload.currentRecoveryKey : '';
+    return profileSession.getPendingRecoveryKeyRotation(currentRecoveryKey);
   });
 
   register('pos-profile:cancel-recovery-rotation', (payload) => {
