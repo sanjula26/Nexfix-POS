@@ -6,12 +6,13 @@ import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { Purchase, PurchaseItem } from '../lib/types';
-import { findDuplicateSupplierInvoices, validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
+import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 import SearchableSelect from '../components/SearchableSelect';
 import { idbDeleteMetaValue, idbGetMetaValue, idbPutMetaValue } from '../lib/db';
 import { getCloudShopId } from '../lib/cloudSync';
 
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
+interface BarcodeScanUndo { previousRows: Row[]; previousCount: number; productName: string; }
 const emptyRow = (): Row => ({ productId: '', qty: 1, cost: 0, sellingPrice: 0, updateSellingPrice: false, unitText: '' });
 
 interface GRNWorkingDraft {
@@ -59,6 +60,8 @@ export default function GRN() {
   const [invoiceNo, setInvoiceNo] = useState('');
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<Row[]>([emptyRow()]);
+  const [barcodeScanCount, setBarcodeScanCount] = useState(0);
+  const [lastBarcodeUndo, setLastBarcodeUndo] = useState<BarcodeScanUndo | null>(null);
   const [search, setSearch] = useState('');
   const [lookupError, setLookupError] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -118,8 +121,24 @@ export default function GRN() {
   useBarcodeScanner(code => {
     const match = state.products.find(p => p.barcode.trim().toLowerCase() === code.trim().toLowerCase());
     if (!match || actionRunning || formMode !== 'receive' || view !== 'form') return;
-    const blank = rows.findIndex(r => !r.productId);
-    setRow(blank >= 0 ? blank : rows.length - 1, { productId: match.id });
+    const action = getGrnBarcodeScanAction(rows, match.id);
+    setLastBarcodeUndo({
+      previousRows: rows.map(row => ({ ...row })),
+      previousCount: barcodeScanCount,
+      productName: match.name,
+    });
+    setBarcodeScanCount(count => count + 1);
+    if (action.type === 'increment') {
+      const currentQty = rows[action.index]?.qty;
+      const nextQty = Number.isFinite(currentQty) ? Math.max(0, Math.floor(currentQty)) + 1 : 1;
+      setRow(action.index, { qty: nextQty }, 'barcode');
+      return;
+    }
+    if (action.type === 'fill') {
+      setRow(action.index, { productId: match.id }, 'barcode');
+      return;
+    }
+    setRows(previous => [...previous, { ...emptyRow(), productId: match.id, cost: match.cost, sellingPrice: match.price }]);
   }, { enabled: view === 'form' && formMode === 'receive' && !actionRunning, force: true, minLength: 3 });
   const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q)).sort((a, b) => +new Date(b.date) - +new Date(a.date));
 
@@ -144,15 +163,25 @@ export default function GRN() {
     setSelectedGrn(match);
   };
 
-  const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
-    if (i !== index) return r;
-    const next = { ...r, ...patch };
-    if (patch.productId) {
-      const p = state.products.find(x => x.id === patch.productId);
-      if (p) { next.cost = p.cost; next.sellingPrice = p.price; next.unitText = ''; }
-    }
-    return next;
-  }));
+  const setRow = (index: number, patch: Partial<Row>, source: 'manual' | 'barcode' = 'manual') => {
+    if (source !== 'barcode') setLastBarcodeUndo(null);
+    setRows(prev => prev.map((r, i) => {
+      if (i !== index) return r;
+      const next = { ...r, ...patch };
+      if (patch.productId) {
+        const p = state.products.find(x => x.id === patch.productId);
+        if (p) { next.cost = p.cost; next.sellingPrice = p.price; next.unitText = ''; }
+      }
+      return next;
+    }));
+  };
+
+  const undoLastBarcodeScan = () => {
+    if (!lastBarcodeUndo || actionRunning) return;
+    setRows(lastBarcodeUndo.previousRows.map(row => ({ ...row })));
+    setBarcodeScanCount(lastBarcodeUndo.previousCount);
+    setLastBarcodeUndo(null);
+  };
 
   const makeWorkingDraft = useCallback((): GRNWorkingDraft => ({
     id: draftIdRef.current || createDraftId(),
@@ -209,6 +238,8 @@ export default function GRN() {
     setInvoiceNo(workingDraft.invoiceNo);
     setNotes(workingDraft.notes);
     setRows(workingDraft.rows.length ? workingDraft.rows.map(row => ({ ...row })) : [emptyRow()]);
+    setBarcodeScanCount(0);
+    setLastBarcodeUndo(null);
     setFormMode('receive');
     setFormError('');
     setView('form');
@@ -229,7 +260,7 @@ export default function GRN() {
   const startNew = () => {
     if (workingDraft) return;
     draftIdRef.current = createDraftId();
-    setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setInvoiceOverrideReason(''); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
+    setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setInvoiceOverrideReason(''); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setBarcodeScanCount(0); setLastBarcodeUndo(null); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
   };
   const openReturn = (p: Purchase) => {
     const returnedByItem = new Map<number, number>();
@@ -247,7 +278,7 @@ export default function GRN() {
       return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0, unitIds: [] };
     }));
   };
-  const edit = (p: Purchase) => { if (workingDraft) return; draftIdRef.current = createDraftId(); setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setFormMode('receive'); setView('form'); };
+  const edit = (p: Purchase) => { if (workingDraft) return; draftIdRef.current = createDraftId(); setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setBarcodeScanCount(0); setLastBarcodeUndo(null); setFormMode('receive'); setView('form'); };
 
   useEffect(() => {
     if (!recoveryLoaded || view !== 'form' || formMode !== 'receive') return;
@@ -406,6 +437,8 @@ export default function GRN() {
     if (!unitValidation.ok) {
       setConfirmId(null); setPriceChanges([]); setEditingId(purchase.id); setSupplierId(purchase.supplierId); setInvoiceNo(purchase.supplierInvoiceNo || ''); setNotes(purchase.notes || '');
       setRows(purchase.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') })));
+      setBarcodeScanCount(0);
+      setLastBarcodeUndo(null);
       setFormMode('receive'); setFormError(unitValidation.error || 'The GRN changed after the confirmation opened. Correct its IMEI/Serial data before processing.'); setView('form');
       return;
     }
@@ -678,9 +711,13 @@ export default function GRN() {
               </div>
 
               <div className="mt-5">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold uppercase tracking-wider text-sub">Items</span>
-                  <button className="btn btn-soft !text-xs" onClick={() => setRows(r => [...r, emptyRow()])} disabled={actionRunning}><Plus size={13} /> Add line</button>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-sub">Items</span>
+                    {barcodeScanCount > 0 && <span className="text-[11px] text-sub rounded-full bg-raised border border-line px-2 py-1">Scans this session: {barcodeScanCount}</span>}
+                    {lastBarcodeUndo && <button className="btn btn-soft !text-xs" onClick={undoLastBarcodeScan} disabled={actionRunning}>Undo last scan · {lastBarcodeUndo.productName}</button>}
+                  </div>
+                  <button className="btn btn-soft !text-xs" onClick={() => { setLastBarcodeUndo(null); setRows(r => [...r, emptyRow()]); }} disabled={actionRunning}><Plus size={13} /> Add line</button>
                 </div>
                 <div className="space-y-3">
                   {rows.map((r, i) => {
@@ -693,7 +730,7 @@ export default function GRN() {
                           <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Product / SKU / Barcode</div><SearchableSelect value={r.productId} options={state.products.filter(p => p.active)} onChange={id => setRow(i, { productId: id })} disabled={actionRunning} placeholder="Search product, SKU or barcode…" ariaLabel="GRN product" clearable maxResults={40} getLabel={p => p.name} getSearchText={p => [p.name,p.sku,p.barcode,p.brand].filter(Boolean).join(' ')} renderOption={p => <><div className="font-semibold text-ink text-sm">{p.name}</div><div className="text-[11px] text-sub">{[p.sku,p.barcode,p.brand].filter(Boolean).join(' · ')}</div></>} /></div>
                           <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Qty</div><input className="input num" type="number" min="1" step="1" value={r.qty || ''} onChange={e => setRow(i, { qty: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Qty" disabled={actionRunning} /></div>
                           <div><div className="text-[10px] uppercase font-bold tracking-wider text-faint mb-1">Cost</div><input className="input num" type="number" min="0" step="0.01" value={Number.isFinite(r.cost) ? r.cost : ''} onChange={e => setRow(i, { cost: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Cost" disabled={actionRunning} /></div>
-                          <button className="icon-btn !w-9 !h-9 mt-5" disabled={actionRunning || rows.length === 1} onClick={() => setRows(rs => rs.filter((_, idx) => idx !== i))} title="Remove line"><X size={14} /></button>
+                          <button className="icon-btn !w-9 !h-9 mt-5" disabled={actionRunning || rows.length === 1} onClick={() => { setLastBarcodeUndo(null); setRows(rs => rs.filter((_, idx) => idx !== i)); }} title="Remove line"><X size={14} /></button>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
                           <div className="rounded-lg border border-line bg-raised p-3">

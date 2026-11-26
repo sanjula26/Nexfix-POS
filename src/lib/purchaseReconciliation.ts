@@ -15,6 +15,23 @@ export interface PurchaseReceivePlanResult extends PurchaseValidationResult {
   plan?: PurchaseReceivePlan;
 }
 
+export type GrnBarcodeScanAction =
+  | { type: 'increment'; index: number }
+  | { type: 'fill'; index: number }
+  | { type: 'append' };
+
+/** Prefer incrementing an existing GRN product line; otherwise fill an empty line or append one. */
+export function getGrnBarcodeScanAction(
+  rows: readonly { productId: string; qty: number }[],
+  productId: string,
+): GrnBarcodeScanAction {
+  const existingIndex = rows.findIndex(row => row.productId === productId);
+  if (existingIndex >= 0) return { type: 'increment', index: existingIndex };
+  const emptyIndex = rows.findIndex(row => !row.productId);
+  if (emptyIndex >= 0) return { type: 'fill', index: emptyIndex };
+  return { type: 'append' };
+}
+
 /** Normalizes supplier invoice references without removing meaningful punctuation. */
 export function normalizeSupplierInvoiceNumber(value: string | undefined | null): string {
   return typeof value === 'string'

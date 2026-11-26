@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { findDuplicateSupplierInvoices, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride } from '../src/lib/purchaseReconciliation.ts';
+import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride } from '../src/lib/purchaseReconciliation.ts';
 import type { POSState, Purchase } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
@@ -688,4 +688,28 @@ test('duplicate supplier invoice override requires Admin/Manager and a meaningfu
   assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'no').ok, false);
   assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin', 'Second supplier invoice copy'), { ok: true });
   assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'Separate branch billing'), { ok: true });
+});
+
+
+test('GRN barcode scans increment an existing product line before filling or appending', () => {
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: 'product-1', qty: 2 },
+      { productId: '', qty: 1 },
+    ], 'product-1'),
+    { type: 'increment', index: 0 },
+  );
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: '', qty: 1 },
+      { productId: 'product-2', qty: 4 },
+    ], 'product-1'),
+    { type: 'fill', index: 0 },
+  );
+  assert.deepEqual(
+    getGrnBarcodeScanAction([
+      { productId: 'product-2', qty: 4 },
+    ], 'product-1'),
+    { type: 'append' },
+  );
 });
