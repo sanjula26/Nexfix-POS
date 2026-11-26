@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
@@ -33,8 +33,10 @@ function grnPrintHtml(grn: Purchase, shopName: string) {
 export default function GRN() {
   const { state, user, saveGRNDraft, updateGRNDraft, processGRN, deletePurchase, createPurchaseReturn, can } = usePOS();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [receivedForTags, setReceivedForTags] = useState<Array<{ productId: string; qty: number }>>([]);
   const [printPreview, setPrintPreview] = useState<{ grn: Purchase; html: string } | null>(null);
+  const [selectedGrn, setSelectedGrn] = useState<Purchase | null>(null);
   const [printReady, setPrintReady] = useState(false);
   const printFrame = useRef<HTMLIFrameElement | null>(null);
   const [view, setView] = useState<'list' | 'form'>('list');
@@ -66,6 +68,17 @@ export default function GRN() {
     setRow(blank >= 0 ? blank : rows.length - 1, { productId: match.id });
   }, { enabled: view === 'form' && formMode === 'receive' && !actionRunning, force: true, minLength: 3 });
   const list = state.purchases.filter(p => !q || p.poNo.toLowerCase().includes(q) || p.supplierName.toLowerCase().includes(q) || (p.supplierInvoiceNo || '').toLowerCase().includes(q)).sort((a, b) => +new Date(b.date) - +new Date(a.date));
+
+  // A GRN opened from the report carries its exact purchase ID in the URL.
+  // Wait for IndexedDB hydration before resolving it so history opens reliably.
+  const requestedGrnId = searchParams.get('grn');
+  useEffect(() => {
+    if (!requestedGrnId) return;
+    const match = state.purchases.find(p => p.id === requestedGrnId);
+    if (!match) return;
+    setSearch(match.poNo);
+    setSelectedGrn(match);
+  }, [requestedGrnId, state.purchases]);
 
   const setRow = (index: number, patch: Partial<Row>) => setRows(prev => prev.map((r, i) => {
     if (i !== index) return r;
@@ -509,7 +522,7 @@ export default function GRN() {
                 <tbody>
                   {list.map(p => (
                     <tr key={p.id} className={`hover:bg-raised/40 transition-colors ${highlightedId === p.id ? 'bg-emerald-500/[0.08] ring-1 ring-inset ring-emerald-500/20' : ''}`}>
-                      <td className="td font-bold text-violet-500">{p.poNo}</td>
+                      <td className="td font-bold text-violet-500"><button type="button" className="underline underline-offset-2 hover:text-violet-700" onClick={() => setSelectedGrn(p)}>{p.poNo}</button></td>
                       <td className="td text-xs text-sub">{fmtDate(p.date)}</td>
                       <td className="td font-semibold">{p.supplierName}</td>
                       <td className="td text-xs text-sub">{p.supplierInvoiceNo || '—'}</td>
@@ -582,6 +595,45 @@ export default function GRN() {
           <button className="btn btn-danger-soft flex-1" onClick={() => { if (deleteId) deletePurchase(deleteId); setDeleteId(null); }} disabled={actionRunning}>Delete draft</button>
           <button className="btn btn-soft flex-1" onClick={() => setDeleteId(null)} disabled={actionRunning}>Cancel</button>
         </div>
+      </Modal>
+
+      <Modal open={!!selectedGrn} onClose={() => setSelectedGrn(null)} title={selectedGrn ? 'GRN ' + selectedGrn.poNo : 'GRN details'} sub="Complete receiving record · read-only history" wide>
+        {selectedGrn && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-line bg-raised p-3 text-sm">
+              <div><span className="text-sub">Supplier:</span> <b>{selectedGrn.supplierName}</b></div>
+              <div><span className="text-sub">Date:</span> <b>{fmtDate(selectedGrn.date)}</b></div>
+              <div><span className="text-sub">Supplier invoice:</span> <b>{selectedGrn.supplierInvoiceNo || '—'}</b></div>
+              <div><span className="text-sub">Status:</span> <b>{selectedGrn.status === 'received' ? 'PROCESSED' : 'DRAFT'}</b></div>
+              {selectedGrn.processedBy && <div><span className="text-sub">Processed by:</span> <b>{selectedGrn.processedBy}</b></div>}
+              {selectedGrn.processedAt && <div><span className="text-sub">Processed at:</span> <b>{fmtDate(selectedGrn.processedAt)}</b></div>}
+              {selectedGrn.branchId && <div><span className="text-sub">Branch:</span> <b>{selectedGrn.branchId}</b></div>}
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full min-w-[560px]">
+                <thead><tr><th className="th">Product</th><th className="th text-right">Qty</th><th className="th text-right">Unit cost</th><th className="th text-right">Line total</th></tr></thead>
+                <tbody>{selectedGrn.items.map((item, index) => (
+                  <tr key={item.productId + ':' + index}>
+                    <td className="td">
+                      <div className="font-semibold">{item.name}</div>
+                      {item.unitIdentifiers?.length ? <div className="text-[11px] text-sub mt-1 break-all">{item.unitIdentifiers.map(unit => [unit.imei, unit.serial].filter(Boolean).join(' / ')).join(' · ')}</div> : null}
+                    </td>
+                    <td className="td num text-right">{item.qty}</td>
+                    <td className="td num text-right">{fmtRs(item.cost)}</td>
+                    <td className="td num text-right font-semibold">{fmtRs(item.qty * item.cost)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div className="flex justify-between rounded-xl border border-line p-3"><span className="font-semibold text-sub">GRN Total</span><b className="num text-lg">{fmtRs(selectedGrn.total)}</b></div>
+            {selectedGrn.notes && <div className="rounded-xl border border-line p-3 text-sm"><b>Notes</b><p className="text-sub mt-1 whitespace-pre-wrap">{selectedGrn.notes}</p></div>}
+            <div className="flex flex-wrap justify-end gap-2">
+              {selectedGrn.status === 'pending' && <button className="btn btn-soft" onClick={() => { const target=selectedGrn; setSelectedGrn(null); edit(target); }}><Pencil size={14}/> Edit draft</button>}
+              <button className="btn btn-primary" onClick={() => { setPrintReady(false); setPrintPreview({ grn:selectedGrn, html:grnPrintHtml(selectedGrn,state.settings.shopName) }); }}><Printer size={14}/> Print / Save PDF</button>
+              <button className="btn btn-soft" onClick={() => setSelectedGrn(null)}>Close</button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <Modal open={!!printPreview} onClose={() => { if (!actionRunning) { setPrintPreview(null); setPrintReady(false); } }} title={printPreview ? 'GRN ' + printPreview.grn.poNo : 'GRN print preview'} sub="Preview the A4 goods received note before printing or saving as PDF" wide>
