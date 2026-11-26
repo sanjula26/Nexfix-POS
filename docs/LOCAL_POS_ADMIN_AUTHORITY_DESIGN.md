@@ -276,3 +276,15 @@ Future authority contract:
 - Account deletion/deactivation/password changes must revoke or invalidate related short-lived capabilities and must not leave a previously issued Admin proof valid past its expiry.
 
 Tests must cover at least two active Admin accounts: either Admin can verify by their own exact account identity; wrong password/identifier combinations fail; a cashier cannot pass by supplying another user's ID; disabling/deleting one Admin immediately invalidates that identity; and no behavior depends on users-array ordering.
+
+## 14. Isolated main-process password verifier primitive — 2026-11-26
+
+A small, deliberately unconnected primitive has been staged to reduce risk in a future authority migration:
+
+- `electron/local-auth-crypto.cjs` verifies the current local POS verifier format: standard Base64 salt (16 bytes), one separator, and standard Base64 PBKDF2-HMAC-SHA256 digest (32 bytes), using 600,000 iterations.
+- The implementation uses Node's asynchronous `crypto.pbkdf2`, checks canonical Base64 and exact byte lengths before deriving, compares equal-length digests with `timingSafeEqual`, and clears temporary salt/digest buffers after verification.
+- Legacy 64-character SHA-256-style hashes are deliberately rejected by this primitive. Their migration/re-enrollment policy remains unresolved; this does not silently bless the legacy format as a new authority credential.
+- `tests/local-auth-crypto.test.cjs` covers a current-format positive/negative password check, malformed/non-canonical inputs, legacy rejection and invalid argument types. The existing POS CI invokes `npm test`, so the new Node test is discovered without changing the test script.
+- This helper is not imported by production login, renderer state, preload, IPC, backup or restore code. It does not create an authority record, copy credentials, change roles, implement lockout or authorize an operation. No user-facing authentication behavior changed in this step.
+
+This is a tested building block only, not a completed main-process Admin authority. The account bootstrap/re-enrollment, multi-Admin identity, PIN policy, profile sidecar migration, backup compatibility, session and restore policies listed above still need explicit decisions and dedicated integration tests before the primitive is connected.
