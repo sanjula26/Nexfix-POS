@@ -118,7 +118,7 @@ export default function GRN() {
       return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0, unitIds: [] };
     }));
   };
-  const edit = (p: Purchase) => { setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\\n') }))); setFormMode('receive'); setView('form'); };
+  const edit = (p: Purchase) => { setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setFormMode('receive'); setView('form'); };
 
   const buildItems = (): PurchaseItem[] => rows.filter(r => r.productId).map(r => {
     const product = state.products.find(p => p.id === r.productId);
@@ -226,7 +226,7 @@ export default function GRN() {
     const unitValidation = validatePurchaseUnitIdentifiers(purchase, state.products, state.units || []);
     if (!unitValidation.ok) {
       setConfirmId(null); setPriceChanges([]); setEditingId(purchase.id); setSupplierId(purchase.supplierId); setInvoiceNo(purchase.supplierInvoiceNo || ''); setNotes(purchase.notes || '');
-      setRows(purchase.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\\n') })));
+      setRows(purchase.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') })));
       setFormMode('receive'); setFormError(unitValidation.error || 'The GRN changed after the confirmation opened. Correct its IMEI/Serial data before processing.'); setView('form');
       return;
     }
@@ -557,7 +557,7 @@ export default function GRN() {
                                 if (!validation.ok) {
                                   setFormError(validation.error || 'This GRN has invalid IMEI/Serial values. Edit the draft and correct them before processing.');
                                   setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || '');
-                                  setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\\n') })));
+                                  setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') })));
                                   setFormMode('receive'); setView('form'); return;
                                 }
                                 setFormError(''); setFormMode('receive'); setPriceChanges([]); setConfirmId(p.id);
