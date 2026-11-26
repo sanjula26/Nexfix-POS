@@ -1,0 +1,191 @@
+# Local POS Admin Authorization — Main-Process Authority Design
+
+**Status:** Draft investigation / proposed architecture  
+**Date:** 2026-11-26  
+**Scope:** Offline local POS authentication and high-risk desktop actions  
+**Implementation status:** No implementation change is included in this document.
+
+This design is not an approved change to the current login behavior. It records the verified trust boundary, the migration constraints and a safe implementation direction for review before changing production code.
+
+## 1. Safety invariants
+
+1. Local POS login remains separate from Supabase cloud login, cloud shop membership and private updater/device authorization.
+2. Local POS must continue to work offline. No Admin verification request may require Supabase or an internet connection.
+3. The main process must not authorize a sensitive Admin operation from renderer-supplied role, user ID, permission flags, a localStorage session marker or a renderer-readable/writable POS state snapshot.
+4. Main-process credential records must contain verifiers only, never plaintext passwords, PINs, Recovery Keys or cloud tokens.
+5. No renderer-generic profile read/write API may read or overwrite the main-process credential record.
+6. The encrypted-profile/IndexedDB cutover must copy and verify the credential authority before committing `folder_primary`. If that copy cannot be verified, IndexedDB remains authoritative and cutover is blocked.
+7. Existing Admin, cashier, manager and technician roles, first-login password-change state, account activation, offline use and the user's current login experience must be preserved unless a separately reviewed change explicitly says otherwise.
+8. No credential-authority migration may silently trust an arbitrary renderer-provided hash as proof that it belongs to the shop owner.
+
+## 2. Verified current implementation
+
+The following observations were checked against the PR #293 head `0ab5685b09987a1d073f93a1eea2c31c111711fc`.
+
+### 2.1 Current credential source
+
+- `src/lib/types.ts` defines `AppUser` with `id`, `email`, `password`, `role`, `active` and optional `mustChangePassword`.
+- `src/lib/store.tsx` stores the user list in the global `POSState`. The Admin unlock verifier is stored at `POSState.settings.adminPinHash`.
+- `src/lib/utils.ts` uses PBKDF2-HMAC-SHA256 with 600,000 iterations, 16-byte random salt and 32-byte digest for the current account password format (`saltBase64:digestBase64`). This is a good password-hash format, but the hash itself is still in renderer-managed state.
+- The same utility's `hashPin` path is a deterministic SHA-256 hash using the project `AUTH_SALT`, not the current per-password salted PBKDF2 format. The Admin unlock PIN minimum is currently four characters in `changeAdminPin`.
+- `src/lib/passwordAsync.ts` uses Web Crypto for the same PBKDF2 format and falls back to the deterministic project verifier.
+
+### 2.2 Renderer-managed login and session
+
+- `src/lib/store.tsx:signIn` finds users in `stateRef.current.users`, verifies the password in the renderer, then writes a session marker containing only `userId` and `remember` to localStorage and sessionStorage.
+- `createInitialAdmin` creates the initial Admin and optional cashier in renderer state and sets `settings.adminPinHash` from the initial Admin password.
+- `changePassword`, `changeManagedPassword`, `saveUser`, `toggleUserActive`, `deleteUser`, `switchRole` and `changeAdminPin` update credential-bearing fields through renderer-managed POS state.
+- `src/App.tsx` derives the authenticated user, role and `mustChangePassword` routing from `POSProvider` state. Idle timeout and session-age handling are also renderer-side.
+- `Login.tsx` calls `ensureCloudSession` after local sign-in, but the source explicitly keeps local POS login independent from the one-time cloud account session. The new authority must not reuse cloud refresh tokens or updater credentials.
+
+### 2.3 Storage and Electron trust boundary
+
+- Before folder-primary cutover, `src/lib/db.ts:idbLoadState` and `idbSaveStateDetailed` read/write the full `POSState` in IndexedDB.
+- After `folder_primary`, the same functions route the full state through `writeDesktopProfileJson('app_state', state)` / `readRequiredProfileJson('app_state')`.
+- `src/lib/desktopProfileStorage.ts` exposes generic renderer bridge methods for `app_state`, `sync_queue`, `meta`, `restore_checkpoint` and `migration_journal`.
+- `electron/profile-ipc.cjs` validates that an IPC caller is the trusted top-level renderer and applies a payload-size limit, then accepts a purpose and serialized payload for `pos-profile:write`.
+- `electron/profile-storage.cjs` applies a purpose allowlist. The allowlist prevents arbitrary filenames, but explicitly allows `app_state`; that entire payload includes the users and Admin PIN hash. Therefore the renderer can legitimately write a replacement `app_state` snapshot through the public bridge.
+- The trusted-renderer check proves frame/origin identity. It does not prove that the current local POS user is Admin or that an `app_state` credential payload has not been replaced by renderer code.
+- The Electron profile key and encrypted data stay in the main process, but generic IPC grants the trusted renderer read/write access to the approved POS data purposes. Encryption at rest is not a separate authentication authority.
+
+### 2.4 Existing storage migration
+
+- `src/lib/storageOverflowMigration.ts` and `src/lib/storageOverflowMigrationCore.ts` copy and read-back-verify four IndexedDB domains: `app_state`, `sync_queue`, `meta` and `restore_checkpoint`.
+- Only after their byte counts, hashes and read-backs pass does the migration transition to `folder_primary`.
+- No separate main-process-owned local credential record is currently part of that cutover.
+
+### 2.5 Existing test coverage
+
+- The current test tree contains Electron security and encrypted profile-session tests, but no dedicated local-login/credential-authority test module was found by the repository tree search.
+- Existing profile IPC tests exercise encrypted data read/write and trusted renderer checks; they do not make the `app_state.users` hash a main-process authority.
+
+## 3. Confirmed security conclusion
+
+**Neither the PBKDF2 account hash nor `settings.adminPinHash` inside `app_state` can be treated as an independent main-process Admin authority.**
+
+The account hash is stored in a record that the renderer can write. The Admin PIN verifier is in that same record and currently uses a weaker deterministic hash format. The renderer session marker contains a user ID, not a verifiable Admin assertion. Reading `app_state` from the main process does not repair this: before cutover it is not the authoritative source; after cutover it remains renderer-writable through the generic profile IPC.
+
+A main-process authorization decision must be based on a separately owned verifier record and a fresh proof of the user's Admin credential, not a renderer-provided role or state snapshot.
+
+## 4. Proposed architecture
+
+The recommended direction is a dedicated main-process credential authority with a versioned, protected record. The current login UX can be preserved while sensitive main-process operations are migrated first; do not attempt a full login rewrite as part of the Recovery Key rotation patch.
+
+### 4.1 Ownership and storage modes
+
+Create a main-process module (working name: `LocalPOSCredentialAuthority`) with a versioned record and explicit read/verify/update functions.
+
+- **IndexedDB-primary mode:** keep the authority record under Electron `app.getPath('userData')`, encrypted with Electron `safeStorage` (Windows DPAPI). This remains local to the current Windows account, matching the current IndexedDB database's local-device scope.
+- **Folder-primary mode:** keep a portable credential record inside the encrypted POS profile (working purpose name: `local_auth`), encrypted with the same profile data key. This lets the record move with the encrypted profile and be read only after the main process unlocks the profile using the OS wrapper, passphrase or Recovery Key.
+- **Cutover:** before `folder_primary` is committed, the main process must copy the current authority record into the protected profile purpose, read it back and compare profile binding, revision and integrity. The renderer migration coordinator must not supply or modify this record. If verification fails, do not mark the folder primary.
+- **After cutover:** the profile-bound record is authoritative. A stale per-Windows `userData` copy must never override the portable profile record.
+
+This requires a main-process migration participant. Simply adding `local_auth` to the renderer's generic `DesktopProfilePurpose` union or to the renderer migration `PURPOSES` list would recreate the same trust-boundary problem.
+
+### 4.2 Protected profile purpose
+
+The encrypted profile storage may reserve a `local_auth` file, but it must not expose this purpose through `readPOSProfileData` or `writePOSProfileData`.
+
+- Add dedicated main-process-only methods on the profile session/storage layer for the credential record.
+- Keep the generic `pos-profile:read` and `pos-profile:write` IPC purpose allowlist explicitly separate from the private credential purpose.
+- Reject direct renderer attempts to read/write `local_auth`, even if the caller passes a syntactically valid purpose string.
+- Bind the record to the active profile ID, schema version and monotonically increasing credential revision. Reject malformed, stale, cross-profile or unauthenticated records.
+
+### 4.3 Credential record contents
+
+The main-process record should contain only the minimum credential authority data, for example:
+
+- schema version and credential revision;
+- profile/shop-local identity binding;
+- accounts keyed by stable local user ID, with normalized email, role, active flag and `mustChangePassword`;
+- a versioned password verifier for each account;
+- a distinct, versioned Admin unlock verifier if the Admin PIN remains a supported credential;
+- persistent failed-attempt/lockout metadata.
+
+Do not store plaintext passwords, plaintext PINs, Supabase IDs, cloud refresh tokens, updater tokens, Recovery Keys or data keys in this record. Do not log the record or send it to Notion.
+
+### 4.4 Password verification
+
+- Implement verification in the Electron main process using Node's asynchronous `crypto.pbkdf2` and constant-time digest comparison. Use the existing PBKDF2 format/parameters for compatible current account hashes where possible.
+- Validate encoded salt/digest sizes, algorithm, iteration count and input length before performing expensive work.
+- Keep legacy hash support only as an explicit migration path. After a successful legacy verification, upgrade to the current PBKDF2 format.
+- The existing Admin PIN uses a separate deterministic SHA-256 format and a four-character minimum. Do not silently treat that as equivalent strength to the current account password. A versioned migration policy is required before accepting it for high-risk actions; new PIN changes should use a salted, slow verifier and a reviewed minimum length.
+- Do not change the existing account login behavior in the same patch as this authority foundation. The first implementation target should be main-process authorization for Recovery Key rotation and other specifically scoped high-risk IPC operations.
+
+### 4.5 Main-process authorization for Recovery Key rotation
+
+The rotation flow should require all of the following in the main process:
+
+1. The exact trusted top-level renderer and active selected profile.
+2. A fresh Admin credential proof verified against the main-owned credential record (not `user.role`, `confirmSensitiveAdmin` renderer state or `app_state`).
+3. Possession of the current desktop profile Recovery Key, verified against the profile's current recovery wrapper.
+4. The pending rotation ID, active profile binding and explicit saved-key acknowledgement already required by the existing protocol.
+
+Possible IPC approach: include a fresh Admin credential proof in the prepare/resume request and verify it inside main before returning or creating pending secret material. Bind the pending operation to that verified Admin identity and profile. Finalize must refer to that exact pending operation and cannot accept a renderer-supplied Admin role or user ID as authorization. On renderer reload, retrieving a still-pending replacement key must re-authenticate the Admin and verify the previous Recovery Key again. A completed key must never be redisplayed.
+
+Avoid creating a generic long-lived Admin token. If a short-lived capability is needed for another operation, bind it to the specific operation, active WebContents, profile ID, expiry and one-time consumption.
+
+### 4.6 Credential mutations and renderer mirror
+
+The main credential record must remain authoritative after bootstrap. It must not be re-created from arbitrary `app_state` snapshots after each render or restore.
+
+- Initial Admin enrollment must be a one-time main-process operation. Once initialized, a renderer cannot reset the authority by sending an empty user list.
+- Account creation, password change, role change, activation/deactivation, deletion and Admin unlock verifier changes must update the main authority through explicit IPC after proof of an existing Admin credential.
+- `POSState.users` may remain a UI/data mirror, but it is not an authentication source for privileged main-process operations.
+- Track a credential revision and define a reconciliation/commit protocol so a crash or failed POS-state write cannot leave the main authority and UI mirror silently inconsistent.
+- Restore flows must be included. Restoring an older `app_state` must not silently roll the main credential authority back or replace it with an unverified hash. Require an explicit, verified reconciliation policy.
+
+### 4.7 Rate limiting and auditing
+
+- Move Admin verification throttling for high-risk IPC into the main process; renderer localStorage counters are not authoritative.
+- Persist bounded failure/lockout metadata with the protected authority record so restarting Electron does not reset the main-process limiter.
+- Apply generic failure messages where practical to avoid account enumeration. Keep PBKDF2 work asynchronous so it does not block Electron's main event loop.
+- Audit success/denial reason codes without recording submitted credentials, hashes, Recovery Keys or other secrets.
+
+## 5. Required migration and compatibility work
+
+This is the highest-risk part of the proposal and must be designed before coding.
+
+1. **Existing IndexedDB shops:** first-time enrollment into the new authority needs a carefully reviewed one-time migration. The current store has no cryptographic provenance that proves its `users` and `adminPinHash` fields were never modified before the upgrade. A successful check against the legacy renderer-held hash preserves the current local state but cannot retroactively prove it was never tampered with. Do not claim otherwise. For this reason, an owner-present re-authentication/re-enrollment step may be required.
+2. **New shops:** initial Admin setup writes the account verifier into the main authority before reporting setup success. A one-time enrollment flag lives in the main authority, not in renderer state.
+3. **IndexedDB to encrypted folder:** main process copies the same revisioned credential authority into the private profile purpose before folder-primary cutover. Read-back verification must pass or cutover remains blocked.
+4. **Already folder-primary shops:** verify that a valid profile-bound `local_auth` record exists before enabling main-process Admin-protected operations. Missing/corrupt records require a clear recovery/re-enrollment path; never rebuild one silently from the renderer.
+5. **Windows reinstall/profile move:** once folder-primary, the credential record must remain decryptable with the existing profile passphrase or Recovery Key on the new Windows installation; it must not depend solely on the old PC's DPAPI sidecar.
+6. **Backup/restore:** explicitly define how a restored backup affects local POS credential authority. Keep Google Drive backup Recovery Key and desktop profile Recovery Key separate. Cloud updater authentication remains out of scope.
+7. **Browser/dev mode:** preserve the browser development fallback deliberately; it must not accidentally invoke a desktop-only authority API or claim main-process protection it does not have.
+
+## 6. Required tests before enabling the authority
+
+- Main-process PBKDF2 parser/verification tests: valid, invalid, malformed, legacy upgrade, constant-time digest-length handling and maximum input limits.
+- Main-process Admin authority tests: non-admin password refused; active Admin succeeds; disabled/deleted Admin refused; role/email changes; password change; Admin unlock verifier migration; failed-attempt lockout survives process restart.
+- IPC tests: untrusted frame rejected; trusted renderer with forged `role: 'admin'` still refused; wrong WebContents/profile/pending ID refused; authorization capability expiry/replay refused.
+- Purpose-boundary tests: renderer generic `read/writePOSProfileData` cannot read or overwrite `local_auth`; only dedicated main-process methods can.
+- State-tampering tests: replace `app_state.users` / `adminPinHash` with a forged Admin hash and prove main-process authorization still follows the protected record.
+- Migration tests: IndexedDB-primary sidecar copies to encrypted profile, revision/hash read-back matches, interrupted copy retries safely, failed verification blocks `folder_primary`, and old sidecar cannot override profile authority after cutover.
+- Profile portability tests: lock/unlock on another Windows installation with Recovery Key, then verify the same Admin credential; do not use Supabase.
+- Restore and user-management tests: authority and renderer mirror reconcile safely after account update, backup restore, deletion and deactivation.
+- Regression tests: existing offline sign-in, role switching, first-login password change, idle lock, POS sales and folder migration remain unchanged.
+
+## 7. Implementation sequence
+
+1. **Draft/design only:** complete the current-source audit and decide the credential migration policy. No login or production code change in this step.
+2. **Authority module + isolated tests:** implement the main-process record and verifier without wiring it to existing login UI. Test the record format, DPAPI storage, PBKDF2 verification, purpose boundary and lockout.
+3. **Migration bridge:** add the main-process-owned IndexedDB-sidecar to profile-sidecar copy and verify it before cutover. Test interruption and rollback.
+4. **Credential mutation bridge:** wire first-run setup, password changes, Admin PIN migration, account management, activation/deletion and restore reconciliation to update the authority safely.
+5. **Sensitive-operation enforcement:** require main-process Admin proof for Recovery Key rotation; remove any reliance on renderer-only Admin gating for that operation.
+6. **Compatibility regression:** run full POS CI, security audit, Windows Desktop Build/QA No Publish, and physical Windows acceptance. Keep PR Draft until all gates pass.
+
+Do not combine this with the Windows durable-file-replacement work; that is a separate security/reliability design and must be tested independently.
+
+## 8. Open decisions
+
+- Whether the existing Admin unlock PIN remains accepted for Recovery Key rotation, or whether only an Admin login password is accepted for that highest-risk operation.
+- The minimum new Admin PIN length and the migration prompt for the current deterministic SHA-256 PIN format.
+- Whether existing shops must re-enroll an Admin credential once during upgrade, because legacy IndexedDB state has no cryptographic provenance.
+- How multiple active Admin accounts and manager/cashier role switches map to the main-process authority.
+- How backup restore and account deletion/activation interact with the authority revision and recovery workflow.
+- How browser development and automated tests should represent the absence of an Electron main process.
+
+## 9. Current implementation boundary
+
+No production authentication code was changed as part of this investigation. The current local POS login, session persistence, roles and PIN behavior remain renderer-managed. PR #293 Recovery Key rotation remains Draft-only and must not be enabled for production operators until main-process Admin authorization, the separate Windows replacement durability review and physical Windows acceptance are completed.
