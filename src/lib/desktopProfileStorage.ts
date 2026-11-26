@@ -107,7 +107,7 @@ type DesktopProfileApi = {
   getPendingPOSProfileCreation?: () => Promise<PendingDesktopPOSProfileCreation>;
   finalizePOSProfileCreation?: (payload: { pendingId: string; storageRoot: string; passphrase: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
   preparePOSRecoveryKeyRotation?: (currentRecoveryKey: string) => Promise<DesktopPOSProfileResult>;
-  getPendingPOSRecoveryKeyRotation?: () => Promise<DesktopPOSProfileResult & { pending: boolean }>;
+  getPendingPOSRecoveryKeyRotation?: (currentRecoveryKey: string) => Promise<DesktopPOSProfileResult & { pending: boolean; finalized?: boolean }>;
   finalizePOSRecoveryKeyRotation?: (payload: { pendingId: string; acknowledged: boolean }) => Promise<DesktopPOSProfileResult>;
   cancelPOSRecoveryKeyRotation?: (pendingId: string) => Promise<{ ok: boolean; canceled?: boolean; error?: string }>;
   unlockPOSProfileWithOS?: (directory: string) => Promise<DesktopPOSProfileResult>;
@@ -295,17 +295,18 @@ export async function prepareDesktopPOSRecoveryKeyRotation(currentRecoveryKey: s
   return { pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
 }
 
-export async function getPendingDesktopPOSRecoveryKeyRotation(): Promise<{
+export async function getPendingDesktopPOSRecoveryKeyRotation(currentRecoveryKey: string): Promise<{
   pending: boolean;
+  finalized?: boolean;
   pendingId?: string;
   profile?: NonNullable<DesktopPOSProfileResult['profile']>;
   recoveryKey?: string;
 }> {
   const api = requireDesktopProfileApi();
   if (typeof api.getPendingPOSRecoveryKeyRotation !== 'function') throw new Error('Pending POS Recovery Key rotation bridge is unavailable.');
-  const result = await api.getPendingPOSRecoveryKeyRotation();
+  const result = await api.getPendingPOSRecoveryKeyRotation(currentRecoveryKey);
   if (!result || result.ok !== true) throw new Error(result?.error || 'Could not resume POS Recovery Key rotation.');
-  return { pending: result.pending === true, pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
+  return { pending: result.pending === true, finalized: result.finalized === true, pendingId: result.pendingId, profile: result.profile, recoveryKey: result.recoveryKey };
 }
 
 export async function finalizeDesktopPOSRecoveryKeyRotation(input: {
