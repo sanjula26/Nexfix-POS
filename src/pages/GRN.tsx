@@ -9,6 +9,7 @@ import type { Purchase, PurchaseItem } from '../lib/types';
 import { validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 import SearchableSelect from '../components/SearchableSelect';
 import { idbDeleteMetaValue, idbGetMetaValue, idbPutMetaValue } from '../lib/db';
+import { getCloudShopId } from '../lib/cloudSync';
 
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
 const emptyRow = (): Row => ({ productId: '', qty: 1, cost: 0, sellingPrice: 0, updateSellingPrice: false, unitText: '' });
@@ -72,6 +73,7 @@ export default function GRN() {
   const [actionRunning, setActionRunning] = useState(false);
   const [invoiceWarning, setInvoiceWarning] = useState(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const workingDraftKey = `${GRN_WORKING_DRAFT_KEY}:${encodeURIComponent(getCloudShopId() || state.settings.shopName.trim().toLowerCase() || 'local-shop')}:${encodeURIComponent(state.settings.branchId || 'local')}`;
   const [workingDraft, setWorkingDraft] = useState<GRNWorkingDraft | null>(null);
   const [recoveryLoaded, setRecoveryLoaded] = useState(false);
   const [draftSaveStatus, setDraftSaveStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
@@ -80,6 +82,8 @@ export default function GRN() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSequenceRef = useRef(0);
   const latestWorkingDraftRef = useRef<GRNWorkingDraft | null>(null);
+  const latestWorkingDraftKeyRef = useRef(workingDraftKey);
+  latestWorkingDraftKeyRef.current = workingDraftKey;
   const isReceivingFormRef = useRef(false);
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
@@ -87,7 +91,7 @@ export default function GRN() {
 
   useEffect(() => {
     let cancelled = false;
-    void idbGetMetaValue<GRNWorkingDraft>(GRN_WORKING_DRAFT_KEY).then(saved => {
+    void idbGetMetaValue<GRNWorkingDraft>(workingDraftKey).then(saved => {
       if (cancelled) return;
       if (saved && typeof saved.id === 'string' && Array.isArray(saved.rows)) {
         setWorkingDraft(saved);
@@ -98,7 +102,7 @@ export default function GRN() {
       setRecoveryLoaded(true);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [workingDraftKey]);
   useBarcodeScanner(code => {
     const match = state.products.find(p => p.barcode.trim().toLowerCase() === code.trim().toLowerCase());
     if (!match || actionRunning || formMode !== 'receive' || view !== 'form') return;
@@ -156,7 +160,7 @@ export default function GRN() {
     const snapshot = makeWorkingDraft();
     draftIdRef.current = snapshot.id;
     setDraftSaveStatus('saving');
-    const ok = await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, snapshot);
+    const ok = await idbPutMetaValue(workingDraftKey, snapshot);
     if (!ok) {
       setDraftSaveStatus('error');
       setFormError('Local draft save failed. Check available storage and retry before leaving this GRN.');
@@ -165,7 +169,7 @@ export default function GRN() {
     setWorkingDraft(snapshot);
     setDraftSaveStatus('saved');
     return true;
-  }, [formMode, makeWorkingDraft]);
+  }, [formMode, makeWorkingDraft, workingDraftKey]);
 
   const closeForm = async () => {
     if (actionRunning) return;
@@ -199,7 +203,7 @@ export default function GRN() {
   };
 
   const discardWorkingDraft = async () => {
-    const ok = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+    const ok = await idbDeleteMetaValue(workingDraftKey);
     if (!ok) {
       setFormError('Could not delete the unfinished local draft. Please retry.');
       return;
@@ -241,7 +245,7 @@ export default function GRN() {
     saveTimerRef.current = setTimeout(() => {
       const snapshot = makeWorkingDraft();
       draftIdRef.current = snapshot.id;
-      void idbPutMetaValue(GRN_WORKING_DRAFT_KEY, snapshot).then(ok => {
+      void idbPutMetaValue(workingDraftKey, snapshot).then(ok => {
         if (sequence !== saveSequenceRef.current) return;
         if (ok) {
           setWorkingDraft(snapshot);
@@ -255,14 +259,14 @@ export default function GRN() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [recoveryLoaded, view, formMode, makeWorkingDraft]);
+  }, [recoveryLoaded, view, formMode, makeWorkingDraft, workingDraftKey]);
 
   // Best-effort final checkpoint when the user navigates to another page or closes the window.
   // The debounced transaction remains the primary save path; this cleanup is an extra safeguard.
   useEffect(() => () => {
     const snapshot = latestWorkingDraftRef.current;
     if (isReceivingFormRef.current && snapshot) {
-      void idbPutMetaValue(GRN_WORKING_DRAFT_KEY, { ...snapshot, savedAt: new Date().toISOString() });
+      void idbPutMetaValue(latestWorkingDraftKeyRef.current, { ...snapshot, savedAt: new Date().toISOString() });
     }
   }, []);
 
@@ -330,7 +334,7 @@ export default function GRN() {
         setHighlightedId(result.purchase.id);
       }
       if (savedId) setEditingId(savedId);
-      const cleared = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      const cleared = await idbDeleteMetaValue(workingDraftKey);
       if (cleared) {
         setWorkingDraft(null);
         draftIdRef.current = '';
@@ -400,7 +404,7 @@ export default function GRN() {
         setView('form');
         return;
       }
-      const clearedRecovery = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      const clearedRecovery = await idbDeleteMetaValue(workingDraftKey);
       if (clearedRecovery) {
         setWorkingDraft(null);
         draftIdRef.current = '';
