@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   getPendingPOSProfileCreation: () => ipcRenderer.invoke('pos-profile:pending-create'),
   finalizePOSProfileCreation: (payload) => ipcRenderer.invoke('pos-profile:finalize-create', payload),
   preparePOSRecoveryKeyRotation: (currentRecoveryKey) => ipcRenderer.invoke('pos-profile:prepare-recovery-rotation', { currentRecoveryKey }),
-  getPendingPOSRecoveryKeyRotation: () => ipcRenderer.invoke('pos-profile:pending-recovery-rotation'),
+  getPendingPOSRecoveryKeyRotation: (currentRecoveryKey) => ipcRenderer.invoke('pos-profile:pending-recovery-rotation', { currentRecoveryKey }),
   finalizePOSRecoveryKeyRotation: (payload) => ipcRenderer.invoke('pos-profile:finalize-recovery-rotation', payload),
   cancelPOSRecoveryKeyRotation: (pendingId) => ipcRenderer.invoke('pos-profile:cancel-recovery-rotation', { pendingId }),
   unlockPOSProfileWithPassphrase: (directory, secret) => ipcRenderer.invoke('pos-profile:unlock-passphrase', { directory, secret }),
