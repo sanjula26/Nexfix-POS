@@ -2598,7 +2598,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!po) return { ok: false, error: 'GRN draft was not found.' };
     if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
     const duplicateInvoiceMatches = findDuplicateSupplierInvoices(po.supplierId, po.supplierInvoiceNo || '', stateRef.current.purchases, po.id);
-    const overrideCheck = validateDuplicateSupplierInvoiceOverride(duplicateInvoiceMatches, user.role, duplicateInvoiceOverrideReason);
+    const overrideCheck = validateDuplicateSupplierInvoiceOverride(duplicateInvoiceMatches, user.role);
     if (!overrideCheck.ok) {
       pushAudit('DENIED', 'GRN', 'Blocked duplicate supplier invoice on ' + po.poNo);
       return { ok: false, error: overrideCheck.error || 'Duplicate supplier invoice requires approval.' };
@@ -2694,7 +2694,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units' + (cloudEnabled ? ' · cloud-authoritative receive' : ''));
       if (duplicateInvoiceMatches.length) {
-        pushAudit('OVERRIDE', 'GRN', 'Admin/Manager approved duplicate supplier invoice "' + (po.supplierInvoiceNo || '').trim() + '" for ' + po.poNo + '; existing GRNs: ' + duplicateInvoiceMatches.map(match => match.poNo).join(', ') + '; reason: ' + approvedOverrideReason);
+        const auditReason = approvedOverrideReason ? '; reason: ' + approvedOverrideReason : '; reason: not provided';
+        pushAudit('OVERRIDE', 'GRN', 'Admin/Manager approved duplicate supplier invoice "' + (po.supplierInvoiceNo || '').trim() + '" for ' + po.poNo + '; existing GRNs: ' + duplicateInvoiceMatches.map(match => match.poNo).join(', ') + auditReason);
       }
       return { ok: true };
     } finally {

@@ -56,18 +56,14 @@ export function findDuplicateSupplierInvoices(
   );
 }
 
-/** Duplicate supplier invoices require a meaningful Admin/Manager override reason. */
+/** Duplicate supplier invoices require Admin/Manager approval; an explanation is optional. */
 export function validateDuplicateSupplierInvoiceOverride(
   duplicates: readonly Purchase[],
   role: string | undefined,
-  reason: string,
 ): PurchaseValidationResult {
   if (duplicates.length === 0) return { ok: true };
   if (role !== 'admin' && role !== 'manager') {
     return { ok: false, error: 'A duplicate supplier invoice was found. Only an Admin or Manager can approve an override.' };
-  }
-  if (reason.trim().length < 5) {
-    return { ok: false, error: 'Enter an override reason with at least 5 characters before processing this GRN.' };
   }
   return { ok: true };
 }

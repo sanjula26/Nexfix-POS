@@ -670,7 +670,7 @@ test('supplier invoice duplicate detection is supplier-scoped, normalized and ex
   assert.deepEqual(findDuplicateSupplierInvoices('supplier-1', '   ', purchases), []);
 });
 
-test('duplicate supplier invoice override requires Admin/Manager and a meaningful reason', () => {
+test('duplicate supplier invoice override requires Admin/Manager but the reason is optional', () => {
   const duplicate: Purchase[] = [{
     id: 'existing-grn',
     poNo: 'GRN-010',
@@ -683,12 +683,10 @@ test('duplicate supplier invoice override requires Admin/Manager and a meaningfu
     status: 'received',
   }];
 
-  assert.deepEqual(validateDuplicateSupplierInvoiceOverride([], 'cashier', ''), { ok: true });
-  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'cashier', 'valid reason').ok, false);
-  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin', '').ok, false);
-  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'no').ok, false);
-  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin', 'Second supplier invoice copy'), { ok: true });
-  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'Separate branch billing'), { ok: true });
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride([], 'cashier'), { ok: true });
+  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'cashier').ok, false);
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin'), { ok: true });
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager'), { ok: true });
 });
 
 

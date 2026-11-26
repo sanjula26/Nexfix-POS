@@ -849,8 +849,9 @@ export default function GRN() {
             <p className="text-xs text-sub">The same normalized invoice number is already recorded for this supplier:</p>
             {confirmInvoiceDuplicates.map(match => <div key={match.id} className="text-xs text-sub"><b>{match.poNo}</b> · {match.status === 'received' ? 'Processed' : 'Draft'} · {fmtDate(match.date)}</div>)}
             {canOverrideInvoiceDuplicate ? (
-              <Field label="Admin/Manager override reason (at least 5 characters)">
-                <textarea className="input min-h-20 text-sm" rows={3} value={invoiceOverrideReason} onChange={e => setInvoiceOverrideReason(e.target.value)} placeholder="Explain why this supplier invoice is being received again…" disabled={actionRunning} />
+              <Field label="Admin/Manager override reason (optional)">
+                <textarea className="input min-h-20 text-sm" rows={3} value={invoiceOverrideReason} onChange={e => setInvoiceOverrideReason(e.target.value)} placeholder="Optional: explain why this supplier invoice is being received again…" disabled={actionRunning} />
+                <p className="text-[11px] text-sub mt-1">You can leave this blank. If entered, the reason will be saved in the audit log.</p>
               </Field>
             ) : (
               <p className="text-xs font-semibold text-rose-600">Only an Admin or Manager can approve this duplicate invoice. No stock will be added until it is approved.</p>
@@ -864,7 +865,7 @@ export default function GRN() {
           </div>
         )}
         <div className="flex gap-2 mt-5">
-          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning || (confirmInvoiceDuplicates.length > 0 && (!canOverrideInvoiceDuplicate || invoiceOverrideReason.trim().length < 5))}>
+          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning || (confirmInvoiceDuplicates.length > 0 && !canOverrideInvoiceDuplicate)}>
             <Zap size={14} /> {actionRunning ? 'Processing...' : 'Process GRN'}
           </button>
           <button className="btn btn-soft flex-1" onClick={() => setConfirmId(null)} disabled={actionRunning}>Cancel</button>
