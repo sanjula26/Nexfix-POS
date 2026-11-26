@@ -240,3 +240,17 @@ A direct read of `src/lib/backup.ts`, `src/lib/driveSync.ts`, `src/lib/restore.t
 - Regression tests must show that a local backup containing a forged/replaced `users` list and Admin PIN cannot change the main authority or the current local account mirror; that failed restore rollback does not roll back credential revisions; and that cloud-safe restore still leaves local credentials unchanged.
 
 No backup or restore behavior was changed in this design-only pass.
+
+
+## 12. Explicit threat-model boundary — what this authority does and does not protect
+
+The proposed credential authority protects the identity/credential decision for operations that are explicitly checked by the main process. It does **not**, by itself, make the entire offline POS database tamper-proof.
+
+- The trusted renderer can currently call the generic `writePOSProfileData('app_state', payload)` bridge. That payload is a complete POS state snapshot. Main-process trusted-frame validation and encrypted-at-rest profile storage do not inspect every business mutation or prove it came from an authorized POS role.
+- A separate private `local_auth` record prevents the renderer from replacing the authority's Admin verifier through `app_state`; it does not prevent a compromised renderer from changing business data in `app_state` if the generic write contract remains broad.
+- Main-process checks can independently protect dedicated IPC operations such as Recovery Key rotation, profile-security changes and any other operation that is actually routed through a dedicated main-process authorization boundary.
+- A main-process-only `authorize restore` handler is not sufficient to make restore tamper-proof while an unrestricted generic `app_state` writer remains available: compromised renderer code could bypass the restore handler and submit a new full state snapshot through the generic writer. Do not claim otherwise.
+- If the product later requires main-process enforcement of Admin-only restore, account/role mutation or all business-state transitions against a compromised renderer, that requires a broader command-based/data-mutation boundary redesign: renderer sends typed business operations, main process validates operation-specific policy and owns/validates commits. That is a separate project-sized scope and must not be slipped into this narrow authority patch.
+- Keep the immediate scope honest: independent Admin verification for dedicated privileged desktop IPC, a protected main-owned credential record, safe migration/backup isolation, and explicit UI/renderer limitations. It is not a guarantee against local machine administrators, modified app binaries, malicious renderer code changing ordinary business data, or direct filesystem tampering by an attacker with the same Windows account.
+
+This distinction is important for acceptance: passing the Admin credential tests must not be described as proof that the whole POS database or every role-controlled business operation is secure against a compromised renderer.
