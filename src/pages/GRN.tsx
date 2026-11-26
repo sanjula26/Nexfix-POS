@@ -206,6 +206,11 @@ export default function GRN() {
 
   const persistWorkingDraft = useCallback(async (): Promise<boolean> => {
     if (formMode !== 'receive') return true;
+    if (!recoveryLoaded || recoveryLoadError) {
+      setDraftSaveStatus('error');
+      setFormError(recoveryLoadError || 'Local GRN recovery check is not complete. Retry the check before saving this draft.');
+      return false;
+    }
     const snapshot = makeWorkingDraft();
     draftIdRef.current = snapshot.id;
     setDraftSaveStatus('saving');
@@ -218,7 +223,7 @@ export default function GRN() {
     setWorkingDraft(snapshot);
     setDraftSaveStatus('saved');
     return true;
-  }, [formMode, makeWorkingDraft, workingDraftKey]);
+  }, [formMode, makeWorkingDraft, workingDraftKey, recoveryLoaded, recoveryLoadError]);
 
   const closeForm = async () => {
     if (actionRunning) return;
@@ -364,6 +369,10 @@ export default function GRN() {
 
   const saveDraft = async () => {
     if (actionRunning) return;
+    if (!recoveryLoaded || recoveryLoadError) {
+      setFormError(recoveryLoadError || 'Local GRN recovery check is not complete. Retry before saving.');
+      return;
+    }
     const supplier = state.suppliers.find(s => s.id === supplierId);
     const items = buildItems();
     const error = validateForm(items);
@@ -404,6 +413,10 @@ export default function GRN() {
 
   const askProcess = () => {
     if (actionRunning) return;
+    if (!recoveryLoaded || recoveryLoadError) {
+      setFormError(recoveryLoadError || 'Local GRN recovery check is not complete. Retry before processing stock.');
+      return;
+    }
     const supplier = state.suppliers.find(s => s.id === supplierId);
     const items = buildItems();
     const error = validateForm(items);
@@ -435,6 +448,12 @@ export default function GRN() {
 
   const process = async () => {
     if (!confirmId || actionRunning) return;
+    if (!recoveryLoaded || recoveryLoadError) {
+      setFormError(recoveryLoadError || 'Local GRN recovery check is not complete. Retry before processing stock.');
+      setConfirmId(null);
+      setPriceChanges([]);
+      return;
+    }
     const purchase = state.purchases.find(p => p.id === confirmId);
     if (!purchase || purchase.status !== 'pending') {
       setConfirmId(null); setPriceChanges([]);
@@ -883,7 +902,7 @@ export default function GRN() {
           </div>
         )}
         <div className="flex gap-2 mt-5">
-          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning || (confirmInvoiceDuplicates.length > 0 && !canOverrideInvoiceDuplicate)}>
+          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning || !recoveryLoaded || !!recoveryLoadError || (confirmInvoiceDuplicates.length > 0 && !canOverrideInvoiceDuplicate)}>
             <Zap size={14} /> {actionRunning ? 'Processing...' : 'Process GRN'}
           </button>
           <button className="btn btn-soft flex-1" onClick={() => setConfirmId(null)} disabled={actionRunning}>Cancel</button>
