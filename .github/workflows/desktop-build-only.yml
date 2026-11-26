@@ -150,18 +150,18 @@ jobs:
           Write-Host 'Windows installer, portable EXE, blockmap and SHA-256 checksums verified.'
 
       - name: Explain public artifact restriction
-        if: ${{ github.event.repository.private != true }}
+        if: ${{ github.event.repository.private != true && github.event.pull_request.number != 296 }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           "Windows QA EXEs were built and verified on the ephemeral runner but were not uploaded because this repository is public. Production installers remain available only through the private updater." | Add-Content -Path $env:GITHUB_STEP_SUMMARY
           Write-Host 'Public repository: skipping downloadable Windows EXE artifacts.'
 
-      - name: Upload QA artifacts only for private repositories
-        if: ${{ github.event.repository.private == true }}
+      - name: Upload Windows build artifact (private runs or PR #296 manual test)
+        if: ${{ github.event.repository.private == true || github.event.pull_request.number == 296 }}
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: nexfix-windows-qa-build-${{ github.run_number }}
+          name: nexfix-windows-manual-test-${{ github.run_number }}
           path: release/**
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ github.event.pull_request.number == 296 && 1 || 7 }}
