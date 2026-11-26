@@ -8,6 +8,9 @@ import {
   idbClearRestoreCheckpoint,
   idbEnqueue,
   idbListQueue,
+  idbDeleteMetaValue,
+  idbGetMetaValue,
+  idbPutMetaValue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
   idbSaveRestoreCheckpoint,
@@ -23,6 +26,27 @@ before(async () => {
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+});
+
+test('IndexedDB metadata stores, restores and deletes incomplete GRN recovery drafts', async () => {
+  const key = 'test_grn_working_draft_recovery';
+  const draft = {
+    id: 'draft-recovery-1',
+    editingId: null,
+    supplierId: 'supplier-1',
+    invoiceNo: 'INV-PARTIAL',
+    notes: 'Stopped before finishing',
+    rows: [{ productId: 'product-1', qty: 3, cost: 120, sellingPrice: 150, updateSellingPrice: false, unitText: 'IMEI-PARTIAL' }],
+    savedAt: '2026-11-26T08:00:00.000Z',
+  };
+
+  assert.equal(await idbPutMetaValue(key, draft), true);
+  assert.deepEqual(await idbGetMetaValue<typeof draft>(key), draft);
+
+  const reopenedDb = await import(`../src/lib/db.ts?grn-recovery=${Date.now()}`);
+  assert.deepEqual(await reopenedDb.idbGetMetaValue<typeof draft>(key), draft);
+  assert.equal(await reopenedDb.idbDeleteMetaValue(key), true);
+  assert.equal(await idbGetMetaValue(key), null);
 });
 
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {
