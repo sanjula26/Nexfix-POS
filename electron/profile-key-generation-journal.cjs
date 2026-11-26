@@ -10,13 +10,14 @@ const LEGACY_ENVELOPE_FILE = 'nexfix-key-envelope.json';
 const MAX_ENVELOPE_BYTES = 64 * 1024;
 const MAX_COMMIT_BYTES = 4 * 1024;
 const MAX_COMMIT_MARKERS = 1024;
+const MAX_GENERATION = 99_999_999;
 
 const PROFILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const COMMIT_FILE_PATTERN = /^nexfix-key-envelope\.commit\.g([0-9]{8})\.json$/;
 
-const COMMIT_KEYS = [
+const COMMIT_KEYS = Object.freeze([
   'format',
   'version',
   'profileId',
@@ -26,10 +27,25 @@ const COMMIT_KEYS = [
   'previousCommitSha256',
   'operationId',
   'createdAt',
-];
+].sort());
 
 function sha256(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function generationSuffix(generation) {
+  if (!Number.isSafeInteger(generation) || generation <= 0 || generation > MAX_GENERATION) {
+    throw new Error('Recovery Key journal generation number is outside the supported range.');
+  }
+  return String(generation).padStart(8, '0');
+}
+
+function generationEnvelopeFileName(generation) {
+  return `nexfix-key-envelope.g${generationSuffix(generation)}.json`;
+}
+
+function generationCommitFileName(generation) {
+  return `nexfix-key-envelope.commit.g${generationSuffix(generation)}.json`;
 }
 
 function toBoundedBuffer(value, maxBytes, label) {
@@ -74,14 +90,6 @@ function validateEnvelope(envelope, expectedProfileId, validateEnvelopeFn) {
     throw new Error('Recovery Key journal envelope failed structural validation.');
   }
   return result.envelope ?? envelope;
-}
-
-function generationEnvelopeFileName(generation) {
-  return `nexfix-key-envelope.g${String(generation).padStart(8, '0')}.json`;
-}
-
-function generationCommitFileName(generation) {
-  return `nexfix-key-envelope.commit.g${String(generation).padStart(8, '0')}.json`;
 }
 
 /**
@@ -142,17 +150,20 @@ function selectCommittedKeyGeneration({
     if (!match) throw new Error('Recovery Key journal commit marker filename is invalid.');
     const generation = Number(match[1]);
     if (!Number.isSafeInteger(generation) || generation <= 0 ||
-        String(generation).padStart(8, '0') !== match[1]) {
+        generation > MAX_GENERATION ||
+        String(generation).padStart(8, '0') !== match[1] ||
+        name !== generationCommitFileName(generation)) {
       throw new Error('Recovery Key journal generation number is invalid.');
     }
     return { ...record, generation };
   }).sort((a, b) => a.generation - b.generation);
 
-  if (normalized.length > 0 && normalized[0].generation !== 1) {
+  if (normalized[0].generation !== 1) {
     throw new Error('Recovery Key journal is missing generation 1.');
   }
 
   let expectedPreviousHash = sha256(legacyBytes);
+  const seenOperationIds = new Set();
   let selected = null;
 
   for (let index = 0; index < normalized.length; index += 1) {
@@ -167,10 +178,15 @@ function selectCommittedKeyGeneration({
       MAX_COMMIT_BYTES,
       'Recovery Key commit marker',
     );
+    const markerText = markerBytes.toString('utf8');
     const marker = parseJsonBytes(markerBytes, 'Recovery Key commit marker');
+    if (JSON.stringify(marker) !== markerText) {
+      throw new Error('Recovery Key commit marker JSON is not canonical.');
+    }
+
     const keys = Object.keys(marker).sort();
     if (keys.length !== COMMIT_KEYS.length ||
-        keys.some((key, keyIndex) => key !== [...COMMIT_KEYS].sort()[keyIndex])) {
+        keys.some((key, keyIndex) => key !== COMMIT_KEYS[keyIndex])) {
       throw new Error('Recovery Key commit marker contains unsupported fields.');
     }
 
@@ -182,12 +198,14 @@ function selectCommittedKeyGeneration({
         typeof marker.envelopeSha256 !== 'string' || !HASH_PATTERN.test(marker.envelopeSha256) ||
         marker.previousCommitSha256 !== expectedPreviousHash ||
         typeof marker.operationId !== 'string' || !UUID_PATTERN.test(marker.operationId) ||
+        seenOperationIds.has(marker.operationId) ||
         typeof marker.createdAt !== 'string' ||
         !Number.isFinite(Date.parse(marker.createdAt)) ||
         new Date(marker.createdAt).toISOString() !== marker.createdAt ||
         record.envelopeFileName !== marker.envelopeFileName) {
       throw new Error('Recovery Key commit marker identity, chain or fields are invalid.');
     }
+    seenOperationIds.add(marker.operationId);
 
     const envelopeBytes = toBoundedBuffer(
       record.envelopeBytes,

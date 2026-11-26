@@ -4,6 +4,12 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const test = require('node:test');
 const {
+  PROFILE_CRYPTO_FORMAT,
+} = require('../electron/profile-crypto.cjs');
+const {
+  validateProfileKeyEnvelope,
+} = require('../electron/profile-key-store.cjs');
+const {
   LEGACY_ENVELOPE_FILE,
   MAX_COMMIT_MARKERS,
   generationEnvelopeFileName,
@@ -12,7 +18,6 @@ const {
 } = require('../electron/profile-key-generation-journal.cjs');
 
 const PROFILE_ID = 'd9d6f0e1-5b2d-4e21-9e72-0cce0d8c7a10';
-const VALID_OPERATION_ID = '00000000-0000-4000-8000-000000000001';
 
 function hash(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
@@ -22,21 +27,28 @@ function encode(value) {
   return Buffer.from(JSON.stringify(value), 'utf8');
 }
 
-function makeEnvelope(profileId, generation) {
+function makeEnvelope(profileId, marker = 1) {
   return {
     format: 'nexfix-pos-key-envelope',
     version: 1,
     profileId,
-    generationHint: generation,
-  };
-}
-
-function validateEnvelope(envelope, expectedProfileId) {
-  return {
-    valid: envelope?.profileId === expectedProfileId &&
-      envelope.format === 'nexfix-pos-key-envelope' &&
-      envelope.version === 1,
-    envelope,
+    osWrappedKey: {
+      format: PROFILE_CRYPTO_FORMAT,
+      version: 1,
+      provider: 'electron-safeStorage',
+      profileId,
+      ciphertext: Buffer.alloc(16, marker).toString('base64'),
+    },
+    recoveryWrappedKey: {
+      format: PROFILE_CRYPTO_FORMAT,
+      version: 1,
+      algorithm: 'AES-256-GCM',
+      profileId,
+      iv: Buffer.alloc(12, marker).toString('base64'),
+      ciphertext: Buffer.alloc(32, marker).toString('base64'),
+      tag: Buffer.alloc(16, marker).toString('base64'),
+    },
+    updatedAt: '2026-11-26T00:00:00.000Z',
   };
 }
 
@@ -56,7 +68,7 @@ function makeRecord(generation, previousCommitSha256, overrides = {}) {
     envelopeFileName: generationEnvelopeFileName(generation),
     envelopeSha256: hash(envelopeBytes),
     previousCommitSha256,
-    operationId: VALID_OPERATION_ID,
+    operationId: `00000000-0000-4000-8000-${String(generation).padStart(12, '0')}`,
     createdAt: '2026-11-26T00:00:00.000Z',
     ...overrides,
   };
@@ -73,7 +85,7 @@ function select(legacy, records) {
     profileId: PROFILE_ID,
     legacyEnvelopeBytes: legacy.bytes,
     commitRecords: records,
-    validateEnvelope,
+    validateEnvelope: validateProfileKeyEnvelope,
   });
 }
 
@@ -84,7 +96,7 @@ test('selects legacy generation zero when no final commit marker exists', () => 
   assert.equal(selected.generation, 0);
   assert.equal(selected.isLegacy, true);
   assert.equal(selected.envelopeFileName, LEGACY_ENVELOPE_FILE);
-  assert.equal(selected.envelope.generationHint, 0);
+  assert.equal(selected.envelope.profileId, PROFILE_ID);
   assert.equal(selected.operationId, null);
 });
 
@@ -98,9 +110,9 @@ test('selects the highest consecutive committed generation in a valid hash chain
   assert.equal(selected.generation, 2);
   assert.equal(selected.isLegacy, false);
   assert.equal(selected.envelopeFileName, generationEnvelopeFileName(2));
-  assert.equal(selected.envelope.generationHint, 2);
+  assert.equal(selected.envelope.profileId, PROFILE_ID);
   assert.equal(selected.commitMarkerFileName, generationCommitFileName(2));
-  assert.equal(selected.operationId, VALID_OPERATION_ID);
+  assert.equal(selected.operationId, '00000000-0000-4000-8000-000000000002');
 });
 
 test('treats an envelope without a final marker as uncommitted legacy data', () => {
@@ -113,7 +125,7 @@ test('treats an envelope without a final marker as uncommitted legacy data', () 
   const selected = select(legacy, []);
 
   assert.equal(selected.generation, 0);
-  assert.equal(selected.envelope.generationHint, 0);
+  assert.equal(selected.envelope.profileId, PROFILE_ID);
 });
 
 test('fails closed when a committed generation number is skipped', () => {
@@ -128,6 +140,16 @@ test('fails closed when commit markers are duplicated or not consecutive', () =>
   const first = makeRecord(1, hash(legacy.bytes));
 
   assert.throws(() => select(legacy, [first, first]), /duplicated or incomplete/);
+});
+
+test('fails closed when commit markers reuse an operation ID', () => {
+  const legacy = makeLegacy();
+  const first = makeRecord(1, hash(legacy.bytes));
+  const second = makeRecord(2, hash(first.markerBytes), {
+    operationId: '00000000-0000-4000-8000-000000000001',
+  });
+
+  assert.throws(() => select(legacy, [first, second]), /identity, chain or fields are invalid/);
 });
 
 test('fails closed when the marker hash chain does not match the previous marker', () => {
@@ -167,7 +189,7 @@ test('rejects wrong profile IDs, non-canonical filenames and marker path travers
       profileId: 'd9d6f0e1-5b2d-4e21-9e72-0cce0d8c7a10',
       legacyEnvelopeBytes: legacy.bytes,
       commitRecords: [{ ...first, markerFileName: '../commit.json' }],
-      validateEnvelope,
+      validateEnvelope: validateProfileKeyEnvelope,
     }),
     /filename is invalid/,
   );
@@ -178,12 +200,16 @@ test('rejects wrong profile IDs, non-canonical filenames and marker path travers
   assert.throws(() => select(legacy, [wrongProfileMarker]), /identity, chain or fields are invalid/);
 });
 
-test('rejects malformed marker JSON, unknown marker fields and invalid timestamps', () => {
+test('rejects malformed marker JSON, non-canonical JSON, unknown fields and invalid timestamps', () => {
   const legacy = makeLegacy();
   const first = makeRecord(1, hash(legacy.bytes));
   assert.throws(
     () => select(legacy, [{ ...first, markerBytes: Buffer.from('{broken') }]),
     /not valid JSON/,
+  );
+  assert.throws(
+    () => select(legacy, [{ ...first, markerBytes: Buffer.concat([first.markerBytes, Buffer.from(' ')]) }]),
+    /JSON is not canonical/,
   );
 
   const withExtra = makeRecord(1, hash(legacy.bytes), { injected: true });
@@ -193,7 +219,7 @@ test('rejects malformed marker JSON, unknown marker fields and invalid timestamp
   assert.throws(() => select(legacy, [badTime]), /identity, chain or fields are invalid/);
 });
 
-test('rejects missing envelope bytes and oversized journal input', () => {
+test('rejects missing envelope bytes, oversized journal input and generation overflow', () => {
   const legacy = makeLegacy();
   const first = makeRecord(1, hash(legacy.bytes));
   assert.throws(
@@ -205,8 +231,10 @@ test('rejects missing envelope bytes and oversized journal input', () => {
       profileId: PROFILE_ID,
       legacyEnvelopeBytes: legacy.bytes,
       commitRecords: new Array(MAX_COMMIT_MARKERS + 1).fill(first),
-      validateEnvelope,
+      validateEnvelope: validateProfileKeyEnvelope,
     }),
     /too many commit markers/,
   );
+  assert.throws(() => generationEnvelopeFileName(100_000_000), /outside the supported range/);
+  assert.throws(() => generationCommitFileName(0), /outside the supported range/);
 });
