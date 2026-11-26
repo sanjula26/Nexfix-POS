@@ -14,7 +14,7 @@ const PERIODS: Array<{ key: PeriodKey; label: string }> = [
 ];
 
 export default function GRNReport() {
-  const { state } = usePOS();
+  const { state, can } = usePOS();
   const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [search, setSearch] = useState('');
@@ -49,7 +49,7 @@ export default function GRNReport() {
     <>
       <style>{`@page { size: A4 landscape; margin: 12mm; } @media print { body * { visibility: hidden !important; } .grn-report-print, .grn-report-print * { visibility: visible !important; } .grn-report-print { position: absolute; inset: 0; width: 100%; padding: 0; background: #fff; color: #111; } .grn-report-controls { display: none !important; } .grn-report-print .card { box-shadow: none !important; border: 0 !important; } .grn-report-print .overflow-x-auto { overflow: visible !important; } .grn-report-print table { min-width: 0 !important; width: 100% !important; font-size: 9pt; } .grn-report-print th, .grn-report-print td { padding: 4px 6px !important; } }`}</style>
     <div className="grn-report-print">
-      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<div className="flex flex-wrap gap-2 print:hidden"><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button><button className="btn btn-primary print:hidden" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button></div>} />
+      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={can('act:export') ? <div className="flex flex-wrap gap-2 print:hidden"><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button><button className="btn btn-primary print:hidden" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button></div> : undefined} />
       <p className="text-xs text-sub mb-4">Showing {fmtDate(dkey(from))} to {fmtDate(dkey(to))} · Status: {status === "all" ? "All" : status === "received" ? "Received" : "Pending"}</p>
       <div className="flex flex-wrap gap-2 mb-5 grn-report-controls">
         {PERIODS.map(p => <button key={p.key} className={`btn !text-xs ${period === p.key ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod(p.key)}>{p.label}</button>)}
