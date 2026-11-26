@@ -267,3 +267,72 @@ test('reopens a finalized Recovery Key rotation with a fresh session', async (t)
   assert.equal(restarted.read('app_state'), state);
   restarted.lock();
 });
+
+
+test('keeps the old Recovery Key and pending rotation intact when envelope rename fails', async (t) => {
+  const root = temporaryRoot(t);
+  const session = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  const created = await session.create({
+    storageRoot: root,
+    directoryName: 'Retry After Rename Failure POS',
+    label: 'NexFix Retry After Rename Failure',
+    passphrase: PASSWORD,
+  });
+  const state = JSON.stringify({ sales: [{ id: 'rename-failure-sale' }] });
+  session.write('app_state', state);
+
+  const envelopePath = path.join(created.profile.directory, 'nexfix-key-envelope.json');
+  const originalBytes = fs.readFileSync(envelopePath);
+  const prepared = session.prepareRecoveryKeyRotation(created.recoveryKey);
+  const originalRenameSync = fs.renameSync;
+  let injectedFailure = false;
+
+  fs.renameSync = function failFirstRename(source, destination, ...args) {
+    if (!injectedFailure) {
+      injectedFailure = true;
+      const error = new Error('simulated atomic envelope rename failure');
+      error.code = 'EIO';
+      throw error;
+    }
+    return originalRenameSync.call(this, source, destination, ...args);
+  };
+
+  try {
+    assert.throws(
+      () => session.finalizeRecoveryKeyRotation({
+        pendingId: prepared.pendingId,
+        acknowledged: true,
+      }),
+      /simulated atomic envelope rename failure/,
+    );
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.equal(injectedFailure, true);
+  assert.deepEqual(fs.readFileSync(envelopePath), originalBytes);
+  const temporaryFiles = fs.readdirSync(created.profile.directory)
+    .filter(name => name.startsWith('.nexfix-key-envelope.json.') && name.endsWith('.tmp'));
+  assert.deepEqual(temporaryFiles, []);
+  assert.equal(
+    session.getPendingRecoveryKeyRotation(created.recoveryKey).pending,
+    true,
+  );
+
+  const retried = session.finalizeRecoveryKeyRotation({
+    pendingId: prepared.pendingId,
+    acknowledged: true,
+  });
+  assert.equal(retried.ok, true);
+  session.lock();
+
+  const restarted = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  await assert.rejects(
+    restarted.unlockWithRecoveryKey(created.profile.directory, created.recoveryKey),
+    /authentication failed/,
+  );
+  const reopened = await restarted.unlockWithRecoveryKey(created.profile.directory, prepared.recoveryKey);
+  assert.equal(reopened.ok, true);
+  assert.equal(restarted.read('app_state'), state);
+  restarted.lock();
+});
