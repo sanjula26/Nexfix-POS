@@ -6,7 +6,7 @@ import { Badge, EmptyState, Field, Modal, PageHeading } from '../components/ui';
 import { fmtDate, fmtRs } from '../lib/utils';
 import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { Purchase, PurchaseItem } from '../lib/types';
-import { validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
+import { findDuplicateSupplierInvoices, validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 import SearchableSelect from '../components/SearchableSelect';
 import { idbDeleteMetaValue, idbGetMetaValue, idbPutMetaValue } from '../lib/db';
 import { getCloudShopId } from '../lib/cloudSync';
@@ -72,6 +72,7 @@ export default function GRN() {
   const [formError, setFormError] = useState('');
   const [actionRunning, setActionRunning] = useState(false);
   const [invoiceWarning, setInvoiceWarning] = useState(false);
+  const [invoiceOverrideReason, setInvoiceOverrideReason] = useState('');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const workingDraftKey = `${GRN_WORKING_DRAFT_KEY}:${encodeURIComponent(getCloudShopId() || state.settings.shopName.trim().toLowerCase() || 'local-shop')}:${encodeURIComponent(state.settings.branchId || 'local')}`;
   const [workingDraft, setWorkingDraft] = useState<GRNWorkingDraft | null>(null);
@@ -88,6 +89,14 @@ export default function GRN() {
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
+  const duplicateInvoiceMatches = formMode === 'receive'
+    ? findDuplicateSupplierInvoices(supplierId, invoiceNo, state.purchases, editingId || undefined)
+    : [];
+  const confirmPurchase = confirmId ? state.purchases.find(p => p.id === confirmId) : undefined;
+  const confirmInvoiceDuplicates = confirmPurchase
+    ? findDuplicateSupplierInvoices(confirmPurchase.supplierId, confirmPurchase.supplierInvoiceNo || '', state.purchases, confirmPurchase.id)
+    : [];
+  const canOverrideInvoiceDuplicate = user?.role === 'admin' || user?.role === 'manager';
 
   useEffect(() => {
     let cancelled = false;
@@ -220,7 +229,7 @@ export default function GRN() {
   const startNew = () => {
     if (workingDraft) return;
     draftIdRef.current = createDraftId();
-    setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
+    setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setInvoiceOverrideReason(''); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
   };
   const openReturn = (p: Purchase) => {
     const returnedByItem = new Map<number, number>();
@@ -371,11 +380,13 @@ export default function GRN() {
       if (editingId) {
         const result = updateGRNDraft(editingId, payload);
         if (!result.ok) { setFormError(result.error || 'Unable to update this GRN draft.'); return; }
+        setInvoiceOverrideReason('');
         setConfirmId(editingId);
       } else {
         const result = saveGRNDraft(payload);
         if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
         setEditingId(result.purchase.id);
+        setInvoiceOverrideReason('');
         setConfirmId(result.purchase.id);
       }
     } finally {
@@ -400,7 +411,7 @@ export default function GRN() {
     }
     setActionRunning(true);
     try {
-      const result = await processGRN(confirmId, user?.name || 'Unknown');
+      const result = await processGRN(confirmId, user?.name || 'Unknown', invoiceOverrideReason.trim());
       if (!result.ok) {
         setFormError(result.error || 'Unable to process this GRN. No stock was changed.');
         setConfirmId(null); setPriceChanges([]);
@@ -652,6 +663,14 @@ export default function GRN() {
                 <Field label="Supplier invoice number">
                   <input className={`input ${invoiceWarning ? 'border-amber-500/50' : ''}`} value={invoiceNo} onChange={e => { setInvoiceNo(e.target.value); setInvoiceWarning(false); }} placeholder="Supplier invoice / reference (recommended)" disabled={actionRunning} />
                   {invoiceWarning && <div className="text-xs text-amber-600 mt-1">Invoice number is empty. You can continue, but verify the supplier reference before processing.</div>}
+                  {duplicateInvoiceMatches.length > 0 && (
+                    <div role="alert" className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.07] p-3 text-xs">
+                      <div className="font-bold text-amber-700">Possible duplicate supplier invoice</div>
+                      <div className="text-sub mt-1">This supplier and invoice number already appear on:</div>
+                      <div className="mt-2 space-y-1">{duplicateInvoiceMatches.map(match => <div key={match.id}><b>{match.poNo}</b> · {match.status === 'received' ? 'Processed' : 'Draft'} · {fmtDate(match.date)}</div>)}</div>
+                      <div className="text-sub mt-2">Saving a draft is allowed. Processing requires Admin/Manager approval and a reason.</div>
+                    </div>
+                  )}
                 </Field>
                 <Field label="Notes">
                   <input className="input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional receiving note" disabled={actionRunning} />
@@ -787,6 +806,20 @@ export default function GRN() {
             <div><span className="text-sub">Units:</span> <b>{unitCount}</b></div>
           </div>;
         })()}
+        {confirmInvoiceDuplicates.length > 0 && (
+          <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/[0.07] p-3 space-y-2">
+            <p className="text-sm font-bold text-amber-700">Duplicate supplier invoice detected</p>
+            <p className="text-xs text-sub">The same normalized invoice number is already recorded for this supplier:</p>
+            {confirmInvoiceDuplicates.map(match => <div key={match.id} className="text-xs text-sub"><b>{match.poNo}</b> · {match.status === 'received' ? 'Processed' : 'Draft'} · {fmtDate(match.date)}</div>)}
+            {canOverrideInvoiceDuplicate ? (
+              <Field label="Admin/Manager override reason (at least 5 characters)">
+                <textarea className="input min-h-20 text-sm" rows={3} value={invoiceOverrideReason} onChange={e => setInvoiceOverrideReason(e.target.value)} placeholder="Explain why this supplier invoice is being received again…" disabled={actionRunning} />
+              </Field>
+            ) : (
+              <p className="text-xs font-semibold text-rose-600">Only an Admin or Manager can approve this duplicate invoice. No stock will be added until it is approved.</p>
+            )}
+          </div>
+        )}
         {priceChanges.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
             <p className="text-xs font-bold text-amber-600 mb-2">Selling price changes</p>
@@ -794,7 +827,7 @@ export default function GRN() {
           </div>
         )}
         <div className="flex gap-2 mt-5">
-          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning}>
+          <button className="btn btn-outline-emerald flex-1" onClick={process} disabled={actionRunning || (confirmInvoiceDuplicates.length > 0 && (!canOverrideInvoiceDuplicate || invoiceOverrideReason.trim().length < 5))}>
             <Zap size={14} /> {actionRunning ? 'Processing...' : 'Process GRN'}
           </button>
           <button className="btn btn-soft flex-1" onClick={() => setConfirmId(null)} disabled={actionRunning}>Cancel</button>

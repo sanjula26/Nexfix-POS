@@ -15,6 +15,46 @@ export interface PurchaseReceivePlanResult extends PurchaseValidationResult {
   plan?: PurchaseReceivePlan;
 }
 
+/** Normalizes supplier invoice references without removing meaningful punctuation. */
+export function normalizeSupplierInvoiceNumber(value: string | undefined | null): string {
+  return typeof value === 'string'
+    ? value.normalize('NFKC').trim().toUpperCase().replace(/\s+/g, '')
+    : '';
+}
+
+/** Finds an invoice already used by another GRN for the same supplier. */
+export function findDuplicateSupplierInvoices(
+  supplierId: string,
+  invoiceNo: string,
+  purchases: readonly Purchase[],
+  excludePurchaseId?: string,
+): Purchase[] {
+  const invoiceKey = normalizeSupplierInvoiceNumber(invoiceNo);
+  if (!supplierId.trim() || !invoiceKey) return [];
+  return purchases.filter(purchase =>
+    purchase.id !== excludePurchaseId
+    && purchase.supplierId === supplierId
+    && (purchase.status === 'pending' || purchase.status === 'received')
+    && normalizeSupplierInvoiceNumber(purchase.supplierInvoiceNo) === invoiceKey,
+  );
+}
+
+/** Duplicate supplier invoices require a meaningful Admin/Manager override reason. */
+export function validateDuplicateSupplierInvoiceOverride(
+  duplicates: readonly Purchase[],
+  role: string | undefined,
+  reason: string,
+): PurchaseValidationResult {
+  if (duplicates.length === 0) return { ok: true };
+  if (role !== 'admin' && role !== 'manager') {
+    return { ok: false, error: 'A duplicate supplier invoice was found. Only an Admin or Manager can approve an override.' };
+  }
+  if (reason.trim().length < 5) {
+    return { ok: false, error: 'Enter an override reason with at least 5 characters before processing this GRN.' };
+  }
+  return { ok: true };
+}
+
 /** Validates explicit IMEI/Serial values before a tracked purchase can be saved or received. */
 export function validatePurchaseUnitIdentifiers(
   po: Purchase,

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import type { POSState } from '../src/lib/types.ts';
+import { findDuplicateSupplierInvoices, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride } from '../src/lib/purchaseReconciliation.ts';
+import type { POSState, Purchase } from '../src/lib/types.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -644,4 +645,47 @@ test('Adjust Stock and Stock Take pass verified online quantities to the store',
   assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
   assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
   assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
+});
+
+
+test('supplier invoice duplicate detection is supplier-scoped, normalized and excludes the current GRN', () => {
+  const purchases: Purchase[] = [
+    { id: 'pending-match', poNo: 'GRN-001', date: '2026-11-20T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: ' inv / 2026 - 001 ', items: [], total: 0, status: 'pending' },
+    { id: 'received-match', poNo: 'GRN-002', date: '2026-11-21T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: 'INV/2026-001', items: [], total: 0, status: 'received' },
+    { id: 'other-supplier', poNo: 'GRN-003', date: '2026-11-22T10:00:00.000Z', supplierId: 'supplier-2', supplierName: 'Supplier 2', supplierInvoiceNo: 'INV/2026-001', items: [], total: 0, status: 'received' },
+    { id: 'different-invoice', poNo: 'GRN-004', date: '2026-11-23T10:00:00.000Z', supplierId: 'supplier-1', supplierName: 'Supplier 1', supplierInvoiceNo: 'INV/2026-002', items: [], total: 0, status: 'received' },
+  ];
+
+  assert.equal(normalizeSupplierInvoiceNumber(' inv / 2026 - 001 '), 'INV/2026-001');
+  assert.deepEqual(
+    findDuplicateSupplierInvoices('supplier-1', 'INV/2026-001', purchases).map(purchase => purchase.id),
+    ['pending-match', 'received-match'],
+  );
+  assert.deepEqual(
+    findDuplicateSupplierInvoices('supplier-1', 'INV/2026-001', purchases, 'pending-match').map(purchase => purchase.id),
+    ['received-match'],
+  );
+  assert.deepEqual(findDuplicateSupplierInvoices('supplier-3', 'INV/2026-001', purchases), []);
+  assert.deepEqual(findDuplicateSupplierInvoices('supplier-1', '   ', purchases), []);
+});
+
+test('duplicate supplier invoice override requires Admin/Manager and a meaningful reason', () => {
+  const duplicate: Purchase[] = [{
+    id: 'existing-grn',
+    poNo: 'GRN-010',
+    date: '2026-11-20T10:00:00.000Z',
+    supplierId: 'supplier-1',
+    supplierName: 'Supplier 1',
+    supplierInvoiceNo: 'INV-010',
+    items: [],
+    total: 0,
+    status: 'received',
+  }];
+
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride([], 'cashier', ''), { ok: true });
+  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'cashier', 'valid reason').ok, false);
+  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin', '').ok, false);
+  assert.equal(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'no').ok, false);
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'admin', 'Second supplier invoice copy'), { ok: true });
+  assert.deepEqual(validateDuplicateSupplierInvoiceOverride(duplicate, 'manager', 'Separate branch billing'), { ok: true });
 });
