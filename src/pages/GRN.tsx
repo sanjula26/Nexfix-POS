@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ClipboardCheck, Plus, Pencil, Printer, Zap, Trash2, X, Search, PackageCheck } from 'lucide-react';
 import { usePOS } from '../lib/store';
@@ -136,7 +136,7 @@ export default function GRN() {
     return next;
   }));
 
-  const makeWorkingDraft = (): GRNWorkingDraft => ({
+  const makeWorkingDraft = useCallback((): GRNWorkingDraft => ({
     id: draftIdRef.current || createDraftId(),
     editingId,
     supplierId,
@@ -144,9 +144,9 @@ export default function GRN() {
     notes,
     rows: rows.map(row => ({ ...row })),
     savedAt: new Date().toISOString(),
-  });
+  }), [editingId, supplierId, invoiceNo, notes, rows]);
 
-  const persistWorkingDraft = async (): Promise<boolean> => {
+  const persistWorkingDraft = useCallback(async (): Promise<boolean> => {
     if (formMode !== 'receive') return true;
     const snapshot = makeWorkingDraft();
     draftIdRef.current = snapshot.id;
@@ -160,7 +160,7 @@ export default function GRN() {
     setWorkingDraft(snapshot);
     setDraftSaveStatus('saved');
     return true;
-  };
+  }, [formMode, makeWorkingDraft]);
 
   const closeForm = async () => {
     if (actionRunning) return;
@@ -250,7 +250,7 @@ export default function GRN() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [recoveryLoaded, view, formMode, editingId, supplierId, invoiceNo, notes, rows]);
+  }, [recoveryLoaded, view, formMode, makeWorkingDraft]);
 
   const buildItems = (): PurchaseItem[] => rows.filter(r => r.productId).map(r => {
     const product = state.products.find(p => p.id === r.productId);
@@ -439,7 +439,8 @@ export default function GRN() {
               </p>
             </div>
             <div className="flex items-center gap-3">
-              {formMode === 'receive' && <span className="text-xs text-sub" role="status">{draftSaveStatus === 'saving' ? 'Saving locally…' : draftSaveStatus === 'error' ? 'Save failed — retry required' : 'Saved locally'}</span>}
+              {formMode === 'receive' && <span className="text-xs text-sub" role="status">{draftSaveStatus === 'saving' ? 'Saving locally…' : draftSaveStatus === 'error' ? 'Save failed — retry required' : workingDraft?.savedAt ? 'Saved locally · ' + new Date(workingDraft.savedAt).toLocaleTimeString() : 'Saved locally'}</span>}
+              {formMode === 'receive' && draftSaveStatus === 'error' && <button className="btn btn-soft !py-1.5 !px-2.5 !text-xs" onClick={() => void persistWorkingDraft()}>Retry save</button>}
               <button className="btn btn-soft" onClick={() => void closeForm()} disabled={actionRunning}><X size={14} /> Save & Close</button>
             </div>
           </div>
