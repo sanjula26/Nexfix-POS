@@ -79,6 +79,8 @@ export default function GRN() {
   const draftIdRef = useRef('');
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSequenceRef = useRef(0);
+  const latestWorkingDraftRef = useRef<GRNWorkingDraft | null>(null);
+  const isReceivingFormRef = useRef(false);
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
@@ -145,6 +147,9 @@ export default function GRN() {
     rows: rows.map(row => ({ ...row })),
     savedAt: new Date().toISOString(),
   }), [editingId, supplierId, invoiceNo, notes, rows]);
+
+  latestWorkingDraftRef.current = makeWorkingDraft();
+  isReceivingFormRef.current = view === 'form' && formMode === 'receive';
 
   const persistWorkingDraft = useCallback(async (): Promise<boolean> => {
     if (formMode !== 'receive') return true;
@@ -251,6 +256,15 @@ export default function GRN() {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [recoveryLoaded, view, formMode, makeWorkingDraft]);
+
+  // Best-effort final checkpoint when the user navigates to another page or closes the window.
+  // The debounced transaction remains the primary save path; this cleanup is an extra safeguard.
+  useEffect(() => () => {
+    const snapshot = latestWorkingDraftRef.current;
+    if (isReceivingFormRef.current && snapshot) {
+      void idbPutMetaValue(GRN_WORKING_DRAFT_KEY, { ...snapshot, savedAt: new Date().toISOString() });
+    }
+  }, []);
 
   const buildItems = (): PurchaseItem[] => rows.filter(r => r.productId).map(r => {
     const product = state.products.find(p => p.id === r.productId);
