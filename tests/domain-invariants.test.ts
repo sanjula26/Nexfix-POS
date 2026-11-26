@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, normalizeSupplierInvoiceNumber, validateDuplicateSupplierInvoiceOverride, validatePurchaseUnitIdentifiers } from '../src/lib/purchaseReconciliation.ts';
-import type { POSState, Product, Purchase } from '../src/lib/types.ts';
+import type { POSState, Product, Purchase, PurchaseReturn } from '../src/lib/types.ts';
+import { buildPurchaseCostHistoryRows, buildSupplierReturnReportRows } from '../src/lib/grnReports.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -807,4 +808,118 @@ test('pending GRN unit reservations exclude the current GRN and ignore already r
   };
   const receivedCheck = validatePurchaseUnitIdentifiers(current, products, [], [receivedCopy]);
   assert.deepEqual(receivedCheck, { ok: true });
+});
+
+
+test('purchase cost history uses processed GRN costs and subtracts partial supplier returns', () => {
+  const purchases: Purchase[] = [
+    {
+      id: 'received-1',
+      poNo: 'GRN-030',
+      date: '2026-11-20T10:00:00.000Z',
+      processedAt: '2026-11-20T12:00:00.000Z',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      supplierInvoiceNo: 'INV-030',
+      items: [
+        { productId: 'phone-1', name: 'Phone X', qty: 10, cost: 120 },
+        { productId: 'charger-1', name: 'Charger', qty: 3, cost: 50 },
+      ],
+      total: 1350,
+      status: 'received',
+    },
+    {
+      id: 'pending-1',
+      poNo: 'GRN-031',
+      date: '2026-11-21T10:00:00.000Z',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      items: [{ productId: 'phone-1', name: 'Phone X', qty: 99, cost: 110 }],
+      total: 10890,
+      status: 'pending',
+    },
+  ];
+  const returns: PurchaseReturn[] = [
+    {
+      id: 'return-1',
+      dnNo: 'DN-001',
+      purchaseId: 'received-1',
+      poNo: 'GRN-030',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      date: '2026-11-22T10:00:00.000Z',
+      items: [{ itemIdx: 0, productId: 'phone-1', name: 'Phone X', qty: 2, cost: 120, total: 240 }],
+      total: 240,
+      reason: 'Damaged on arrival',
+      by: 'Manager',
+    },
+    {
+      id: 'return-2',
+      dnNo: 'DN-002',
+      purchaseId: 'received-1',
+      poNo: 'GRN-030',
+      supplierId: 'supplier-1',
+      supplierName: 'Supplier One',
+      date: '2026-11-23T10:00:00.000Z',
+      items: [
+        { itemIdx: 0, productId: 'phone-1', name: 'Phone X', qty: 1, cost: 120, total: 120 },
+        { itemIdx: 1, productId: 'charger-1', name: 'Charger', qty: 3, cost: 50, total: 150 },
+      ],
+      total: 270,
+      reason: 'Supplier approved return',
+      by: 'Admin',
+    },
+  ];
+
+  const rows = buildPurchaseCostHistoryRows(purchases, returns);
+  assert.equal(rows.length, 2);
+  const phone = rows.find(row => row.productId === 'phone-1');
+  assert.ok(phone);
+  assert.equal(phone.date, '2026-11-20T12:00:00.000Z');
+  assert.equal(phone.purchaseQty, 10);
+  assert.equal(phone.returnedQty, 3);
+  assert.equal(phone.netQty, 7);
+  assert.equal(phone.unitCost, 120);
+  assert.equal(phone.purchaseValue, 1200);
+  assert.equal(phone.returnedValue, 360);
+  assert.equal(phone.netValue, 840);
+
+  const charger = rows.find(row => row.productId === 'charger-1');
+  assert.ok(charger);
+  assert.equal(charger.returnedQty, 3);
+  assert.equal(charger.netQty, 0);
+  assert.equal(charger.netValue, 0);
+  assert.equal(rows.some(row => row.purchaseId === 'pending-1'), false);
+});
+
+test('supplier return report exposes debit note, source GRN, item values and audit details', () => {
+  const returns: PurchaseReturn[] = [{
+    id: 'return-3',
+    dnNo: 'DN-003',
+    purchaseId: 'received-3',
+    poNo: 'GRN-033',
+    supplierId: 'supplier-3',
+    supplierName: 'Supplier Three',
+    date: '2026-11-24T10:00:00.000Z',
+    items: [
+      { itemIdx: 0, productId: 'phone-3', name: 'Phone Z', qty: 1, cost: 250, total: 250 },
+      { itemIdx: 1, productId: 'case-3', name: 'Phone Case', qty: 2, cost: 20, total: 40 },
+    ],
+    total: 290,
+    reason: 'Wrong model supplied',
+    by: 'Manager',
+  }];
+
+  const rows = buildSupplierReturnReportRows(returns);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].dnNo, 'DN-003');
+  assert.equal(rows[0].poNo, 'GRN-033');
+  assert.equal(rows[0].supplierName, 'Supplier Three');
+  assert.equal(rows[0].productName, 'Phone Z');
+  assert.equal(rows[0].qty, 1);
+  assert.equal(rows[0].total, 250);
+  assert.equal(rows[0].reason, 'Wrong model supplied');
+  assert.equal(rows[0].by, 'Manager');
+  assert.equal(rows[1].productName, 'Phone Case');
+  assert.equal(rows[1].total, 40);
 });
