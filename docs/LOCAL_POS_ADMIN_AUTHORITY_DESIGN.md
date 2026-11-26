@@ -254,3 +254,25 @@ The proposed credential authority protects the identity/credential decision for 
 - Keep the immediate scope honest: independent Admin verification for dedicated privileged desktop IPC, a protected main-owned credential record, safe migration/backup isolation, and explicit UI/renderer limitations. It is not a guarantee against local machine administrators, modified app binaries, malicious renderer code changing ordinary business data, or direct filesystem tampering by an attacker with the same Windows account.
 
 This distinction is important for acceptance: passing the Admin credential tests must not be described as proof that the whole POS database or every role-controlled business operation is secure against a compromised renderer.
+
+
+## 13. Multiple-Admin identity binding — exact renderer behavior — 2026-11-26
+
+A direct read of `src/lib/store.tsx` and `src/pages/Users.tsx` confirms the UI supports multiple active Admin accounts: the Users page can create/edit an account with role `admin`, and can deactivate or delete other accounts.
+
+However, current renderer authentication helpers select the first active Admin record in array order in two places:
+
+- `resolveSensitiveAdmin` uses `stateRef.current.users.find(u => u.role === 'admin' && u.active)` and verifies the entered Admin password only against that one record; the separate shared Admin PIN is also accepted.
+- Cashier-to-Admin `switchRole` similarly finds the first active Admin and checks its password (or the shared Admin PIN).
+
+This means a shop with more than one active Admin does not have a clear "which Admin re-authenticated?" identity in these flows; an active second Admin's unique password may not be accepted if another active Admin appears first.
+
+Future authority contract:
+
+- Every password-based Admin proof must identify an account (normalized email or stable local user ID), then main process must look up that exact record and independently verify that the account is active and role `admin`. The supplied identifier is only a lookup hint; never trust a renderer-supplied role.
+- Do not use array order or "first active Admin" as an account-selection rule.
+- For high-risk Recovery Key rotation, prefer a fresh proof using the selected active Admin account's unique password, so audit events can identify the responsible Admin. Whether a shared Admin PIN remains acceptable for less-sensitive actions is still an open product decision; a shared PIN does not identify which Admin performed the action.
+- The authority must reject proofs for cashier, manager or technician accounts even when the renderer labels the current session Admin.
+- Account deletion/deactivation/password changes must revoke or invalidate related short-lived capabilities and must not leave a previously issued Admin proof valid past its expiry.
+
+Tests must cover at least two active Admin accounts: either Admin can verify by their own exact account identity; wrong password/identifier combinations fail; a cashier cannot pass by supplying another user's ID; disabling/deleting one Admin immediately invalidates that identity; and no behavior depends on users-array ordering.
