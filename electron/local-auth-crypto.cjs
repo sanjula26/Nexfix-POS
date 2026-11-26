@@ -49,6 +49,9 @@ async function verifyLocalPasswordHash(password, storedHash) {
     return false;
   }
 
+  // Current verifier encoding is fixed-width: 24 salt chars, colon, 44 digest chars.
+  if (storedHash.length !== 69) return false;
+
   const separator = storedHash.indexOf(':');
   if (separator < 0 || storedHash.indexOf(':', separator + 1) !== -1) {
     return false;
