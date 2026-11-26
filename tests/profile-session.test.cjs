@@ -233,3 +233,37 @@ test('recovery unlock clears the temporary data-key buffer after encrypted stora
   );
   assert.match(recoveryUnlock, /new EncryptedProfileStorage\(directory, manifest\.profileId, dataKey\);\s*dataKey\.fill\(0\);/);
 });
+
+test('reopens a finalized Recovery Key rotation with a fresh session', async (t) => {
+  const root = temporaryRoot(t);
+  const first = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  const created = await first.create({
+    storageRoot: root,
+    directoryName: 'Rotated Recovery POS',
+    label: 'NexFix Rotated Recovery Shop',
+    passphrase: PASSWORD,
+  });
+  const state = JSON.stringify({ sales: [{ id: 'rotation-restart-sale' }], products: [{ id: 'p1' }] });
+  first.write('app_state', state);
+
+  const prepared = first.prepareRecoveryKeyRotation(created.recoveryKey);
+  const finalized = first.finalizeRecoveryKeyRotation({
+    pendingId: prepared.pendingId,
+    acknowledged: true,
+  });
+  assert.equal(finalized.ok, true);
+  assert.equal(finalized.recoveryKeyUpdated, true);
+  first.lock();
+
+  // A new session models a fresh Electron main-process instance reading only
+  // the persisted key envelope, not the prior process's pending memory.
+  const restarted = new POSProfileSession({ safeStorage: safeStorage('windows-a:'), platform: 'linux' });
+  await assert.rejects(
+    restarted.unlockWithRecoveryKey(created.profile.directory, created.recoveryKey),
+    /authentication failed/,
+  );
+  const reopened = await restarted.unlockWithRecoveryKey(created.profile.directory, prepared.recoveryKey);
+  assert.equal(reopened.ok, true);
+  assert.equal(restarted.read('app_state'), state);
+  restarted.lock();
+});
