@@ -315,3 +315,85 @@ Existing regression coverage verifies a rename failure leaves the old envelope a
 A new regression test, `preserves the previous key envelope and permits retry when the temp-file fsync fails`, injects an `EIO` at the temporary-file flush boundary. It asserts that the old envelope bytes remain unchanged, the temporary file is cleaned up, the old key remains valid, the new key is not yet committed, and retry after restoring the flush call succeeds. This is a fault-injection test, **not** a power-loss durability test.
 
 **Decision:** no change to production replacement code in this step. Do not describe Windows key-envelope rotation as proven power-loss durable. Before closing this blocker, evaluate a small native Windows commit helper using documented write-through flags or a versioned/two-generation recovery protocol; preserve a recoverable previous envelope until the new commit is durably selected; then run controlled crash/power-cut tests on actual supported Windows filesystems and operator machines. Do not assume the API flag alone proves behavior across removable media, storage-controller caches or every device.
+
+## 16. Proposed Windows crash-consistent generation journal — 2026-11-26
+
+This is a design proposal for review, not an implementation approval. The goal is that a crash at any point during Recovery Key rotation leaves one unambiguous, recoverable committed generation, while never destroying the previous committed envelope before the new commit is selected.
+
+### Additional confirmed scope
+
+- `electron/overflow-folder.cjs` rejects UNC/network paths and tells the user to choose an internal or attached external drive. It validates the folder, symlinks and write access, but does not inspect or restrict the volume filesystem type. A removable drive may therefore be NTFS, exFAT or another filesystem with different durability behavior.
+- `electron/profile-storage.cjs` writes encrypted profile records to a temporary file, calls `fs.fsyncSync`, closes it, renames it over the destination and verifies the read-back. It calls directory `fsync` only when `process.platform !== 'win32'`. Therefore the same Windows destination-name durability question also affects encrypted `app_state`, `sync_queue`, `meta` and `restore_checkpoint` writes after folder-primary cutover. Do not treat this as a Recovery-Key-only issue.
+- This proposal should converge on one main-process-owned durable file publication primitive for profile data and key-envelope commits. The existing renderer-facing generic profile IPC must remain unchanged in authority scope; this helper is internal to Electron main process and is not exposed through preload.
+
+### Proposed on-disk generations
+
+Keep the current `nexfix-key-envelope.json` as legacy generation 0. New rotations create immutable, uniquely named files in the same profile directory:
+
+- `nexfix-key-envelope.g00000001.json` — validated wrapped-key envelope for generation 1.
+- `nexfix-key-envelope.commit.g00000001.json` — commit marker for generation 1.
+- Subsequent rotations create generation 2, 3, etc. Each candidate uses a random same-directory `.tmp` name before publication.
+
+A commit marker contains only non-secret metadata:
+
+- fixed format/version and profile ID;
+- monotonically increasing generation number;
+- the exact deterministic envelope filename for that generation;
+- SHA-256 of the complete envelope bytes;
+- SHA-256 of the previous commit marker (generation 1 is anchored to the original legacy envelope hash);
+- a random operation ID and canonical timestamp.
+
+Never put the Recovery Key, plaintext data key, passphrase, DPAPI plaintext or other secret in a marker. Do not accept arbitrary paths from a marker; derive the filename from the validated generation number. Do not use a replaceable `CURRENT` pointer file.
+
+### Proposed commit sequence
+
+1. **Prepare only in memory.** Reuse the current old-key proof and new-wrapper preflight. Keep the new Recovery Key and data-key copy in main-process memory; user acknowledgement must happen before any commit marker is published.
+2. **Stage the envelope.** Write generation N+1 to an exclusive same-directory temp file, flush its file contents, close it, then parse it back, validate all wrappers and verify that the new Recovery Key opens to the same data key. Compute the envelope SHA-256.
+3. **Publish the immutable envelope.** On Windows, a small internal N-API C++ helper is the preferred prototype candidate. It should validate that source and destination are normal non-reparse files in the same profile directory and same volume, reject an existing generation destination, and call `MoveFileExW(temp, final, MOVEFILE_WRITE_THROUGH)` without `MOVEFILE_COPY_ALLOWED` or `MOVEFILE_REPLACE_EXISTING`. A same-directory, unique destination avoids replacing an existing committed file. Read the final bytes back and compare their SHA-256 before continuing.
+4. **Stage the commit marker.** Write the marker to a unique temp file, flush/close it, read it back, and verify its profile ID, generation, previous-marker hash, deterministic filename and envelope hash.
+5. **Publish the commit marker last.** Publish the marker under its unique immutable generation name through the same native write-through path. This marker is the logical commit point. Re-open and validate the marker and envelope through the normal startup selection code. Return rotation success and clear pending secret material only after this succeeds.
+6. **Retain the prior generation.** Keep at least the immediately previous complete envelope and all small commit markers until a fresh process has opened the selected new generation successfully. Cleanup must be a separate, retryable maintenance step; never remove the previous generation as part of the critical commit sequence. Deleting old files is not guaranteed secure erasure on SSDs/removable media.
+7. **Idempotent retry.** If the IPC response is lost after marker publication, a retry checks the exact operation ID, generation and envelope hash. It returns success only for the exact already-committed operation; it must not publish a second generation or disclose the new key again after process restart.
+
+### Startup and crash-recovery rules
+
+- If no journal markers exist, load the legacy generation 0 exactly as today.
+- A complete envelope generation with no final commit marker is an orphan candidate, not committed; continue using the previous committed generation.
+- Ignore incomplete `.tmp` files after validating their names and ensuring they are not symlinks/reparse points. Clean them only in a separate safe cleanup step.
+- Select only a fully validated, monotonically linked commit chain for this profile. Validate strict schema, marker hash, previous marker hash, envelope hash, exact filename, profile ID, generation bounds and envelope schema. Bound the number and size of files read during startup.
+- If a final marker exists but its chain or envelope is inconsistent, do not silently guess or accept a stale Recovery Key. Enter an explicit recovery-required state and preserve all generations for diagnosis/recovery. A valid newest marker makes that generation current; old generation files are not accepted as the active credential.
+- No marker published yet: old generation remains current. Marker published and validated: new generation is current. If the process dies after the marker commit but before the IPC response, a fresh process reads the new generation; this is why acknowledgement must precede marker publication.
+- A hash chain detects accidental mismatch/reordering, but it is not a trusted anti-rollback anchor. A person who can replace the entire local folder or restore an old snapshot may still roll back the whole profile; do not claim protection against full-folder rollback or a compromised local machine.
+
+### Windows publication helper candidates and limitations
+
+- Candidate A: same-volume `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, unique destination names and no copy/delete fallback. Microsoft says the function does not return until the file is actually moved on disk and explicitly documents flushing for a copy/delete move. The exact same-volume generation-publication behavior still needs physical crash testing; the flag alone is not treated as proof ([MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)).
+- Candidate B to compare experimentally: open the staged file with `CreateFileW` using `FILE_FLAG_WRITE_THROUGH`, then publish with `SetFileInformationByHandle(FileRenameInfo/Ex)`. Microsoft documents that write-through requests cause NTFS metadata changes such as rename operations to be flushed, but its public documentation does not spell out the complete durability contract for this exact call sequence. This is a candidate to test, not an already-established guarantee ([CreateFileW caching behavior](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea), [SetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle), [FILE_RENAME_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info)).
+- `ReplaceFileW` is not the write-through solution: `REPLACEFILE_WRITE_THROUGH` is explicitly unsupported ([ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)).
+- Keep file-content flushing and namespace publication as separate steps. `FlushFileBuffers` flushes a file handle's buffered data; it does not, by itself, prove the later destination-name update is durable ([FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers)).
+- Native helper inputs must be constrained to internally generated paths under the already validated profile directory. Check same-volume identity, reparse points, regular-file attributes, ACL/write failures and existing destination collisions. Never accept arbitrary renderer-supplied paths. If the volume/filesystem does not meet the tested support matrix, fail the key rotation without touching the current generation and report a clear reason.
+
+### Test plan and release gates
+
+**Automated cross-platform/unit tests**
+
+- Inject failure at every phase: envelope write, file flush, envelope publication, envelope read-back, marker write, marker flush, marker publication and marker read-back.
+- Verify old generation remains selected before commit marker publication; new generation is selected after a valid marker is published; orphan generations and temp files never become current.
+- Kill a child process at every phase, restart the profile session and verify recovery selection. Include lost IPC response after marker commit, retry, duplicate generation, generation overflow, marker hash mismatch, previous-hash mismatch, wrong profile ID, path traversal names, symlink/reparse files, destination collision and concurrent rotation.
+- Verify that the old Recovery Key is rejected after a valid new marker is active, the new Recovery Key opens the unchanged data key, and the OS/passphrase wrappers continue to open the same data key.
+- Verify the production ASAR contains only the reviewed native binary and no QA-only helper/test assets.
+
+**Windows CI and physical acceptance**
+
+- Windows CI must compile the native addon against the exact Electron headers, load it from the packaged app, and run same-volume success/failure tests on the hosted Windows filesystem. CI process termination tests are useful but are not a substitute for power removal.
+- Physical test matrix must include Windows 10/11 on internal NTFS storage and the attached external drives the product intends to support (at minimum NTFS and exFAT). Record filesystem, device model, USB/controller path and cache/power settings.
+- At each sequence boundary, terminate the process and separately perform controlled VM power-cut or physical power interruption on disposable profile copies. After restart, verify either the old committed generation or the new committed generation is recoverable as specified; never accept a mixed/partially written envelope or lose the encrypted profile data.
+- Repeat each boundary enough times to expose timing variability. Capture Windows build, filesystem and storage hardware for every result. A green hosted CI run cannot certify a user's SSD, USB bridge or device firmware.
+- Decide the supported filesystem matrix explicitly. The folder picker currently permits attached external drives without filesystem-type detection; do not promise equal durability on every external format until tested.
+
+**Scope decision:** no native helper or generation journal is wired in by this documentation step. The next safe implementation should first add a pure parser/recovery-selector with fixture tests, then a Windows-only native publication adapter, then a shared write path for `profile-storage.cjs` after its own data-recovery semantics are reviewed. Do not patch only key-envelope rename and claim all folder-primary data is power-loss durable.
+
+## 17. Separate Electron patch-level maintenance finding — 2026-11-26
+
+- The current lockfile resolves Electron `44.11.4` (the package range is `^44.3.0`). Electron `44.11.6` was released on 2026-11-24 and includes additional fixes, including renderer-crash fixes; it still reports bundled Node.js `24.22.3` ([Electron 44.11.6 release](https://releases.electronjs.org/release/v44.11.6), [Electron 44.11.4 release](https://releases.electronjs.org/release/v44.11.4)).
+- This is separate patch-level maintenance, not part of the durability design. Do not silently modify the lockfile in this commit. Before compiling a native helper or publishing a production installer, assess and preferably update the Electron lockfile in its own small commit, then rerun all four exact-head workflows and physical Windows smoke tests.
