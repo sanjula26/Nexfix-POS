@@ -547,7 +547,7 @@ export default function GRN() {
                       <td className="td">
                         <div className="flex justify-end gap-1">
                           {p.status === 'pending' && <button className="icon-btn !w-8 !h-8" title="Edit" onClick={() => edit(p)} disabled={actionRunning}><Pencil size={14} /></button>}
-                          <button className="icon-btn !w-8 !h-8" title="Print" onClick={() => { setPrintReady(false); setPrintPreview({ grn: p, html: grnPrintHtml(p, state.settings.shopName) }); }} disabled={actionRunning}><Printer size={14} /></button>
+                          {can('act:export') && <button className="icon-btn !w-8 !h-8" title="Print" onClick={() => { setPrintReady(false); setPrintPreview({ grn: p, html: grnPrintHtml(p, state.settings.shopName) }); }} disabled={actionRunning}><Printer size={14} /></button>}
                           {p.status === 'pending' && (
                             <button
                               className="btn btn-outline-emerald !py-1.5 !px-2.5 !text-xs"
@@ -644,7 +644,7 @@ export default function GRN() {
             {selectedGrn.notes && <div className="rounded-xl border border-line p-3 text-sm"><b>Notes</b><p className="text-sub mt-1 whitespace-pre-wrap">{selectedGrn.notes}</p></div>}
             <div className="flex flex-wrap justify-end gap-2">
               {selectedGrn.status === 'pending' && <button className="btn btn-soft" onClick={() => { const target=selectedGrn; setSelectedGrn(null); edit(target); }}><Pencil size={14}/> Edit draft</button>}
-              <button className="btn btn-primary" onClick={() => { setPrintReady(false); setPrintPreview({ grn:selectedGrn, html:grnPrintHtml(selectedGrn,state.settings.shopName) }); }}><Printer size={14}/> Print / Save PDF</button>
+              {can('act:export') && <button className="btn btn-primary" onClick={() => { setPrintReady(false); setPrintPreview({ grn:selectedGrn, html:grnPrintHtml(selectedGrn,state.settings.shopName) }); }}><Printer size={14}/> Print / Save PDF</button>}
               <button className="btn btn-soft" onClick={() => setSelectedGrn(null)}>Close</button>
             </div>
           </div>
