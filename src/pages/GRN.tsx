@@ -91,6 +91,9 @@ export default function GRN() {
 
   useEffect(() => {
     let cancelled = false;
+    setWorkingDraft(null);
+    setRecoveryLoaded(false);
+    setDraftSaveStatus('loading');
     void idbGetMetaValue<GRNWorkingDraft>(workingDraftKey).then(saved => {
       if (cancelled) return;
       if (saved && typeof saved.id === 'string' && Array.isArray(saved.rows)) {
@@ -456,6 +459,7 @@ export default function GRN() {
             <div className="min-w-0">
               <div className="font-bold text-ink">Unfinished GRN recovered</div>
               <div className="text-sm text-sub mt-1">Your previous work was saved locally on this PC at {fmtDate(workingDraft.savedAt)}. Continue from the saved fields and rows. Stock has not been changed.</div>
+              {draftSaveStatus === 'error' && <div className="text-xs text-rose-600 mt-1">The recovery copy needs attention. Confirm the saved GRN before discarding this temporary copy.</div>}
             </div>
             <div className="flex flex-wrap gap-2">
               <button className="btn btn-primary" onClick={resumeWorkingDraft}><Pencil size={14}/> Continue GRN</button>
