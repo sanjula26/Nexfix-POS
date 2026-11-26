@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ClipboardList, Download, PackageCheck, Clock4 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ClipboardList, Download, PackageCheck, Clock4, Printer } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, PageHeading, SearchInput } from '../components/ui';
 import { dkey, downloadFile, fmtDate, fmtRs, inRange, periodRange, type PeriodKey } from '../lib/utils';
@@ -14,6 +15,7 @@ const PERIODS: Array<{ key: PeriodKey; label: string }> = [
 
 export default function GRNReport() {
   const { state } = usePOS();
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'all' | 'pending' | 'received'>('all');
@@ -44,9 +46,11 @@ export default function GRNReport() {
   };
 
   return (
-    <div>
-      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button>} />
-      <div className="flex flex-wrap gap-2 mb-5">
+    <>
+      <style>{`@media print { body * { visibility: hidden !important; } .grn-report-print, .grn-report-print * { visibility: visible !important; } .grn-report-print { position: absolute; inset: 0; width: 100%; padding: 12mm; background: #fff; color: #111; } .grn-report-controls { display: none !important; } .grn-report-print .card { box-shadow: none !important; border: 0 !important; } }`}</style>
+    <div className="grn-report-print">
+      <PageHeading chip="Procurement" chipTone="violet" title="GRN / Receiving Report" sub={`${rows.length} purchase/receiving records in the selected period`} actions={<div className="flex flex-wrap gap-2"><button className="btn btn-outline" onClick={exportCsv}><Download size={14} /> Export CSV</button><button className="btn btn-primary print:hidden" onClick={() => window.print()}><Printer size={14} /> Print / Save PDF</button></div>} />
+      <div className="flex flex-wrap gap-2 mb-5 grn-report-controls">
         {PERIODS.map(p => <button key={p.key} className={`btn !text-xs ${period === p.key ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod(p.key)}>{p.label}</button>)}
         <button className={`btn !text-xs ${period === 'custom' ? 'btn-primary' : 'btn-soft'}`} onClick={() => setPeriod('custom')}>Custom</button>
         {period === 'custom' && <><input className="input !w-auto !py-1.5 text-xs" type="date" value={custom.from} onChange={e => setCustom(c => ({ ...c, from: e.target.value }))} /><input className="input !w-auto !py-1.5 text-xs" type="date" value={custom.to} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))} /></>}
@@ -57,12 +61,13 @@ export default function GRNReport() {
         <div className="card p-4"><div className="text-[10px] font-bold uppercase tracking-wider text-faint">Total records</div><div className="num text-xl font-extrabold text-ink mt-1">{rows.length}</div><div className="text-xs text-sub mt-1">{rows.reduce((n, p) => n + p.items.reduce((a, i) => a + i.qty, 0), 0)} units on lines</div></div>
       </div>
       <div className="card overflow-hidden">
-        <div className="p-4 border-b border-line flex flex-wrap gap-3 items-center">
+        <div className="p-4 border-b border-line flex flex-wrap gap-3 items-center grn-report-controls">
           <SearchInput value={search} onChange={setSearch} placeholder="Search GRN/PO, supplier or invoice..." className="max-w-md flex-1" />
           <div className="flex gap-1.5">{(['all', 'pending', 'received'] as const).map(s => <button key={s} className={`btn !text-xs ${status === s ? 'btn-primary' : 'btn-soft'}`} onClick={() => setStatus(s)}>{s === 'all' ? 'All' : s === 'received' ? 'Received' : 'Pending'}</button>)}</div>
         </div>
-        {rows.length === 0 ? <EmptyState icon={<ClipboardList size={26} />} title="No receiving records" sub="No purchase/GRN records match the selected filters." /> : <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr><th className="th">GRN / PO</th><th className="th">Date</th><th className="th">Supplier</th><th className="th">Invoice</th><th className="th">Items</th><th className="th">Status</th><th className="th !text-right">Total</th></tr></thead><tbody>{rows.map(p => <tr key={p.id} className="hover:bg-raised/40"><td className="td font-bold text-violet-500">{p.poNo}</td><td className="td text-xs text-sub">{fmtDate(p.date)}</td><td className="td font-semibold">{p.supplierName}</td><td className="td text-xs text-sub">{p.supplierInvoiceNo || '—'}</td><td className="td text-xs text-sub">{p.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td><td className="td"><Badge tone={p.status === 'received' ? 'emerald' : 'amber'}>{p.status === 'received' ? <PackageCheck size={11} /> : <Clock4 size={11} />}{p.status.toUpperCase()}</Badge></td><td className="td num font-bold text-right">{fmtRs(p.total)}</td></tr>)}</tbody></table></div>}
+        {rows.length === 0 ? <EmptyState icon={<ClipboardList size={26} />} title="No receiving records" sub="No purchase/GRN records match the selected filters." /> : <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr><th className="th">GRN / PO</th><th className="th">Date</th><th className="th">Supplier</th><th className="th">Invoice</th><th className="th">Items</th><th className="th">Status</th><th className="th !text-right">Total</th></tr></thead><tbody>{rows.map(p => <tr key={p.id} className="hover:bg-raised/40"><td className="td font-bold text-violet-500"><button type="button" className="underline underline-offset-2 hover:text-violet-700" onClick={() => navigate(`/grn?grn=${encodeURIComponent(p.id)}`)}>{p.poNo}</button></td><td className="td text-xs text-sub">{fmtDate(p.date)}</td><td className="td font-semibold">{p.supplierName}</td><td className="td text-xs text-sub">{p.supplierInvoiceNo || '—'}</td><td className="td text-xs text-sub">{p.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td><td className="td"><Badge tone={p.status === 'received' ? 'emerald' : 'amber'}>{p.status === 'received' ? <PackageCheck size={11} /> : <Clock4 size={11} />}{p.status.toUpperCase()}</Badge></td><td className="td num font-bold text-right">{fmtRs(p.total)}</td></tr>)}</tbody></table></div>}
       </div>
     </div>
+    </>
   );
 }
