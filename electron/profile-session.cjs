@@ -360,7 +360,7 @@ class POSProfileSession {
     return { ok: true, canceled: true };
   }
 
-  getPendingRecoveryKeyRotation() {
+  getPendingRecoveryKeyRotation(currentRecoveryKey) {
     const pending = this.pendingRecoveryKeyRotation;
     if (!pending) return { ok: true, pending: false };
     const active = this.requireActive();
@@ -370,9 +370,28 @@ class POSProfileSession {
       return { ok: true, pending: false };
     }
     if (pending.finalized === true) {
-      // The user already acknowledged and saved the key. Do not re-display it
-      // after a renderer reload; retain only the non-secret retry receipt.
+      // A completed rotation never needs to reveal its replacement key again.
       return { ok: true, pending: false, finalized: true };
+    }
+    if (typeof currentRecoveryKey !== 'string' ||
+        !currentRecoveryKey || currentRecoveryKey.length > 256) {
+      throw new Error('Enter the previous POS Recovery Key to verify and resume this pending rotation.');
+    }
+
+    // The pending replacement key is a secret. Re-verify possession of the
+    // previous key inside the main process before returning it to the renderer.
+    // Also compare the unwrapped key with the one retained for this rotation,
+    // so an externally changed envelope cannot authorize disclosure.
+    const envelope = readProfileKeyEnvelope(active.directory, active.profileId);
+    const verifiedDataKey = unwrapDataKeyWithRecoveryKey(
+      envelope.recoveryWrappedKey, currentRecoveryKey, active.profileId,
+    );
+    try {
+      if (!Buffer.isBuffer(pending.dataKey) || !verifiedDataKey.equals(pending.dataKey)) {
+        throw new Error('The previous POS Recovery Key does not match this pending rotation.');
+      }
+    } finally {
+      verifiedDataKey.fill(0);
     }
     return {
       ok: true,
