@@ -391,7 +391,8 @@ export default function Settings() {
   const recoveryKeyFileRef = useRef<HTMLInputElement>(null);
 
   // This profile key is distinct from the Google Drive backup Recovery Key.
-  // Never retrieve a pending key into renderer state outside an admin session.
+  // The main process requires the previous key again before revealing a
+  // pending replacement after renderer reload.
   useEffect(() => {
     if (user?.role !== 'admin') {
       setDesktopProfileForRotation(null);
@@ -404,18 +405,10 @@ export default function Settings() {
     }
     if (!hasDesktopProfileRuntime()) return;
     let active = true;
-    void (async () => {
-      const status = await getDesktopPOSProfileStatus();
-      if (!active || !status.unlocked || !status.profile) return;
-      setDesktopProfileForRotation(status.profile);
-      const pending = await getPendingDesktopPOSRecoveryKeyRotation();
-      if (!active || !pending.pending || !pending.pendingId || !pending.recoveryKey) return;
-      setDesktopRotationPendingId(pending.pendingId);
-      setDesktopRotationNewKey(pending.recoveryKey);
-      setDesktopRotationAcknowledged(false);
-      setDesktopRotationMessage('A Recovery Key rotation is waiting for your acknowledgement. Save the displayed new key before finishing.');
-    })().catch(error => {
-      if (active) setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not check pending desktop Recovery Key rotation.');
+    void getDesktopPOSProfileStatus().then(status => {
+      if (active && status.unlocked && status.profile) setDesktopProfileForRotation(status.profile);
+    }).catch(error => {
+      if (active) setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not check desktop POS profile status.');
     });
     return () => { active = false; };
   }, [user?.role]);
@@ -1250,18 +1243,31 @@ export default function Settings() {
                           return;
                         }
                         setDesktopRotationBusy(true);
-                        setDesktopRotationMessage('Verifying the current key and preparing a replacement…');
+                        setDesktopRotationMessage('Verifying the current key…');
                         try {
-                          const pending = await prepareDesktopPOSRecoveryKeyRotation(desktopRotationCurrentKey.trim());
-                          setDesktopRotationPendingId(pending.pendingId);
-                          setDesktopRotationNewKey(pending.recoveryKey);
-                          setDesktopRotationAcknowledged(false);
-                          setDesktopRotationCurrentKey('');
-                          setDesktopRotationMessage('New key prepared. Copy and save it outside this PC before acknowledging.');
+                          const currentKey = desktopRotationCurrentKey.trim();
+                          const pending = await getPendingDesktopPOSRecoveryKeyRotation(currentKey);
+                          if (pending.pending && pending.pendingId && pending.recoveryKey) {
+                            setDesktopRotationPendingId(pending.pendingId);
+                            setDesktopRotationNewKey(pending.recoveryKey);
+                            setDesktopRotationAcknowledged(false);
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('Previous key verified. The pending replacement is restored; save it before finishing.');
+                          } else if (pending.finalized) {
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('This Recovery Key rotation was already completed. The replacement key is not displayed again.');
+                          } else {
+                            const prepared = await prepareDesktopPOSRecoveryKeyRotation(currentKey);
+                            setDesktopRotationPendingId(prepared.pendingId);
+                            setDesktopRotationNewKey(prepared.recoveryKey);
+                            setDesktopRotationAcknowledged(false);
+                            setDesktopRotationCurrentKey('');
+                            setDesktopRotationMessage('New key prepared. Copy and save it outside this PC before acknowledging.');
+                          }
                         } catch (error) {
-                          setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not prepare a new desktop Recovery Key.');
+                          setDesktopRotationMessage(error instanceof Error ? error.message : 'Could not verify or prepare a desktop Recovery Key rotation.');
                         } finally { setDesktopRotationBusy(false); }
-                      }}>{desktopRotationBusy ? 'Preparing…' : 'Prepare new key'}</button>
+                      }}>{desktopRotationBusy ? 'Checking…' : 'Verify / resume / prepare'}</button>
                   </div>
                 </Field>
               ) : (
