@@ -8,9 +8,22 @@ import { useBarcodeScanner } from '../lib/useBarcodeScanner';
 import type { Purchase, PurchaseItem } from '../lib/types';
 import { validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 import SearchableSelect from '../components/SearchableSelect';
+import { idbDeleteMetaValue, idbGetMetaValue, idbPutMetaValue } from '../lib/db';
 
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
 const emptyRow = (): Row => ({ productId: '', qty: 1, cost: 0, sellingPrice: 0, updateSellingPrice: false, unitText: '' });
+
+interface GRNWorkingDraft {
+  id: string;
+  editingId: string | null;
+  supplierId: string;
+  invoiceNo: string;
+  notes: string;
+  rows: Row[];
+  savedAt: string;
+}
+const GRN_WORKING_DRAFT_KEY = 'grn_working_draft_v1';
+const createDraftId = () => globalThis.crypto?.randomUUID?.() || `grn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -59,9 +72,31 @@ export default function GRN() {
   const [actionRunning, setActionRunning] = useState(false);
   const [invoiceWarning, setInvoiceWarning] = useState(false);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [workingDraft, setWorkingDraft] = useState<GRNWorkingDraft | null>(null);
+  const [recoveryLoaded, setRecoveryLoaded] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
+  const [confirmWorkingDraftDiscard, setConfirmWorkingDraftDiscard] = useState(false);
+  const draftIdRef = useRef('');
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveSequenceRef = useRef(0);
   const drafts = state.purchases.filter(p => p.status === 'pending');
   const processed = state.purchases.filter(p => p.status === 'received');
   const q = search.trim().toLowerCase();
+
+  useEffect(() => {
+    let cancelled = false;
+    void idbGetMetaValue<GRNWorkingDraft>(GRN_WORKING_DRAFT_KEY).then(saved => {
+      if (cancelled) return;
+      if (saved && typeof saved.id === 'string' && Array.isArray(saved.rows)) {
+        setWorkingDraft(saved);
+        setDraftSaveStatus('saved');
+      } else {
+        setDraftSaveStatus('saved');
+      }
+      setRecoveryLoaded(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
   useBarcodeScanner(code => {
     const match = state.products.find(p => p.barcode.trim().toLowerCase() === code.trim().toLowerCase());
     if (!match || actionRunning || formMode !== 'receive' || view !== 'form') return;
@@ -101,7 +136,80 @@ export default function GRN() {
     return next;
   }));
 
-  const startNew = () => { setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form'); };
+  const makeWorkingDraft = (): GRNWorkingDraft => ({
+    id: draftIdRef.current || createDraftId(),
+    editingId,
+    supplierId,
+    invoiceNo,
+    notes,
+    rows: rows.map(row => ({ ...row })),
+    savedAt: new Date().toISOString(),
+  });
+
+  const persistWorkingDraft = async (): Promise<boolean> => {
+    if (formMode !== 'receive') return true;
+    const snapshot = makeWorkingDraft();
+    draftIdRef.current = snapshot.id;
+    setDraftSaveStatus('saving');
+    const ok = await idbPutMetaValue(GRN_WORKING_DRAFT_KEY, snapshot);
+    if (!ok) {
+      setDraftSaveStatus('error');
+      setFormError('Local draft save failed. Check available storage and retry before leaving this GRN.');
+      return false;
+    }
+    setWorkingDraft(snapshot);
+    setDraftSaveStatus('saved');
+    return true;
+  };
+
+  const closeForm = async () => {
+    if (actionRunning) return;
+    if (formMode === 'receive') {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveSequenceRef.current += 1;
+      const saved = await persistWorkingDraft();
+      if (!saved) return;
+    }
+    setView('list');
+  };
+
+  const resumeWorkingDraft = () => {
+    if (!workingDraft) return;
+    if (workingDraft.editingId) {
+      const existing = state.purchases.find(p => p.id === workingDraft.editingId);
+      if (!existing || existing.status !== 'pending') {
+        setFormError('The GRN being edited is no longer a pending draft. Save or discard this recovery copy before continuing.');
+        return;
+      }
+    }
+    draftIdRef.current = workingDraft.id;
+    setEditingId(workingDraft.editingId);
+    setSupplierId(workingDraft.supplierId);
+    setInvoiceNo(workingDraft.invoiceNo);
+    setNotes(workingDraft.notes);
+    setRows(workingDraft.rows.length ? workingDraft.rows.map(row => ({ ...row })) : [emptyRow()]);
+    setFormMode('receive');
+    setFormError('');
+    setView('form');
+  };
+
+  const discardWorkingDraft = async () => {
+    const ok = await idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+    if (!ok) {
+      setFormError('Could not delete the unfinished local draft. Please retry.');
+      return;
+    }
+    setWorkingDraft(null);
+    setConfirmWorkingDraftDiscard(false);
+    setDraftSaveStatus('saved');
+    draftIdRef.current = '';
+  };
+
+  const startNew = () => {
+    if (workingDraft) return;
+    draftIdRef.current = createDraftId();
+    setFormError(''); setHighlightedId(null); setInvoiceWarning(false); setEditingId(null); setSupplierId(''); setInvoiceNo(''); setNotes(''); setRows([emptyRow()]); setFormMode('receive'); setReturnGrnId(''); setReturnPurchase(null); setReturnLines([]); setReturnReason(''); setView('form');
+  };
   const openReturn = (p: Purchase) => {
     const returnedByItem = new Map<number, number>();
     for (const ret of state.purchaseReturns || []) if (ret.purchaseId === p.id) for (const item of ret.items) returnedByItem.set(item.itemIdx, (returnedByItem.get(item.itemIdx) || 0) + item.qty);
@@ -118,7 +226,31 @@ export default function GRN() {
       return { itemIdx, maxQty: Math.min(remaining, stock, unitStock), qty: 0, unitIds: [] };
     }));
   };
-  const edit = (p: Purchase) => { setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setFormMode('receive'); setView('form'); };
+  const edit = (p: Purchase) => { if (workingDraft) return; draftIdRef.current = createDraftId(); setFormError(''); setEditingId(p.id); setSupplierId(p.supplierId); setInvoiceNo(p.supplierInvoiceNo || ''); setNotes(p.notes || ''); setRows(p.items.map(i => ({ productId: i.productId, qty: i.qty, cost: i.cost, sellingPrice: i.sellingPrice ?? state.products.find(x => x.id === i.productId)?.price ?? 0, updateSellingPrice: !!i.updateSellingPrice, unitText: (i.unitIdentifiers || []).map(u => [u.imei, u.serial].filter(Boolean).join(',')).join('\n') }))); setFormMode('receive'); setView('form'); };
+
+  useEffect(() => {
+    if (!recoveryLoaded || view !== 'form' || formMode !== 'receive') return;
+    const sequence = ++saveSequenceRef.current;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setDraftSaveStatus('saving');
+    saveTimerRef.current = setTimeout(() => {
+      const snapshot = makeWorkingDraft();
+      draftIdRef.current = snapshot.id;
+      void idbPutMetaValue(GRN_WORKING_DRAFT_KEY, snapshot).then(ok => {
+        if (sequence !== saveSequenceRef.current) return;
+        if (ok) {
+          setWorkingDraft(snapshot);
+          setDraftSaveStatus('saved');
+        } else {
+          setDraftSaveStatus('error');
+          setFormError('Auto-save failed. Check local storage space and use Retry before leaving this GRN.');
+        }
+      });
+    }, 450);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [recoveryLoaded, view, formMode, editingId, supplierId, invoiceNo, notes, rows]);
 
   const buildItems = (): PurchaseItem[] => rows.filter(r => r.productId).map(r => {
     const product = state.products.find(p => p.id === r.productId);
@@ -181,6 +313,9 @@ export default function GRN() {
         if (!result.ok || !result.purchase) { setFormError(result.error || 'Unable to save this GRN draft.'); return; }
         setHighlightedId(result.purchase.id);
       }
+      void idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      setWorkingDraft(null);
+      draftIdRef.current = '';
       setView('list');
     } finally {
       setActionRunning(false);
@@ -239,6 +374,9 @@ export default function GRN() {
         setView('form');
         return;
       }
+      void idbDeleteMetaValue(GRN_WORKING_DRAFT_KEY);
+      setWorkingDraft(null);
+      draftIdRef.current = '';
       setReceivedForTags(purchase.items.map(item => ({ productId: item.productId, qty: Math.max(1, Math.floor(item.qty || 1)) })));
       setConfirmId(null); setPriceChanges([]);
       setFormError(''); setView('list');
@@ -254,7 +392,7 @@ export default function GRN() {
         chipTone="blue"
         title="Goods Received Notes"
         sub={processed.length + ' processed · ' + drafts.length + ' drafts'}
-        actions={<button className="btn btn-primary" onClick={startNew}><Plus size={15} /> New GRN</button>}
+        actions={<button className="btn btn-primary" onClick={startNew} disabled={!!workingDraft || !recoveryLoaded}><Plus size={15} /> New GRN</button>}
       />
 
       {receivedForTags.length > 0 && <div className="card p-4 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-emerald-500/30 bg-emerald-500/[0.05]"><div><div className="font-bold text-ink">GRN processed successfully</div><div className="text-sm text-sub mt-1">Print product price labels for {receivedForTags.length} received product line(s). Received quantities will be preselected as label copies.</div></div>{can('page:pricetags') && <button className="btn btn-primary" onClick={() => { try { sessionStorage.setItem('nexfix_grn_price_tags_v1', JSON.stringify({ items: receivedForTags })); } catch { setFormError('Could not prepare the price-tag selection. Open Price Tags and select products manually.'); return; } navigate('/price-tags'); }}><Printer size={15}/> Print price tags for these items</button>}</div>}
@@ -276,6 +414,21 @@ export default function GRN() {
         </div>
       </div>
 
+      {view === 'list' && workingDraft && (
+        <div className="card p-4 mb-5 border border-amber-500/30 bg-amber-500/[0.05]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-bold text-ink">Unfinished GRN recovered</div>
+              <div className="text-sm text-sub mt-1">Your previous work was saved locally on this PC at {fmtDate(workingDraft.savedAt)}. Continue from the saved fields and rows. Stock has not been changed.</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn btn-primary" onClick={resumeWorkingDraft}><Pencil size={14}/> Continue GRN</button>
+              <button className="btn btn-soft" onClick={() => setConfirmWorkingDraftDiscard(true)}>Discard</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {view === 'form' ? (
         <div className="card p-5">
           <div className="flex items-center justify-between mb-5">
@@ -285,7 +438,10 @@ export default function GRN() {
                 {formMode === 'return' ? 'Return received items to the supplier and deduct stock automatically.' : 'Stock is updated only when the GRN is processed.'}
               </p>
             </div>
-            <button className="btn btn-soft" onClick={() => setView('list')} disabled={actionRunning}><X size={14} /> Close</button>
+            <div className="flex items-center gap-3">
+              {formMode === 'receive' && <span className="text-xs text-sub" role="status">{draftSaveStatus === 'saving' ? 'Saving locally…' : draftSaveStatus === 'error' ? 'Save failed — retry required' : 'Saved locally'}</span>}
+              <button className="btn btn-soft" onClick={() => void closeForm()} disabled={actionRunning}><X size={14} /> Save & Close</button>
+            </div>
           </div>
 
           {!editingId && (
@@ -601,6 +757,14 @@ export default function GRN() {
             <Zap size={14} /> {actionRunning ? 'Processing...' : 'Process GRN'}
           </button>
           <button className="btn btn-soft flex-1" onClick={() => setConfirmId(null)} disabled={actionRunning}>Cancel</button>
+        </div>
+      </Modal>
+
+      <Modal open={confirmWorkingDraftDiscard} onClose={() => setConfirmWorkingDraftDiscard(false)} title="Discard unfinished GRN?">
+        <p className="text-sm text-sub">This removes only the unfinished local recovery copy. It does not change inventory stock or processed GRNs.</p>
+        <div className="flex gap-2 mt-5">
+          <button className="btn btn-danger-soft flex-1" onClick={() => void discardWorkingDraft()}>Discard unfinished work</button>
+          <button className="btn btn-soft flex-1" onClick={() => setConfirmWorkingDraftDiscard(false)}>Keep draft</button>
         </div>
       </Modal>
 
