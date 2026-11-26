@@ -383,12 +383,25 @@ class POSProfileSession {
     // Also compare the unwrapped key with the one retained for this rotation,
     // so an externally changed envelope cannot authorize disclosure.
     const envelope = readProfileKeyEnvelope(active.directory, active.profileId);
+    const replacementCommitted = JSON.stringify(envelope.recoveryWrappedKey) ===
+      JSON.stringify(pending.recoveryWrappedKey);
     const verifiedDataKey = unwrapDataKeyWithRecoveryKey(
       envelope.recoveryWrappedKey, currentRecoveryKey, active.profileId,
     );
     try {
       if (!Buffer.isBuffer(pending.dataKey) || !verifiedDataKey.equals(pending.dataKey)) {
-        throw new Error('The previous POS Recovery Key does not match this pending rotation.');
+        throw new Error('The supplied POS Recovery Key does not match this pending rotation.');
+      }
+      if (replacementCommitted) {
+        // The atomic rename committed, but the finalize IPC response may have
+        // been lost before the in-memory completion receipt was recorded.
+        // A valid key for the exact replacement wrapper confirms completion;
+        // do not disclose the replacement key again after renderer reload.
+        pending.finalized = true;
+        pending.recoveryKey = '';
+        pending.dataKey.fill(0);
+        pending.dataKey = null;
+        return { ok: true, pending: false, finalized: true };
       }
     } finally {
       verifiedDataKey.fill(0);
