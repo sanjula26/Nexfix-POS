@@ -189,3 +189,20 @@ Do not combine this with the Windows durable-file-replacement work; that is a se
 ## 9. Current implementation boundary
 
 No production authentication code was changed as part of this investigation. The current local POS login, session persistence, roles and PIN behavior remain renderer-managed. PR #293 Recovery Key rotation remains Draft-only and must not be enabled for production operators until main-process Admin authorization, the separate Windows replacement durability review and physical Windows acceptance are completed.
+
+
+## 10. Verified startup order and authority bootstrap timing — 2026-11-26
+
+A further source review of `src/App.tsx` confirms that `POSApplication` (and therefore `POSProvider`, local Login and first-run Admin setup) mounts inside `DesktopOverflowFolderSetup`. The encrypted-folder profile is not created as part of ordinary first-run Login. The separate `StorageOverflowController` waits for an IndexedDB quota warning; only after the user prepares migration does it create a profile, show the profile Recovery Key, and copy the current IndexedDB state to the selected folder.
+
+This fixes the required order for a future authority implementation:
+
+1. **Before/at first local Admin enrollment:** initialize a main-process-owned credential authority in the per-Windows-user DPAPI/safeStorage sidecar while IndexedDB is still primary. Main-process setup must be one-time and must never accept an arbitrary renderer-supplied PBKDF2 hash as proof of Admin identity.
+2. **Normal IndexedDB-primary operation:** every approved account/password/role/activation mutation synchronizes through main-process authority IPC; the authority sidecar is the high-risk Admin proof source. The renderer's `app_state.users` remains a compatibility/UI mirror, not a main-process credential source.
+3. **Only after a quota warning and encrypted profile creation:** when the user acknowledges the new profile Recovery Key and starts migration, the main process copies its current authority record into the private encrypted profile purpose `local_auth`, binds it to the exact profile ID and revision, and reads it back. The existing four IndexedDB data domains are then copied/verified.
+4. **Before folder-primary transition:** main process verifies the `local_auth` copy and all four POS data-domain migration records. If any check fails, the app must not mark `folder_primary`.
+5. **After cutover:** profile-bound `local_auth` becomes the authority. A sidecar copy may remain only as a non-authoritative recovery aid and must never overwrite a newer profile revision.
+
+The folder profile and its Recovery Key are therefore not available as the only source for initial Admin authority creation: initial Admin setup happens earlier. A design that waits until profile creation to establish the authority would leave the entire IndexedDB-primary period unprotected.
+
+For existing shops upgraded from a renderer-only credential store, the bootstrap limitation in section 5 still applies. There is no cryptographic proof in the old `app_state` that distinguishes the original Admin hash from a hash substituted before the authority is created. Do not silently promote whichever hash happens to be present at upgrade time.
