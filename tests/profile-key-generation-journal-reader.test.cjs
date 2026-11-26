@@ -360,7 +360,10 @@ test('rejects a profile directory whose metadata changes during the read snapsho
     },
     realpathSync: fs.realpathSync.bind(fs),
     opendirSync: fs.opendirSync.bind(fs),
+    openSync: fs.openSync.bind(fs),
+    fstatSync: fs.fstatSync.bind(fs),
     readFileSync: fs.readFileSync.bind(fs),
+    closeSync: fs.closeSync.bind(fs),
   };
 
   assert.throws(
@@ -368,4 +371,78 @@ test('rejects a profile directory whose metadata changes during the read snapsho
     /changed while it was being read/,
   );
   assert.equal(canonicalChecks, changeOnCheck);
+});
+
+
+test('rejects a file handle that resolves to a different object than the lstat snapshot', (t) => {
+  const directory = temporaryDirectory(t);
+  writeLegacy(directory);
+  const legacyPath = path.join(directory, 'nexfix-key-envelope.json');
+  const alternatePath = path.join(directory, 'alternate-envelope.json');
+  writeExclusive(alternatePath, encode(makeEnvelope(9)));
+  let closed = 0;
+  let pathReadAttempted = false;
+  const fsApi = {
+    lstatSync: fs.lstatSync.bind(fs),
+    realpathSync: fs.realpathSync.bind(fs),
+    opendirSync: fs.opendirSync.bind(fs),
+    openSync: (filePath, flags) => fs.openSync(filePath === legacyPath ? alternatePath : filePath, flags),
+    fstatSync: fs.fstatSync.bind(fs),
+    readFileSync: (source, ...args) => {
+      if (source === legacyPath) pathReadAttempted = true;
+      return fs.readFileSync(source, ...args);
+    },
+    closeSync: (descriptor) => {
+      closed += 1;
+      return fs.closeSync(descriptor);
+    },
+  };
+
+  assert.throws(
+    () => readKeyGenerationJournal(directory, PROFILE_ID, { fsApi }),
+    /changed while it was being read/,
+  );
+  assert.equal(pathReadAttempted, false);
+  assert.equal(closed, 1);
+});
+
+test('reads through an opened handle and rejects a pathname replacement after the handle was opened', (t) => {
+  const directory = temporaryDirectory(t);
+  writeLegacy(directory);
+  const legacyPath = path.join(directory, 'nexfix-key-envelope.json');
+  const alternatePath = path.join(directory, 'alternate-envelope.json');
+  writeExclusive(alternatePath, encode(makeEnvelope(10)));
+  const originalLstat = fs.lstatSync.bind(fs);
+  let legacyPathChecks = 0;
+  let handleReads = 0;
+  let closed = 0;
+  const fsApi = {
+    lstatSync: (filePath) => {
+      if (filePath === legacyPath) {
+        legacyPathChecks += 1;
+        if (legacyPathChecks > 1) return originalLstat(alternatePath);
+      }
+      return originalLstat(filePath);
+    },
+    realpathSync: fs.realpathSync.bind(fs),
+    opendirSync: fs.opendirSync.bind(fs),
+    openSync: fs.openSync.bind(fs),
+    fstatSync: fs.fstatSync.bind(fs),
+    readFileSync: (source, ...args) => {
+      if (typeof source === 'number') handleReads += 1;
+      return fs.readFileSync(source, ...args);
+    },
+    closeSync: (descriptor) => {
+      closed += 1;
+      return fs.closeSync(descriptor);
+    },
+  };
+
+  assert.throws(
+    () => readKeyGenerationJournal(directory, PROFILE_ID, { fsApi }),
+    /changed while it was being read/,
+  );
+  assert.equal(handleReads, 1);
+  assert.equal(legacyPathChecks, 2);
+  assert.equal(closed, 1);
 });

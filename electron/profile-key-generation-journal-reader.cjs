@@ -34,6 +34,17 @@ function statRegularFile(fsApi, filePath, label, maxBytes) {
   return stat;
 }
 
+function assertSameFileSnapshot(actual, expected, label) {
+  if (!actual || !actual.isFile() ||
+      actual.dev !== expected.dev ||
+      actual.ino !== expected.ino ||
+      actual.size !== expected.size ||
+      actual.mtimeMs !== expected.mtimeMs ||
+      actual.ctimeMs !== expected.ctimeMs) {
+    throw new Error(`${label} changed while it was being read.`);
+  }
+}
+
 function assertFileUnchanged(fsApi, filePath, before, label) {
   let after;
   try {
@@ -122,15 +133,55 @@ function readRegularFile(fsApi, filePath, label, maxBytes, total) {
     throw new Error('Recovery Key journal exceeds the total read-size limit.');
   }
 
+  let descriptor = null;
   let bytes;
+  let readFailure = null;
   try {
-    bytes = fsApi.readFileSync(filePath);
-  } catch {
-    throw new Error(`${label} could not be read.`);
+    try {
+      descriptor = fsApi.openSync(filePath, 'r');
+    } catch {
+      throw new Error(`${label} could not be opened safely.`);
+    }
+
+    let openedStat;
+    try {
+      openedStat = fsApi.fstatSync(descriptor);
+    } catch {
+      throw new Error(`${label} handle could not be inspected.`);
+    }
+    assertSameFileSnapshot(openedStat, before, label);
+
+    try {
+      bytes = fsApi.readFileSync(descriptor);
+    } catch {
+      throw new Error(`${label} could not be read from its verified handle.`);
+    }
+    if (!Buffer.isBuffer(bytes) || bytes.length !== before.size || bytes.length > maxBytes) {
+      throw new Error(`${label} changed size while it was being read.`);
+    }
+
+    let afterReadStat;
+    try {
+      afterReadStat = fsApi.fstatSync(descriptor);
+    } catch {
+      throw new Error(`${label} handle could not be re-inspected after reading.`);
+    }
+    assertSameFileSnapshot(afterReadStat, openedStat, label);
+  } catch (error) {
+    readFailure = error;
+    throw error;
+  } finally {
+    if (descriptor !== null) {
+      try {
+        fsApi.closeSync(descriptor);
+      } catch {
+        if (!readFailure) throw new Error(`${label} handle could not be closed.`);
+      }
+    }
   }
-  if (!Buffer.isBuffer(bytes) || bytes.length !== before.size || bytes.length > maxBytes) {
-    throw new Error(`${label} changed size while it was being read.`);
-  }
+
+  // Confirm the pathname still names the same object after reading from the
+  // open handle. A path swap cannot redirect the bytes already read above.
   assertFileUnchanged(fsApi, filePath, before, label);
   return bytes;
 }
@@ -140,9 +191,10 @@ function readRegularFile(fsApi, filePath, label, maxBytes, total) {
  * markers, then delegates all cryptographic/schema selection to the pure
  * journal selector.
  *
- * This read-only prototype rejects symbolic links and non-regular files and
- * checks that file identity/size/timestamps stay stable around path-based
- * reads. It does not eliminate every path-swap/reparse-point TOCTOU race:
+ * This read-only prototype rejects symbolic links and non-regular files,
+ * verifies each opened file handle against the pre-open path snapshot, reads
+ * through that handle, then confirms the pathname still names the same object.
+ * It does not eliminate every intermediate-path/reparse-point TOCTOU race:
  * production integration still requires a reviewed native handle-based
  * reparse-point-safe adapter and crash tests. This module is not wired to
  * startup or key-store/session code.
