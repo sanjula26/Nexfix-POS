@@ -202,7 +202,7 @@ export default function GRN() {
   }), [editingId, supplierId, invoiceNo, notes, rows]);
 
   latestWorkingDraftRef.current = makeWorkingDraft();
-  isReceivingFormRef.current = view === 'form' && formMode === 'receive';
+  isReceivingFormRef.current = view === 'form' && formMode === 'receive' && recoveryLoaded && !recoveryLoadError;
 
   const persistWorkingDraft = useCallback(async (): Promise<boolean> => {
     if (formMode !== 'receive') return true;
