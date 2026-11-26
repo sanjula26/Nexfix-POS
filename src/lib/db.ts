@@ -92,15 +92,13 @@ export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
 /** Store feature-specific local metadata without changing the IndexedDB schema. */
 export async function idbGetMetaValue<T>(key: string): Promise<T | null> {
   if (!key) return null;
-  try {
-    const db = await getDB();
-    const row = await idbReq<{ key: string; value: T } | undefined>(
-      db.transaction(STORE_META, 'readonly').objectStore(STORE_META).get(key),
-    );
-    return row?.value ?? null;
-  } catch {
-    return null;
-  }
+  // A missing key and a failed read are different states. Callers that protect
+  // user drafts must be able to stop rather than overwrite data they could not inspect.
+  const db = await getDB();
+  const row = await idbReq<{ key: string; value: T } | undefined>(
+    db.transaction(STORE_META, 'readonly').objectStore(STORE_META).get(key),
+  );
+  return row?.value ?? null;
 }
 
 export async function idbPutMetaValue<T>(key: string, value: T): Promise<boolean> {
