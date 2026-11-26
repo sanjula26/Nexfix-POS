@@ -647,7 +647,15 @@ test('stages Recovery Key rotation in trusted IPC and finalizes only after ackno
   assert.notEqual(prepared.recoveryKey, created.recoveryKey);
   assert.deepEqual(readProfileKeyEnvelope(directory, finalized.profile.profileId), oldEnvelope);
 
-  const pendingAfterRendererReload = await ctx.call('pos-profile:pending-recovery-rotation');
+  const deniedPendingRead = await ctx.call('pos-profile:pending-recovery-rotation', {
+    currentRecoveryKey: 'A'.repeat(43),
+  });
+  assert.equal(deniedPendingRead.ok, false);
+  assert.match(deniedPendingRead.error, /authentication failed|does not match/i);
+
+  const pendingAfterRendererReload = await ctx.call('pos-profile:pending-recovery-rotation', {
+    currentRecoveryKey: created.recoveryKey,
+  });
   assert.equal(pendingAfterRendererReload.pending, true);
   assert.equal(pendingAfterRendererReload.recoveryKey, prepared.recoveryKey);
 
