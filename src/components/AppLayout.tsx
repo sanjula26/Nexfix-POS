@@ -448,12 +448,15 @@ export default function AppLayout() {
 
   const cloudSyncActive = cloudActivity.active > 0 || syncManagerState.status === 'syncing';
   const cloudSyncComplete = !cloudSyncActive
+    && !cloudActivity.lastError
     && connectivity === 'online'
     && syncManagerState.status === 'synced'
     && syncManagerState.pending === 0;
   const cloudSyncHealthy = cloudSyncActive || cloudSyncComplete;
   const cloudSyncTitle = cloudSyncActive
     ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
+    : cloudActivity.lastError
+      ? `Cloud sync failed: ${cloudActivity.lastError}`
     : connectivity !== 'online'
       ? `Offline — ${syncManagerState.pending} cloud update(s) waiting`
       : syncManagerState.status === 'conflict'
