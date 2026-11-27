@@ -391,19 +391,25 @@ export async function findCloudCustomerByPhone(
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  // Keep the paged fallback compatible with legacy phone formats, but transfer
-  // only the fields needed to identify a match. Fetch details for one matched row.
-  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
-  for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from('customers').select('id,phone,name')
-      .eq('shop_id', shopId).order('id').range(offset, offset + 499);
-    if (error) return { ok: false, error: error.message };
-    const page = data || [];
-    rows.push(...page);
-    if (page.length < 500) break;
+  // Most saved customers use the same phone formatting on each POS. Try
+  // the indexed exact value first so a normal match does not scan every
+  // customer page. Keep the paged normalized fallback for legacy formats.
+  const exactLookup = await supabase.from('customers').select('id,phone,name')
+    .eq('shop_id', shopId).eq('phone', phone.trim()).order('id').limit(1).maybeSingle();
+  if (exactLookup.error) return { ok: false, error: exactLookup.error.message };
+  let match: { id: string; phone: string | null; name: string } | undefined = exactLookup.data || undefined;
+  if (!match) {
+    const rows: Array<{ id: string; phone: string | null; name: string }> = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase.from('customers').select('id,phone,name')
+        .eq('shop_id', shopId).order('id').range(offset, offset + 499);
+      if (error) return { ok: false, error: error.message };
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < 500) break;
+    }
+    match = rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
   }
-  const exact = rows.find(row => String(row.phone || '').trim() === phone.trim());
-  const match = exact || rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
   if (!match) return { ok: true };
 
   const { data: customer, error: detailError } = await supabase.from('customers')
