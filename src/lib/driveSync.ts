@@ -582,8 +582,8 @@ async function getGoogleDeploymentError(shopId: string, shopProof: string): Prom
   }
 }
 
-export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{
-  const result = await withCloudActivity('Google Drive backup', async () => { ok: boolean; error?: string }> {
+export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
+  const result = await withCloudActivity('Google Drive backup', async () => {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   let shopId = '';
@@ -715,8 +715,8 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   return result;
 }
 
-export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{
-  const result = await withCloudActivity('Google Drive metadata', async () => { ok: boolean; error?: string }> {
+export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ ok: boolean; error?: string }> {
+  const result = await withCloudActivity('Google Drive metadata', async () => {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google Drive requires an online connection.' };
 
