@@ -686,7 +686,7 @@ test('cloud activity indicator tracks overlapping uploads and clears when each c
   finishSale();
   assert.equal(getCloudActivityState().active, 1);
   finishCatalog();
-  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null });
+  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null, lastError: 'network failure' });
 });
 
 test('cloud activity wrapper clears the indicator after success and failure', async () => {
