@@ -22,7 +22,7 @@ import { applyInventoryLedger, type InventoryLedgerOperation } from './inventory
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
-import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { supabase, supabaseConfigured } from './supabase';
 import { buildSaleCreateQueueInput } from './saleQueuePayload';
 import { commitLocalSaleDurably } from './offlineSaleCommit';
 import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError, resolveLocalSaleFallbackId } from './cloudTransport';
@@ -2115,22 +2115,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
     // remains a single clear gate and never triggers an automatic re-login.
-    let restored: Awaited<ReturnType<typeof restoreCloudSession>>;
     let shop: Awaited<ReturnType<typeof ensureCloudShop>>;
     try {
-      restored = await restoreCloudSession();
+      // ensureCloudShop owns the durable session restore and its one retry.
+      // Do not repeat those secure-storage/session operations in the sale path.
       shop = await ensureCloudShop('Nexfix Shop');
-      if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
-        await restoreCloudSession();
-        shop = await ensureCloudShop('Nexfix Shop');
-      }
     } catch (error) {
       if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
       throw error;
     }
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline' ||
-          isTransientCloudTransportError(shop.error) || isTransientCloudTransportError(restored.error)) {
+          isTransientCloudTransportError(shop.error)) {
         return completeLocallyAndQueue();
       }
       if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
@@ -2392,7 +2388,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
       cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: saleBranchId, resolvedBranchId: saleBranchId,
+      deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
