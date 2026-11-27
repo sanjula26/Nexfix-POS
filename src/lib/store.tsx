@@ -2386,7 +2386,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const detail = error instanceof Error ? error.message : String(error || 'unknown RPC error');
       throw new Error(`Cloud sale failed: ${detail}`);
     }
-    if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
+    if (!cloud.ok) {
+      if (cloud.rpcAttempted === false && isTransientCloudTransportError(cloud.error)) {
+        // The atomic sale RPC was definitely not sent. Reuse its already
+        // persisted idempotency Sale ID for the local bill and queued replay.
+        return completeLocallyAndQueue(saleId);
+      }
+      throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
+    }
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
