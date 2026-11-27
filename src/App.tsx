@@ -8,7 +8,7 @@ import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { syncNormalizedCatalog } from './lib/cloudSync';
 import { refreshDesktopUpdaterCredentials } from './lib/cloudAuth';
-import { withCloudActivity } from './lib/cloudActivity';
+import { reportCloudActivityFailure, withCloudActivity } from './lib/cloudActivity';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -168,6 +168,7 @@ function CloudSyncStateBridge() {
       try {
         const result = await withCloudActivity('Catalog data', () => syncNormalizedCatalog(stateRef.current));
         succeeded = result.ok;
+        if (!result.ok) reportCloudActivityFailure(result.error || 'Catalog sync failed');
       } catch {
         // A rejected network request is handled by the same bounded retry path.
       } finally {
