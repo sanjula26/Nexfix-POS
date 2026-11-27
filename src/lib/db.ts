@@ -21,6 +21,11 @@ export type QueueOp =
   | { id: string; ts: string; type: 'branch_stock_adjustment'; payload: string }
   | { id: string; ts: string; type: 'inventory_units_add'; payload: string }
   | { id: string; ts: string; type: 'inventory_unit_delete'; payload: string };
+export interface CloudSyncMeta {
+  lastSuccessAt: string;
+  lastSuccessOperation: string;
+}
+
 export interface BackupMeta {
   lastAutoBackupAt?: string;
   lastManualBackupAt?: string;
@@ -87,4 +92,42 @@ export async function idbClearQueue():Promise<void>{const ops=await idbListQueue
 const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
 export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
 export async function idbSetMeta(patch:Partial<BackupMeta>):Promise<BackupMeta>{const current=await idbGetMeta();const next={...current,...patch};try{const db=await getDB();const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:'backup',value:next});await idbTransactionComplete(tx,'Backup metadata write failed');}catch{/* metadata is best-effort */}return next;}
+
+function cloudSyncMetaKey(shopId: string, userId: string): string | null {
+  const shop = shopId.trim();
+  const user = userId.trim();
+  if (!shop || !user || shop.length > 100 || user.length > 100) return null;
+  return `cloud_sync:${encodeURIComponent(shop)}:${encodeURIComponent(user)}`;
+}
+
+export async function idbGetCloudSyncMeta(shopId: string, userId: string): Promise<CloudSyncMeta | null> {
+  const key = cloudSyncMetaKey(shopId, userId);
+  if (!key) return null;
+  try {
+    const db = await getDB();
+    const row = await idbReq<{ key: string; value?: unknown } | undefined>(db.transaction(STORE_META, 'readonly').objectStore(STORE_META).get(key));
+    if (!row?.value || typeof row.value !== 'object') return null;
+    const value = row.value as Partial<CloudSyncMeta>;
+    if (typeof value.lastSuccessAt !== 'string' || !Number.isFinite(Date.parse(value.lastSuccessAt))) return null;
+    if (typeof value.lastSuccessOperation !== 'string' || !value.lastSuccessOperation.trim() || value.lastSuccessOperation.length > 80) return null;
+    return { lastSuccessAt: value.lastSuccessAt, lastSuccessOperation: value.lastSuccessOperation };
+  } catch {
+    return null;
+  }
+}
+
+export async function idbSetCloudSyncMeta(shopId: string, userId: string, meta: CloudSyncMeta): Promise<boolean> {
+  const key = cloudSyncMetaKey(shopId, userId);
+  if (!key || !meta || typeof meta.lastSuccessAt !== 'string' || !Number.isFinite(Date.parse(meta.lastSuccessAt)) ||
+      typeof meta.lastSuccessOperation !== 'string' || !meta.lastSuccessOperation.trim() || meta.lastSuccessOperation.length > 80) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).put({ key, value: meta, updatedAt: new Date().toISOString() });
+    await idbTransactionComplete(tx, 'Cloud sync metadata write failed');
+    return true;
+  } catch {
+    return false;
+  }
+}
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}

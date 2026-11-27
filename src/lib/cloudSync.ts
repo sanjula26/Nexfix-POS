@@ -62,7 +62,11 @@ export function getCloudShopId(): string {
 export function setCloudShopId(id: string): void {
   const normalized = id.trim();
   if (!normalized || normalized.length > MAX_SHOP_ID_LENGTH) return;
+  const changed = getCloudShopId() !== normalized;
   try { storage()?.setItem(SHOP_KEY, normalized); } catch { /* ignore */ }
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('nexfix:cloud-shop-changed'));
+  }
 }
 
 /** Resolve an explicitly provisioned active shop membership for the authenticated user. */

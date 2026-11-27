@@ -1,3 +1,10 @@
+import { idbGetCloudSyncMeta, idbSetCloudSyncMeta } from './db';
+
+export interface CloudActivityScope {
+  shopId: string;
+  userId: string;
+}
+
 export interface CloudActivityState {
   active: number;
   operations: string[];
@@ -13,8 +20,18 @@ let nextId = 0;
 let lastError: string | null = null;
 let lastSuccessAt: number | null = null;
 let lastSuccessOperation: string | null = null;
+let activeScope: CloudActivityScope | null = null;
+let activeScopeKey: string | null = null;
+let scopeGeneration = 0;
 const activeOperations = new Map<number, string>();
 const listeners = new Set<(next: CloudActivityState) => void>();
+
+function scopeKey(scope: CloudActivityScope | null): string | null {
+  if (!scope) return null;
+  const shopId = scope.shopId.trim();
+  const userId = scope.userId.trim();
+  return shopId && userId ? `${encodeURIComponent(shopId)}:${encodeURIComponent(userId)}` : null;
+}
 
 function publish(): void {
   state = {
@@ -26,6 +43,30 @@ function publish(): void {
     lastSuccessOperation,
   };
   listeners.forEach(listener => listener(state));
+}
+
+/** Select the current cloud identity. Local POS cashier/admin IDs are deliberately not used. */
+export async function setCloudActivityScope(scope: CloudActivityScope | null): Promise<void> {
+  const nextScope = scope && scope.shopId.trim() && scope.userId.trim()
+    ? { shopId: scope.shopId.trim(), userId: scope.userId.trim() }
+    : null;
+  const nextKey = scopeKey(nextScope);
+  if (nextKey === activeScopeKey) return;
+
+  activeScope = nextScope;
+  activeScopeKey = nextKey;
+  const generation = ++scopeGeneration;
+  lastError = null;
+  lastSuccessAt = null;
+  lastSuccessOperation = null;
+  publish();
+
+  if (!nextScope) return;
+  const saved = await idbGetCloudSyncMeta(nextScope.shopId, nextScope.userId);
+  if (generation !== scopeGeneration || activeScopeKey !== nextKey || !saved) return;
+  lastSuccessAt = Date.parse(saved.lastSuccessAt);
+  lastSuccessOperation = saved.lastSuccessOperation;
+  publish();
 }
 
 export function getCloudActivityState(): CloudActivityState {
@@ -64,20 +105,35 @@ export async function withCloudActivity<T>(
   action: () => Promise<T>,
   didTransfer: (result: T) => boolean = () => true,
 ): Promise<T> {
+  const requestScope = activeScope;
+  const requestScopeKey = activeScopeKey;
   const end = beginCloudActivity(operation);
   try {
     const result = await action();
     if (didTransfer(result)) {
-      lastSuccessAt = Date.now();
-      lastSuccessOperation = operation;
-      publish();
-    } else if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' && result.error) {
+      const completedAt = new Date().toISOString();
+      if (requestScope) {
+        // Best effort only: never await IndexedDB metadata while a bill/GRN action is completing.
+        void idbSetCloudSyncMeta(requestScope.shopId, requestScope.userId, {
+          lastSuccessAt: completedAt,
+          lastSuccessOperation: operation.slice(0, 80),
+        }).catch(() => false);
+      }
+      if (requestScopeKey === activeScopeKey) {
+        lastSuccessAt = Date.parse(completedAt);
+        lastSuccessOperation = operation;
+        lastError = null;
+        publish();
+      }
+    } else if (requestScopeKey === activeScopeKey && result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' && result.error) {
       lastError = result.error;
       publish();
     }
     return result;
   } catch (error) {
-    reportCloudActivityFailure(error);
+    // An in-flight request from a previous account/shop must not overwrite the
+    // current identity's issue panel after the operator switches cloud scope.
+    if (requestScopeKey === activeScopeKey) reportCloudActivityFailure(error);
     throw error;
   } finally {
     end();

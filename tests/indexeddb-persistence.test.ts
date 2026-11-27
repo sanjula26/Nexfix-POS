@@ -2,11 +2,14 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
 import type { POSState } from '../src/lib/types.ts';
+import { getCloudActivityState, setCloudActivityScope, withCloudActivity } from '../src/lib/cloudActivity.ts';
 import {
   idbAcknowledgeQueue,
   idbClearQueue,
   idbClearRestoreCheckpoint,
   idbEnqueue,
+  idbGetCloudSyncMeta,
+  idbSetCloudSyncMeta,
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
@@ -23,6 +26,59 @@ before(async () => {
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+});
+
+test('cloud sync metadata persists independently per shop and cloud user', async () => {
+  const first = {
+    lastSuccessAt: '2026-11-27T12:00:00.000Z',
+    lastSuccessOperation: 'Cloud sale',
+  };
+  assert.equal(await idbSetCloudSyncMeta('shop-a', 'cloud-user-a', first), true);
+  assert.deepEqual(await idbGetCloudSyncMeta('shop-a', 'cloud-user-a'), first);
+  assert.equal(await idbGetCloudSyncMeta('shop-b', 'cloud-user-a'), null);
+  assert.equal(await idbGetCloudSyncMeta('shop-a', 'cloud-user-b'), null);
+  assert.equal(await idbSetCloudSyncMeta('shop-a', 'cloud-user-a', { ...first, lastSuccessAt: 'invalid' }), false);
+  assert.equal((await idbGetCloudSyncMeta('shop-a', 'cloud-user-a'))?.lastSuccessAt, first.lastSuccessAt);
+});
+
+test('cloud activity restores only the active cloud user/shop and persists successful transfers', async () => {
+  try {
+    await setCloudActivityScope({ shopId: 'shop-scope-a', userId: 'cloud-user-a' });
+    assert.equal(getCloudActivityState().lastSuccessAt, null);
+    const result = await withCloudActivity('GRN receive', async () => ({ ok: true }), value => value.ok);
+    assert.deepEqual(result, { ok: true });
+    const persisted = await idbGetCloudSyncMeta('shop-scope-a', 'cloud-user-a');
+    assert.ok(persisted);
+    assert.equal(persisted?.lastSuccessOperation, 'GRN receive');
+    assert.ok(Number.isFinite(Date.parse(persisted!.lastSuccessAt)));
+
+    await setCloudActivityScope({ shopId: 'shop-scope-b', userId: 'cloud-user-a' });
+    assert.equal(getCloudActivityState().lastSuccessAt, null);
+    await setCloudActivityScope({ shopId: 'shop-scope-a', userId: 'cloud-user-b' });
+    assert.equal(getCloudActivityState().lastSuccessAt, null);
+    await setCloudActivityScope({ shopId: 'shop-scope-a', userId: 'cloud-user-a' });
+    assert.equal(getCloudActivityState().lastSuccessOperation, 'GRN receive');
+    assert.ok(getCloudActivityState().lastSuccessAt);
+  } finally {
+    await setCloudActivityScope(null);
+  }
+});
+
+test('cloud sync metadata write failure does not block a successful business operation', async () => {
+  await setCloudActivityScope({ shopId: 'shop-meta-failure', userId: 'cloud-user-a' });
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = Array.isArray(args[0]) ? args[0] : [args[0]];
+    if (stores.includes('meta')) throw new DOMException('Injected metadata write failure', 'InvalidStateError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+  try {
+    assert.equal(await withCloudActivity('Cloud sale', async () => 'sale-committed'), 'sale-committed');
+    await new Promise(resolve => setTimeout(resolve, 0));
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+    await setCloudActivityScope(null);
+  }
 });
 
 test('IndexedDB queue commits operations and returns them in timestamp order', async () => {

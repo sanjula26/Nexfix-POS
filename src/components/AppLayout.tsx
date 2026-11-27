@@ -15,8 +15,10 @@ import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/
 import { hasRecoveryKey } from '../lib/backupCrypto';
 import { Avatar, Modal } from './ui';
 import CommandPalette from './CommandPalette';
-import { getCloudActivityState, subscribeCloudActivity } from '../lib/cloudActivity';
+import { getCloudActivityState, subscribeCloudActivity, setCloudActivityScope } from '../lib/cloudActivity';
 import { getSyncManagerState, subscribeSyncManager, runSyncNow } from '../lib/syncManager';
+import { getCloudShopId } from '../lib/cloudSync';
+import { supabase } from '../lib/supabase';
 
 interface NavDef {
   to: string; label: string; icon: React.ElementType; perm?: string; group: string; adminOnly?: boolean; badge?: boolean;
@@ -501,7 +503,30 @@ export default function AppLayout() {
   useEffect(() => {
     const stopActivity = subscribeCloudActivity(setCloudActivity);
     const stopSyncManager = subscribeSyncManager(setSyncManagerState);
-    return () => { stopActivity(); stopSyncManager(); };
+    let active = true;
+    const applyCloudUser = (userId: string | null) => {
+      const shopId = getCloudShopId();
+      void setCloudActivityScope(shopId && userId ? { shopId, userId } : null);
+    };
+    const refreshScope = () => {
+      if (!supabase) { applyCloudUser(null); return; }
+      void supabase.auth.getSession().then(({ data, error }) => {
+        if (active) applyCloudUser(error ? null : data.session?.user.id || null);
+      }).catch(() => { if (active) applyCloudUser(null); });
+    };
+    const authListener = supabase?.auth.onAuthStateChange((_event, session) => {
+      applyCloudUser(session?.user.id || null);
+    });
+    window.addEventListener('nexfix:cloud-shop-changed', refreshScope);
+    refreshScope();
+    return () => {
+      active = false;
+      window.removeEventListener('nexfix:cloud-shop-changed', refreshScope);
+      authListener?.data.subscription.unsubscribe();
+      stopActivity();
+      stopSyncManager();
+      void setCloudActivityScope(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -714,7 +739,7 @@ export default function AppLayout() {
                     </div>
                   )}
                   <div className="flex items-start justify-between gap-4">
-                    <dt className="text-sub">Last successful transfer (this session)</dt>
+                    <dt className="text-sub">Last successful transfer</dt>
                     <dd className="max-w-[65%] text-right font-semibold">{cloudLastSuccessAt ? <>{cloudActivity.lastSuccessOperation || 'Cloud sync'} · {cloudLastSuccessAt}</> : 'Not recorded in this session'}</dd>
                   </div>
                   {cloudLastIssue && (
