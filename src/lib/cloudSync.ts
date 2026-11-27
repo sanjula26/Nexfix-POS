@@ -459,18 +459,19 @@ export async function ensureCloudCustomerForSale(
 
 export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   const cache = normalizedCatalogSyncCache;
-  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  const client = supabase;
+  if (!supabaseConfigured || !client) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   const uid = sessionData.session?.user.id;
   if (!uid) return { ok: false, error: 'Cloud session is not available' };
-  const { data: membership, error: membershipError } = await supabase.from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
+  const { data: membership, error: membershipError } = await client.from('shop_memberships').select('role').eq('shop_id', shopId).eq('user_id', uid).eq('active', true).maybeSingle();
   if (membershipError) return { ok: false, error: membershipError.message };
   if (!membership || !['admin', 'manager'].includes(membership.role)) return { ok: false, error: 'Catalog sync requires admin or manager access' };
 
-  const { data: activeBranches, error: branchLookupError } = await supabase.from('branches')
+  const { data: activeBranches, error: branchLookupError } = await client.from('branches')
     .select('id,is_default').eq('shop_id', shopId).eq('active', true);
   if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
   const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
@@ -488,16 +489,16 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   }));
   if (supplierRows.length) {
     const ids = supplierRows.map(s => s.id);
-    const { data: existing, error: existingError } = await supabase.from('suppliers').select('id').eq('shop_id', shopId).in('id', ids);
+    const { data: existing, error: existingError } = await client.from('suppliers').select('id').eq('shop_id', shopId).in('id', ids);
     if (existingError) return { ok: false, error: `Suppliers lookup: ${existingError.message}` };
     const existingIds = new Set((existing || []).map(row => row.id));
     const missing = supplierRows.filter(row => !existingIds.has(row.id));
     if (missing.length) {
-      const { error } = await supabase.from('suppliers').insert(missing);
+      const { error } = await client.from('suppliers').insert(missing);
       if (error) return { ok: false, error: `Suppliers: ${error.message}` };
     }
     for (const row of supplierRows.filter(item => existingIds.has(item.id))) {
-      const { error } = await supabase.from('suppliers').update({
+      const { error } = await client.from('suppliers').update({
         name: row.name, contact_person: row.contact_person, phone: row.phone,
         email: row.email, address: row.address,
       }).eq('id', row.id).eq('shop_id', shopId);
@@ -517,14 +518,14 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   }));
   if (productRows.length) {
     const ids = productRows.map(p => p.id);
-    const { data: existing, error: existingError } = await supabase.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
+    const { data: existing, error: existingError } = await client.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
     if (existingError) return { ok: false, error: `Products lookup: ${existingError.message}` };
     let existingRows = (existing || []) as Array<{ id: string; stock?: number }>;
     let existingIds = new Set(existingRows.map(row => row.id));
     let missing = productRows.filter(row => !existingIds.has(row.id));
     let newlyInsertedRows: typeof productRows = [];
     if (missing.length) {
-      const { error } = await supabase.from('products').insert(missing);
+      const { error } = await client.from('products').insert(missing);
       if (!error) {
         newlyInsertedRows = missing;
       } else {
@@ -532,13 +533,13 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
         if (!uniqueConflict) return { ok: false, error: `Products: ${error.message}` };
         // A background catalog sync can insert the same product after this
         // lookup. Refresh by ID, then retry only rows that truly remain absent.
-        const refreshed = await supabase.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
+        const refreshed = await client.from('products').select('id,stock').eq('shop_id', shopId).in('id', ids);
         if (refreshed.error) return { ok: false, error: `Products conflict recovery lookup: ${refreshed.error.message}` };
         existingRows = (refreshed.data || []) as Array<{ id: string; stock?: number }>;
         existingIds = new Set(existingRows.map(row => row.id));
         missing = productRows.filter(row => !existingIds.has(row.id));
         for (const row of missing) {
-          const retry = await supabase.from('products').insert(row);
+          const retry = await client.from('products').insert(row);
           if (!retry.error) {
             newlyInsertedRows.push(row);
             existingIds.add(row.id);
@@ -546,7 +547,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
           }
           const retryUniqueConflict = retry.error.code === '23505' || /duplicate key|unique constraint/i.test(retry.error.message);
           if (retryUniqueConflict) {
-            const sameShop = await supabase.from('products').select('id,shop_id,stock').eq('id', row.id).maybeSingle();
+            const sameShop = await client.from('products').select('id,shop_id,stock').eq('id', row.id).maybeSingle();
             if (sameShop.error) return { ok: false, error: `Products conflict recovery for ${row.name}: ${sameShop.error.message}` };
             if (sameShop.data?.id && sameShop.data.shop_id === shopId) {
               existingIds.add(row.id);
@@ -560,10 +561,10 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       }
       if (newlyInsertedRows.length && (activeBranches || []).length > 1 && defaultBranch && selectedBranch.branchId !== defaultBranch.id) {
         const insertedIds = newlyInsertedRows.map(row => row.id);
-        const { error: clearDefaultError } = await supabase.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
+        const { error: clearDefaultError } = await client.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
           .eq('shop_id', shopId).eq('branch_id', defaultBranch.id).in('product_id', insertedIds);
         if (clearDefaultError) return { ok: false, error: `Initial branch stock allocation: ${clearDefaultError.message}` };
-        const { error: allocateError } = await supabase.from('branch_stock').upsert(
+        const { error: allocateError } = await client.from('branch_stock').upsert(
           newlyInsertedRows.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.id, qty: row.stock, updated_at: new Date().toISOString() })),
           { onConflict: 'branch_id,product_id' },
         );
@@ -576,7 +577,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     const existingProductRows = productRows.filter(row => existingIds.has(row.id));
     if (existingProductRows.length) {
       for (const row of existingProductRows) {
-        const { error } = await supabase.from('products').update({
+        const { error } = await client.from('products').update({
           name: row.name, sku: row.sku, barcode: row.barcode, cost: row.cost, price: row.price,
           reorder_level: row.reorder_level, track_imei: row.track_imei, track_serial: row.track_serial,
           track_expiry: row.track_expiry, warranty_months: row.warranty_months, is_kit: row.is_kit,
@@ -600,17 +601,17 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
       const bootstrapRows = productRows
         .filter(row => existingIds.has(row.id) && Number(row.stock) > 0)
         .map(row => ({ product_id: row.id, stock: Number(row.stock) || 0 }));
-      const { error: bootstrapError } = await supabase.rpc('bootstrap_initial_catalog_stock', {
+      const { error: bootstrapError } = await client.rpc('bootstrap_initial_catalog_stock', {
         p_shop_id: shopId,
         p_rows: bootstrapRows,
       });
       if (bootstrapError) return { ok: false, error: `Initial cloud stock bootstrap: ${bootstrapError.message}` };
       if ((activeBranches || []).length > 1) {
         const bootstrapIds = bootstrapRows.map(row => row.product_id);
-        const { error: clearDefaultError } = await supabase.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
+        const { error: clearDefaultError } = await client.from('branch_stock').update({ qty: 0, updated_at: new Date().toISOString() })
           .eq('shop_id', shopId).eq('branch_id', defaultBranch?.id || '').in('product_id', bootstrapIds);
         if (clearDefaultError) return { ok: false, error: `Bootstrap branch allocation: ${clearDefaultError.message}` };
-        const { error: allocateError } = await supabase.from('branch_stock').upsert(
+        const { error: allocateError } = await client.from('branch_stock').upsert(
           bootstrapRows.map(row => ({ shop_id: shopId, branch_id: selectedBranch.branchId, product_id: row.product_id, qty: row.stock, updated_at: new Date().toISOString() })),
           { onConflict: 'branch_id,product_id' },
         );
@@ -623,13 +624,13 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   // for the shop's kit products so removals are reflected, not just additions.
   const kitProductIds = productRows.filter(p => p.is_kit).map(p => p.id);
   if (kitProductIds.length) {
-    const { error: deleteKitError } = await supabase.from('kit_items').delete().in('kit_product_id', kitProductIds);
+    const { error: deleteKitError } = await client.from('kit_items').delete().in('kit_product_id', kitProductIds);
     if (deleteKitError) return { ok: false, error: `Kit BOM delete: ${deleteKitError.message}` };
     const kitRows = (state.kitItems || [])
       .filter(k => kitProductIds.includes(k.kitProductId))
       .map(k => ({ kit_product_id: k.kitProductId, component_product_id: k.componentProductId, qty: k.qty }));
     if (kitRows.length) {
-      const { error: insertKitError } = await supabase.from('kit_items').insert(kitRows);
+      const { error: insertKitError } = await client.from('kit_items').insert(kitRows);
       if (insertKitError) return { ok: false, error: `Kit BOM insert: ${insertKitError.message}` };
     }
   }
@@ -657,7 +658,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     // not silently miss records beyond PostgREST's default row limit.
     const cloudCustomers: Array<{ id: string; phone: string | null }> = [];
     for (let offset = 0; ; offset += 500) {
-      const { data, error } = await supabase.from('customers')
+      const { data, error } = await client.from('customers')
         .select('id,phone').eq('shop_id', shopId).order('id').range(offset, offset + 499);
       if (error) return { ok: false, error: `Customers lookup: ${error.message}` };
       const page = data || [];
@@ -720,19 +721,19 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
         address: row.address, credit_limit: row.credit_limit, updated_at: row.updated_at,
         ...(phoneCanUpdate ? { phone: row.phone } : {}),
       };
-      const { error } = await supabase.from('customers').update(updates).eq('id', row.id).eq('shop_id', shopId);
+      const { error } = await client.from('customers').update(updates).eq('id', row.id).eq('shop_id', shopId);
       if (error) return { ok: false, error: `Customers update: ${error.message}` };
     }
 
     if (missingRows.length) {
-      const { error } = await supabase.from('customers').insert(missingRows);
+      const { error } = await client.from('customers').insert(missingRows);
       if (error) {
         // A concurrent customer create can race the lookup. Re-read and recover
         // any phone-unique conflict; only fail if the row cannot be reconciled.
         const uniqueConflict = error.code === '23505' || /duplicate key|unique constraint/i.test(error.message);
         if (!uniqueConflict) return { ok: false, error: `Customers: ${error.message}` };
         for (const row of missingRows) {
-          const current = await supabase.from('customers').select('id,phone').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
+          const current = await client.from('customers').select('id,phone').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
           if (current.error) return { ok: false, error: `Customers conflict recovery lookup: ${current.error.message}` };
           if (current.data?.id) { customerIdMap[row.id] = current.data.id; continue; }
           // The initial catalog lookup may be stale: another POS can create a
@@ -744,7 +745,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
             if (!byPhone.ok) return { ok: false, error: `Customers conflict recovery phone lookup: ${byPhone.error}` };
             if (byPhone.customer) { customerIdMap[row.id] = byPhone.customer.id; continue; }
           }
-          const retry = await supabase.from('customers').insert(row);
+          const retry = await client.from('customers').insert(row);
           if (retry.error) {
             if (retry.error.code === '23505' || /duplicate key|unique constraint/i.test(retry.error.message)) {
               if (row.phone) {
@@ -752,7 +753,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
                 if (!latest.ok) return { ok: false, error: `Customers retry conflict lookup: ${latest.error}` };
                 if (latest.customer) { customerIdMap[row.id] = latest.customer.id; continue; }
               }
-              const latestById = await supabase.from('customers').select('id').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
+              const latestById = await client.from('customers').select('id').eq('shop_id', shopId).eq('id', row.id).maybeSingle();
               if (latestById.error) return { ok: false, error: `Customers retry ID lookup: ${latestById.error.message}` };
               if (latestById.data?.id) { customerIdMap[row.id] = latestById.data.id; continue; }
             }
@@ -778,12 +779,12 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (unitRows.some(row => !row.branch_id)) return { ok: false, error: 'An in-stock IMEI/serial unit has no valid branch. Ask the shop admin to assign this POS to an active branch before cloud sync.' };
   if (unitRows.length) {
     const ids = unitRows.map(u => u.id);
-    const { data: existing, error: existingError } = await supabase.from('inventory_units').select('id').eq('shop_id', shopId).in('id', ids);
+    const { data: existing, error: existingError } = await client.from('inventory_units').select('id').eq('shop_id', shopId).in('id', ids);
     if (existingError) return { ok: false, error: `Inventory units lookup: ${existingError.message}` };
     const existingIds = new Set((existing || []).map(row => row.id));
     const missing = unitRows.filter(row => !existingIds.has(row.id));
     if (missing.length) {
-      const { error } = await supabase.from('inventory_units').insert(missing);
+      const { error } = await client.from('inventory_units').insert(missing);
       if (error) return { ok: false, error: `Inventory units: ${error.message}` };
     }
   }
