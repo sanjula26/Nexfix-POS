@@ -173,12 +173,11 @@ function CloudSyncStateBridge() {
           getPendingSyncOperations(),
         ]);
         if (cancelled || attempt !== generation) return;
-        const hasPendingNormalizedSale = recoveryIds.length > 0 ||
-          operations.some(operation => operation.type === 'sale_create');
-        if (hasPendingNormalizedSale) {
-          // A locally committed/offline bill must reach the atomic normalized
-          // sale RPC first. Never let the legacy full-state snapshot upload it
-          // in parallel and bypass branch-stock/idempotency enforcement.
+        const hasPendingQueueWork = recoveryIds.length > 0 || operations.length > 0;
+        if (hasPendingQueueWork) {
+          // A durable offline transaction (or snapshot write) must be processed
+          // by the ordered sync queue first. Never race a legacy full-state
+          // snapshot against a normalized sale/GRN/return operation.
           cancelScheduledCloudSync();
           return;
         }
