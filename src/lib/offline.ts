@@ -54,30 +54,9 @@ async function queueWriteWork(note?:string):Promise<void>{
   );
   for(const sale of state.sales){
     if(existingSaleIds.has(sale.id)) continue;
-    const payload={
-      saleId:sale.id,
-      input:{
-        branchId:sale.branchId || state.settings.branchId || 'local-main',
-        customerId:sale.customerId,
-        shipping:sale.shipping,
-        discount:sale.discount,
-        tradeInValue:sale.tradeIn?.value || 0,
-        tradeIn: sale.tradeIn?.addToInventory && sale.tradeIn.productId ? {
-          unitId: sale.tradeIn.unitId,
-          productId: sale.tradeIn.productId,
-          value: sale.tradeIn.value,
-          imei: sale.tradeIn.imei,
-          serial: sale.tradeIn.serial,
-        } : undefined,
-        taxPct:Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))) * 100 : 0,
-        pointsRedeemed:sale.pointsRedeemed,
-        note:sale.note,
-        salesmanId:sale.cashierId,
-        lines:sale.items.map(item=>({productId:item.productId,qty:item.qty,discount:item.discount,price:item.price,unitIds:item.unitIds})),
-        payment:sale.payment,
-        amountPaid:sale.amountPaid,
-        payments:sale.payments,
-      },
+    const payload = {
+      saleId: sale.id,
+      input: buildSaleCreateQueueInput(sale, state.settings.branchId),
     };
     const ok=await idbEnqueueChecked({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
     if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
