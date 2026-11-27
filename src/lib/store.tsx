@@ -1065,7 +1065,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             return false;
           }
           const cloudResult = await withCloudActivity('Stock adjustment', () => adjustBranchStockAtomic({
-            shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id,
+            shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id,
             productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId, refreshCache: false,
           }), result => result.ok);
           if (!cloudResult.ok) {
@@ -1221,7 +1221,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
         return false;
       }
-      const cloudResult = await withCloudActivity('Stock adjustment', () => adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false }), result => result.ok);
+      const cloudResult = await withCloudActivity('Stock adjustment', () => adjustBranchStockAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false }), result => result.ok);
       if (!cloudResult.ok) {
         if (isStaleBranchStockConflict(cloudResult.error)) {
           // Remove the stale cached quantity first. A single authoritative row
@@ -2314,13 +2314,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
 
       const cloud = await withCloudActivity('Sale refund', () => processSaleReturnAtomic({
-        shopId: shop.shopId,
+        shopId: shop.shopId!,
         returnId,
         saleId: sale.id,
         reason: 'Full bill refund',
         mode: 'refund',
         paymentMethod: 'cash',
-        lines: resolve.lines,
+        lines: resolve.lines!,
       }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
@@ -2630,7 +2630,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
         const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
-          shopId: shop.shopId,
+          shopId: shop.shopId!,
           branchId: receiveBranchId,
           deviceId: getMachineIdentity().id,
           purchaseId: po.id,
@@ -2855,7 +2855,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return null;
         }
         const cloudResult = await withCloudActivity('Supplier return', () => processPurchaseReturnAtomic({
-          shopId: shop.shopId,
+          shopId: shop.shopId!,
           returnId,
           purchaseId: purchase.id,
           deviceId: getMachineIdentity().id,
@@ -3551,7 +3551,7 @@ const deletePurchase = useCallback((id: string) => {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not saved: ' + (catalog.error || 'Catalog sync failed.'));
         return false;
       }
-      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: [normalized] }), result => result.ok);
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: [normalized] }), result => result.ok);
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not saved: ' + (cloudResult.error || 'Cloud transaction failed.'));
         return false;
@@ -3654,7 +3654,7 @@ const deletePurchase = useCallback((id: string) => {
       if (!shop.ok || !shop.shopId) return { ok: false, added: 0, errors: [...errors, shop.error || 'Cloud shop is unavailable.'] };
       const catalog = await syncNormalizedCatalog({ ...stateRef.current, products: currentProducts, units: [] }, shop.shopId);
       if (!catalog.ok) return { ok: false, added: 0, errors: [...errors, catalog.error || 'Catalog sync failed.'] };
-      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: toSync }), result => result.ok);
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: toSync }), result => result.ok);
       if (!cloudResult.ok) return { ok: false, added: 0, errors: [...errors, cloudResult.error || 'Cloud unit transaction failed.'] };
       productStocks = cloudResult.productStocks;
     } else {
@@ -3730,7 +3730,7 @@ const deletePurchase = useCallback((id: string) => {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (catalog.error || 'Catalog sync failed.'));
         return false;
       }
-      const cloudResult = await withCloudActivity('IMEI / Serial units', () => deleteInventoryUnitAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, unitId: unit.id }), result => result.ok);
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => deleteInventoryUnitAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, unitId: unit.id }), result => result.ok);
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (cloudResult.error || 'Cloud transaction failed.'));
         return false;
@@ -3862,7 +3862,7 @@ const deletePurchase = useCallback((id: string) => {
             return;
           }
         } else {
-          const cloud = await withCloudActivity('Repair delivery', () => processRepairDeliveryAtomic({ shopId: shop.shopId, repairId: id, deviceId: machine.id, repair: next }), result => result.ok);
+          const cloud = await withCloudActivity('Repair delivery', () => processRepairDeliveryAtomic({ shopId: shop.shopId!, repairId: id, deviceId: machine.id, repair: next }), result => result.ok);
           if (!cloud.ok) {
             pushAudit('DENIED', 'Repair', 'Cloud repair delivery was not committed: ' + (cloud.error || 'unknown error'));
             return;
