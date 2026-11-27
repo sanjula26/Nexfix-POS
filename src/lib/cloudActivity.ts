@@ -23,6 +23,7 @@ let lastSuccessOperation: string | null = null;
 let activeScope: CloudActivityScope | null = null;
 let activeScopeKey: string | null = null;
 let scopeGeneration = 0;
+let scopeSuccessRevision = 0;
 const activeOperations = new Map<number, string>();
 const listeners = new Set<(next: CloudActivityState) => void>();
 
@@ -56,7 +57,7 @@ export async function setCloudActivityScope(scope: CloudActivityScope | null): P
   activeScope = nextScope;
   activeScopeKey = nextKey;
   const generation = ++scopeGeneration;
-  let scopeSuccessRevision = 0;
+  scopeSuccessRevision = 0;
   lastError = null;
   lastSuccessAt = null;
   lastSuccessOperation = null;
