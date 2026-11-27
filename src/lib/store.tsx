@@ -2026,7 +2026,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
     };
 
-    const completeLocallyAndQueue = async (): Promise<Sale> => {
+    const completeLocallyAndQueue = async (stableSaleId?: string): Promise<Sale> => {
       const shopId = getCloudShopId();
       const localBranchId = getPOSBranchId(shopId, stateRef.current.settings.branchId);
       if (hasMultipleCachedBranches(shopId) && localBranchId === 'local-main') {
@@ -2034,7 +2034,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       assertOpenSessionForBranch(localBranchId);
 
-      const saleId = uid();
+      const saleId = stableSaleId || input._saleId || uid();
       const requiresCloudQueue = supabaseConfigured;
       if (requiresCloudQueue && !(await idbAddPendingSaleQueueId(saleId))) {
         const error = new Error('Local POS storage could not reserve a safe sync record. No bill was completed; check the selected storage folder/IndexedDB before trying again.') as Error & { code?: string };
@@ -2107,33 +2107,41 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
     // remains a single clear gate and never triggers an automatic re-login.
-    const restored = await restoreCloudSession();
-    let shop = await ensureCloudShop('Nexfix Shop');
-    if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
-      await restoreCloudSession();
+    let restored: Awaited<ReturnType<typeof restoreCloudSession>>;
+    let shop: Awaited<ReturnType<typeof ensureCloudShop>>;
+    try {
+      restored = await restoreCloudSession();
       shop = await ensureCloudShop('Nexfix Shop');
+      if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
+        await restoreCloudSession();
+        shop = await ensureCloudShop('Nexfix Shop');
+      }
+    } catch (error) {
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+      throw error;
     }
     if (!shop.ok || !shop.shopId) {
-      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
-        const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
-        if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
-          throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling.');
-        }
-        assertOpenSessionForBranch(localBranchId);
-        const localSale = completeSale(input);
-        if (!localSale) throw new Error('Local sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
-        return localSale;
+      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline' ||
+          isTransientCloudTransportError(shop.error) || isTransientCloudTransportError(restored.error)) {
+        return completeLocallyAndQueue();
       }
       if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
         throw new Error('Cloud sign-in required once in Settings. Open Settings → Cloud account and sign in.');
       }
       throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
-    const branchResolution = await resolveCloudBranchId(
-      shop.shopId,
-      getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
-    );
+    let branchResolution: Awaited<ReturnType<typeof resolveCloudBranchId>>;
+    try {
+      branchResolution = await resolveCloudBranchId(
+        shop.shopId,
+        getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
+      );
+    } catch (error) {
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+      throw error;
+    }
     if (!branchResolution.ok || !branchResolution.branchId) {
+      if (isTransientCloudTransportError(branchResolution.error)) return completeLocallyAndQueue();
       throw new Error(branchResolution.error || 'This POS is not assigned to an active branch.');
     }
     const saleBranchId = branchResolution.branchId;
@@ -2167,15 +2175,33 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     let customerIdMap: Record<string, string> = {};
     if (user.role === 'admin' || user.role === 'manager') {
-      const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
-      if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
+      let catalog: Awaited<ReturnType<typeof syncNormalizedCatalog>>;
+      try {
+        catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
+      } catch (error) {
+        if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+        throw error;
+      }
+      if (!catalog.ok) {
+        if (isTransientCloudTransportError(catalog.error)) return completeLocallyAndQueue();
+        throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
+      }
       customerIdMap = catalog.customerIdMap || {};
     }
     let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
       if (localCustomer) {
-        const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        let resolvedCustomer: Awaited<ReturnType<typeof ensureCloudCustomerForSale>>;
+        try {
+          resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        } catch (error) {
+          if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+          throw error;
+        }
+        if (!resolvedCustomer.ok && isTransientCloudTransportError(resolvedCustomer.error)) {
+          return completeLocallyAndQueue();
+        }
         if (resolvedCustomer.ok && resolvedCustomer.customerId) {
           cloudCustomerId = resolvedCustomer.customerId;
         } else if ((input.creditDue || 0) > 0.009) {
