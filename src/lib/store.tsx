@@ -50,6 +50,12 @@ export function pauseBackgroundPOSStateRefresh(): Promise<() => void> {
 
 interface Session { userId: string; remember: boolean }
 
+interface LocalSaleStateWaiter {
+  resolve: (state: POSState) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 interface NewSaleLine {
   productId: string;
   qty: number;
@@ -475,8 +481,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const waitForLocalSaleState = useCallback((saleId: string): Promise<POSState> => {
+    const current = stateRef.current;
+    if (current.sales.some(sale => sale.id === saleId)) return Promise.resolve(current);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingLocalSaleStateWaitersRef.current.delete(saleId);
+        reject(new Error('The local POS sale update did not reach committed React state. Check Sales History before trying again.'));
+      }, 10000);
+      pendingLocalSaleStateWaitersRef.current.set(saleId, { resolve, reject, timer });
+      const latest = stateRef.current;
+      if (latest.sales.some(sale => sale.id === saleId)) {
+        const waiter = pendingLocalSaleStateWaitersRef.current.get(saleId);
+        if (waiter) clearTimeout(waiter.timer);
+        pendingLocalSaleStateWaitersRef.current.delete(saleId);
+        resolve(latest);
+      }
+    });
+  }, []);
   const previousBackupStateRef = useRef(state);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLocalSaleStateWaitersRef = useRef(new Map<string, LocalSaleStateWaiter>());
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
   const stockAdjustmentLockRef = useRef(false);
@@ -631,6 +656,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
   }, [state, ready]);
+
+  // Resolve explicit offline-sale durability waiters only after React has
+  // committed the state containing the exact sale ID.
+  useEffect(() => {
+    const waiters = pendingLocalSaleStateWaitersRef.current;
+    if (!waiters.size) return;
+    for (const [saleId, waiter] of waiters) {
+      if (!state.sales.some(sale => sale.id === saleId)) continue;
+      clearTimeout(waiter.timer);
+      waiters.delete(saleId);
+      waiter.resolve(state);
+    }
+  }, [state]);
+
+  useEffect(() => () => {
+    for (const waiter of pendingLocalSaleStateWaitersRef.current.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('POS closed before the local sale could be durably confirmed.'));
+    }
+    pendingLocalSaleStateWaitersRef.current.clear();
+  }, []);
 
   // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
   useEffect(() => {
