@@ -35,10 +35,18 @@ test('one-shot QA interruption is durable outside the profile and is consumed ex
     assert.equal(last.phase, 'after_copy_meta');
     assert.equal(typeof last.armedAt, 'string');
     assert.equal(fs.existsSync(path.join(directory, 'storage-qa-interruption-armed.json')), false);
-    assert.equal(controller.checkpoint({ profileId, phase: 'after_copy_meta' }).stop, false);
-    assert.equal(controller.clearLast({ runId, profileId }), true);
-    assert.equal(controller.getLast(), null);
-    assert.equal(controller.clearLast({ runId, profileId }), false);
+
+    const restartedController = createQaInterruptionController({ userDataDirectory: directory });
+    const lastAfterRestart = restartedController.getLast();
+    assert.equal(lastAfterRestart.runId, runId);
+    assert.equal(lastAfterRestart.profileId, profileId);
+    assert.equal(lastAfterRestart.phase, 'after_copy_meta');
+    assert.equal(typeof lastAfterRestart.armedAt, 'string');
+    assert.deepEqual(Object.keys(lastAfterRestart).sort(), ['armedAt', 'format', 'phase', 'profileId', 'runId']);
+    assert.equal(restartedController.checkpoint({ profileId, phase: 'after_copy_meta' }).stop, false);
+    assert.equal(restartedController.clearLast({ runId, profileId }), true);
+    assert.equal(restartedController.getLast(), null);
+    assert.equal(restartedController.clearLast({ runId, profileId }), false);
   });
 });
 
