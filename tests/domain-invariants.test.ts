@@ -6,6 +6,7 @@ import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from 
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { buildNormalizedCatalogSyncFingerprint } from '../src/lib/cloudSyncFingerprint.ts';
+import { beginCloudActivity, getCloudActivityState, withCloudActivity } from '../src/lib/cloudActivity.ts';
 import { createSuccessfulSingleFlightCache } from '../src/lib/successfulSyncCache.ts';
 import {
   allocateCreditPaymentFIFO,
@@ -673,4 +674,27 @@ test('catalog sync cache separates shops, users, branches and changed fingerprin
   ];
   for (const key of keys) await cache.run(key, action);
   assert.equal(calls, keys.length);
+});
+
+
+test('cloud activity indicator tracks overlapping uploads and clears when each completes', () => {
+  const finishSale = beginCloudActivity('Cloud sale');
+  const finishCatalog = beginCloudActivity('Catalog data');
+  assert.equal(getCloudActivityState().active, 2);
+  assert.deepEqual(getCloudActivityState().operations, ['Cloud sale', 'Catalog data']);
+  finishSale();
+  finishSale();
+  assert.equal(getCloudActivityState().active, 1);
+  finishCatalog();
+  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null });
+});
+
+test('cloud activity wrapper clears the indicator after success and failure', async () => {
+  assert.equal(await withCloudActivity('POS data', async () => 42), 42);
+  assert.equal(getCloudActivityState().active, 0);
+  await assert.rejects(
+    withCloudActivity('POS data', async () => { throw new Error('network failure'); }),
+    /network failure/,
+  );
+  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null });
 });
