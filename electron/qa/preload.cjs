@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('nexfixStorageQA', Object.freeze({
   armInterruption: payload => ipcRenderer.invoke('nexfix-storage-qa:arm-interruption', payload),
   phaseCheckpoint: payload => ipcRenderer.invoke('nexfix-storage-qa:phase-checkpoint', payload),
   getLastInterruption: () => ipcRenderer.invoke('nexfix-storage-qa:last-interruption'),
+  clearLastInterruption: payload => ipcRenderer.invoke('nexfix-storage-qa:clear-last-interruption', payload),
 }));
