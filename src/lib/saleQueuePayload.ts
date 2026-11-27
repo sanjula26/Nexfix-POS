@@ -40,7 +40,8 @@ export function buildSaleCreateQueueInput(sale: Sale, fallbackBranchId?: string)
     branchId: sale.branchId || fallbackBranchId || 'local-main',
     customerId: sale.customerId,
     shipping: sale.shipping,
-    discount: sale.discount + tradeInValue,
+    // The replay worker adds tradeInValue to discount exactly once.
+    discount: sale.discount,
     tradeInValue,
     tradeIn: sale.tradeIn?.addToInventory && sale.tradeIn.productId ? {
       unitId: sale.tradeIn.unitId,
