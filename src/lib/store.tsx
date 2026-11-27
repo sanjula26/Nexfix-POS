@@ -2213,9 +2213,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     try {
       cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
     } catch (error) {
-      // Salesman/profile resolution is still pre-RPC. A transport failure here
-      // is safe to route through the durable local outbox using the same Sale ID.
-      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue(saleId);
+      // No atomic sale RPC has started yet. The durable local-sale helper reuses
+      // an explicitly supplied _saleId or allocates one stable ID for its outbox.
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
       throw error;
     }
 
