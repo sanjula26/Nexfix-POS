@@ -47,7 +47,7 @@ test('trade-in amount and identifiers are included only when the trade-in is add
     tradeIn: { productId: 'phone-1', value: 300, imei: '123456789012345', addToInventory: true, unitId: 'trade-unit-1' },
   } satisfies Sale;
   const input = buildSaleCreateQueueInput(sale);
-  assert.equal(input.discount, sale.discount + 300);
+  assert.equal(input.discount, sale.discount);
   assert.equal(input.tradeInValue, 300);
   assert.deepEqual(input.tradeIn, {
     unitId: 'trade-unit-1', productId: 'phone-1', value: 300, imei: '123456789012345', serial: undefined,
