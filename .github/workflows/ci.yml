@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, fix/admin-auth-throttle-20261119, fix/admin-pin-pbkdf2-async-20261119-v2]
   workflow_dispatch:
 
 permissions:

@@ -4,7 +4,7 @@ name: Windows Desktop QA (No Publish)
 # changes updater metadata, creates tags/releases, or deletes old releases.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, fix/admin-auth-throttle-20261119, fix/admin-pin-pbkdf2-async-20261119-v2]
     paths:
       - 'src/**'
       - 'tests/**'
