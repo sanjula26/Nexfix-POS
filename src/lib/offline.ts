@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
-import { buildSaleCreateQueueInput } from './saleQueuePayload';
+import { buildSaleCreateQueueInput, buildSaleReplayPayments } from './saleQueuePayload';
 import { recoverPendingSaleQueueIds } from './offlineSaleQueueRecovery';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState, idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
@@ -257,7 +257,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};creditDue?:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           let customerIdMap: Record<string, string> = {};
@@ -266,9 +266,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
             if(catalog.ok) customerIdMap = catalog.customerIdMap || {};
           }
-          const payments=(parsed.input.payments&&parsed.input.payments.length)
-            ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
-            : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
+          const payments = buildSaleReplayPayments(parsed.input);
           let cloudCustomerId = parsed.input.customerId
             ? (customerIdMap[parsed.input.customerId] || parsed.input.customerId)
             : undefined;
