@@ -134,3 +134,31 @@ test('serializes multiple queued catalog fingerprints in invocation order', asyn
   assert.deepEqual(started, ['v1', 'v2', 'v3']);
 });
 
+
+test('re-queues an earlier fingerprint after a newer snapshot has been queued', async () => {
+  const coordinator = createFingerprintSyncCoordinator<{ ok: boolean; version: string }>();
+  const firstGate = deferred<{ ok: boolean; version: string }>();
+  const started: string[] = [];
+
+  const firstA = coordinator.run('shop-a:user-a', 'catalog-a', () => {
+    started.push('A-first');
+    return firstGate.promise;
+  });
+  await Promise.resolve();
+
+  const middleB = coordinator.run('shop-a:user-a', 'catalog-b', async () => {
+    started.push('B');
+    return { ok: true, version: 'B' };
+  });
+  const finalA = coordinator.run('shop-a:user-a', 'catalog-a', async () => {
+    started.push('A-final');
+    return { ok: true, version: 'A-final' };
+  });
+
+  assert.deepEqual(started, ['A-first']);
+  firstGate.resolve({ ok: true, version: 'A-first' });
+  assert.deepEqual(await firstA, { ok: true, version: 'A-first' });
+  assert.deepEqual(await middleB, { ok: true, version: 'B' });
+  assert.deepEqual(await finalA, { ok: true, version: 'A-final' });
+  assert.deepEqual(started, ['A-first', 'B', 'A-final']);
+});
