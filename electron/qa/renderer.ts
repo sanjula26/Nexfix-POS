@@ -165,7 +165,7 @@ async function failOneProductionIndexedDbWrite(
 ): Promise<void> {
   let injectionMessage = '';
   const injector = installOneShotQaQuotaInjection(domain, runId, error => {
-    injectionMessage = error.message;
+    injectionMessage = error.name + ': ' + error.message;
     result.textContent = 'Injected QuotaExceededError at the production IndexedDB transaction boundary for ' + domain + '.';
   });
 
