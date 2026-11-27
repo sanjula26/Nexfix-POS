@@ -2,7 +2,6 @@ import { queueWrite } from './offline';
 import { runSyncNow } from './syncManager';
 import { getCloudShopId } from './cloudSync';
 import { supabase, supabaseConfigured } from './supabase';
-import { withCloudActivity } from './cloudActivity';
 
 const CLOUD_SYNC_DELAY_MS = 350;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -21,10 +20,8 @@ export function scheduleCloudSync(note = 'state_change'): void {
         if (!supabaseConfigured || !supabase || !getCloudShopId()) return;
         const { data, error } = await supabase.auth.getSession();
         if (error || !data.session) return;
-        await withCloudActivity('POS data', async () => {
-          await queueWrite(note);
-          return runSyncNow();
-        }, result => result.status === 'synced');
+        await queueWrite(note);
+        await runSyncNow();
       } catch {
         // The normal connectivity/retry path will retry after a durable queue write.
       }
