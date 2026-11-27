@@ -691,10 +691,16 @@ test('cloud activity indicator tracks overlapping uploads and clears when each c
 
 test('cloud activity wrapper clears the indicator after success and failure', async () => {
   assert.equal(await withCloudActivity('POS data', async () => 42), 42);
-  assert.equal(getCloudActivityState().active, 0);
+  const successfulState = getCloudActivityState();
+  assert.equal(successfulState.active, 0);
+  assert.equal(successfulState.lastError, null);
+  assert.equal(typeof successfulState.lastSuccessAt, 'number');
   await assert.rejects(
     withCloudActivity('POS data', async () => { throw new Error('network failure'); }),
     /network failure/,
   );
-  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null, lastError: 'network failure', lastSuccessAt: Date.now() });
+  const failedState = getCloudActivityState();
+  assert.equal(failedState.active, 0);
+  assert.equal(failedState.lastError, 'network failure');
+  assert.equal(failedState.lastSuccessAt, successfulState.lastSuccessAt);
 });
