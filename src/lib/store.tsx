@@ -8,11 +8,11 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, idbAddPendingSaleQueueId, idbRemovePendingSaleQueueIds, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
 import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueSaleCreate, getPendingSyncOperations, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
@@ -23,8 +23,11 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { buildSaleCreateQueueInput } from './saleQueuePayload';
+import { isTransientCloudTransportError } from './cloudTransport';
+import { runSyncNow } from './syncManager';
 import { createDrainableWorkGate } from './drainableWorkGate';
-import { createStatePersistenceGate, type StatePersistencePause } from './statePersistenceGate';
+import { createStatePersistenceGate, type StatePersistenceOptions, type StatePersistencePause } from './statePersistenceGate';
 import { createPOSWriteQuiescenceCoordinator, type POSWriteQuiescenceLease } from './posWriteQuiescence';
 import { pauseRestoreWork } from './restore';
 import { pauseAutoBackupWork, pauseBackupExecutionWork } from './backup';
@@ -358,7 +361,7 @@ async function checkIndexedDBQuotaAfterWrite(): Promise<void> {
 export type POSStatePersistencePause = StatePersistencePause<POSState>;
 export type POSStorageMaintenanceLease = POSStatePersistencePause;
 
-async function persistStateWork(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
+async function persistStateWork(state: POSState, options: StatePersistenceOptions = {}): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
@@ -404,7 +407,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
   // Track write for offline queue (future cloud sync)
   let queueSaved = true;
   let queueFailureKind: string | undefined;
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (options.enqueueOfflineQueue !== false && typeof navigator !== 'undefined' && !navigator.onLine) {
     try {
       await queueWrite('state_write_offline');
     } catch (error) {
@@ -434,8 +437,8 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
 /** Normal debounced writes are tracked so migration can stop and drain them. */
 const statePersistenceGate = createStatePersistenceGate<POSState>(persistStateWork);
 
-function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
-  return statePersistenceGate.persist(state);
+function persistState(state: POSState, options?: StatePersistenceOptions): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
+  return statePersistenceGate.persist(state, options);
 }
 
 /**
