@@ -32,7 +32,7 @@ export type MigrationDependencies<J extends MigrationJournal, S extends Migratio
   recordVerification: (purpose: MigrationPurpose, details: { revision: number; bytes: number; sha256: string }) => Promise<J>;
   writePayload: (purpose: MigrationPurpose, serialized: string) => Promise<{ revision: number; bytes: number }>;
   readPayload: (purpose: MigrationPurpose) => Promise<string | null>;
-  setFolderPrimary: () => void;
+  setFolderPrimary: () => void | Promise<void>;
   onCutoverUncertain?: (message: string) => void;
   /** Test-only callers may pause at durable checkpoints; production leaves this unset. */
   onCheckpoint?: (checkpoint: MigrationCheckpoint) => void | Promise<void>;
@@ -123,7 +123,7 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
     }
 
     try {
-      dependencies.setFolderPrimary();
+      await dependencies.setFolderPrimary();
     } catch {
       releaseOnFinish = false;
       const message = 'Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.';
