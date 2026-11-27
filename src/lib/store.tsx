@@ -2209,7 +2209,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const localSalesman = input.salesmanId
       ? state.users.find(u => u.id === input.salesmanId && u.active)
       : user;
-    const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
+    let cloudSalesmanId: string | undefined;
+    try {
+      cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
+    } catch (error) {
+      // Salesman/profile resolution is still pre-RPC. A transport failure here
+      // is safe to route through the durable local outbox using the same Sale ID.
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue(saleId);
+      throw error;
+    }
 
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
