@@ -49,6 +49,32 @@ test('development navigation is limited to the configured origin', () => {
   assert.equal(isAllowedNavigation('http://user@localhost:5173/'), false);
 });
 
+test('encrypted POS profile IPC is registered before renderer startup and locked on quit', () => {
+  assert.match(mainSource, /require\('\.\/profile-ipc\.cjs'\)/);
+  const ready = mainSource.indexOf("app.whenReady().then(()=>");
+  const register = mainSource.indexOf("posProfileIpc = registerPOSProfileIpc({", ready);
+  const create = mainSource.indexOf("setupAutoUpdater(); createWindow();", ready);
+  assert.ok(ready >= 0 && register > ready && create > register,
+    'profile IPC must be registered before the renderer window is created');
+  assert.match(mainSource, /app\.on\('will-quit',\s*\(\)\s*=>\s*\{\s*try\s*\{\s*posProfileIpc\?\.lock\(\)/);
+});
+
+test('preload exposes only narrow POS profile IPC methods', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  for (const method of [
+    'choosePOSStorageRoot', 'discoverPOSProfiles', 'createPOSProfile',
+    'unlockPOSProfileWithPassphrase', 'unlockPOSProfileWithRecoveryKey', 'unlockPOSProfileWithOS',
+    'getPOSProfileStatus', 'lockPOSProfile', 'getPOSMigrationJournal',
+    'beginPOSStorageMigration', 'transitionPOSStorageMigration',
+    'recordPOSMigrationCopy', 'recordPOSMigrationVerification', 'readPOSProfileData',
+    'writePOSProfileData', 'changePOSProfilePassphrase', 'resetPOSProfilePassphrase',
+  ]) {
+    assert.match(preloadSource, new RegExp('\\b' + method + ':'));
+  }
+  assert.doesNotMatch(preloadSource, /ipcRenderer\.send\s*\(/,
+    'preload must use request/response IPC rather than exposing raw event sending');
+});
+
 test('Electron keeps the renderer sandboxed and isolated', () => {
   assert.match(
     mainSource,
@@ -186,4 +212,38 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     version: 2,
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
+});
+
+test('POS overflow folder IPC is registered before the renderer window is created', () => {
+  assert.match(mainSource, /require\('\.\/overflow-folder\.cjs'\)/);
+  const ready = mainSource.indexOf("app.whenReady().then(()=>");
+  const register = mainSource.indexOf("registerOverflowFolderIpc({ app, ipcMain, dialog, BrowserWindow, isTrustedRenderer })");
+  const create = mainSource.indexOf("setupAutoUpdater(); createWindow();", ready);
+  assert.ok(ready >= 0 && register > ready && create > register,
+    'overflow folder preference IPC must be registered before renderer startup');
+});
+
+test('preload exposes only scoped POS overflow-folder preference operations', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  assert.match(preloadSource, /getPOSOverflowFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('pos-overflow-folder:get'\)/);
+  assert.match(preloadSource, /choosePOSOverflowFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('pos-overflow-folder:choose'\)/);
+  assert.doesNotMatch(preloadSource, /pos-overflow-folder:.*(?:write|delete|clear)/);
+});
+
+test('desktop startup gate is outside POSProvider and leaves browser development unaffected', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+  assert.match(appSource, /function POSApplication\(\)[\s\S]*?<POSProvider>/);
+  const appRoot = appSource.slice(appSource.indexOf('export default function App()'));
+  assert.match(appRoot, /<DesktopOverflowFolderSetup>[\s\S]*?<POSApplication\s*\/>/,
+    'folder selection must wrap the POS application before POSProvider mounts');
+  assert.match(appSource, /if\s*\(!desktopApi\?\.isDesktop\)\s*return\s*<>\{children\}<\/>/);
+  assert.match(appSource, /IndexedDB remains the normal POS database/);
+});
+
+test('disconnected overflow folder does not block POS while IndexedDB remains the active store', () => {
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+  assert.match(appSource, /folderStatus\.storageMode === 'indexeddb'[\s\S]{0,500}POS is continuing with IndexedDB/);
+  assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}\{children\}/);
+  assert.match(appSource, /POS is continuing with IndexedDB[\s\S]{0,1000}chooseFolder\(\)/);
+  assert.match(appSource, /role="alert"[\s\S]{0,1000}POS is continuing with IndexedDB/);
 });

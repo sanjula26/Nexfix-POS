@@ -2,6 +2,7 @@ import type { POSState } from './types';
 import { idbClearRestoreCheckpoint, idbLoadRestoreCheckpoint, idbSaveRestoreCheckpoint, idbSaveState } from './db';
 import { validateBackupForRestore, type BackupEnvelope } from './backup';
 import { isCloudSafeBackup } from './driveSync';
+import { runRestoreWork } from './restoreWorkGate';
 
 const SESSION_KEY = 'nexfix_session_v1';
 
@@ -25,12 +26,12 @@ function requireAdminRestoreAccess(state: POSState): void {
   }
 }
 
-export async function prepareRestore(current: POSState): Promise<void> {
+async function prepareRestore(current: POSState): Promise<void> {
   const saved = await idbSaveRestoreCheckpoint(current);
   if (!saved) throw new Error('Could not create restore checkpoint. Restore cancelled.');
 }
 
-export async function rollbackRestore(): Promise<boolean> {
+async function rollbackRestore(): Promise<boolean> {
   const checkpoint = await idbLoadRestoreCheckpoint();
   if (!checkpoint) return false;
   const restored = await idbSaveState(checkpoint);
@@ -94,7 +95,7 @@ function restoreLocalAuthentication(current: POSState, restored: POSState): POSS
  * secrets. A cloud restore therefore cannot create, modify, erase or replace
  * device credentials.
  */
-export async function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
+async function applyBackupRestoreWork(current: POSState, input: unknown): Promise<POSState> {
   requireAdminRestoreAccess(current);
   const cloudSafe = isCloudSafeBackup(input);
   const backup = await restoreBackup(asRestoreEnvelope(input));
@@ -105,6 +106,9 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
     if (!saved) throw new Error('Could not persist restored POS state.');
     const checkpointCleared = await idbClearRestoreCheckpoint();
     if (!checkpointCleared) throw new Error('Could not clear the restore safety checkpoint.');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('nexfix:restore-committed', { detail: { state: nextState } }));
+    }
     return nextState;
   } catch (error) {
     const rolledBack = await rollbackRestore();
@@ -115,7 +119,28 @@ export async function applyBackupRestore(current: POSState, input: unknown): Pro
   }
 }
 
-export async function completeRestore(): Promise<void> {
+
+/**
+ * A restore is one indivisible storage operation: checkpoint, replacement,
+ * checkpoint cleanup, and any rollback must finish before a migration snapshot.
+ */
+export { pauseRestoreWork } from './restoreWorkGate';
+
+export function applyBackupRestore(current: POSState, input: unknown): Promise<POSState> {
+  return runRestoreWork(
+    () => applyBackupRestoreWork(current, input),
+    'POS restore is temporarily paused for safe storage maintenance.',
+  );
+}
+
+async function completeRestoreWork(): Promise<void> {
   const cleared = await idbClearRestoreCheckpoint();
   if (!cleared) throw new Error('Could not clear the restore safety checkpoint.');
+}
+
+export function completeRestore(): Promise<void> {
+  return runRestoreWork(
+    completeRestoreWork,
+    'POS restore checkpoint cleanup is temporarily paused for safe storage maintenance.',
+  );
 }

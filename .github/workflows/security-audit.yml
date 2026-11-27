@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, feature/local-pos-data-profile-20261122]
   workflow_dispatch:
 
 permissions:

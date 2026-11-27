@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
@@ -7,8 +8,9 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
-import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
+import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
   getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
@@ -21,6 +23,12 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { createDrainableWorkGate } from './drainableWorkGate';
+import { createStatePersistenceGate, type StatePersistencePause } from './statePersistenceGate';
+import { createPOSWriteQuiescenceCoordinator, type POSWriteQuiescenceLease } from './posWriteQuiescence';
+import { pauseRestoreWork } from './restore';
+import { pauseAutoBackupWork, pauseBackupExecutionWork } from './backup';
+import { pauseOfflineQueueFlush, pauseOfflineQueueMutations } from './offline';
 import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
@@ -28,6 +36,14 @@ const STORE_KEY = 'nexfix_pos_v2';
 const STORE_KEY_V1 = 'nexfix_pos_v1';
 const SESSION_KEY = 'nexfix_session_v1';
 const THEME_KEY = 'nexfix_theme';
+
+// One renderer-wide barrier for public POS business mutations.
+const posMutationCoordinator = createPOSWriteQuiescenceCoordinator();
+const backgroundPOSStateRefreshWork = createDrainableWorkGate();
+
+export function pauseBackgroundPOSStateRefresh(): Promise<() => void> {
+  return backgroundPOSStateRefreshWork.pause();
+}
 
 interface Session { userId: string; remember: boolean }
 
@@ -171,10 +187,16 @@ interface StoreCtx {
   /** Phase 2: connectivity + backup */
   connectivity: Connectivity;
   ready: boolean; // false while IndexedDB is loading
+  /** Pause debounced state persistence, drain active writes, and flush the latest state for safe storage maintenance. */
+  pauseStatePersistence: () => Promise<POSStatePersistencePause>;
+  /** Pause and drain all public POS business mutation entry points. */
+  pausePOSMutationWrites: () => Promise<POSWriteQuiescenceLease>;
+  /** Pause and drain every audited local POS storage writer before a migration snapshot. */
+  pauseStorageMaintenance: () => Promise<POSStorageMaintenanceLease>;
   backupMeta: BackupMeta;
   runManualBackup: () => Promise<{ ok: boolean; error?: string }>;
   refreshBackupMeta: () => Promise<void>;
-  setAutoBackupHours: (hours: number) => Promise<void>;
+  setAutoBackupHours: (hours: number) => Promise<boolean>;
   flushOfflineQueue: () => Promise<number>;
   pendingQueueCount: number;
   // Phase 3 — units & repairs
@@ -303,26 +325,58 @@ function loadState(): POSState {
   return loadStateFromLocalStorage() || buildSeed();
 }
 
-/** Persist to both IndexedDB (primary) and localStorage (fast secondary cache) */
-async function persistState(state: POSState): Promise<void> {
+/** Persist the latest POS snapshot to IndexedDB and its offline queue marker. */
+let lastIndexedDBQuotaCheckAt = 0;
+let lastIndexedDBQuotaWarningAt = 0;
+
+function notifyIndexedDBQuotaWarning(reason: 'near_quota' | 'quota_exceeded', usage?: number, quota?: number, ratio?: number) {
+  if (typeof window === 'undefined' || isDesktopProfilePrimary()) return;
+  const now = Date.now();
+  // A real quota failure must never be hidden by a recently shown advisory warning.
+  if (reason === 'near_quota') {
+    if (now - lastIndexedDBQuotaWarningAt < 5 * 60 * 1000) return;
+    lastIndexedDBQuotaWarningAt = now;
+  }
+  dispatchStorageQuotaWarning(window, { reason, usage, quota, ratio });
+}
+
+async function checkIndexedDBQuotaAfterWrite(): Promise<void> {
+  if (isDesktopProfilePrimary() || typeof window === 'undefined') return;
+  const now = Date.now();
+  if (now - lastIndexedDBQuotaCheckAt < 60 * 1000) return;
+  lastIndexedDBQuotaCheckAt = now;
+  try {
+    const estimate = await estimateIndexedDBQuota();
+    if (estimate.status === 'available' && estimate.nearQuota) {
+      notifyIndexedDBQuotaWarning('near_quota', estimate.usage, estimate.quota, estimate.usageRatio);
+    }
+  } catch {
+    // Quota estimation is advisory; QuotaExceededError remains authoritative.
+  }
+}
+
+export type POSStatePersistencePause = StatePersistencePause<POSState>;
+export type POSStorageMaintenanceLease = POSStatePersistencePause;
+
+async function persistStateWork(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
-    const saved = await idbSaveState(state);
+    const saved = await idbSaveStateDetailed(state);
     // Never enqueue an offline state sync from a stale IndexedDB snapshot when
     // this authoritative write failed. Keep the cloud-sale marker so a later
     // successful persist can safely reconcile the sale instead of risking a
     // duplicate or silently syncing older state.
-    if (!saved) {
-      console.error('[POS Storage] IndexedDB state save failed; offline sync enqueue skipped to avoid stale-state sync.');
+    if (!saved.ok) {
+      console.error('[POS Storage] IndexedDB state save failed (' + saved.error.kind + '); offline sync enqueue skipped to avoid stale-state sync.');
       // Surface durability failures to the active POS screen. Do not pretend the
       // state is saved, and do not enqueue a potentially stale snapshot.
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
-          detail: { message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
+          detail: { kind: saved.error.kind, message: 'Local POS storage failed. A recent change or sale may not be saved on this PC. Verify the sale in Sales History/cloud before retrying; do not bill it again until its status is confirmed.' },
         }));
       }
-      return;
+      return { stateSaved: false, queueSaved: false, failureKind: saved.error.kind };
     }
     // Keep the cloud-sale idempotency marker until the authoritative sale is
     // durably persisted locally. This closes the crash window between the
@@ -345,12 +399,54 @@ async function persistState(state: POSState): Promise<void> {
         detail: { message: 'IndexedDB is unavailable on this PC. POS changes cannot be safely saved locally. Do not retry a sale until its status is checked in Sales History/cloud.' },
       }));
     }
-    return;
+    return { stateSaved: false, queueSaved: false, failureKind: 'unavailable' };
   }
   // Track write for offline queue (future cloud sync)
+  let queueSaved = true;
+  let queueFailureKind: string | undefined;
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    await queueWrite('state_write_offline');
+    try {
+      await queueWrite('state_write_offline');
+    } catch (error) {
+      const failureKind = error && typeof error === 'object' &&
+        'storageFailureKind' in error &&
+        (error.storageFailureKind === 'quota_exceeded' || error.storageFailureKind === 'write_failed')
+        ? error.storageFailureKind
+        : 'write_failed';
+      queueSaved = false;
+      queueFailureKind = failureKind;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-error', {
+          detail: {
+            kind: failureKind,
+            message: failureKind === 'quota_exceeded'
+              ? 'The POS change was saved locally, but the offline sync queue is full. Do not repeat the sale. Reconnect and verify pending sync before continuing; Nexfix is attempting the verified move to your selected encrypted storage folder; verify pending sync after it completes.'
+              : 'The POS change was saved locally, but its offline sync queue could not be confirmed. Do not repeat the sale. Reconnect and verify pending sync before continuing.',
+          },
+        }));
+      }
+    }
   }
+  void checkIndexedDBQuotaAfterWrite();
+  return { stateSaved: true, queueSaved, failureKind: queueFailureKind };
+}
+
+/** Normal debounced writes are tracked so migration can stop and drain them. */
+const statePersistenceGate = createStatePersistenceGate<POSState>(persistStateWork);
+
+function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
+  return statePersistenceGate.persist(state);
+}
+
+/**
+ * Close the state-persistence gate, drain active writes, then persist the
+ * caller's latest in-memory snapshot through a privileged maintenance path.
+ * Pause top-level POS mutations and restore first. Keep queue-enqueue admission
+ * open until this final flush has finished because offline persistence may
+ * append a state_write operation.
+ */
+export function pauseStatePersistence(getLatestState: () => POSState): Promise<POSStatePersistencePause> {
+  return statePersistenceGate.pauseAndFlush(getLatestState);
 }
 
 function loadSession(): Session | null {
@@ -397,21 +493,51 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
 
+  // Keep the live in-memory snapshot aligned with a completed IndexedDB restore.
+  // The maintenance flush reads stateRef synchronously, before React's next render.
+  useEffect(() => {
+    const onRestoreCommitted = (event: Event) => {
+      const restored = (event as CustomEvent<{ state?: POSState }>).detail?.state;
+      if (!restored || !Array.isArray(restored.products) || !Array.isArray(restored.users)) return;
+      stateRef.current = restored;
+      setState(restored);
+    };
+    window.addEventListener('nexfix:restore-committed', onRestoreCommitted);
+    return () => window.removeEventListener('nexfix:restore-committed', onRestoreCommitted);
+  }, []);
+
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      let primaryStorageBlocked = false;
+      const reportPrimaryStorageError = (message: string) => {
+        if (typeof window !== 'undefined') {
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
+            detail: { message },
+          })), 0);
+        }
+      };
       if (!idbAvailable()) {
-        setReady(true);
-        return;
+        if (isDesktopProfilePrimary()) {
+          primaryStorageBlocked = true;
+          reportPrimaryStorageError('The encrypted primary POS folder is not available. IndexedDB fallback is disabled.');
+        } else {
+          setReady(true);
+          return;
+        }
       }
       try {
+        if (primaryStorageBlocked) throw new Error('Primary POS storage bridge is unavailable.');
         const fromIdb = await idbLoadState();
+        if (isDesktopProfilePrimary() && !fromIdb) {
+          throw new Error('The encrypted primary POS state file is missing. IndexedDB fallback is disabled.');
+        }
         if (cancelled) return;
         if (fromIdb) {
           // idbLoadState always repairs the default admin recovery account
           let hydrated = migrate(fromIdb);
-          const local = loadStateFromLocalStorage();
+          const local = isDesktopProfilePrimary() ? null : loadStateFromLocalStorage();
           if ((!hydrated.kitItems || hydrated.kitItems.length === 0) && local?.kitItems?.length) {
             hydrated = { ...hydrated, kitItems: local.kitItems };
             await idbSaveState(hydrated);
@@ -427,13 +553,23 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         // Clearing session against stateRef races with concurrent signIn and
         // was deleting a freshly written session (login → bounce back to /login).
 
-        const meta = await idbGetMeta();
+        const metaResult = await idbGetMetaDetailed();
         const queued = await idbListQueue();
         if (!cancelled) {
-          setBackupMeta(meta);
+          if (metaResult.ok) setBackupMeta(metaResult.value);
+          else console.warn('[Backup] local backup metadata could not be loaded during startup:', metaResult.error.message);
           setPendingQueueCount(queued.length);
         }
-      } catch { /* keep localStorage state */ }
+      } catch (error) {
+        if (isDesktopProfilePrimary()) {
+          primaryStorageBlocked = true;
+          reportPrimaryStorageError(error instanceof Error ? error.message : 'The encrypted primary POS storage could not be read.');
+        }
+        // Never load localStorage or seed data when the encrypted folder is primary.
+      }
+      if (!primaryStorageBlocked && idbAvailable() && !isDesktopProfilePrimary()) {
+        void checkIndexedDBQuotaAfterWrite();
+      }
       // Re-hydrate session from storage AFTER users are loaded so login is not lost
         try {
           const raw = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
@@ -443,7 +579,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             setSession(sess);
           }
         } catch { /* ignore */ }
-        if (!cancelled) setReady(true);
+        if (!cancelled && !primaryStorageBlocked) setReady(true);
       // Register service worker for offline shell
       registerServiceWorker().catch(() => {});
     })();
@@ -497,9 +633,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready || !user || !supabaseConfigured || typeof navigator === 'undefined' || !navigator.onLine) return;
     let cancelled = false;
-    (async () => {
+    const refresh = async () => {
       const shop = await ensureCloudShop('Nexfix Shop');
-      if (!shop.ok || !shop.shopId) return;
+      if (!shop.ok || !shop.shopId || cancelled) return;
       const remote = await listSaleReversalRequests(shop.shopId);
       if (!remote.ok || !remote.requests || cancelled) return;
       setState(s => {
@@ -513,7 +649,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         }
         return { ...s, reverseRequests: [...localById.values()].sort((a,b) => +new Date(b.requestedAt) - +new Date(a.requestedAt)) };
       });
-    })();
+    };
+    void backgroundPOSStateRefreshWork.run(refresh, async () => undefined).catch(error => {
+      console.error('[POS Storage] background state refresh failed:', error);
+    });
     return () => { cancelled = true; };
   }, [ready, user?.id, user?.role, connectivity]);
 
@@ -537,8 +676,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             if (!metadataResult.ok) {
               console.warn('[Google Backup] reconnect shop metadata sync failed:', metadataResult.error);
             }
-            const meta = await idbGetMeta();
-            setBackupMeta(meta);
+            const metaResult = await idbGetMetaDetailed();
+            if (metaResult.ok) setBackupMeta(metaResult.value);
+            else console.warn('[Backup] local backup metadata could not be refreshed after reconnect:', metaResult.error.message);
           } catch { /* ignore */ }
         }
       }
@@ -556,8 +696,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       async () => {
         // Refresh both success and failure metadata so Settings never looks
         // silently stale after an automatic attempt.
-        const meta = await idbGetMeta();
-        setBackupMeta(meta);
+        const metaResult = await idbGetMetaDetailed();
+        if (metaResult.ok) setBackupMeta(metaResult.value);
+        else console.warn('[Backup] local backup metadata could not be refreshed after automatic backup:', metaResult.error.message);
       },
     );
     return stop;
@@ -3432,6 +3573,9 @@ const deletePurchase = useCallback((id: string) => {
       if (ready) await persistState(current);
 
       const fromIdb = idbAvailable() ? await idbLoadState() : null;
+      if (isDesktopProfilePrimary() && !fromIdb) {
+        throw new Error('The encrypted primary POS state could not be read. IndexedDB fallback is disabled.');
+      }
       let refreshed = fromIdb ? migrate(fromIdb) : (loadStateFromLocalStorage() || buildSeed());
 
       if (activeSession) {
@@ -3461,7 +3605,12 @@ const deletePurchase = useCallback((id: string) => {
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
       if (activeSession) setSession(activeSession);
-    } catch {
+    } catch (error) {
+      if (isDesktopProfilePrimary() && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nexfix:storage-primary-error', {
+          detail: { message: error instanceof Error ? error.message : 'The encrypted primary POS storage could not be read.' },
+        }));
+      }
       // A refresh failure must leave the authenticated POS session untouched.
       setState(current);
       if (activeSession) setSession(activeSession);
@@ -4044,6 +4193,60 @@ const deletePurchase = useCallback((id: string) => {
     scheduleGoogleBackup(() => stateRef.current, 'settings');
   }, [user, can, pushAudit]);
 
+  const pausePOSMutationWrites = useCallback(async (): Promise<POSWriteQuiescenceLease> => {
+    if (!ready) throw new Error('POS is still loading; storage maintenance cannot start yet.');
+    return posMutationCoordinator.pause();
+  }, [ready]);
+
+  const pauseStorageMaintenance = useCallback(async (): Promise<POSStorageMaintenanceLease> => {
+    if (!ready) throw new Error('POS is still loading; storage maintenance cannot start yet.');
+    const releases: Array<() => void> = [];
+    let released = false;
+    const releaseAll = () => {
+      if (released) return;
+      released = true;
+      for (let index = releases.length - 1; index >= 0; index -= 1) releases[index]();
+    };
+
+    try {
+      // Stop public business mutations first, then independent restore/background
+      // writers. Drain the backup scheduler before its nested backup executor.
+      const mutationLease = await posMutationCoordinator.pause();
+      releases.push(() => mutationLease.release());
+
+      // Stop queue sync early so no new network flush starts during the local
+      // snapshot window. Existing work is drained before restore/state reads.
+      releases.push(await pauseOfflineQueueFlush());
+      releases.push(await pauseRestoreWork());
+      releases.push(await pauseBackgroundPOSStateRefresh());
+      flushSync(() => {});
+      releases.push(await pauseAutoBackupWork());
+      releases.push(await pauseBackupExecutionWork());
+
+      // This privileged flush may enqueue an offline state_write, so keep
+      // queue-enqueue admission open until after it has completed.
+      const statePause = await pauseStatePersistence(() => stateRef.current);
+      releases.push(statePause.release);
+      releases.push(await pauseOfflineQueueMutations());
+
+      return {
+        release: releaseAll,
+        latestState: statePause.latestState,
+        stateSaved: statePause.stateSaved,
+        queueSaved: statePause.queueSaved,
+        failureKind: statePause.failureKind,
+      };
+    } catch (error) {
+      releaseAll();
+      throw error;
+    }
+  }, [ready]);
+
+  const pauseStorageStatePersistence = useCallback(
+    () => pauseStatePersistence(() => stateRef.current),
+    [],
+  );
+
   const runManualBackup = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     if (!user || !can('act:export')) {
       pushAudit('DENIED', 'Settings', 'Blocked manual backup without export permission');
@@ -4052,15 +4255,22 @@ const deletePurchase = useCallback((id: string) => {
     if (!(await confirmSensitiveAdmin('full local backup export'))) return { ok: false, error: 'Backup export cancelled.' };
     try {
       const result = await downloadBackup(stateRef.current, 'manual', { download: true, cloud: false });
-      const meta = await idbGetMeta();
-      setBackupMeta(meta);
+      const metaResult = await idbGetMetaDetailed();
+      if (metaResult.ok) {
+        setBackupMeta(metaResult.value);
+      } else {
+        console.error('[Backup] local backup history could not be read after export:', metaResult.error.message);
+      }
       if (!result.local) {
         const error = result.error || 'Backup file could not be downloaded to this PC.';
         pushAudit('DENIED', 'Settings', 'Manual backup download failed');
         return { ok: false, error };
       }
       pushAudit('BACKUP', 'Settings', 'Manual backup downloaded');
-      return { ok: true };
+      const warning = result.error || (!metaResult.ok
+        ? `Backup file downloaded, but backup history could not be refreshed: ${metaResult.error.message}`
+        : undefined);
+      return { ok: true, ...(warning ? { error: warning } : {}) };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Backup download failed.';
       pushAudit('DENIED', 'Settings', 'Manual backup download failed');
@@ -4069,19 +4279,34 @@ const deletePurchase = useCallback((id: string) => {
   }, [state, pushAudit, user, can, confirmSensitiveAdmin]);
 
   const refreshBackupMeta = useCallback(async () => {
-    const meta = await idbGetMeta();
-    setBackupMeta(meta);
+    const result = await idbGetMetaDetailed();
+    if (result.ok) {
+      setBackupMeta(result.value);
+    } else {
+      console.error('[Backup] local backup history could not be refreshed:', result.error.message);
+    }
   }, []);
 
-  const setAutoBackupHours = useCallback(async (hours: number) => {
+  const setAutoBackupHours = useCallback(async (hours: number): Promise<boolean> => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Backup', 'Blocked auto-backup setting change without admin access');
-      return;
+      return false;
     }
-    const meta = await idbSetMeta({ autoBackupHours: Math.max(0, hours) });
-    setBackupMeta(meta);
+    let result: Awaited<ReturnType<typeof saveAutoBackupHours>>;
+    try {
+      result = await saveAutoBackupHours(hours);
+    } catch (error) {
+      console.error('[Backup] auto-backup interval could not be saved:', error instanceof Error ? error.message : error);
+      return false;
+    }
+    if (!result.ok) {
+      console.error('[Backup] auto-backup interval could not be saved:', result.error.message);
+      return false;
+    }
+    setBackupMeta(result.value);
     const label = hours <= 0 ? 'OFF' : hours < 1 ? `${Math.round(hours * 60)}m` : `${hours}h`;
     pushAudit('SETTINGS', 'Backup', `Auto-backup interval set to ${label}`);
+    return true;
   }, [pushAudit, user]);
 
   const flushOfflineQueue = useCallback(async () => {
@@ -4104,14 +4329,58 @@ const deletePurchase = useCallback((id: string) => {
     saveUser, toggleUserActive, deleteUser,
     setPermission, updateSettings, closeSession, closeDay, logAudit, clearAudit,
     exportData, importData, resetData, refreshPOS,
-    connectivity, ready, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
+    connectivity, ready, pauseStatePersistence: pauseStorageStatePersistence, pausePOSMutationWrites, pauseStorageMaintenance, backupMeta, runManualBackup, refreshBackupMeta, setAutoBackupHours,
     flushOfflineQueue, pendingQueueCount,
     saveUnit, saveUnitsBulk, deleteUnit, findUnitByCode,
     saveRepair, updateRepairStatus, deleteRepair, saveWarrantyClaim,
     saveCategory, removeCategory, renameCategory, openSession, saveBrand, removeBrand,
   };
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  // Keep public wrapper identities stable across state renders (for example,
+  // SessionSecurity depends on signOut). The latest callback implementation is
+  // read from this ref when a wrapper is invoked.
+  const latestStoreValueRef = useRef(value);
+  latestStoreValueRef.current = value;
+  const mutationWrappersRef = useRef(new Map<keyof StoreCtx, unknown>());
+  const guardedValue: StoreCtx = { ...value };
+  const mutationActions = [
+    'signIn', 'createInitialAdmin', 'changePassword', 'changeManagedPassword', 'signOut', 'switchRole',
+    'changeAdminPin', 'verifyAdminPin', 'resolveSensitiveAdmin', 'unlockSession',
+    'saveProduct', 'deleteProduct', 'saveKitItems', 'saveQuotations', 'adjustStock',
+    'saveCustomer', 'deleteCustomer', 'saveSupplier', 'deleteSupplier', 'saveSupplierPayment',
+    'deleteSupplierPayment', 'saveCustomerCreditPayment',
+    'completeSale', 'completeSaleCloud', 'refundSale', 'requestBillReverse', 'approveBillReverse',
+    'rejectBillReverse', 'holdSale', 'resumeHold', 'deleteHold',
+    'savePurchase', 'saveGRNDraft', 'updateGRNDraft', 'receivePurchase', 'processGRN',
+    'createPurchaseReturn', 'deletePurchase', 'addExpense', 'deleteExpense', 'processExchange',
+    'saveUser', 'toggleUserActive', 'deleteUser', 'setPermission', 'updateSettings',
+    'closeSession', 'closeDay', 'logAudit', 'clearAudit', 'importData', 'resetData', 'refreshPOS',
+    'runManualBackup', 'setAutoBackupHours', 'flushOfflineQueue',
+    'saveUnit', 'saveUnitsBulk', 'deleteUnit', 'saveRepair', 'updateRepairStatus', 'deleteRepair',
+    'saveWarrantyClaim', 'saveCategory', 'removeCategory', 'renameCategory', 'openSession',
+    'saveBrand', 'removeBrand',
+  ] as const satisfies readonly (keyof StoreCtx)[];
+
+  for (const actionName of mutationActions) {
+    if (typeof value[actionName] !== 'function') {
+      throw new Error(`POS mutation action is not callable: ${actionName}`);
+    }
+    let wrapper = mutationWrappersRef.current.get(actionName);
+    if (!wrapper) {
+      wrapper = (...args: unknown[]) => {
+        const action = latestStoreValueRef.current[actionName];
+        if (typeof action !== 'function') {
+          throw new Error(`POS mutation action is not callable: ${actionName}`);
+        }
+        const invoke = action as unknown as (...values: unknown[]) => unknown;
+        return posMutationCoordinator.runMutation(actionName, () => invoke(...args));
+      };
+      mutationWrappersRef.current.set(actionName, wrapper);
+    }
+    (guardedValue as unknown as Record<string, unknown>)[actionName] = wrapper;
+  }
+
+  return <Ctx.Provider value={guardedValue}>{children}</Ctx.Provider>;
 }
 
 export function usePOS() {

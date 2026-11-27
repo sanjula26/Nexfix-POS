@@ -3,6 +3,25 @@ import { buildCreditSettlementSyncFingerprint } from './lib/creditSettlementSync
 import { buildNormalizedCatalogSyncFingerprint } from './lib/cloudSyncFingerprint';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
+import { setDesktopProfilePrimary } from './lib/db';
+import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
+import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigration';
+import { subscribeToStorageQuotaWarnings, type StorageQuotaWarning } from './lib/storageOverflowEvents';
+import {
+  createDesktopPOSProfile,
+  finalizeDesktopPOSProfileCreation,
+  getPendingDesktopPOSProfileCreation,
+  discoverDesktopPOSProfiles,
+  getConfiguredPOSOverflowFolder,
+  getDesktopPOSMigrationJournal,
+  getDesktopPOSProfileStatus,
+  readDesktopProfilePayload,
+  transitionDesktopPOSStorageMigration,
+  unlockDesktopPOSProfileWithOS,
+  unlockDesktopPOSProfileWithPassphrase,
+  unlockDesktopPOSProfileWithRecoveryKey,
+  type DesktopPOSMigrationPurpose,
+} from './lib/desktopProfileStorage';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
@@ -417,10 +436,885 @@ function AppRoutes() {
   );
 }
 
-export default function App() {
+type OverflowFolderStatus = {
+  ok?: boolean;
+  configured?: boolean;
+  available?: boolean;
+  folderPath?: string | null;
+  storageMode?: 'indexeddb' | 'folder_primary' | 'unknown';
+  profileDirectoryName?: string | null;
+  profileId?: string | null;
+  profileDirectory?: string | null;
+  error?: string;
+  canceled?: boolean;
+};
+
+const PRIMARY_PROFILE_PURPOSES: DesktopPOSMigrationPurpose[] = [
+  'app_state', 'sync_queue', 'meta', 'restore_checkpoint',
+];
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyAndActivatePrimaryProfile(status: OverflowFolderStatus, directory: string): Promise<void> {
+  const active = await getDesktopPOSProfileStatus();
+  if (!active.unlocked || active.profile?.profileId !== status.profileId || active.profile?.directory !== directory) {
+    throw new Error('The unlocked encrypted profile does not match the configured primary POS profile.');
+  }
+  let journal = await getDesktopPOSMigrationJournal();
+  if (!journal || journal.profileId !== status.profileId) {
+    throw new Error('The primary POS profile has no matching migration journal.');
+  }
+  if (journal.phase !== 'ready_to_cutover' && journal.phase !== 'folder_primary') {
+    throw new Error('The primary POS migration was interrupted before all data was verified. Do not use an older IndexedDB copy.');
+  }
+
+  for (const purpose of PRIMARY_PROFILE_PURPOSES) {
+    const entry = journal.entries[purpose];
+    if (entry.status !== 'verified' || !entry.sha256 || !Number.isFinite(entry.bytes) || !Number.isFinite(entry.revision)) {
+      throw new Error(`The primary POS ${purpose} data has no completed verification record.`);
+    }
+    const serialized = await readDesktopProfilePayload(purpose);
+    if (serialized === null) throw new Error(`The primary POS ${purpose} file is missing.`);
+    const bytes = new TextEncoder().encode(serialized).byteLength;
+    const sha256 = await sha256Hex(serialized);
+    if (bytes !== entry.bytes || sha256 !== entry.sha256) {
+      throw new Error(`The primary POS ${purpose} data failed its integrity check.`);
+    }
+    const value = JSON.parse(serialized);
+    if (purpose === 'app_state' &&
+        (!value || !Array.isArray(value.products) || !Array.isArray(value.users) || !Array.isArray(value.sales))) {
+      throw new Error('The primary POS state file has an unsupported data shape.');
+    }
+    if (purpose === 'sync_queue' && !Array.isArray(value)) {
+      throw new Error('The primary POS offline queue has an unsupported data shape.');
+    }
+    if (purpose === 'meta' &&
+        (!value || !Number.isFinite(value.autoBackupHours) || !Number.isFinite(value.backupCount))) {
+      throw new Error('The primary POS backup metadata has an unsupported data shape.');
+    }
+    if (purpose === 'restore_checkpoint' && value !== null &&
+        (!value || !Array.isArray(value.products) || !Array.isArray(value.users) || !Array.isArray(value.sales))) {
+      throw new Error('The primary POS restore checkpoint has an unsupported data shape.');
+    }
+  }
+
+  if (journal.phase === 'ready_to_cutover') {
+    journal = await transitionDesktopPOSStorageMigration('folder_primary');
+  }
+  if (journal.phase !== 'folder_primary') {
+    throw new Error('The encrypted POS profile did not complete its primary-storage cutover.');
+  }
+  setDesktopProfilePrimary(true);
+}
+
+function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
+  const desktopApi = useMemo(() => (window as Window & {
+    nexfixDesktop?: {
+      isDesktop?: boolean;
+      getPOSOverflowFolder?: () => Promise<OverflowFolderStatus>;
+      choosePOSOverflowFolder?: () => Promise<OverflowFolderStatus>;
+    };
+  }).nexfixDesktop, []);
+  const [loading, setLoading] = useState(Boolean(desktopApi?.isDesktop && desktopApi.getPOSOverflowFolder));
+  const [choosing, setChoosing] = useState(false);
+  const [folderStatus, setFolderStatus] = useState<OverflowFolderStatus | null>(null);
+  const [error, setError] = useState('');
+  const [primaryBooting, setPrimaryBooting] = useState(false);
+  const [primaryReady, setPrimaryReady] = useState(false);
+  const [primaryUnlockRequired, setPrimaryUnlockRequired] = useState(false);
+  const [primaryDirectory, setPrimaryDirectory] = useState('');
+  const [unlockMode, setUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
+  const [unlockSecret, setUnlockSecret] = useState('');
+  const [unlockError, setUnlockError] = useState('');
+  const [primaryStorageError, setPrimaryStorageError] = useState('');
+  const [profileSetupPhase, setProfileSetupPhase] = useState<'idle' | 'checking' | 'create' | 'recovery' | 'unlock' | 'ready' | 'error'>('idle');
+  const [profileSetupDirectory, setProfileSetupDirectory] = useState('');
+  const [profileSetupPendingId, setProfileSetupPendingId] = useState('');
+  const [profileSetupPassphrase, setProfileSetupPassphrase] = useState('');
+  const [profileSetupConfirm, setProfileSetupConfirm] = useState('');
+  const [profileSetupRecoveryKey, setProfileSetupRecoveryKey] = useState('');
+  const [profileSetupRecoveryAcknowledged, setProfileSetupRecoveryAcknowledged] = useState(false);
+  const [profileSetupUnlockMode, setProfileSetupUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
+  const [profileSetupUnlockSecret, setProfileSetupUnlockSecret] = useState('');
+  const [profileSetupError, setProfileSetupError] = useState('');
+  const [profileSetupBusy, setProfileSetupBusy] = useState(false);
+
+  useEffect(() => {
+    if (!folderStatus || folderStatus.storageMode !== 'indexeddb' || !folderStatus.configured ||
+        !folderStatus.available || !folderStatus.folderPath) {
+      setProfileSetupPhase('idle');
+      return;
+    }
+    let active = true;
+    setProfileSetupPhase('checking');
+    setProfileSetupError('');
+    void (async () => {
+      const pending = await getPendingDesktopPOSProfileCreation();
+      if (pending.pending && pending.pendingId && pending.profile && pending.recoveryKey) {
+        if (active) {
+          setProfileSetupPendingId(pending.pendingId);
+          setProfileSetupDirectory(pending.profile.directory);
+          setProfileSetupRecoveryKey(pending.recoveryKey);
+          setProfileSetupRecoveryAcknowledged(false);
+          setProfileSetupPassphrase('');
+          setProfileSetupConfirm('');
+          setProfileSetupPhase('recovery');
+        }
+        return;
+      }
+      const discovery = await discoverDesktopPOSProfiles(folderStatus.folderPath!);
+      if (discovery.duplicates.length > 0 || discovery.invalid.length > 0 || discovery.available.length > 1) {
+        throw new Error('The selected folder must contain exactly one valid encrypted POS profile. No profile was changed.');
+      }
+      if (discovery.available.length === 0) {
+        if (active) setProfileSetupPhase('create');
+        return;
+      }
+      const profile = discovery.available[0];
+      if (active) setProfileSetupDirectory(profile.directory);
+      const status = await getDesktopPOSProfileStatus();
+      if (status.unlocked) {
+        if (status.profile?.profileId !== profile.profileId) {
+          throw new Error('A different encrypted POS profile is already open. Close and reopen Nexfix before continuing.');
+        }
+        if (active) setProfileSetupPhase('ready');
+        return;
+      }
+      try {
+        await unlockDesktopPOSProfileWithOS(profile.directory);
+        if (active) setProfileSetupPhase('ready');
+      } catch {
+        if (active) {
+          setProfileSetupUnlockMode('passphrase');
+          setProfileSetupError('Windows could not unlock this profile automatically. Enter its passphrase or recovery key.');
+          setProfileSetupPhase('unlock');
+        }
+      }
+    })().catch(cause => {
+      if (active) {
+        setProfileSetupError(cause instanceof Error ? cause.message : 'Encrypted POS profile setup could not be checked.');
+        setProfileSetupPhase('error');
+      }
+    });
+    return () => { active = false; };
+  }, [folderStatus]);
+
+  useEffect(() => {
+    if (!desktopApi?.isDesktop || !desktopApi.getPOSOverflowFolder) return;
+    let active = true;
+    void desktopApi.getPOSOverflowFolder().then(result => {
+      if (!active) return;
+      setFolderStatus(result);
+      if (!result?.ok) setError(result?.error || 'Saved storage folder status could not be checked.');
+    }).catch(() => {
+      if (active) setError('Saved storage folder status could not be checked. Please choose the folder again.');
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    const onPrimaryStorageError = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      setPrimaryStorageError(message || 'The encrypted primary POS storage could not be read.');
+      setPrimaryReady(false);
+    };
+    const reloadFolderStatus = () => {
+      void desktopApi?.getPOSOverflowFolder?.().then(setFolderStatus).catch(() => {
+        setPrimaryStorageError('The POS storage location could not be reloaded.');
+      });
+    };
+    window.addEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
+    window.addEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+    window.addEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
+    return () => {
+      window.removeEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
+      window.removeEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+      window.removeEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
+    };
+  }, [desktopApi]);
+
+  useEffect(() => {
+    if (!folderStatus) return;
+    if (folderStatus.storageMode !== 'folder_primary') {
+      setDesktopProfilePrimary(false);
+      setPrimaryReady(false);
+      setPrimaryBooting(false);
+      setPrimaryUnlockRequired(false);
+      setPrimaryDirectory('');
+      setPrimaryStorageError('');
+      setUnlockError('');
+      return;
+    }
+    // Do not turn the file-backed adapter off during a runtime cutover or
+    // while a primary drive is reconnecting. Only verified rollback to
+    // IndexedDB mode may clear the backend flag.
+    setPrimaryReady(false);
+    if (!folderStatus.available || !folderStatus.folderPath || !folderStatus.profileDirectory || !folderStatus.profileId) {
+      setPrimaryBooting(false);
+      return;
+    }
+    let active = true;
+    setPrimaryBooting(true);
+    setPrimaryUnlockRequired(false);
+    setPrimaryStorageError('');
+    setUnlockError('');
+    void (async () => {
+      const discovery = await discoverDesktopPOSProfiles(folderStatus.folderPath!);
+      if (discovery.available.length !== 1 || discovery.duplicates.length > 0 || discovery.invalid.length > 0) {
+        throw new Error('The selected folder must contain exactly one valid encrypted POS profile. No data was changed.');
+      }
+      const profile = discovery.available.find(item =>
+        item.profileId === folderStatus.profileId && item.directory === folderStatus.profileDirectory,
+      );
+      if (!profile) throw new Error('The configured primary POS profile was not found in the selected folder.');
+      if (active) setPrimaryDirectory(profile.directory);
+      const profileStatus = await getDesktopPOSProfileStatus();
+      if (profileStatus.unlocked && profileStatus.profile?.profileId !== folderStatus.profileId) {
+        throw new Error('A different encrypted POS profile is already open in this app session.');
+      }
+      if (!profileStatus.unlocked) {
+        try {
+          await unlockDesktopPOSProfileWithOS(profile.directory);
+        } catch {
+          if (active) {
+            setPrimaryUnlockRequired(true);
+            setUnlockError('Automatic Windows unlock is unavailable. Enter the profile passphrase or recovery key.');
+          }
+          return;
+        }
+      }
+      await verifyAndActivatePrimaryProfile(folderStatus, profile.directory);
+      if (active) {
+        setPrimaryReady(true);
+        setPrimaryUnlockRequired(false);
+        setUnlockSecret('');
+      }
+    })().catch(error => {
+      if (active) setPrimaryStorageError(error instanceof Error ? error.message : 'Primary POS storage verification failed.');
+    }).finally(() => {
+      if (active) setPrimaryBooting(false);
+    });
+    return () => { active = false; };
+  }, [folderStatus]);
+
+  const unlockPrimaryProfile = async () => {
+    if (!primaryDirectory || !folderStatus || !unlockSecret.trim() || primaryBooting) return;
+    setPrimaryBooting(true);
+    setUnlockError('');
+    try {
+      if (unlockMode === 'passphrase') {
+        await unlockDesktopPOSProfileWithPassphrase(primaryDirectory, unlockSecret);
+      } else {
+        await unlockDesktopPOSProfileWithRecoveryKey(primaryDirectory, unlockSecret);
+      }
+    } catch (error) {
+      setUnlockError(error instanceof Error ? error.message : 'The profile could not be unlocked.');
+      setPrimaryBooting(false);
+      return;
+    }
+    try {
+      await verifyAndActivatePrimaryProfile(folderStatus, primaryDirectory);
+      setPrimaryReady(true);
+      setPrimaryUnlockRequired(false);
+      setUnlockSecret('');
+      setUnlockError('');
+    } catch (error) {
+      setPrimaryStorageError(error instanceof Error ? error.message : 'Primary POS storage verification failed.');
+    } finally {
+      setPrimaryBooting(false);
+    }
+  };
+
+  const createOverflowProfile = async () => {
+    if (profileSetupPassphrase.length < 12 || !/[A-Za-z]/.test(profileSetupPassphrase) || !/[0-9]/.test(profileSetupPassphrase)) {
+      setProfileSetupError('Use at least 12 characters with letters and numbers.');
+      return;
+    }
+    if (profileSetupPassphrase !== profileSetupConfirm) {
+      setProfileSetupError('The two passphrases do not match.');
+      return;
+    }
+    if (!folderStatus?.folderPath) {
+      setProfileSetupError('Choose an available storage folder first.');
+      return;
+    }
+    setProfileSetupBusy(true);
+    setProfileSetupError('');
+    try {
+      const created = await createDesktopPOSProfile({
+        storageRoot: folderStatus.folderPath,
+        directoryName: 'Nexfix POS Data',
+        label: 'NexFix POS Storage',
+        passphrase: profileSetupPassphrase,
+      });
+      setProfileSetupDirectory(created.profile.directory);
+      setProfileSetupPendingId(created.pendingId);
+      setProfileSetupRecoveryKey(created.recoveryKey);
+      setProfileSetupRecoveryAcknowledged(false);
+      setProfileSetupPhase('recovery');
+    } catch (cause) {
+      setProfileSetupError(cause instanceof Error ? cause.message : 'Could not create the encrypted POS profile.');
+    } finally {
+      setProfileSetupBusy(false);
+    }
+  };
+
+  const unlockOverflowProfile = async () => {
+    if (!profileSetupDirectory || !profileSetupUnlockSecret.trim()) return;
+    setProfileSetupBusy(true);
+    setProfileSetupError('');
+    try {
+      if (profileSetupUnlockMode === 'passphrase') {
+        await unlockDesktopPOSProfileWithPassphrase(profileSetupDirectory, profileSetupUnlockSecret);
+      } else {
+        await unlockDesktopPOSProfileWithRecoveryKey(profileSetupDirectory, profileSetupUnlockSecret);
+      }
+      setProfileSetupUnlockSecret('');
+      setProfileSetupPhase('ready');
+    } catch (cause) {
+      setProfileSetupError(cause instanceof Error ? cause.message : 'Could not unlock the encrypted POS profile.');
+    } finally {
+      setProfileSetupBusy(false);
+    }
+  };
+
+  const finishOverflowProfileSetup = async () => {
+    if (!profileSetupRecoveryAcknowledged || !profileSetupRecoveryKey || !profileSetupPendingId) return;
+    if (!profileSetupPassphrase) {
+      setProfileSetupError('Re-enter the storage passphrase to finalize this setup. The profile has not been saved yet.');
+      return;
+    }
+    setProfileSetupBusy(true);
+    setProfileSetupError('');
+    try {
+      if (!folderStatus?.folderPath) {
+        throw new Error('Reconnect the original POS storage folder before finishing setup.');
+      }
+      const profile = await finalizeDesktopPOSProfileCreation({
+        pendingId: profileSetupPendingId,
+        storageRoot: folderStatus.folderPath,
+        passphrase: profileSetupPassphrase,
+        acknowledged: true,
+      });
+      setProfileSetupDirectory(profile.directory);
+      setProfileSetupPendingId('');
+      setProfileSetupRecoveryKey('');
+      setProfileSetupPassphrase('');
+      setProfileSetupConfirm('');
+      setProfileSetupPhase('ready');
+    } catch (cause) {
+      setProfileSetupError(cause instanceof Error ? cause.message : 'Could not finish encrypted POS profile setup.');
+    } finally {
+      setProfileSetupBusy(false);
+    }
+  };
+
+  const chooseFolder = async () => {
+    if (!desktopApi?.choosePOSOverflowFolder || choosing) return;
+    setChoosing(true);
+    setError('');
+    try {
+      const result = await desktopApi.choosePOSOverflowFolder();
+      if (!result?.ok) {
+        setError(result?.error || 'The selected folder could not be saved. Please try again.');
+      } else if (!result.canceled && result.configured && result.available) {
+        setFolderStatus(result);
+      } else if (result.error) {
+        setError(result.error);
+      }
+    } catch {
+      setError('The folder could not be selected. Please try again.');
+    } finally {
+      setChoosing(false);
+    }
+  };
+
+  if (!desktopApi?.isDesktop) return <>{children}</>;
+  if (loading) return <RouteFallback />;
+
+  // Never fall back to IndexedDB after the durable config says the folder is
+  // primary. The file-backed DB adapter/startup unlock must be ready first.
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.storageMode === 'folder_primary') {
+    if (!folderStatus.available) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-red-600" />
+            <h1 className="text-xl font-black">Primary POS storage folder is disconnected</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Nexfix has already marked the selected folder as the primary data location. POS is paused to protect your latest sales. Reconnect the original drive, or select a folder containing the same verified POS profile.
+            </p>
+            {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
+            <button type="button" onClick={() => void chooseFolder()} disabled={choosing || !desktopApi?.choosePOSOverflowFolder}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {choosing ? 'Verifying original storage…' : 'Reconnect original storage folder'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (primaryStorageError) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-red-600" />
+            <h1 className="text-xl font-black">Primary POS storage verification failed</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Nexfix has stopped POS instead of opening an older IndexedDB copy. Reconnect the original folder or restore the verified profile before continuing.
+            </p>
+            <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{primaryStorageError}</p>
+          </div>
+        </div>
+      );
+    }
+    if (primaryBooting || (!primaryReady && !primaryUnlockRequired)) return <RouteFallback />;
+    if (primaryUnlockRequired) {
+      return (
+        <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+          <div className="w-full max-w-xl rounded-2xl border border-amber-300 bg-white p-6 shadow-xl dark:border-amber-300/20 dark:bg-[#101a2d] sm:p-8">
+            <AlertTriangle size={28} className="mb-4 text-amber-600" />
+            <h1 className="text-xl font-black">Unlock primary POS storage</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              The original encrypted POS profile is present. This Windows account cannot unlock it automatically, so use the profile passphrase or recovery key. This is separate from your normal POS login.
+            </p>
+            <div className="mt-5 flex gap-2">
+              <button type="button" onClick={() => setUnlockMode('passphrase')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'passphrase' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Passphrase</button>
+              <button type="button" onClick={() => setUnlockMode('recovery')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'recovery' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Recovery key</button>
+            </div>
+            <input type="password" value={unlockSecret} onChange={event => setUnlockSecret(event.target.value)}
+              placeholder={unlockMode === 'passphrase' ? 'POS profile passphrase' : 'POS profile recovery key'}
+              className="mt-4 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900 outline-none focus:border-cyan-500" />
+            {unlockError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{unlockError}</p>}
+            <button type="button" onClick={() => void unlockPrimaryProfile()} disabled={primaryBooting || !unlockSecret.trim()}
+              className="mt-5 w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {primaryBooting ? 'Verifying encrypted data…' : 'Unlock and verify POS data'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <>{children}</>;
+  }
+
+  if (folderStatus?.storageMode === 'unknown' || (folderStatus?.ok === false && folderStatus.configured)) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+        <div className="w-full max-w-xl rounded-2xl border border-red-300 bg-white p-6 shadow-xl dark:border-red-300/20 dark:bg-[#101a2d] sm:p-8">
+          <AlertTriangle size={28} className="mb-4 text-red-600" />
+          <h1 className="text-xl font-black">POS storage configuration needs repair</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            Nexfix cannot safely determine which storage location is primary. POS is paused to avoid opening a stale database copy.
+          </p>
+          {error && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.available && folderStatus.storageMode === 'indexeddb' && profileSetupPhase !== 'ready') {
+    return (
+      <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+        <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-[#101a2d] sm:p-8">
+          <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-300">
+            <AlertTriangle size={23} />
+          </div>
+          <h1 className="text-xl font-black">Prepare automatic POS overflow storage</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+            IndexedDB remains the normal POS database. This encrypted folder profile is prepared now so Nexfix can move the latest data automatically if IndexedDB becomes full. No POS data is moved during this setup.
+          </p>
+          {profileSetupPhase === 'checking' && (
+            <div className="mt-6 flex items-center gap-2 rounded-xl bg-cyan-50 p-4 text-sm text-cyan-900 dark:bg-cyan-300/10 dark:text-cyan-100">
+              <Loader2 size={17} className="animate-spin" /> Checking encrypted storage profile…
+            </div>
+          )}
+          {profileSetupPhase === 'create' && (
+            <div className="mt-6 space-y-3">
+              <p className="text-sm text-slate-600 dark:text-slate-300">Create a separate storage passphrase. This is not your normal POS login. You will also receive a recovery key; save it safely.</p>
+              <input type="password" value={profileSetupPassphrase} onChange={event => setProfileSetupPassphrase(event.target.value)}
+                placeholder="New storage passphrase (12+ characters)" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+              <input type="password" value={profileSetupConfirm} onChange={event => setProfileSetupConfirm(event.target.value)}
+                placeholder="Confirm storage passphrase" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+              <button type="button" onClick={() => void createOverflowProfile()} disabled={profileSetupBusy}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+                {profileSetupBusy ? 'Creating encrypted profile…' : 'Create encrypted storage profile'}
+              </button>
+            </div>
+          )}
+          {profileSetupPhase === 'recovery' && (
+            <div className="mt-6 space-y-3">
+              <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. The encrypted profile is not written to the selected folder until you confirm saving the key and finish setup.</p>
+              <pre className="select-all break-all rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm text-slate-900 dark:border-white/15 dark:bg-black/30 dark:text-white">{profileSetupRecoveryKey}</pre>
+              <input type="password" value={profileSetupPassphrase} onChange={event => setProfileSetupPassphrase(event.target.value)}
+                placeholder="Re-enter storage passphrase to finish" autoComplete="new-password"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+              <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
+                <input type="checkbox" checked={profileSetupRecoveryAcknowledged} onChange={event => setProfileSetupRecoveryAcknowledged(event.target.checked)} className="mt-1" />
+                I saved the recovery key somewhere safe.
+              </label>
+              <button type="button" onClick={() => void finishOverflowProfileSetup()} disabled={!profileSetupRecoveryAcknowledged || profileSetupBusy || !profileSetupPassphrase}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+                {profileSetupBusy ? 'Verifying and saving profile…' : 'Finish storage setup'}
+              </button>
+            </div>
+          )}
+          {profileSetupPhase === 'unlock' && (
+            <div className="mt-6 space-y-3">
+              <p className="text-sm text-slate-600 dark:text-slate-300">Unlock the existing encrypted POS profile. This is separate from your normal POS login.</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setProfileSetupUnlockMode('passphrase')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${profileSetupUnlockMode === 'passphrase' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Passphrase</button>
+                <button type="button" onClick={() => setProfileSetupUnlockMode('recovery')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${profileSetupUnlockMode === 'recovery' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Recovery key</button>
+              </div>
+              <input type="password" value={profileSetupUnlockSecret} onChange={event => setProfileSetupUnlockSecret(event.target.value)}
+                placeholder={profileSetupUnlockMode === 'passphrase' ? 'Storage passphrase' : 'Storage recovery key'} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+              <button type="button" onClick={() => void unlockOverflowProfile()} disabled={profileSetupBusy || !profileSetupUnlockSecret.trim()}
+                className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Unlock encrypted profile</button>
+            </div>
+          )}
+          {profileSetupPhase === 'error' && (
+            <div className="mt-6 space-y-3">
+              <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{profileSetupError}</p>
+              <button type="button" onClick={() => void chooseFolder()} disabled={choosing}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Reconnect / choose storage folder</button>
+            </div>
+          )}
+          {profileSetupError && profileSetupPhase !== 'error' && (
+            <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{profileSetupError}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+  if (folderStatus?.ok && folderStatus.configured && folderStatus.available && folderStatus.storageMode === 'indexeddb') return <>{children}</>;
+
+  // Before cutover, IndexedDB remains primary, so a disconnected overflow
+  // destination is a warning only and POS can continue safely.
+  if (folderStatus?.ok && folderStatus.configured && !folderStatus.available && folderStatus.storageMode === 'indexeddb') {
+    return (
+      <>
+        <div role="alert" className="fixed inset-x-0 top-0 z-[300] flex flex-wrap items-center justify-center gap-3 border-b border-amber-300 bg-amber-50 px-4 py-3 text-center text-sm text-amber-900 shadow-sm dark:border-amber-300/20 dark:bg-amber-950 dark:text-amber-100">
+          <span>The selected extra-storage folder is disconnected. POS is continuing with IndexedDB; reconnect the drive or choose another folder before overflow migration is enabled.</span>
+          <button type="button" onClick={() => void chooseFolder()} disabled={choosing}
+            className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-bold hover:bg-amber-100 disabled:opacity-60 dark:hover:bg-amber-900">
+            {choosing ? 'Checking folder…' : 'Reconnect / choose folder'}
+          </button>
+        </div>
+        {children}
+      </>
+    );
+  }
+
+  return (
+    <div className="min-h-screen grid place-items-center bg-[#f5f6fb] p-5 text-[#17133c] dark:bg-[#080d1c] dark:text-white">
+      <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-white/10 dark:bg-[#101a2d] sm:p-8">
+        <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-300">
+          <AlertTriangle size={23} />
+        </div>
+        <h1 className="text-xl font-black">Choose a POS storage folder</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Before opening Nexfix POS, select a folder on this computer or an attached drive. This folder is prepared for extra storage if the browser database becomes full.
+        </p>
+        <div className="mt-4 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950 dark:border-cyan-300/20 dark:bg-cyan-300/10 dark:text-cyan-100">
+          <strong>Important:</strong> IndexedDB remains the normal POS database. Nexfix prepares an encrypted profile in the selected folder now, but moves POS data there only when IndexedDB reaches its limit and the migration is verified.
+        </div>
+        {folderStatus?.configured && !folderStatus.available && (
+          <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-300/10 dark:text-amber-200">
+            The previously selected folder is not available. Reconnect its drive or choose another folder.
+          </p>
+        )}
+        {(error || (desktopApi?.isDesktop && !desktopApi.getPOSOverflowFolder
+          ? 'This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.'
+          : '')) && <p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error || 'This Nexfix desktop build does not include the storage-folder setup service. Update the app before continuing.'}</p>}
+        <button type="button" onClick={() => void chooseFolder()} disabled={choosing || !desktopApi?.choosePOSOverflowFolder}
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-lg transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60">
+          {choosing ? <Loader2 size={17} className="animate-spin" /> : null}
+          {choosing ? 'Checking folder…' : 'Select storage folder'}
+        </button>
+        <p className="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">
+          Choose a normal writable folder, not the drive root itself. You can use an internal drive or an attached external drive.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function formatStorageBytes(value?: number): string {
+  if (!Number.isFinite(value) || value === undefined || value < 0) return 'Unknown';
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function StorageOverflowController() {
+  const { pauseStorageMaintenance } = usePOS();
+  const [warning, setWarning] = useState<StorageQuotaWarning | null>(null);
+  const [blocking, setBlocking] = useState(false);
+  const [phase, setPhase] = useState<'warning' | 'create' | 'unlock' | 'recovery' | 'copying' | 'error'>('warning');
+  const [folderPath, setFolderPath] = useState('');
+  const [profileDirectory, setProfileDirectory] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [confirmPassphrase, setConfirmPassphrase] = useState('');
+  const [unlockMode, setUnlockMode] = useState<'passphrase' | 'recovery'>('passphrase');
+  const [unlockSecret, setUnlockSecret] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const autoMigrationAttemptedRef = useRef(false);
+  const prepareMigrationRef = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    return subscribeToStorageQuotaWarnings(window, detail => {
+      setWarning(detail);
+      setBlocking(detail.reason === 'quota_exceeded');
+      setPhase('warning');
+      setError('');
+    });
+  }, []);
+
+  const runMigration = async (): Promise<boolean> => {
+    setBusy(true);
+    setPhase('copying');
+    setError('');
+    try {
+      await migrateIndexedDBToEncryptedPOSFolder(pauseStorageMaintenance);
+      setRecoveryKey('');
+      setPassphrase('');
+      setConfirmPassphrase('');
+      setUnlockSecret('');
+      setWarning(null);
+      setBlocking(false);
+      autoMigrationAttemptedRef.current = false;
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Encrypted POS storage migration failed.');
+      setPhase('error');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prepareMigration = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await runAutomaticPOSOverflowMigration({
+        getFolder: getConfiguredPOSOverflowFolder,
+        discoverProfiles: discoverDesktopPOSProfiles,
+        getProfileStatus: getDesktopPOSProfileStatus,
+        unlockWithOS: unlockDesktopPOSProfileWithOS,
+        migrate: runMigration,
+      });
+      if (result.status === 'unlock_required') {
+        setProfileDirectory(result.profileDirectory);
+        setUnlockMode('passphrase');
+        setPhase('unlock');
+        setError('Windows could not unlock the encrypted profile automatically. Enter the storage passphrase or recovery key to continue.');
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not prepare the encrypted POS folder.');
+      setPhase('error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  prepareMigrationRef.current = prepareMigration;
+
+  useEffect(() => {
+    if (warning?.reason !== 'quota_exceeded' || autoMigrationAttemptedRef.current) return;
+    autoMigrationAttemptedRef.current = true;
+    void prepareMigrationRef.current();
+  }, [warning]);
+
+  const createProfile = async () => {
+    if (passphrase.length < 12 || !/[A-Za-z]/.test(passphrase) || !/[0-9]/.test(passphrase)) {
+      setError('Use at least 12 characters with letters and numbers.');
+      return;
+    }
+    if (passphrase !== confirmPassphrase) {
+      setError('The two passphrases do not match.');
+      return;
+    }
+    if (!folderPath) {
+      setError('Choose the POS storage folder first.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const created = await createDesktopPOSProfile({
+        storageRoot: folderPath,
+        directoryName: 'Nexfix POS Data',
+        label: 'NexFix POS Storage',
+        passphrase,
+      });
+      setProfileDirectory(created.profile.directory);
+      setRecoveryKey(created.recoveryKey);
+      setPhase('recovery');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create the encrypted POS profile.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlockExistingProfile = async () => {
+    if (!profileDirectory || !unlockSecret.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (unlockMode === 'passphrase') {
+        await unlockDesktopPOSProfileWithPassphrase(profileDirectory, unlockSecret);
+      } else {
+        await unlockDesktopPOSProfileWithRecoveryKey(profileDirectory, unlockSecret);
+      }
+      setUnlockSecret('');
+      await runMigration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not unlock the encrypted POS profile.');
+      setBusy(false);
+    }
+  };
+
+  const reconnectFolder = async () => {
+    const api = typeof window !== 'undefined'
+      ? (window as Window & { nexfixDesktop?: { choosePOSOverflowFolder?: () => Promise<{
+          ok: boolean; available: boolean; folderPath?: string | null;
+          storageMode?: string; error?: string;
+        }> } }).nexfixDesktop
+      : undefined;
+    if (!api?.choosePOSOverflowFolder) {
+      setError('The desktop folder chooser is unavailable in this app build.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.choosePOSOverflowFolder();
+      if (!result?.ok || !result.available || !result.folderPath || result.storageMode !== 'indexeddb') {
+        throw new Error(result?.error || 'The selected folder could not be reconnected.');
+      }
+      setFolderPath(result.folderPath);
+      window.dispatchEvent(new CustomEvent('nexfix:storage-folder-updated'));
+      await prepareMigration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not reconnect the POS storage folder.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!warning) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] grid place-items-center bg-slate-950/70 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-cyan-200 bg-white p-5 text-slate-900 shadow-2xl dark:border-cyan-300/20 dark:bg-[#101a2d] dark:text-white sm:p-7">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className={`mt-1 shrink-0 ${blocking ? 'text-red-600' : 'text-amber-600'}`} size={26} />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-black">
+              {blocking ? 'POS storage is full' : 'POS storage is almost full'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              {blocking
+                ? 'IndexedDB could not save the latest change. Do not repeat the sale. Move the latest in-memory POS data to the selected encrypted folder before continuing.'
+                : 'IndexedDB is approaching its storage limit. You can move the POS data to the selected encrypted folder now, before writes start failing.'}
+            </p>
+            {warning.usage !== undefined && warning.quota !== undefined && (
+              <p className="mt-2 text-xs font-semibold text-slate-500">
+                Used {formatStorageBytes(warning.usage)} of {formatStorageBytes(warning.quota)}
+                {warning.ratio !== undefined ? ` (${Math.round(warning.ratio * 100)}%)` : ''}
+              </p>
+            )}
+          </div>
+          {!blocking && phase === 'warning' && (
+            <button type="button" onClick={() => setWarning(null)} className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10">Close</button>
+          )}
+        </div>
+
+        {phase === 'warning' && (
+          <div className="mt-6 space-y-3">
+            <button type="button" onClick={() => void prepareMigration()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">
+              {busy ? 'Checking selected folder…' : 'Prepare encrypted folder migration'}
+            </button>
+            <button type="button" onClick={() => void reconnectFolder()} disabled={busy}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 disabled:opacity-60 dark:border-white/15 dark:text-slate-200">
+              Reconnect / choose storage folder
+            </button>
+          </div>
+        )}
+
+        {phase === 'create' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">Create an encrypted POS folder profile. This passphrase is separate from the normal POS login.</p>
+            <input type="password" value={passphrase} onChange={event => setPassphrase(event.target.value)}
+              placeholder="New profile passphrase (12+ characters)" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <input type="password" value={confirmPassphrase} onChange={event => setConfirmPassphrase(event.target.value)}
+              placeholder="Confirm profile passphrase" className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <button type="button" onClick={() => void createProfile()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Create encrypted profile</button>
+          </div>
+        )}
+
+        {phase === 'recovery' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm font-bold text-amber-700 dark:text-amber-300">Save this recovery key somewhere safe. It is shown only during profile creation.</p>
+            <pre className="select-all break-all rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm text-slate-900 dark:border-white/15 dark:bg-black/30 dark:text-white">{recoveryKey}</pre>
+            <p className="text-xs text-slate-500">Do not send this key to anyone. If the Windows account or drive is lost, this key may be needed to unlock the data.</p>
+            <button type="button" onClick={() => void runMigration()} disabled={busy || !recoveryKey}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">I saved the recovery key — start migration</button>
+          </div>
+        )}
+
+        {phase === 'unlock' && (
+          <div className="mt-6 space-y-3">
+            <p className="text-sm text-slate-600 dark:text-slate-300">Unlock the existing encrypted POS profile to continue.</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setUnlockMode('passphrase')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'passphrase' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Passphrase</button>
+              <button type="button" onClick={() => setUnlockMode('recovery')} className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold ${unlockMode === 'recovery' ? 'border-cyan-500 bg-cyan-50 text-cyan-800' : 'border-slate-300 text-slate-600'}`}>Recovery key</button>
+            </div>
+            <input type="password" value={unlockSecret} onChange={event => setUnlockSecret(event.target.value)}
+              placeholder={unlockMode === 'passphrase' ? 'Profile passphrase' : 'Profile recovery key'}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-900" />
+            <button type="button" onClick={() => void unlockExistingProfile()} disabled={busy || !unlockSecret.trim()}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Unlock and migrate</button>
+          </div>
+        )}
+
+        {phase === 'copying' && (
+          <div className="mt-6 rounded-xl bg-cyan-50 p-4 text-sm text-cyan-900 dark:bg-cyan-400/10 dark:text-cyan-100">
+            POS writes and background workers are paused. Copying app state, offline queue, backup metadata and restore checkpoint; then reading each file back and checking its SHA-256 hash. Do not close Nexfix.
+          </div>
+        )}
+
+        {phase === 'error' && (
+          <div className="mt-6 space-y-3">
+            <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-400/10 dark:text-red-200">{error}</p>
+            <button type="button" onClick={() => void prepareMigration()} disabled={busy}
+              className="w-full rounded-xl bg-cyan-600 px-4 py-3 text-sm font-extrabold text-white disabled:opacity-60">Retry safe migration</button>
+            <button type="button" onClick={() => void reconnectFolder()} disabled={busy}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Reconnect / choose storage folder</button>
+            {!profileDirectory && (
+              <button type="button" onClick={() => setPhase('warning')} disabled={busy}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-bold disabled:opacity-60">Back</button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function POSApplication() {
   useEffect(() => startSyncManager(), []);
   return (
     <POSProvider>
+      <StorageOverflowController />
       <HashRouter>
         <CloudAuthLifecycle />
         <SessionSecurity />
@@ -429,5 +1323,13 @@ export default function App() {
         <AppRoutes />
       </HashRouter>
     </POSProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <DesktopOverflowFolderSetup>
+      <POSApplication />
+    </DesktopOverflowFolderSetup>
   );
 }

@@ -5,7 +5,7 @@ name: Windows Desktop Build (No Publish)
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, feature/local-pos-data-profile-20261122]
     paths:
       - 'src/**'
       - 'electron/**'
@@ -125,6 +125,9 @@ jobs:
 
       - name: Build Windows installer and portable app without publishing
         run: npx electron-builder --win --publish never
+
+      - name: Verify production ASAR excludes QA harness files
+        run: npm run verify:production:asar
 
       - name: Verify Windows artifacts and generate checksums
         shell: pwsh

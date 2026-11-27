@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Nexfix POS Storage QA</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f5f7fa; color: #172033; }
+    main { width: min(720px, calc(100% - 48px)); padding: 36px; border: 1px solid #d9e0ea; border-radius: 16px; background: #fff; box-shadow: 0 12px 36px rgba(20, 35, 60, .08); }
+    h1 { margin-top: 0; font-size: 26px; }
+    .status { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #e8f5ed; color: #17643a; font-size: 13px; font-weight: 600; }
+    p { line-height: 1.6; }
+    .notice { margin-top: 24px; padding: 14px 16px; border-left: 4px solid #b7791f; background: #fff8e8; }
+    button { margin: 6px 8px 6px 0; padding: 10px 16px; border: 0; border-radius: 8px; background: #174ea6; color: white; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    code { display: block; margin-top: 12px; overflow-wrap: anywhere; }
+    #result { min-height: 24px; }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="status">Offline-only QA shell</span>
+    <h1>Nexfix POS Storage QA</h1>
+    <p>This separate test application has its own app identity and user-data directory. It does not open the production POS profile or connect to cloud services.</p>
+    <p>Choose a parent folder used only for disposable QA data. The app creates a new child folder and an exclusive QA sentinel; it never clears or reuses existing folder contents.</p>
+    <button id="choose-folder" type="button">Choose disposable QA folder</button>
+    <button id="create-profile" type="button" disabled>Verify encrypted QA profile</button>
+    <button id="inject-quota" type="button" disabled>Run one-shot quota event test</button>
+    <p id="result" role="status" aria-live="polite">No QA folder selected.</p>
+    <code id="folder-path"></code>
+    <div class="notice">The encrypted-profile test uses the reviewed production profile/session and OS-unlock modules against disposable QA data. The one-shot synthetic quota event invokes the automatic migration coordinator and verifies encrypted copy/read-back for all four data domains. It does not fill a disk or test process interruption/restart recovery yet.</div>
+  </main>
+  <script type="module" src="./renderer.ts"></script>
+</body>
+</html>
