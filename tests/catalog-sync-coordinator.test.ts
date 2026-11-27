@@ -96,3 +96,41 @@ test('does not cache failed results and lets another identity sync independently
   assert.equal(otherUser.ok, true);
   assert.equal(calls, 3);
 });
+
+test('serializes multiple queued catalog fingerprints in invocation order', async () => {
+  const coordinator = createFingerprintSyncCoordinator<{ ok: boolean; version: string }>();
+  const firstGate = deferred<{ ok: boolean; version: string }>();
+  const started: string[] = [];
+
+  const first = coordinator.run('shop-a:user-a', 'catalog-v1', () => {
+    started.push('v1');
+    return firstGate.promise;
+  });
+  await Promise.resolve();
+
+  const second = coordinator.run('shop-a:user-a', 'catalog-v2', async () => {
+    started.push('v2');
+    return { ok: true, version: 'v2' };
+  });
+  const third = coordinator.run('shop-a:user-a', 'catalog-v3', async () => {
+    started.push('v3');
+    return { ok: true, version: 'v3' };
+  });
+  const secondDuplicate = coordinator.run('shop-a:user-a', 'catalog-v2', async () => {
+    started.push('duplicate-v2');
+    return { ok: true, version: 'unexpected' };
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(started, ['v1']);
+
+  firstGate.resolve({ ok: true, version: 'v1' });
+  assert.deepEqual(await first, { ok: true, version: 'v1' });
+  assert.deepEqual(await Promise.all([second, third, secondDuplicate]), [
+    { ok: true, version: 'v2' },
+    { ok: true, version: 'v3' },
+    { ok: true, version: 'v2' },
+  ]);
+  assert.deepEqual(started, ['v1', 'v2', 'v3']);
+});
+
