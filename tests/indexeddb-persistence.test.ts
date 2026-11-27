@@ -34,11 +34,13 @@ before(async () => {
   assert.ok(typeof indexedDB !== 'undefined', 'Node test runtime must provide IndexedDB');
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
 });
 
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
 });
 
 test('folder-primary backend routes POS domains to encrypted profile and never falls back to IndexedDB', async () => {
