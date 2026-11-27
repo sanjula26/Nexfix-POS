@@ -160,7 +160,7 @@ export async function recoverPendingOfflineSaleQueues(): Promise<number> {
   const queuedSaleIds = new Set(
     queued.filter(op => op.type === 'sale_create').map(op => op.id.slice('sale:'.length)),
   );
-  return recoverPendingSaleQueueIds({
+  const restored = await recoverPendingSaleQueueIds({
     pendingSaleIds: pendingIds,
     sales: state.sales,
     queuedSaleIds,
@@ -169,9 +169,12 @@ export async function recoverPendingOfflineSaleQueues(): Promise<number> {
       .some(op => op.type === 'sale_create' && op.id === queueId),
     clearRecoveryMarkers: idbRemovePendingSaleQueueIds,
   });
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+  return restored;
 }
 
 export async function getPendingSyncOperations(){return idbListQueue();}
+export async function getPendingOfflineSaleQueueIds(): Promise<string[]> { return idbGetPendingSaleQueueIds(); }
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 const offlineQueueWork = createDrainableWorkGate();
@@ -385,7 +388,10 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
     }
 
-    if(acknowledged.length) await idbAcknowledgeQueue(acknowledged);
+    if(acknowledged.length) {
+      await idbAcknowledgeQueue(acknowledged);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+    }
     const remaining=await idbListQueue();
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
