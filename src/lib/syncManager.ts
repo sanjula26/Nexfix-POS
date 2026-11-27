@@ -64,7 +64,7 @@ export async function runSyncNow(): Promise<SyncManagerState> {
   syncing = true;
   publish({ ...state, status: 'syncing', lastError: null });
   try {
-    const result = await withCloudActivity('Pending changes', () => flushSyncQueue());
+    const result = await withCloudActivity('Pending changes', () => flushSyncQueue(), result => result.synced);
     retryAttempt = 0;
     if (result.conflict) {
       publish({ ...state, status: 'conflict', pending: result.pending });
