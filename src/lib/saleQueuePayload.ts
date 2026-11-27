@@ -83,11 +83,16 @@ export function buildSaleReplayPayments(input: {
   payments?: PaymentLeg[];
 }): PaymentLeg[] {
   const tenders = (input.payments || []).filter(leg => leg.method !== 'credit' && leg.amount > 0);
+  const tenderTotal = Math.round(tenders.reduce((sum, leg) => sum + leg.amount, 0) * 100) / 100;
+  const amountPaid = Math.max(0, Math.round((Number(input.amountPaid) || 0) * 100) / 100);
+  if ((tenders.length > 0 || input.payment === 'credit') && Math.abs(tenderTotal - amountPaid) > 0.01) {
+    throw new Error('Offline sale payment details do not match the saved amount paid. Keep the sale pending and reconcile it before cloud replay.');
+  }
+
   const creditDue = Math.max(0, Math.round((Number(input.creditDue) || 0) * 100) / 100);
   if (creditDue > 0.009) return [...tenders, { method: 'credit', amount: creditDue }];
   if (tenders.length) return tenders;
-  if (input.payment !== 'credit' && input.amountPaid > 0) {
-    return [{ method: input.payment, amount: input.amountPaid }];
-  }
+  if (input.payment === 'credit') return [];
+  if (amountPaid > 0) return [{ method: input.payment, amount: amountPaid }];
   return [];
 }
