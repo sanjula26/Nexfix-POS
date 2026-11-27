@@ -8,7 +8,7 @@ import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
 import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
 import { createSuccessfulSingleFlightCache } from './successfulSyncCache';
-import { reportCloudActivityFailure, withCloudActivity } from './cloudActivity';
+import { withCloudActivity } from './cloudActivity';
 
 const normalizedCatalogSyncCache = createSuccessfulSingleFlightCache<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }>(8);
 
@@ -795,7 +795,6 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   }
   return { ok: true, customerIdMap };
   }, result => result.ok));
-  if (!result.ok) reportCloudActivityFailure(result.error || 'Catalog sync failed');
   return result;
 }
 

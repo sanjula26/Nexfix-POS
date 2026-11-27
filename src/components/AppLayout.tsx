@@ -463,9 +463,7 @@ export default function AppLayout() {
   const cloudSyncHealthy = cloudSyncActive;
   const cloudLastSuccessAt = cloudActivity.lastSuccessAt
     ? new Date(cloudActivity.lastSuccessAt).toLocaleString()
-    : syncManagerState.lastSyncAt
-      ? new Date(syncManagerState.lastSyncAt).toLocaleString()
-      : null;
+    : null;
   const cloudLastIssue = cloudActivity.lastError || syncManagerState.lastError;
   const cloudStatusLabel = cloudSyncActive
     ? 'Sending data to cloud'
@@ -504,17 +502,20 @@ export default function AppLayout() {
     const stopActivity = subscribeCloudActivity(setCloudActivity);
     const stopSyncManager = subscribeSyncManager(setSyncManagerState);
     let active = true;
+    let authChangeVersion = 0;
     const applyCloudUser = (userId: string | null) => {
       const shopId = getCloudShopId();
       void setCloudActivityScope(shopId && userId ? { shopId, userId } : null);
     };
     const refreshScope = () => {
       if (!supabase) { applyCloudUser(null); return; }
+      const requestVersion = authChangeVersion;
       void supabase.auth.getSession().then(({ data, error }) => {
-        if (active) applyCloudUser(error ? null : data.session?.user.id || null);
-      }).catch(() => { if (active) applyCloudUser(null); });
+        if (active && requestVersion === authChangeVersion) applyCloudUser(error ? null : data.session?.user.id || null);
+      }).catch(() => { if (active && requestVersion === authChangeVersion) applyCloudUser(null); });
     };
     const authListener = supabase?.auth.onAuthStateChange((_event, session) => {
+      authChangeVersion += 1;
       applyCloudUser(session?.user.id || null);
     });
     window.addEventListener('nexfix:cloud-shop-changed', refreshScope);
@@ -740,7 +741,7 @@ export default function AppLayout() {
                   )}
                   <div className="flex items-start justify-between gap-4">
                     <dt className="text-sub">Last successful transfer</dt>
-                    <dd className="max-w-[65%] text-right font-semibold">{cloudLastSuccessAt ? <>{cloudActivity.lastSuccessOperation || 'Cloud sync'} · {cloudLastSuccessAt}</> : 'Not recorded in this session'}</dd>
+                    <dd className="max-w-[65%] text-right font-semibold">{cloudLastSuccessAt ? <>{cloudActivity.lastSuccessOperation || 'Cloud sync'} · {cloudLastSuccessAt}</> : 'No confirmed transfer recorded'}</dd>
                   </div>
                   {cloudLastIssue && (
                     <div className="rounded-lg bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">

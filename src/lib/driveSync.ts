@@ -12,7 +12,7 @@ import {
 } from './backupCrypto';
 import { ensureCloudShop } from './cloudSync';
 import { isValidGoogleBackupManifest, type GoogleBackupManifest } from './backupManifest';
-import { reportCloudActivityFailure, withCloudActivity } from './cloudActivity';
+import { withCloudActivity } from './cloudActivity';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
@@ -711,7 +711,6 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
   }
 
   }, result => result.ok);
-  if (!result.ok) reportCloudActivityFailure(result.error || 'Google Drive backup failed');
   return result;
 }
 
@@ -778,7 +777,6 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
   }
 
   }, result => result.ok);
-  if (!result.ok) reportCloudActivityFailure(result.error || 'Google Drive metadata failed');
   return result;
 }
 

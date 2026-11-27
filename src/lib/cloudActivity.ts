@@ -56,14 +56,16 @@ export async function setCloudActivityScope(scope: CloudActivityScope | null): P
   activeScope = nextScope;
   activeScopeKey = nextKey;
   const generation = ++scopeGeneration;
+  let scopeSuccessRevision = 0;
   lastError = null;
   lastSuccessAt = null;
   lastSuccessOperation = null;
   publish();
 
   if (!nextScope) return;
+  const loadRevision = scopeSuccessRevision;
   const saved = await idbGetCloudSyncMeta(nextScope.shopId, nextScope.userId);
-  if (generation !== scopeGeneration || activeScopeKey !== nextKey || !saved) return;
+  if (generation !== scopeGeneration || activeScopeKey !== nextKey || scopeSuccessRevision !== loadRevision || !saved) return;
   lastSuccessAt = Date.parse(saved.lastSuccessAt);
   lastSuccessOperation = saved.lastSuccessOperation;
   publish();
@@ -95,7 +97,7 @@ export function beginCloudActivity(operation: string): () => void {
 }
 
 /** Track an async cloud operation without changing its result or error behavior. */
-export function reportCloudActivityFailure(error: unknown): void {
+function reportCloudActivityFailure(error: unknown): void {
   lastError = error instanceof Error ? error.message : String(error || 'Cloud sync failed');
   publish();
 }
@@ -119,15 +121,20 @@ export async function withCloudActivity<T>(
           lastSuccessOperation: operation.slice(0, 80),
         }).catch(() => false);
       }
-      if (requestScopeKey === activeScopeKey) {
+      if (requestScopeKey && requestScopeKey === activeScopeKey) {
+        scopeSuccessRevision += 1;
         lastSuccessAt = Date.parse(completedAt);
         lastSuccessOperation = operation;
         lastError = null;
         publish();
       }
-    } else if (requestScopeKey === activeScopeKey && result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' && result.error) {
-      lastError = result.error;
-      publish();
+    } else if (requestScopeKey && requestScopeKey === activeScopeKey && result && typeof result === 'object') {
+      const resultError = 'error' in result && typeof result.error === 'string' ? result.error : '';
+      const notConfirmed = 'ok' in result && result.ok === false;
+      if (resultError || notConfirmed) {
+        lastError = resultError || `${operation} was not confirmed`;
+        publish();
+      }
     }
     return result;
   } catch (error) {

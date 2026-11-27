@@ -64,6 +64,18 @@ test('cloud activity restores only the active cloud user/shop and persists succe
   }
 });
 
+test('a failed cloud request from the previous shop does not contaminate the new shop status', async () => {
+  await setCloudActivityScope({ shopId: 'shop-old', userId: 'cloud-user-a' });
+  let rejectRequest!: (error: Error) => void;
+  const pending = withCloudActivity('Cloud sale', () => new Promise((_resolve, reject) => { rejectRequest = reject; }));
+  await Promise.resolve();
+  await setCloudActivityScope({ shopId: 'shop-new', userId: 'cloud-user-a' });
+  rejectRequest(new Error('old shop network error'));
+  await assert.rejects(pending, /old shop network error/);
+  assert.equal(getCloudActivityState().lastError, null);
+  await setCloudActivityScope(null);
+});
+
 test('cloud sync metadata write failure does not block a successful business operation', async () => {
   await setCloudActivityScope({ shopId: 'shop-meta-failure', userId: 'cloud-user-a' });
   const originalTransaction = IDBDatabase.prototype.transaction;
