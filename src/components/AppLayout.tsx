@@ -450,8 +450,8 @@ export default function AppLayout() {
   const cloudSyncComplete = !cloudSyncActive
     && !cloudActivity.lastError
     && connectivity === 'online'
-    && syncManagerState.status === 'synced'
-    && syncManagerState.pending === 0;
+    && syncManagerState.pending === 0
+    && (syncManagerState.status === 'synced' || cloudActivity.lastSuccessAt !== null);
   const cloudSyncHealthy = cloudSyncActive || cloudSyncComplete;
   const cloudSyncTitle = cloudSyncActive
     ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
@@ -466,7 +466,7 @@ export default function AppLayout() {
           : syncManagerState.pending > 0
             ? `${syncManagerState.pending} cloud update(s) waiting to sync`
             : cloudSyncComplete
-              ? `Cloud sync complete — ${syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
+              ? `Cloud sync complete — ${cloudActivity.lastSuccessAt ? new Date(cloudActivity.lastSuccessAt).toLocaleString() : syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
               : 'No data is being sent to the cloud right now';
 
   useEffect(() => {
@@ -626,8 +626,9 @@ export default function AppLayout() {
           <span className={`hidden sm:inline-flex badge border ${connectivity === 'online' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'}`}>
             <Wifi size={11} /> {connectivity === 'online' ? 'Online' : 'Offline'} <span className={`w-1.5 h-1.5 rounded-full ${connectivity === 'online' ? 'bg-emerald-500 blink' : 'bg-rose-500'}`} />
           </span>
-          <button
-            type="button"
+          <span
+            role="status"
+            aria-live="polite"
             className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${cloudSyncHealthy ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}
             title={cloudSyncTitle}
             aria-label={cloudSyncTitle}
@@ -636,7 +637,7 @@ export default function AppLayout() {
             <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? cloudSyncActive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500' : 'bg-rose-500'}`} />
             <span className="hidden md:inline">{cloudSyncActive ? 'Syncing' : cloudSyncComplete ? 'Synced' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' ? 'Error' : connectivity !== 'online' ? 'Offline' : 'No sync'}</span>
             {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
-          </button>
+          </span>
           {!ready && <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">Loading storage…</span>}
           <Clock />
           <button onClick={() => navigate('/inventory?low=1')} className={`badge !py-1.5 !px-3 transition-all hover:brightness-110 cursor-pointer ${lowStock.length > 0 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-raised text-faint border border-line'}`} title={lowStock.length ? 'View low stock items' : 'All products well stocked'}>
