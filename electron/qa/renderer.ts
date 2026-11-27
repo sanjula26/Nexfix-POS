@@ -32,11 +32,11 @@ import {
   idbSaveRestoreCheckpointDetailed,
   idbSaveStateDetailed,
   idbSetMetaDetailed,
+  setDesktopProfilePrimary,
   type LegacyPOSProfileSnapshot,
 } from '../../src/lib/db.ts';
 import { ensureOfflineStateWriteMarker } from '../../src/lib/storageOverflowQueue.ts';
 import type { POSState } from '../../src/lib/types.ts';
-import { setDesktopProfilePrimary } from '../../src/lib/db.ts';
 import { installOneShotQaQuotaInjection, type QaQuotaDomain } from './quota-injector.ts';
 
 const chooseButton = document.getElementById('choose-folder') as HTMLButtonElement;
