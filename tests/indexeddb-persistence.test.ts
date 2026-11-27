@@ -64,6 +64,23 @@ test('cloud activity restores only the active cloud user/shop and persists succe
   }
 });
 
+test('an active transfer from the previous shop is not shown in the new shop status', async () => {
+  await setCloudActivityScope({ shopId: 'shop-active-old', userId: 'cloud-user-a' });
+  let finishTransfer!: () => void;
+  const pending = withCloudActivity('Old shop sale', () => new Promise(resolve => { finishTransfer = () => resolve('old-sale-confirmed'); }));
+  await Promise.resolve();
+  assert.equal(getCloudActivityState().active, 1);
+  assert.deepEqual(getCloudActivityState().operations, ['Old shop sale']);
+
+  await setCloudActivityScope({ shopId: 'shop-active-new', userId: 'cloud-user-a' });
+  assert.equal(getCloudActivityState().active, 0);
+  assert.deepEqual(getCloudActivityState().operations, []);
+  finishTransfer();
+  assert.equal(await pending, 'old-sale-confirmed');
+  assert.equal(getCloudActivityState().active, 0);
+  await setCloudActivityScope(null);
+});
+
 test('a failed cloud request from the previous shop does not contaminate the new shop status', async () => {
   await setCloudActivityScope({ shopId: 'shop-old', userId: 'cloud-user-a' });
   let rejectRequest!: (error: Error) => void;

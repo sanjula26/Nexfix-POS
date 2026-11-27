@@ -24,7 +24,11 @@ let activeScope: CloudActivityScope | null = null;
 let activeScopeKey: string | null = null;
 let scopeGeneration = 0;
 let scopeSuccessRevision = 0;
-const activeOperations = new Map<number, string>();
+interface ActiveCloudOperation {
+  operation: string;
+  scopeKey: string | null;
+}
+const activeOperations = new Map<number, ActiveCloudOperation>();
 const listeners = new Set<(next: CloudActivityState) => void>();
 
 function scopeKey(scope: CloudActivityScope | null): string | null {
@@ -35,10 +39,11 @@ function scopeKey(scope: CloudActivityScope | null): string | null {
 }
 
 function publish(): void {
+  const visibleOperations = [...activeOperations.values()].filter(item => item.scopeKey === activeScopeKey);
   state = {
-    active: activeOperations.size,
-    operations: [...activeOperations.values()],
-    startedAt: activeOperations.size ? state.startedAt ?? Date.now() : null,
+    active: visibleOperations.length,
+    operations: visibleOperations.map(item => item.operation),
+    startedAt: visibleOperations.length ? state.startedAt ?? Date.now() : null,
     lastError,
     lastSuccessAt,
     lastSuccessOperation,
@@ -83,10 +88,10 @@ export function subscribeCloudActivity(listener: (next: CloudActivityState) => v
 }
 
 /** Mark a real cloud request as active and return an idempotent completion callback. */
-export function beginCloudActivity(operation: string): () => void {
+export function beginCloudActivity(operation: string, requestScopeKey: string | null = activeScopeKey): () => void {
   const id = ++nextId;
   lastError = null;
-  activeOperations.set(id, operation);
+  activeOperations.set(id, { operation, scopeKey: requestScopeKey });
   publish();
   let ended = false;
   return () => {
@@ -110,7 +115,7 @@ export async function withCloudActivity<T>(
 ): Promise<T> {
   const requestScope = activeScope;
   const requestScopeKey = activeScopeKey;
-  const end = beginCloudActivity(operation);
+  const end = beginCloudActivity(operation, requestScopeKey);
   try {
     const result = await action();
     if (didTransfer(result)) {
