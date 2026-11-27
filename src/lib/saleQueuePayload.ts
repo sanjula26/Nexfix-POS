@@ -55,7 +55,7 @@ export function buildSaleCreateQueueInput(sale: Sale, fallbackBranchId?: string)
     note: sale.note,
     // Preserve the existing queue contract: this resolves through the local
     // POS user/profile mapping during replay, not through a Supabase UID.
-    salesmanId: sale.cashierId,
+    salesmanId: sale.salesmanId || sale.cashierId,
     lines: sale.items.map(item => ({
       productId: item.productId,
       qty: item.qty,
