@@ -75,6 +75,13 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
         error.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
         throw error;
       }
+      // Notify mounted pages only after the encrypted adapter is active. GRN
+      // uses this to retry an in-memory recovery draft whose IndexedDB write
+      // failed at the quota boundary.
+      if (typeof window !== 'undefined') {
+        try { window.dispatchEvent(new CustomEvent('nexfix:storage-primary-committed')); }
+        catch { /* Storage is already active; UI status refresh is best-effort. */ }
+      }
     },
     onCutoverUncertain: message => {
       if (typeof window !== 'undefined') {
