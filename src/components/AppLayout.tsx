@@ -491,11 +491,12 @@ export default function AppLayout() {
             : cloudSyncComplete
               ? `No pending updates — last successful transfer: ${cloudActivity.lastSuccessOperation || 'Cloud sync'}`
               : 'No data is being sent to the cloud right now';
+  const showRetryCloudSync = syncManagerState.pending > 0 || syncManagerState.status === 'error';
   const canRetryCloudSync = connectivity === 'online'
-    && syncManagerState.pending > 0
     && syncManagerState.status !== 'conflict'
     && syncManagerState.status !== 'syncing'
-    && !cloudSyncActive;
+    && !cloudSyncActive
+    && showRetryCloudSync;
 
   useEffect(() => {
     const stopActivity = subscribeCloudActivity(setCloudActivity);
@@ -708,9 +709,9 @@ export default function AppLayout() {
                     <dd className="text-right font-semibold">{syncManagerState.pending}</dd>
                   </div>
                   {syncManagerState.pending > 0 && (
-                    <p className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                    <div className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
                       These updates are stored in this PC's local queue and are waiting for cloud confirmation.
-                    </p>
+                    </div>
                   )}
                   <div className="flex items-start justify-between gap-4">
                     <dt className="text-sub">Last successful transfer</dt>
@@ -729,14 +730,20 @@ export default function AppLayout() {
                 </dl>
                 <div className="mt-4 flex items-center justify-between gap-3">
                   <span className="text-[10px] text-sub">The Internet indicator does not guarantee the cloud server is reachable.</span>
-                  <button
-                    type="button"
-                    disabled={!canRetryCloudSync}
-                    onClick={() => { void runSyncNow(); }}
-                    className="shrink-0 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] font-bold text-violet-700 transition-colors hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
-                  >
-                    {syncManagerState.status === 'syncing' || cloudSyncActive ? 'Sending…' : 'Retry sync'}
-                  </button>
+                  {showRetryCloudSync ? (
+                    <button
+                      type="button"
+                      disabled={!canRetryCloudSync}
+                      onClick={() => { void runSyncNow(); }}
+                      className="shrink-0 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] font-bold text-violet-700 transition-colors hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
+                    >
+                      {syncManagerState.status === 'syncing' || cloudSyncActive ? 'Sending…' : 'Retry sync'}
+                    </button>
+                  ) : syncManagerState.status === 'conflict' ? (
+                    <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-300">Review conflict first</span>
+                  ) : (
+                    <span className="text-[10px] text-sub">No retry needed</span>
+                  )}
                 </div>
               </div>
             )}
