@@ -15,6 +15,7 @@ import {
   type DesktopPOSMigrationPurpose,
 } from './desktopProfileStorage';
 import { setDesktopProfilePrimary } from './db';
+import { dispatchStoragePrimaryCommitted } from './storageOverflowEvents';
 import type { POSStorageMaintenanceLease } from './store';
 import { runEncryptedPOSFolderMigration } from './storageOverflowMigrationCore.ts';
 
@@ -79,7 +80,7 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
       // uses this to retry an in-memory recovery draft whose IndexedDB write
       // failed at the quota boundary.
       if (typeof window !== 'undefined') {
-        try { window.dispatchEvent(new CustomEvent('nexfix:storage-primary-committed')); }
+        try { dispatchStoragePrimaryCommitted(window); }
         catch { /* Storage is already active; UI status refresh is best-effort. */ }
       }
     },
