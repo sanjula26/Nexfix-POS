@@ -528,6 +528,20 @@ test('normalized catalog sync fingerprint changes for catalog metadata, customer
 });
 
 
+test('cloud customer phone lookup checks the exact indexed phone before scanning legacy formats', () => {
+  const cloudSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  const lookupStart = cloudSource.indexOf('export async function findCloudCustomerByPhone');
+  const lookupEnd = cloudSource.indexOf('export async function ensureCloudCustomerForSale', lookupStart);
+  const lookupSource = cloudSource.slice(lookupStart, lookupEnd);
+
+  assert.ok(lookupStart >= 0, 'expected the cloud customer phone lookup');
+  assert.ok(lookupEnd > lookupStart, 'expected the customer sale resolver after phone lookup');
+  assert.match(lookupSource, /\.eq\('shop_id', shopId\)\.eq\('phone', phone\.trim\(\)\)/);
+  assert.match(lookupSource, /if \(!match\) \{[\s\S]*?\.range\(offset, offset \+ 499\)/);
+  assert.match(lookupSource, /normalizeWhatsAppPhone\(row\.phone\) === normalized/);
+});
+
+
 test('sale preflight reuses the catalog customer mapping before issuing an individual cloud customer lookup', () => {
   const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
   const catalogMappingBranch = storeSource.indexOf('if (localCustomer && customerIdMap[input.customerId])');
