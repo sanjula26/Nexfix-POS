@@ -107,7 +107,18 @@ function createQaInterruptionController(options = {}) {
     return readInstruction(lastPath);
   }
 
-  return Object.freeze({ arm, checkpoint, getLast });
+  function clearLast(input = {}) {
+    const last = getLast();
+    if (!last) return false;
+    if (last.runId !== String(input.runId || '').toLowerCase() ||
+        last.profileId !== String(input.profileId || '').toLowerCase()) {
+      throw new Error('The previous QA interruption record belongs to a different run or profile.');
+    }
+    fsApi.unlinkSync(lastPath);
+    return true;
+  }
+
+  return Object.freeze({ arm, checkpoint, getLast, clearLast });
 }
 
 module.exports = { QA_INTERRUPTION_PHASES, createQaInterruptionController };
