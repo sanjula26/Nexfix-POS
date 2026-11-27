@@ -6,6 +6,10 @@ import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
+import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
+import { createSuccessfulSingleFlightCache } from './successfulSyncCache';
+
+const normalizedCatalogSyncCache = createSuccessfulSingleFlightCache<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }>(8);
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -454,6 +458,7 @@ export async function ensureCloudCustomerForSale(
 }
 
 export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
+  const cache = normalizedCatalogSyncCache;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -472,6 +477,10 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   const selectedBranch = await resolveCloudBranchId(shopId, state.settings.branchId);
   if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Assign this POS to an active branch before syncing catalog stock' };
 
+  const cacheKey = [shopId, uid, selectedBranch.branchId, buildNormalizedCatalogSyncFingerprint(state)].join(':');
+  return cache.run(cacheKey, async () => {
+  // The fingerprint deliberately excludes stock and tracked-unit mutations:
+  // stock is committed by atomic sale/GRN RPCs and units use dedicated RPC/queue paths.
   const supplierRows = state.suppliers.map(s => ({
     id: s.id, shop_id: shopId, name: s.name, contact_person: s.contactPerson || null,
     phone: s.phone || null, email: s.email || null, address: s.address || null,
@@ -779,6 +788,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
   return { ok: true, customerIdMap };
+  });
 }
 
 export async function deleteInventoryUnitAtomic(input: {
