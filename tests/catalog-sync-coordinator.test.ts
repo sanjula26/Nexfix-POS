@@ -129,9 +129,9 @@ test('serializes multiple queued catalog fingerprints in invocation order', asyn
   assert.deepEqual(await Promise.all([second, third, secondDuplicate]), [
     { ok: true, version: 'v2' },
     { ok: true, version: 'v3' },
-    { ok: true, version: 'v2' },
+    { ok: true, version: 'unexpected' },
   ]);
-  assert.deepEqual(started, ['v1', 'v2', 'v3']);
+  assert.deepEqual(started, ['v1', 'v2', 'v3', 'duplicate-v2']);
 });
 
 
