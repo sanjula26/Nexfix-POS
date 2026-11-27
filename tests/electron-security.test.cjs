@@ -49,11 +49,12 @@ test('development navigation is limited to the configured origin', () => {
   assert.equal(isAllowedNavigation('http://user@localhost:5173/'), false);
 });
 
-test('Electron keeps the renderer sandboxed and isolated', () => {
+test('Electron keeps the renderer sandboxed, isolated and DevTools-disabled in packaged builds', () => {
   assert.match(
     mainSource,
-    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true\}/,
+    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true[^}]*devTools:isDev\}/,
   );
+  assert.match(mainSource, /const isDev = !app\.isPackaged;/);
 });
 
 test('privileged clipboard, external-open and exit IPC handlers reject untrusted frames', () => {
@@ -186,4 +187,34 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     version: 2,
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
+});
+
+
+test('local admin authentication guard IPC is limited to the trusted renderer and validates completion payloads', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  for (const channel of ['local-auth:begin', 'local-auth:complete']) {
+    const markerText = `ipcMain.handle('${channel}'`;
+    const handlerStart = mainSource.indexOf(markerText);
+    assert.notEqual(handlerStart, -1, `Missing IPC handler: ${channel}`);
+    assert.ok(mainSource.slice(handlerStart, handlerStart + 700).includes('isTrustedRenderer(event)'));
+  }
+  assert.ok(mainSource.includes("typeof payload?.attemptId!=='string'"));
+  assert.ok(mainSource.includes("typeof payload?.success!=='boolean'"));
+  assert.ok(preloadSource.includes("beginLocalAuthAttempt: () => ipcRenderer.invoke('local-auth:begin')"));
+  assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
+});
+
+
+test('async administrator authentication callers await verification before granting access', () => {
+  const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
+  const posSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'POS.tsx'), 'utf8');
+  const layoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AppLayout.tsx'), 'utf8');
+  const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Settings.tsx'), 'utf8');
+
+  assert.match(mobileSalesSource, /const submitPin = async \(\) =>/);
+  assert.match(mobileSalesSource, /await verifyAdminPin\(value, 'Today sales'\)/);
+  assert.match(posSource, /ok = await verifyAdminPin\(gatePin, 'price override'\)/);
+  assert.match(layoutSource, /if \(await unlockSession\(unlockCredential\)\)/);
+  assert.match(layoutSource, /await resolveSensitiveAdmin\(sensitiveCredential\)/);
+  assert.match(settingsSource, /await changeAdminPin\(pinCur, pinNew\)/);
 });

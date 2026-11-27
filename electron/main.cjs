@@ -3,6 +3,7 @@ const { writeBufferFully } = require('./write-buffer.cjs');
 const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncryptedUpdaterCredential, loadEncryptedUpdaterCredential, clearEncryptedUpdaterCredential } = require('./updater-credentials.cjs');
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
+const { beginLocalAuthAttempt, completeLocalAuthAttempt } = require('./local-auth-guard.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -62,6 +63,30 @@ function isTrustedRenderer(event){
 }
 
 function getSecureRecoveryFile(){ return path.join(app.getPath('userData'),'nexfix-secure','cloud-updater-recovery.json'); }
+
+function getLocalAuthGuardFile(){ return path.join(app.getPath('userData'),'nexfix-secure','local-auth-guard.json'); }
+function readLocalAuthGuard(){
+  const file=getLocalAuthGuardFile();
+  try{
+    if(!fs.existsSync(file)) return {};
+    const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(!parsed || parsed.version!==1 || !Number.isInteger(parsed.failures) || !Number.isFinite(parsed.lockedUntil)){
+      return {version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+    }
+    return parsed;
+  }catch{
+    // Corrupt state must fail closed rather than silently reset the attempt counter.
+    return {version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+  }
+}
+function writeLocalAuthGuard(value){
+  const file=getLocalAuthGuardFile();
+  const dir=path.dirname(file);
+  fs.mkdirSync(dir,{recursive:true});
+  const tmp=file+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify(value),{encoding:'utf8',mode:0o600});
+  fs.renameSync(tmp,file);
+}
 
 function readSecureRecoveryFile(){
   try{
@@ -473,7 +498,7 @@ const isAllowedNavigation = createNavigationGuard({
   rendererPath: path.join(__dirname, '..', 'dist', 'index.html'),
 });
 function createWindow(){
-  const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
+  const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#f5f6fb',icon:path.join(__dirname,'..','build','icon.ico'),show:false,frame:false,fullscreen:true,kiosk:true,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,devTools:isDev}});
   win.webContents.setWindowOpenHandler(({url})=>{
     if(isAllowedNavigation(url)) return {action:'allow'};
     try{
@@ -549,6 +574,25 @@ app.on('before-quit',(event)=>{
   if(allowQuit)return;
   event.preventDefault();
   requestExitWithBackup();
+});
+
+ipcMain.handle('local-auth:begin',(event)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  try{
+    const next=beginLocalAuthAttempt(readLocalAuthGuard(),Date.now(),crypto.randomUUID());
+    writeLocalAuthGuard(next.state);
+    return next.result;
+  }catch(error){return {ok:false,error:error?.message||'Local authentication guard is unavailable'};}
+});
+ipcMain.handle('local-auth:complete',(event,payload)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  if(typeof payload?.attemptId!=='string'||payload.attemptId.length>128||typeof payload?.success!=='boolean') return {ok:false,error:'Invalid local authentication result'};
+  try{
+    const next=completeLocalAuthAttempt(readLocalAuthGuard(),payload.attemptId,payload.success,Date.now());
+    if(!next.result.ok) return next.result;
+    writeLocalAuthGuard(next.state);
+    return {ok:true};
+  }catch(error){return {ok:false,error:error?.message||'Local authentication guard could not be saved'};}
 });
 
 function isCloudAuthStorageKey(key){

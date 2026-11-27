@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { ArrowLeft, LogOut, ReceiptText, WalletCards, Banknote, CreditCard, Smartphone, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { usePOS } from '../lib/store';
@@ -195,6 +195,8 @@ export default function MobileTodaySales() {
   const [remoteError, setRemoteError] = useState('');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
+  const pinBusyRef = useRef(false);
   const [pinVerified, setPinVerified] = useState(!!requestedToken);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dateKeyInTimeZone(new Date(), requestedTimeZone);
@@ -338,13 +340,29 @@ export default function MobileTodaySales() {
     );
   }, [requestedToken, selectedDate, requestedTimeZone]);
 
-  const submitPin = () => {
+  const submitPin = async () => {
+    if (pinBusyRef.current) return;
     const value = pin.trim();
     if (!value) { setPinError('Enter the Admin PIN.'); return; }
-    if (!verifyAdminPin(value, 'Today sales')) { setPinError('Incorrect Admin PIN.'); return; }
+    pinBusyRef.current = true;
+    setPinBusy(true);
     setPinError('');
-    setPinVerified(true);
-    setPin('');
+    try {
+      const accepted = await verifyAdminPin(value, 'Today sales');
+      if (!accepted) {
+        setPinError('Incorrect Admin PIN or authentication temporarily locked.');
+        setPin('');
+        return;
+      }
+      setPinVerified(true);
+      setPin('');
+    } catch {
+      setPinError('Unable to verify Admin PIN. Please try again.');
+      setPin('');
+    } finally {
+      pinBusyRef.current = false;
+      setPinBusy(false);
+    }
   };
 
 
@@ -407,9 +425,9 @@ export default function MobileTodaySales() {
           <h1 className="text-xl font-black">Today’s Sales</h1>
           <p className="mt-2 text-sm leading-relaxed text-sub">After login, the Admin PIN is required to view this read-only sales page.</p>
           <label className="mt-5 block text-xs font-bold text-sub">Admin PIN</label>
-          <input className="mt-2 min-h-12 w-full rounded-xl border border-line bg-raised text-ink px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
+          <input className="mt-2 min-h-12 w-full rounded-xl border border-line bg-raised text-ink px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') void submitPin(); }} autoFocus />
           {pinError && <p className="mt-2 text-xs font-bold text-rose-600">{pinError}</p>}
-          <button type="button" onClick={submitPin} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">Unlock today’s sales</button>
+          <button type="button" onClick={() => void submitPin()} disabled={pinBusy || !pin.trim()} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">{pinBusy ? 'Verifying…' : 'Unlock today’s sales'}</button>
           <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-raised px-4 text-sm font-bold text-ink">Logout</button>
         </div>
       </main>
