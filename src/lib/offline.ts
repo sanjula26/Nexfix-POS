@@ -5,7 +5,7 @@ import { recoverPendingSaleQueueIds } from './offlineSaleQueueRecovery';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState, idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
 import { getMachineIdentity } from './machine';
-import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
+import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, ensureCloudCustomerForSale, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 type QueueStorageError = Error & { storageFailureKind?: 'quota_exceeded' | 'write_failed' };
 
@@ -262,12 +262,28 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const payments=(parsed.input.payments&&parsed.input.payments.length)
             ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
             : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
+          let cloudCustomerId = parsed.input.customerId
+            ? (customerIdMap[parsed.input.customerId] || parsed.input.customerId)
+            : undefined;
+          if (parsed.input.customerId && !customerIdMap[parsed.input.customerId] && state) {
+            const localCustomer = state.customers.find(customer => customer.id === parsed.input.customerId);
+            if (localCustomer) {
+              const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+              if (resolvedCustomer.ok && resolvedCustomer.customerId) cloudCustomerId = resolvedCustomer.customerId;
+              else if (parsed.input.payment === 'credit') break;
+              else cloudCustomerId = undefined;
+            } else if (parsed.input.payment === 'credit') {
+              break;
+            } else {
+              cloudCustomerId = undefined;
+            }
+          }
           const localSalesman = parsed.input.salesmanId && state
             ? state.users.find(u => u.id === parsed.input.salesmanId && u.active)
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId ? (customerIdMap[parsed.input.customerId] || parsed.input.customerId) : undefined,shipping:parsed.input.shipping,
+            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:cloudCustomerId,shipping:parsed.input.shipping,
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
