@@ -2027,7 +2027,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
     };
 
-    const completeLocallyAndQueue = async (stableSaleId?: string): Promise<Sale> => {
+    const completeLocallyAndQueue = async (stableSaleId?: string, allowMatchingPendingId = false): Promise<Sale> => {
       const shopId = getCloudShopId();
       const requestedSaleId = stableSaleId || input._saleId;
       const requiresCloudQueue = supabaseConfigured;
@@ -2046,6 +2046,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pendingMarkerRaw: pendingCloudSaleRaw,
         markerReadable: pendingCloudSaleReadable,
         cloudShopId: shopId,
+        allowMatchingPendingId,
       });
       if (!fallbackId.ok) throw new Error(fallbackId.error);
 
@@ -2405,7 +2406,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (canFallbackToLocalSaleBeforeRpc(cloud.rpcAttempted, cloud.error)) {
         // The atomic sale RPC was definitely not sent. Reuse its already
         // persisted idempotency Sale ID for the local bill and queued replay.
-        return completeLocallyAndQueue(saleId);
+        return completeLocallyAndQueue(saleId, true);
       }
       throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     }
