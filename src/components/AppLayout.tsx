@@ -450,6 +450,9 @@ export default function AppLayout() {
   const cloudSyncComplete = !cloudSyncActive
     && !cloudActivity.lastError
     && connectivity === 'online'
+    && syncManagerState.status !== 'offline'
+    && syncManagerState.status !== 'conflict'
+    && syncManagerState.status !== 'error'
     && syncManagerState.pending === 0
     && (syncManagerState.status === 'synced' || cloudActivity.lastSuccessAt !== null);
   const cloudSyncHealthy = cloudSyncActive || cloudSyncComplete;
