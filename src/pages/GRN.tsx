@@ -225,6 +225,18 @@ export default function GRN() {
     return true;
   }, [formMode, makeWorkingDraft, workingDraftKey, recoveryLoaded, recoveryLoadError]);
 
+  // If IndexedDB became full while an unfinished GRN was being edited, the
+  // first draft save may have failed immediately before folder migration.
+  // Retry the live in-memory draft only after the encrypted adapter is active.
+  useEffect(() => {
+    const onPrimaryStorageCommitted = () => {
+      if (view !== 'form' || formMode !== 'receive' || !recoveryLoaded || recoveryLoadError) return;
+      void persistWorkingDraft();
+    };
+    window.addEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+    return () => window.removeEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+  }, [view, formMode, recoveryLoaded, recoveryLoadError, persistWorkingDraft]);
+
   const closeForm = async () => {
     if (actionRunning) return;
     if (formMode === 'receive') {
