@@ -2206,7 +2206,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
-      if (localCustomer) {
+      if (localCustomer && customerIdMap[input.customerId]) {
+        // Admin/Manager catalog reconciliation already resolved this exact
+        // local customer ID (including phone de-duplication). Reuse its
+        // authoritative cloud ID instead of issuing a second customer lookup.
+        cloudCustomerId = customerIdMap[input.customerId];
+      } else if (localCustomer) {
         let resolvedCustomer: Awaited<ReturnType<typeof ensureCloudCustomerForSale>>;
         try {
           resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
