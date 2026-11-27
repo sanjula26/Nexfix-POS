@@ -6,7 +6,7 @@ import {
   ArrowLeftRight, Wallet, BarChart3, Tags, ShieldCheck, UserCog,
   Landmark, KeyRound, ScrollText, Settings, LogOut, Globe, Sparkles, Eye,
   EyeOff, Wifi, Activity, Bell, Sun, Moon, Menu, X, Lock, LockKeyhole,
-  Loader2, AlertCircle, ShieldAlert, Wrench, Cpu, Search, FileText, RefreshCw, CheckCircle2,
+  Loader2, AlertCircle, ShieldAlert, Wrench, Cpu, Search, FileText, RefreshCw, CheckCircle2, Cloud, CloudUpload,
 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { fmtNum } from '../lib/utils';
@@ -15,6 +15,8 @@ import { getLocalShopId, getGoogleScriptUrl, isGoogleSyncEnabled } from '../lib/
 import { hasRecoveryKey } from '../lib/backupCrypto';
 import { Avatar, Modal } from './ui';
 import CommandPalette from './CommandPalette';
+import { getCloudActivityState, subscribeCloudActivity } from '../lib/cloudActivity';
+import { getSyncManagerState, subscribeSyncManager } from '../lib/syncManager';
 
 interface NavDef {
   to: string; label: string; icon: React.ElementType; perm?: string; group: string; adminOnly?: boolean; badge?: boolean;
@@ -430,6 +432,8 @@ export default function AppLayout() {
   const [sensitiveCredential, setSensitiveCredential] = useState('');
   const [sensitiveError, setSensitiveError] = useState('');
   const [sensitiveBusy, setSensitiveBusy] = useState(false);
+  const [cloudActivity, setCloudActivity] = useState(getCloudActivityState);
+  const [syncManagerState, setSyncManagerState] = useState(getSyncManagerState);
   const lastActivityRef = useRef(Date.now());
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
@@ -441,6 +445,38 @@ export default function AppLayout() {
     () => (state.reverseRequests || []).filter(r => r.status === 'pending').length,
     [state.reverseRequests],
   );
+
+  const cloudSyncActive = cloudActivity.active > 0 || syncManagerState.status === 'syncing';
+  const cloudSyncComplete = !cloudSyncActive
+    && !cloudActivity.lastError
+    && connectivity === 'online'
+    && syncManagerState.status !== 'offline'
+    && syncManagerState.status !== 'conflict'
+    && syncManagerState.status !== 'error'
+    && syncManagerState.pending === 0
+    && (syncManagerState.status === 'synced' || cloudActivity.lastSuccessAt !== null);
+  const cloudSyncHealthy = cloudSyncActive || cloudSyncComplete;
+  const cloudSyncTitle = cloudSyncActive
+    ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
+    : cloudActivity.lastError
+      ? `Cloud sync failed: ${cloudActivity.lastError}`
+    : connectivity !== 'online'
+      ? `Offline — ${syncManagerState.pending} cloud update(s) waiting`
+      : syncManagerState.status === 'conflict'
+        ? `Cloud sync conflict — ${syncManagerState.pending} update(s) need attention`
+        : syncManagerState.status === 'error'
+          ? `Cloud sync error: ${syncManagerState.lastError || 'retry pending'}`
+          : syncManagerState.pending > 0
+            ? `${syncManagerState.pending} cloud update(s) waiting to sync`
+            : cloudSyncComplete
+              ? `Cloud sync complete${cloudActivity.lastSuccessOperation ? ` · ${cloudActivity.lastSuccessOperation}` : ''} — ${cloudActivity.lastSuccessAt ? new Date(cloudActivity.lastSuccessAt).toLocaleString() : syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
+              : 'No data is being sent to the cloud right now';
+
+  useEffect(() => {
+    const stopActivity = subscribeCloudActivity(setCloudActivity);
+    const stopSyncManager = subscribeSyncManager(setSyncManagerState);
+    return () => { stopActivity(); stopSyncManager(); };
+  }, []);
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
   useEffect(() => {
@@ -592,6 +628,18 @@ export default function AppLayout() {
           <div className="flex-1" />
           <span className={`hidden sm:inline-flex badge border ${connectivity === 'online' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'}`}>
             <Wifi size={11} /> {connectivity === 'online' ? 'Online' : 'Offline'} <span className={`w-1.5 h-1.5 rounded-full ${connectivity === 'online' ? 'bg-emerald-500 blink' : 'bg-rose-500'}`} />
+          </span>
+          <span
+            role="status"
+            aria-live="polite"
+            className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${cloudSyncHealthy ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}
+            title={cloudSyncTitle}
+            aria-label={cloudSyncTitle}
+          >
+            {cloudSyncActive ? <CloudUpload size={15} className="animate-pulse" /> : <Cloud size={15} />}
+            <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? cloudSyncActive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500' : 'bg-rose-500'}`} />
+            <span className="hidden md:inline">{cloudSyncActive ? 'Syncing' : cloudSyncComplete ? 'Synced' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' ? 'Error' : connectivity !== 'online' ? 'Offline' : 'No sync'}</span>
+            {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
           </span>
           {!ready && <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">Loading storage…</span>}
           <Clock />
