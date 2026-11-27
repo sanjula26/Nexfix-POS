@@ -900,18 +900,22 @@ export async function completeSaleAtomic(input: {
   // the HTTP request does not prove PostgreSQL rolled back, so keep this as an
   // ambiguous post-RPC result and leave the caller's stable Sale ID marker intact.
   const deadline = createCloudRequestDeadline(15_000);
+  const timeoutMessage = 'Cloud sale request timed out after 15 seconds. The server may still have committed this bill. Reconnect and retry the same cart to reconcile its original Sale ID; do not create a new bill.';
   const sendAtomicSale = () => client.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments }).abortSignal(deadline.signal);
   let rpcResponse: Awaited<ReturnType<typeof sendAtomicSale>>;
   try {
     rpcResponse = await sendAtomicSale();
   } catch (error) {
     const message = deadline.didTimeout()
-      ? 'Cloud sale request timed out after 15 seconds. The server may still have committed this bill. Reconnect and retry the same cart to reconcile its original Sale ID; do not create a new bill.'
+      ? timeoutMessage
       : error instanceof Error ? error.message : String(error);
     return { ok: false, rpcAttempted: true, error: message };
   } finally {
     deadline.dispose();
   }
+  // Some client versions surface an aborted fetch as a resolved PostgREST
+  // error result. Preserve the same ambiguous-commit warning in either case.
+  if (deadline.didTimeout()) return { ok: false, rpcAttempted: true, error: timeoutMessage };
   const { data, error } = rpcResponse;
   if (error) return { ok: false, rpcAttempted: true, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
