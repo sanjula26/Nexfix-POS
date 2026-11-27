@@ -2099,7 +2099,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       // The local sale has already been read back from primary storage. Finish
       // outbox persistence/recovery-marker cleanup in the background so the
       // cashier can see the durable receipt without waiting for queue I/O.
-      void committed.finalizeQueue().then(syncPending => {
+      void backgroundPOSStateRefreshWork.run(
+        () => committed.finalizeQueue(),
+        // Storage maintenance has closed background-work admission. Keep the
+        // durable marker and let reconnect/startup recovery finish this sale.
+        () => true,
+      ).then(syncPending => {
         if (syncPending && requiresCloudQueue) {
           window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
             detail: { saleId, message: `Bill ${committed.sale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
