@@ -481,6 +481,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const previousBackupStateRef = useRef(state);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLocalSaleStateWaitersRef = useRef(new Map<string, LocalSaleStateWaiter>());
   const waitForLocalSaleState = useCallback((saleId: string): Promise<POSState> => {
     const current = stateRef.current;
     if (current.sales.some(sale => sale.id === saleId)) return Promise.resolve(current);
@@ -499,9 +502,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
     });
   }, []);
-  const previousBackupStateRef = useRef(state);
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingLocalSaleStateWaitersRef = useRef(new Map<string, LocalSaleStateWaiter>());
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
   const stockAdjustmentLockRef = useRef(false);
@@ -2026,15 +2026,83 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
     };
 
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
-      if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
+    const completeLocallyAndQueue = async (): Promise<Sale> => {
+      const shopId = getCloudShopId();
+      const localBranchId = getPOSBranchId(shopId, stateRef.current.settings.branchId);
+      if (hasMultipleCachedBranches(shopId) && localBranchId === 'local-main') {
         throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling offline.');
       }
       assertOpenSessionForBranch(localBranchId);
-      const localSale = completeSale(input);
-      if (!localSale) throw new Error('Offline sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
+
+      const saleId = uid();
+      const requiresCloudQueue = supabaseConfigured;
+      if (requiresCloudQueue && !(await idbAddPendingSaleQueueId(saleId))) {
+        const error = new Error('Local POS storage could not reserve a safe sync record. No bill was completed; check the selected storage folder/IndexedDB before trying again.') as Error & { code?: string };
+        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
+        throw error;
+      }
+
+      const localSale = completeSale({ ...input, _saleId: saleId });
+      if (!localSale) {
+        if (requiresCloudQueue) await idbRemovePendingSaleQueueIds([saleId]);
+        throw new Error('Offline sale was not completed. Check assigned-branch stock, cashier session, IMEI/serial selections, and payment details.');
+      }
+
+      let committedState: POSState;
+      try {
+        committedState = await waitForLocalSaleState(saleId);
+      } catch (cause) {
+        const error = new Error('The bill was prepared but its local POS update could not be confirmed. Do not press Complete again; check Sales History and storage first.') as Error & { code?: string };
+        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
+        throw error;
+      }
+
+      // Cancel the ordinary 120 ms debounce and await the authoritative store
+      // write ourselves. The sale receipt is not returned until the exact sale
+      // is read back from the selected primary local storage.
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+      const latestState = stateRef.current.sales.some(sale => sale.id === saleId) ? stateRef.current : committedState;
+      const persisted = await persistState(latestState, { enqueueOfflineQueue: false });
+      let durableState: POSState | null = persisted.stateSaved ? latestState : await idbLoadState();
+      if (!durableState?.sales.some(sale => sale.id === saleId)) {
+        const error = new Error('This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.') as Error & { code?: string };
+        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
+        throw error;
+      }
+
+      if (requiresCloudQueue) {
+        try {
+          await queueSaleCreate(saleId, buildSaleCreateQueueInput(localSale, durableState.settings.branchId));
+          const queued = await idbListQueue();
+          if (!queued.some(operation => operation.type === 'sale_create' && operation.id === `sale:${saleId}`)) {
+            throw new Error('The saved bill could not be confirmed in the offline cloud-sync queue.');
+          }
+          // Clear the recovery marker only after the exact stable-ID queue job
+          // has been read back from IndexedDB or the encrypted POS profile.
+          const markerCleared = await idbRemovePendingSaleQueueIds([saleId]);
+          if (!markerCleared) {
+            window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
+              detail: { saleId, message: `Bill ${localSale.billNo} is saved on this PC. Cloud sync is pending and will be retried; do not bill it again.` },
+            }));
+          }
+          setPendingQueueCount(queued.length);
+        } catch {
+          // The local bill is already durable. Keep its recovery marker so the
+          // next online sync can recreate the same sale_create job idempotently.
+          window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
+            detail: { saleId, message: `Bill ${localSale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
+          }));
+        }
+        void runSyncNow();
+      }
       return localSale;
+    };
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return completeLocallyAndQueue();
     }
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
