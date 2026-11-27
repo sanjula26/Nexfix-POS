@@ -2233,7 +2233,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         cloudCustomerId = undefined;
       }
     }
-    let cloudSalesmanId: string | undefined;
     const salesmanResolution = await cloudSalesmanPromise;
     if (!salesmanResolution.ok) {
       // No atomic sale RPC has started yet. The durable local-sale helper reuses
@@ -2241,7 +2240,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (isTransientCloudTransportError(salesmanResolution.error)) return completeLocallyAndQueue();
       throw salesmanResolution.error;
     }
-    cloudSalesmanId = salesmanResolution.value;
+    const cloudSalesmanId = salesmanResolution.value;
 
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
