@@ -32,11 +32,16 @@ const singleInstanceLock = app.requestSingleInstanceLock();
 function emitAuthCallback(url){
   try{
     const parsed = new URL(url);
-    if(parsed.protocol !== AUTH_PROTOCOL + ':' || parsed.hostname !== 'auth' || parsed.pathname !== '/callback') return;
+    if(parsed.protocol !== AUTH_PROTOCOL + ':' || parsed.pathname !== '/callback') return;
+    // Keep Admin/updater and staff PKCE callbacks explicitly separated. Staff
+    // links must use nexfix://staff-auth/callback and are never passed to the
+    // legacy Admin/updater completion flow.
+    const audience = parsed.hostname === 'staff-auth' ? 'staff' : parsed.hostname === 'auth' ? 'admin' : '';
+    if(!audience) return;
     const code = parsed.searchParams.get('code')?.trim() || '';
     if(!code || code.length > 4096) return;
     const flowId = parsed.searchParams.get('sb_flow_id')?.trim() || '';
-    pendingAuthCallback = { code, flowId: flowId || undefined };
+    pendingAuthCallback = { code, flowId: flowId || undefined, audience };
     const win = getMainWindow();
     if(win && !win.isDestroyed()) win.webContents.send('auth:callback', pendingAuthCallback);
   }catch{}
@@ -551,8 +556,22 @@ app.on('before-quit',(event)=>{
   requestExitWithBackup();
 });
 
+// A deep link may arrive before the renderer subscribes. Allow the trusted
+// renderer to consume the pending PKCE callback once after startup. The
+// callback code is never exposed to an untrusted frame or persisted to disk.
+ipcMain.handle('auth:callback:take',(event)=>{
+  if(!isTrustedRenderer(event)) return null;
+  const callback=pendingAuthCallback;
+  pendingAuthCallback=null;
+  return callback;
+});
+
 function isCloudAuthStorageKey(key){
-  return typeof key==='string' && key.length<=120 && /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
+  if(typeof key!=='string' || key.length>120) return false;
+  // Admin/updater keeps the legacy Supabase key. Staff receives a separate
+  // app-namespaced key; do not accept arbitrary renderer-selected storage keys.
+  return /^sb-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key) ||
+    /^nexfix-staff-[a-z0-9-]+-auth-token(?:-code-verifier)?$/.test(key);
 }
 ipcMain.handle('cloud-auth-storage:get',(event,key)=>{
   if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};

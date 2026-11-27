@@ -187,3 +187,48 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+test('pending Auth callback can be consumed once through trusted renderer IPC', () => {
+  const marker = "ipcMain.handle('auth:callback:take'";
+  const start = mainSource.indexOf(marker);
+  assert.notEqual(start, -1, 'Missing pending Auth callback retrieval IPC');
+  const handler = mainSource.slice(start, start + 420);
+  assert.ok(handler.includes('if(!isTrustedRenderer(event))'), 'callback retrieval must reject untrusted frames');
+  assert.ok(handler.includes('const callback=pendingAuthCallback;'), 'handler must read the pending callback');
+  assert.ok(handler.includes('pendingAuthCallback=null;'), 'handler must clear the callback after reading it');
+  assert.ok(handler.includes('return callback;'), 'handler must return the callback to the trusted renderer');
+  assert.ok(mainSource.includes("parsed.hostname === 'staff-auth' ? 'staff' : parsed.hostname === 'auth' ? 'admin' : ''"), 'Admin and staff callback audiences must be separated');
+  assert.ok(mainSource.includes("pendingAuthCallback = { code, flowId: flowId || undefined, audience }"), 'callback audience must travel with the pending code');
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  assert.ok(preloadSource.includes("takePendingAuthCallback: () => ipcRenderer.invoke('auth:callback:take')"));
+  const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Settings.tsx'), 'utf8');
+  assert.ok(settingsSource.includes('void desktopApi.takePendingAuthCallback?.()'), 'Settings must consume a callback that arrived before React subscribed');
+  assert.ok(settingsSource.includes("if (audience === 'staff')"), 'Staff callbacks must have a separate handling branch');
+  assert.ok(settingsSource.includes('completeStaffSignIn(code)'), 'Staff callback code must be exchanged through the Staff-only auth helper');
+  assert.ok(settingsSource.includes("import { completeStaffSignIn } from '../lib/staffCloudAuth'"), 'Settings must import the isolated Staff auth helper');
+  assert.ok(settingsSource.includes('const key = `${audience}:${code}`;'), 'event and pending callback delivery must be de-duplicated');
+});
+
+
+test('Staff Auth uses a separate Supabase storage namespace and no Admin updater lifecycle', () => {
+  const staffAuthSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'staffSupabase.ts'), 'utf8');
+  assert.match(staffAuthSource, /nexfix-staff-\$\{projectRef\}-auth-token/);
+  assert.match(staffAuthSource, /storageKey: staffSupabaseStorageKey/);
+  assert.match(staffAuthSource, /detectSessionInUrl: false/);
+  assert.match(staffAuthSource, /Secure Staff Cloud session storage removal is unavailable/);
+  assert.doesNotMatch(staffAuthSource, /cloudAuth|cloudSync|ensureCloudShop|register_pos_device|desktop-updates/);
+  assert.match(mainSource, /nexfix-staff-\[a-z0-9-\]\+-auth-token/);
+  assert.match(mainSource, /sb-\[a-z0-9-\]\+-auth-token/);
+});
+
+
+test('Staff email sign-in is isolated, provisioned-only, and local-signout scoped', () => {
+  const staffFlowSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'staffCloudAuth.ts'), 'utf8');
+  assert.match(staffFlowSource, /nexfix:\/\/staff-auth\/callback/);
+  assert.match(staffFlowSource, /shouldCreateUser: false/);
+  assert.match(staffFlowSource, /staffSupabase\.auth\.signInWithOtp/);
+  assert.match(staffFlowSource, /staffSupabase\.auth\.exchangeCodeForSession/);
+  assert.match(staffFlowSource, /signOut\(\{ scope: 'local' \}\)/);
+  assert.doesNotMatch(staffFlowSource, /from ['"].*cloudAuth|from ['"].*supabase['"]/);
+  assert.doesNotMatch(staffFlowSource, /cloudSync|register_pos_device|desktop-updates|ensureCloudShop/);
+});
