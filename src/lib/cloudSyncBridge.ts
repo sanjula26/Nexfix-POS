@@ -23,8 +23,8 @@ export function scheduleCloudSync(note = 'state_change'): void {
         if (error || !data.session) return;
         await withCloudActivity('POS data', async () => {
           await queueWrite(note);
-          await runSyncNow();
-        });
+          return runSyncNow();
+        }, result => result.status === 'synced');
       } catch {
         // The normal connectivity/retry path will retry after a durable queue write.
       }
