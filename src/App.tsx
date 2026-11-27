@@ -166,7 +166,7 @@ function CloudSyncStateBridge() {
       inFlightCatalogSyncKeyRef.current = syncKey;
       let succeeded = false;
       try {
-        const result = await withCloudActivity('Catalog data', () => syncNormalizedCatalog(stateRef.current));
+        const result = await withCloudActivity('Catalog data', () => syncNormalizedCatalog(stateRef.current), result => result.ok);
         succeeded = result.ok;
         if (!result.ok) reportCloudActivityFailure(result.error || 'Catalog sync failed');
       } catch {
