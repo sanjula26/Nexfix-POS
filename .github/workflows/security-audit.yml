@@ -145,11 +145,14 @@ jobs:
             exit 1
           fi
 
-      - name: Dependency security audit
+      - name: Full dependency tree security audit (runtime + build tools)
         shell: bash
         run: |
           set -euo pipefail
-          npm audit --audit-level=high --omit=dev
+          # Audit every locked dependency, including Electron/Vite/build tooling.
+          # Moderate and higher findings fail this gate so development-only
+          # vulnerabilities are not hidden by an --omit=dev filter.
+          npm audit --audit-level=moderate
 
       - name: Check security workflow configuration
         shell: bash
