@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   dispatchStorageQuotaWarning,
   subscribeToStorageQuotaWarnings,
+  dispatchStoragePrimaryCommitted,
+  subscribeToStoragePrimaryCommitted,
   type StorageQuotaWarning,
 } from '../src/lib/storageOverflowEvents.ts';
 
@@ -34,4 +36,16 @@ test('quota warning listener ignores invalid event details', () => {
   }));
   assert.deepEqual(received, []);
   unsubscribe();
+});
+
+
+test('encrypted storage cutover notification is delivered only to active subscribers', () => {
+  const target = new EventTarget();
+  let calls = 0;
+  const unsubscribe = subscribeToStoragePrimaryCommitted(target, () => { calls += 1; });
+  dispatchStoragePrimaryCommitted(target);
+  assert.equal(calls, 1);
+  unsubscribe();
+  dispatchStoragePrimaryCommitted(target);
+  assert.equal(calls, 1);
 });
