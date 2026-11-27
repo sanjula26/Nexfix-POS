@@ -1,4 +1,5 @@
 import { flushSyncQueue, getConnectivity, getPendingSyncOperations, type Connectivity, onConnectivityChange } from './offline';
+import { withCloudActivity } from './cloudActivity';
 
 export type SyncManagerStatus =
   | 'idle'
@@ -63,7 +64,7 @@ export async function runSyncNow(): Promise<SyncManagerState> {
   syncing = true;
   publish({ ...state, status: 'syncing', lastError: null });
   try {
-    const result = await flushSyncQueue();
+    const result = await withCloudActivity('Pending changes', () => flushSyncQueue());
     retryAttempt = 0;
     if (result.conflict) {
       publish({ ...state, status: 'conflict', pending: result.pending });
