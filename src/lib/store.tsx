@@ -8,7 +8,7 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, idbAddPendingSaleQueueId, idbRemovePendingSaleQueueIds, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, idbHasQueueEntry, idbAddPendingSaleQueueId, idbRemovePendingSaleQueueIds, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
 import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -2085,8 +2085,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             await queueSaleCreate(saleId, buildSaleCreateQueueInput(sale, stateRef.current.settings.branchId));
           }
         },
-        confirmQueueEntry: async id => !requiresCloudQueue || (await idbListQueue())
-          .some(operation => operation.type === 'sale_create' && operation.id === `sale:${id}`),
+        confirmQueueEntry: async id => !requiresCloudQueue || idbHasQueueEntry(`sale:${id}`, 'sale_create'),
         clearRecoveryMarker: async () => {
           if (!requiresCloudQueue) return true;
           const cleared = await idbRemovePendingSaleQueueIds([saleId]);

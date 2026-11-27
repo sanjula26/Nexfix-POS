@@ -492,6 +492,29 @@ export async function idbEnqueue(op: QueueInput): Promise<boolean> {
   return (await idbEnqueueDetailed(op)).ok;
 }
 export async function idbListQueue():Promise<QueueOp[]>{if(desktopProfilePrimary){const all=await readRequiredProfileJson<QueueOp[]>('sync_queue');return all.sort((a,b)=>a.ts.localeCompare(b.ts));}if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
+/** Confirm one normalized outbox record without loading and sorting the entire queue. */
+export async function idbHasQueueEntry(id: string, expectedType?: QueueOp['type']): Promise<boolean> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return false;
+
+  let entry: QueueOp | undefined;
+  if (desktopProfilePrimary) {
+    const queue = await readRequiredProfileJson<QueueOp[]>('sync_queue');
+    entry = queue.find(operation => operation.id === normalizedId);
+  } else {
+    if (!idbAvailable()) return false;
+    const db = await getDB();
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const transactionDone = idbTransactionComplete(tx, 'Offline queue lookup failed');
+    const [found] = await Promise.all([
+      idbReq<QueueOp | undefined>(tx.objectStore(STORE_QUEUE).get(normalizedId)),
+      transactionDone,
+    ]);
+    entry = found;
+  }
+
+  return !!entry && entry.id === normalizedId && (!expectedType || entry.type === expectedType);
+}
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=await readRequiredProfileJson<QueueOp[]>('sync_queue');const remove=new Set(ids);await writeDesktopProfileJson('sync_queue',queue.filter(op=>!remove.has(op.id)));});}catch{/* keep unacknowledged queue entries safe */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];await writeDesktopProfileJson('sync_queue',queue.filter(op=>op.id!==id));});}catch{/* best-effort cleanup */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
