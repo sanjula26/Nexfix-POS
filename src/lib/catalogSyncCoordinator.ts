@@ -9,29 +9,42 @@ export interface FingerprintedSyncResult {
  */
 export function createFingerprintSyncCoordinator<T extends FingerprintedSyncResult>() {
   const completed = new Map<string, { fingerprint: string; result: T }>();
-  const inFlight = new Map<string, { fingerprint: string; promise: Promise<T> }>();
+  const inFlight = new Map<string, Map<string, Promise<T>>>();
+  const identityTails = new Map<string, Promise<void>>();
 
   const run = async (identity: string, fingerprint: string, sync: () => Promise<T>): Promise<T> => {
     const cached = completed.get(identity);
     if (cached?.fingerprint === fingerprint) return cached.result;
 
-    const active = inFlight.get(identity);
-    if (active) {
-      if (active.fingerprint === fingerprint) return active.promise;
-      // Wait for an older catalog snapshot to finish before applying a newer
-      // one. A failed older attempt must not prevent the newer state from trying.
-      try { await active.promise; } catch { /* retry below with the latest fingerprint */ }
-      return run(identity, fingerprint, sync);
-    }
+    const identityFlights = inFlight.get(identity);
+    const existing = identityFlights?.get(fingerprint);
+    if (existing) return existing;
 
-    const promise = Promise.resolve().then(sync);
-    inFlight.set(identity, { fingerprint, promise });
-    try {
-      const result = await promise;
+    // Serialize every different fingerprint in invocation order. A single
+    // mutable "active fingerprint" slot can let two waiters race after an
+    // older sync settles, applying catalog snapshots out of order.
+    const previous = identityTails.get(identity) || Promise.resolve();
+    const pending = previous.then(async () => {
+      const latest = completed.get(identity);
+      if (latest?.fingerprint === fingerprint) return latest.result;
+      const result = await sync();
       if (result.ok) completed.set(identity, { fingerprint, result });
       return result;
+    });
+    const tail = pending.then(() => undefined, () => undefined);
+    if (!identityFlights) inFlight.set(identity, new Map([[fingerprint, pending]]));
+    else identityFlights.set(fingerprint, pending);
+    identityTails.set(identity, tail);
+
+    try {
+      return await pending;
     } finally {
-      if (inFlight.get(identity)?.promise === promise) inFlight.delete(identity);
+      const flights = inFlight.get(identity);
+      if (flights?.get(fingerprint) === pending) {
+        flights.delete(fingerprint);
+        if (flights.size === 0) inFlight.delete(identity);
+      }
+      if (identityTails.get(identity) === tail) identityTails.delete(identity);
     }
   };
 
