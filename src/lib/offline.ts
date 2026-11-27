@@ -383,6 +383,18 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const remaining=await idbListQueue();
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
+
+    // A normalized transaction (sale/GRN/return/repair/stock/unit/reversal)
+    // that has not committed must block the legacy whole-state snapshot.
+    // Otherwise a failed sale_create could still publish the local sale record
+    // through the snapshot path without its atomic stock/payment transaction.
+    const pendingNormalizedOps = remaining.filter(op =>
+      op.type !== 'state_write' && op.type !== 'backup' && op.type !== 'custom',
+    );
+    if (pendingNormalizedOps.length) {
+      return { flushed, pending: remaining.length, synced: false, conflict: false };
+    }
+
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
 
     // Bootstrap the cloud snapshot even when the durable queue is empty.
