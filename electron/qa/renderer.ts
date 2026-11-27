@@ -42,6 +42,7 @@ let profileReady = false;
 let injectionUsed = false;
 let quotaEventReceived = false;
 let migrationPromise: Promise<void> | null = null;
+let activeMigrationFixture: { latestState: POSState; stateSaved: boolean; queueSaved: boolean } | null = null;
 
 subscribeToStorageQuotaWarnings(window, detail => {
   if (detail.reason !== 'quota_exceeded' || migrationPromise) return;
@@ -55,7 +56,11 @@ subscribeToStorageQuotaWarnings(window, detail => {
     },
     getProfileStatus: getDesktopPOSProfileStatus,
     unlockWithOS: unlockDesktopPOSProfileWithOS,
-    migrate: async () => { await migrateQaFixtureToEncryptedFolder(); },
+    migrate: async () => {
+      const fixture = activeMigrationFixture;
+      if (!fixture) throw new Error('The isolated QA migration fixture is not ready.');
+      await migrateQaFixtureToEncryptedFolder(fixture.latestState, fixture.stateSaved, fixture.queueSaved);
+    },
   }).then(async outcome => {
     if (outcome.status === 'migrated') {
       result.textContent = 'PASS: automatic migration completed for profile ' + outcome.profileId + '. All four encrypted domains were read back and verified; IndexedDB fixture remains intact.';
@@ -379,6 +384,11 @@ injectButton.addEventListener('click', async () => {
 
   try {
     const fixture = await seedIndexedDbFixture(runId);
+    activeMigrationFixture = {
+      latestState: fixture.latestState,
+      stateSaved: domain !== 'app_state',
+      queueSaved: domain !== 'app_state' && domain !== 'sync_queue',
+    };
 
     // The POS state held in memory is newer than the last durable state. For
     // non-state failure modes, persist that state before injecting the failure.
