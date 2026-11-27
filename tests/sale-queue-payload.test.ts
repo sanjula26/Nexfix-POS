@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildSaleCreateQueueInput } from '../src/lib/saleQueuePayload.ts';
+import { buildSaleCreateQueueInput, buildSaleReplayPayments } from '../src/lib/saleQueuePayload.ts';
 import type { Sale } from '../src/lib/types.ts';
 
 const baseSale = {
@@ -68,4 +68,42 @@ test('non-inventory trade-in is represented as a discount without creating a tra
 test('tax percentage is zero when the taxable base is zero', () => {
   const sale = { ...baseSale, subtotal: 100, discount: 100, tax: 0 } satisfies Sale;
   assert.equal(buildSaleCreateQueueInput(sale).taxPct, 0);
+});
+
+test('offline sale replay preserves a full credit balance as an explicit credit leg', () => {
+  const sale = { ...baseSale, payment: 'credit', amountPaid: 0, payments: undefined } satisfies Sale;
+  const input = buildSaleCreateQueueInput(sale);
+  assert.equal(input.creditDue, sale.total);
+  assert.deepEqual(buildSaleReplayPayments(input), [{ method: 'credit', amount: sale.total }]);
+});
+
+test('offline sale replay preserves tender legs and adds the outstanding partial credit exactly once', () => {
+  const sale = {
+    ...baseSale,
+    payment: 'credit',
+    amountPaid: 500,
+    payments: [{ method: 'cash', amount: 300 }, { method: 'card', amount: 200 }],
+  } satisfies Sale;
+  const input = buildSaleCreateQueueInput(sale);
+  assert.equal(input.creditDue, sale.total - sale.amountPaid);
+  assert.deepEqual(buildSaleReplayPayments(input), [
+    { method: 'cash', amount: 300 },
+    { method: 'card', amount: 200 },
+    { method: 'credit', amount: sale.total - sale.amountPaid },
+  ]);
+});
+
+test('offline sale replay preserves fully paid split tenders without adding a credit leg', () => {
+  const sale = {
+    ...baseSale,
+    payment: 'cash',
+    amountPaid: 1205,
+    payments: [{ method: 'cash', amount: 400 }, { method: 'card', amount: 805 }],
+  } satisfies Sale;
+  const input = buildSaleCreateQueueInput(sale);
+  assert.equal(input.creditDue, 0);
+  assert.deepEqual(buildSaleReplayPayments(input), [
+    { method: 'cash', amount: 400 },
+    { method: 'card', amount: 805 },
+  ]);
 });
