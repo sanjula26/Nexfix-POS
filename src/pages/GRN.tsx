@@ -223,6 +223,7 @@ export default function GRN() {
     }
     setWorkingDraft(snapshot);
     setDraftSaveStatus('saved');
+    setFormError(current => current.startsWith('Local draft save failed.') ? '' : current);
     return true;
   }, [formMode, makeWorkingDraft, workingDraftKey, recoveryLoaded, recoveryLoadError]);
 
