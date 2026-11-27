@@ -1,6 +1,6 @@
-# Storage overflow QA harness — design and safety contract
+# Storage overflow QA harness — implementation and safety contract
 
-Status: **Design only. No QA harness or physical Windows acceptance has been implemented by this document.**
+Status as of 2026-11-27: **The isolated QA shell, real IndexedDB transaction-boundary quota injection, four-domain migration verification, and named interruption/restart-recovery controls are implemented on the combined test branch. Physical Windows acceptance remains NOT RUN.**
 
 This design closes the gap between the current automated synthetic-quota unit tests and the physical Windows acceptance checklist in `STORAGE_OVERFLOW_WINDOWS_ACCEPTANCE.md`.
 
@@ -12,6 +12,20 @@ This design closes the gap between the current automated synthetic-quota unit te
 - Stop and restart a disposable QA process at named migration phases to test recovery.
 - Keep every QA control out of production renderer APIs, production IPC registration and production installer artifacts.
 
+## Implemented candidate functionality — 2026-11-27
+
+The combined candidate branch has added the following QA-only capabilities without adding QA controls to the production renderer or production Electron preload:
+
+- A separate Electron package identity, executable name and user-data directory, with network requests and permissions blocked.
+- A disposable folder picker that rejects protected OS/app/profile paths, symbolic links, existing folder reuse and missing/invalid sentinels.
+- A one-shot `QuotaExceededError` injected at the actual `IDBDatabase.transaction()` boundary, limited to the selected `nexfix_pos_db` write store. The operator can select app state, restore checkpoint, offline queue or backup/GRN metadata. It consumes no disk space.
+- The production `db.ts` save APIs, quota-warning event contract and automatic migration coordinator are exercised. The source IndexedDB snapshot is checked before adapter activation; the encrypted folder copy is read back and SHA-256/byte-count verified.
+- The QA fixture includes a pending GRN working draft under `BackupMeta.grnWorkingDrafts`. After cutover, the active encrypted DB adapter is used to read and update the same draft.
+- The migration core has optional durable checkpoint callbacks (no effect unless a QA caller supplies one). The separate QA shell can stop itself after source snapshot, each domain copy, all verification, before folder-primary, or after the durable folder-primary marker and before renderer adapter activation.
+- A one-shot interruption record is stored in the QA app's separate user-data directory, not inside the encrypted POS profile. On restart, the operator verifies the exact profile ID, journal phase and preserved IndexedDB source. The QA shell then either activates the already-committed encrypted profile or safely retries the migration from the preserved source.
+- The QA-only ASAR has an explicit exact-file allowlist and the no-publish Windows workflow verifies it. Production packaging continues to exclude the entire `electron/qa` directory.
+
+The Windows workflow builds an unpacked QA application (`--dir`) and does not upload artifacts, create releases, publish to R2, or call Supabase. The QA shell is not the production POS installer and must not be distributed as one.
 ## Non-negotiable isolation
 
 1. Build a separate QA-only Windows package with a different Electron `appId`, product name, executable name and user-data directory from production.
@@ -70,9 +84,14 @@ The before/after cutover cases are especially important: if the primary marker a
 - CI: build and checksum the QA package as a no-publish job; do not upload the artifact. Run all unit/integration tests on the exact commit.
 - Physical acceptance: manually install and run the QA package on a disposable Windows machine. CI packaging success is not physical acceptance.
 
-## Current gap and release gate
+## Remaining gaps and acceptance gate
 
-The current branch has synthetic `QuotaExceededError` unit tests and migration-core dependency-injection tests, but no operator-accessible packaged QA trigger or named-phase process-stop harness. The physical acceptance scenarios therefore remain **BLOCKED / NOT RUN**.
+- The controlled quota and named-interruption flows have not yet been run by a human on a physical Windows machine. Green CI/ASAR packaging is not physical acceptance.
+- Manual first-run/reconnect, OS unlock failure, restart at every named phase, removable-drive disconnect/reconnect, Windows reboot, and operator-facing recovery must be exercised on a disposable Windows account/VM.
+- The isolated QA shell currently verifies four data domains, GRN working-draft preservation and adapter activation. It does not yet automate every sales/backup/restore/large-dataset workflow or real removable-drive failure mode.
+- The Windows workflow currently builds the QA app unpacked with `--dir`; it does not create or publish a QA installer. No production EXE, R2 release, tag, PR merge or Supabase operation is authorized by this QA task.
+
+Do not mark the Windows acceptance checklist complete, merge the production storage branch, or release until the separate physical Windows acceptance is performed and recorded.
 
 Implement this design in small steps, first proving production-package exclusion and QA app isolation, then adding quota injection, then interruption/restart controls. Do not merge PR #292 or publish an EXE/R2 release until the separate Windows acceptance checklist is completed and signed off.
 
