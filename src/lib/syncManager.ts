@@ -26,6 +26,7 @@ let state = INITIAL;
 let stopConnectivity: (() => void) | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let syncing = false;
+let syncRequestedWhileBusy = false;
 let retryAttempt = 0;
 const listeners = new Set<(next: SyncManagerState) => void>();
 
@@ -53,7 +54,13 @@ export function subscribeSyncManager(listener: (next: SyncManagerState) => void)
 }
 
 export async function runSyncNow(): Promise<SyncManagerState> {
-  if (syncing) return state;
+  if (syncing) {
+    // A new local sale may be queued while an earlier startup/reconnect flush
+    // is already running. Remember that request so the fresh queue is not left
+    // waiting for another browser online event.
+    syncRequestedWhileBusy = true;
+    return state;
+  }
   if (getConnectivity() === 'offline') {
     const pending = await refreshPending();
     publish({ ...state, status: 'offline', pending });
@@ -92,6 +99,10 @@ export async function runSyncNow(): Promise<SyncManagerState> {
     scheduleRetry();
   } finally {
     syncing = false;
+    if (syncRequestedWhileBusy) {
+      syncRequestedWhileBusy = false;
+      void runSyncNow();
+    }
   }
   return state;
 }
@@ -127,4 +138,5 @@ export function stopSyncManager(): void {
   if (retryTimer !== null) clearTimeout(retryTimer);
   retryTimer = null;
   retryAttempt = 0;
+  syncRequestedWhileBusy = false;
 }
