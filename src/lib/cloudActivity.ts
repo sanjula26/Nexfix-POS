@@ -3,12 +3,14 @@ export interface CloudActivityState {
   operations: string[];
   startedAt: number | null;
   lastError: string | null;
+  lastSuccessAt: number | null;
 }
 
-const INITIAL: CloudActivityState = { active: 0, operations: [], startedAt: null, lastError: null };
+const INITIAL: CloudActivityState = { active: 0, operations: [], startedAt: null, lastError: null, lastSuccessAt: null };
 let state: CloudActivityState = INITIAL;
 let nextId = 0;
 let lastError: string | null = null;
+let lastSuccessAt: number | null = null;
 const activeOperations = new Map<number, string>();
 const listeners = new Set<(next: CloudActivityState) => void>();
 
@@ -18,6 +20,7 @@ function publish(): void {
     operations: [...activeOperations.values()],
     startedAt: activeOperations.size ? state.startedAt ?? Date.now() : null,
     lastError,
+    lastSuccessAt,
   };
   listeners.forEach(listener => listener(state));
 }
@@ -56,7 +59,10 @@ export function reportCloudActivityFailure(error: unknown): void {
 export async function withCloudActivity<T>(operation: string, action: () => Promise<T>): Promise<T> {
   const end = beginCloudActivity(operation);
   try {
-    return await action();
+    const result = await action();
+    lastSuccessAt = Date.now();
+    publish();
+    return result;
   } catch (error) {
     reportCloudActivityFailure(error);
     throw error;
