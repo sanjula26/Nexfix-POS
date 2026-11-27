@@ -23,6 +23,11 @@ export function createFingerprintSyncCoordinator<T extends FingerprintedSyncResu
       // fingerprint, so reuse its success rather than issuing a duplicate.
       const latest = completed.get(identity);
       if (latest?.fingerprint === fingerprint) return latest.result;
+
+      // Catalog reconciliation is a sequence of writes, not one transaction.
+      // A failed newer fingerprint may already have changed some cloud rows,
+      // so an older cached success is no longer safe to reuse.
+      completed.delete(identity);
       const result = await sync();
       if (result.ok) completed.set(identity, { fingerprint, result });
       return result;
