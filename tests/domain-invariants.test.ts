@@ -6,6 +6,8 @@ import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from 
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { buildNormalizedCatalogSyncFingerprint } from '../src/lib/cloudSyncFingerprint.ts';
+import { beginCloudActivity, getCloudActivityState, withCloudActivity } from '../src/lib/cloudActivity.ts';
+import { createSuccessfulSingleFlightCache } from '../src/lib/successfulSyncCache.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -618,4 +620,91 @@ test('Adjust Stock and Stock Take pass verified online quantities to the store',
   assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
   assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
   assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
+});
+
+
+test('successful catalog sync results are reused for an unchanged key', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: true, value: ++calls });
+  assert.deepEqual(await cache.run('shop:user:branch:fingerprint-a', action), { ok: true, value: 1 });
+  assert.deepEqual(await cache.run('shop:user:branch:fingerprint-a', action), { ok: true, value: 1 });
+  assert.equal(calls, 1);
+});
+
+test('concurrent catalog sync callers share one in-flight request', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  let release!: (value: { ok: boolean; value: number }) => void;
+  const action = () => {
+    calls += 1;
+    return new Promise<{ ok: boolean; value: number }>(resolve => { release = resolve; });
+  };
+  const first = cache.run('same-key', action);
+  const second = cache.run('same-key', action);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release({ ok: true, value: 7 });
+  assert.deepEqual(await Promise.all([first, second]), [
+    { ok: true, value: 7 },
+    { ok: true, value: 7 },
+  ]);
+});
+
+test('failed catalog sync results are not cached and can be retried', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: ++calls > 1, value: calls });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: false, value: 1 });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: true, value: 2 });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: true, value: 2 });
+  assert.equal(calls, 2);
+});
+
+test('catalog sync cache separates shops, users, branches and changed fingerprints', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: true, value: ++calls });
+  const keys = [
+    'shop-a:user:branch-a:fingerprint-a',
+    'shop-b:user:branch-a:fingerprint-a',
+    'shop-a:other-user:branch-a:fingerprint-a',
+    'shop-a:user:branch-b:fingerprint-a',
+    'shop-a:user:branch-a:fingerprint-b',
+  ];
+  for (const key of keys) await cache.run(key, action);
+  assert.equal(calls, keys.length);
+});
+
+
+test('cloud activity indicator tracks overlapping uploads and clears when each completes', () => {
+  const finishSale = beginCloudActivity('Cloud sale');
+  const finishCatalog = beginCloudActivity('Catalog data');
+  assert.equal(getCloudActivityState().active, 2);
+  assert.deepEqual(getCloudActivityState().operations, ['Cloud sale', 'Catalog data']);
+  finishSale();
+  finishSale();
+  assert.equal(getCloudActivityState().active, 1);
+  finishCatalog();
+  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null, lastError: null, lastSuccessAt: null, lastSuccessOperation: null });
+});
+
+test('cloud activity wrapper clears the indicator after success and failure', async () => {
+  assert.equal(await withCloudActivity('No-op check', async () => false, result => result), false);
+  assert.equal(getCloudActivityState().lastSuccessAt, null);
+  assert.equal(await withCloudActivity('POS data', async () => 42), 42);
+  const successfulState = getCloudActivityState();
+  assert.equal(successfulState.active, 0);
+  assert.equal(successfulState.lastError, null);
+  assert.equal(typeof successfulState.lastSuccessAt, 'number');
+  assert.equal(successfulState.lastSuccessOperation, 'POS data');
+  await assert.rejects(
+    withCloudActivity('POS data', async () => { throw new Error('network failure'); }),
+    /network failure/,
+  );
+  const failedState = getCloudActivityState();
+  assert.equal(failedState.active, 0);
+  assert.equal(failedState.lastError, 'network failure');
+  assert.equal(failedState.lastSuccessAt, successfulState.lastSuccessAt);
+  assert.equal(failedState.lastSuccessOperation, successfulState.lastSuccessOperation);
 });
