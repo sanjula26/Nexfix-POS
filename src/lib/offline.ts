@@ -1,5 +1,7 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
+import { idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
+import { buildSaleCreateQueueInput } from './saleQueuePayload';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState } from './db';
 import { getMachineIdentity } from './machine';
@@ -141,6 +143,49 @@ export function queueSaleReversalRejection(requestId: string, note?: string): Pr
   return runQueueMutation(() => queueSaleReversalRejectionWork(requestId, note));
 }
 
+/**
+ * Recover the durable marker written before a local offline sale. State and
+ * queue are separate storage domains, so a crash or quota failure between
+ * them must leave a marker that lets the next sync attempt reconstruct the
+ * exact normalized sale job from the saved sale record.
+ */
+export async function recoverPendingOfflineSaleQueues(): Promise<number> {
+  const pendingIds = await idbGetPendingSaleQueueIds();
+  if (!pendingIds.length) return 0;
+
+  const state = await idbLoadState();
+  if (!state) throw new Error('Could not read local POS state while recovering pending offline sales.');
+
+  const queued = await idbListQueue();
+  const confirmedIds: string[] = [];
+  let restored = 0;
+
+  for (const saleId of pendingIds) {
+    const sale = state.sales.find(item => item.id === saleId);
+    // Keep the marker when the sale is not in the committed local snapshot.
+    // This avoids deleting a marker during a concurrent state-commit window.
+    if (!sale) continue;
+
+    const queueId = `sale:${saleId}`;
+    const existing = queued.find(op => op.type === 'sale_create' && op.id === queueId);
+    if (!existing) {
+      await queueSaleCreate(saleId, buildSaleCreateQueueInput(sale, state.settings.branchId));
+      restored += 1;
+    }
+
+    const readBack = await idbListQueue();
+    if (!readBack.some(op => op.type === 'sale_create' && op.id === queueId)) {
+      throw new Error(`Offline sale ${sale.billNo} is saved locally but its cloud sync queue could not be confirmed.`);
+    }
+    confirmedIds.push(saleId);
+  }
+
+  if (confirmedIds.length && !(await idbRemovePendingSaleQueueIds(confirmedIds))) {
+    throw new Error('Offline sale queue was written, but its recovery marker could not be cleared. It will be checked again safely.');
+  }
+  return restored;
+}
+
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
@@ -151,6 +196,7 @@ export function pauseOfflineQueueFlush(): Promise<() => void> { return offlineQu
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=offlineQueueWork.run(async()=>{
+    await recoverPendingOfflineSaleQueues();
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
@@ -222,9 +268,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          let customerIdMap: Record<string, string> = {};
           if(state) {
             const catalog=await syncNormalizedCatalog(state, shop.shopId);
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
+            if(catalog.ok) customerIdMap = catalog.customerIdMap || {};
           }
           const payments=(parsed.input.payments&&parsed.input.payments.length)
             ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
@@ -234,7 +282,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
+            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId ? (customerIdMap[parsed.input.customerId] || parsed.input.customerId) : undefined,shipping:parsed.input.shipping,
             discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
             salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
