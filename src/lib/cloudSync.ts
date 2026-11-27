@@ -6,6 +6,7 @@ import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
+import { createCloudRequestDeadline } from './cloudTransport';
 import { createFingerprintSyncCoordinator } from './catalogSyncCoordinator';
 import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
 
@@ -895,12 +896,21 @@ export async function completeSaleAtomic(input: {
   }
   if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
 
-  const sendAtomicSale = () => client.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  // Bound the cashier wait if the Supabase RPC stops responding. Aborting
+  // the HTTP request does not prove PostgreSQL rolled back, so keep this as an
+  // ambiguous post-RPC result and leave the caller's stable Sale ID marker intact.
+  const deadline = createCloudRequestDeadline(15_000);
+  const sendAtomicSale = () => client.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesmanId: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments }).abortSignal(deadline.signal);
   let rpcResponse: Awaited<ReturnType<typeof sendAtomicSale>>;
   try {
     rpcResponse = await sendAtomicSale();
   } catch (error) {
-    return { ok: false, rpcAttempted: true, error: error instanceof Error ? error.message : String(error) };
+    const message = deadline.didTimeout()
+      ? 'Cloud sale request timed out after 15 seconds. The server may still have committed this bill. Reconnect and retry the same cart to reconcile its original Sale ID; do not create a new bill.'
+      : error instanceof Error ? error.message : String(error);
+    return { ok: false, rpcAttempted: true, error: message };
+  } finally {
+    deadline.dispose();
   }
   const { data, error } = rpcResponse;
   if (error) return { ok: false, rpcAttempted: true, error: error.message };
