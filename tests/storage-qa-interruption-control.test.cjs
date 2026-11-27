@@ -36,6 +36,9 @@ test('one-shot QA interruption is durable outside the profile and is consumed ex
     assert.equal(typeof last.armedAt, 'string');
     assert.equal(fs.existsSync(path.join(directory, 'storage-qa-interruption-armed.json')), false);
     assert.equal(controller.checkpoint({ profileId, phase: 'after_copy_meta' }).stop, false);
+    assert.equal(controller.clearLast({ runId, profileId }), true);
+    assert.equal(controller.getLast(), null);
+    assert.equal(controller.clearLast({ runId, profileId }), false);
   });
 });
 
