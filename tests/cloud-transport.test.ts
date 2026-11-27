@@ -53,6 +53,7 @@ test('reuses the exact pending Sale ID only when the pre-RPC attempt matches its
     requestedSaleId: 'sale-stable-1',
     pendingMarkerRaw: JSON.stringify({ saleId: 'sale-stable-1', shopId: 'shop-a' }),
     cloudShopId: 'shop-a',
+    allowMatchingPendingId: true,
   }), { ok: true, saleId: 'sale-stable-1' });
 });
 
@@ -107,4 +108,16 @@ test('local-only POS is not blocked by an unrelated legacy cloud retry marker', 
     pendingMarkerRaw: '{not-json',
     markerReadable: false,
   }), { ok: true });
+});
+
+
+test('does not reuse a matching cloud marker without proof that the current RPC was not sent', () => {
+  const result = resolveLocalSaleFallbackId({
+    cloudConfigured: true,
+    requestedSaleId: 'sale-stable-1',
+    pendingMarkerRaw: JSON.stringify({ saleId: 'sale-stable-1', shopId: 'shop-a' }),
+    cloudShopId: 'shop-a',
+    allowMatchingPendingId: false,
+  });
+  assert.equal(result.ok, false);
 });
