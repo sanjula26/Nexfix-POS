@@ -690,6 +690,8 @@ test('cloud activity indicator tracks overlapping uploads and clears when each c
 });
 
 test('cloud activity wrapper clears the indicator after success and failure', async () => {
+  assert.equal(await withCloudActivity('No-op check', async () => false, result => result), false);
+  assert.equal(getCloudActivityState().lastSuccessAt, null);
   assert.equal(await withCloudActivity('POS data', async () => 42), 42);
   const successfulState = getCloudActivityState();
   assert.equal(successfulState.active, 0);
