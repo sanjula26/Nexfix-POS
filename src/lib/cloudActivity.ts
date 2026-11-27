@@ -122,14 +122,14 @@ export async function withCloudActivity<T>(
           lastSuccessOperation: operation.slice(0, 80),
         }).catch(() => false);
       }
-      if (requestScopeKey && requestScopeKey === activeScopeKey) {
-        scopeSuccessRevision += 1;
+      if (requestScopeKey === activeScopeKey) {
+        if (requestScopeKey) scopeSuccessRevision += 1;
         lastSuccessAt = Date.parse(completedAt);
         lastSuccessOperation = operation;
         lastError = null;
         publish();
       }
-    } else if (requestScopeKey && requestScopeKey === activeScopeKey && result && typeof result === 'object') {
+    } else if (requestScopeKey === activeScopeKey && result && typeof result === 'object') {
       const resultError = 'error' in result && typeof result.error === 'string' ? result.error : '';
       const notConfirmed = 'ok' in result && result.ok === false;
       if (resultError || notConfirmed) {
