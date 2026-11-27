@@ -2,6 +2,7 @@ import { runAutomaticPOSOverflowMigration } from '../../src/lib/storageOverflowA
 import {
   runEncryptedPOSFolderMigration,
   type MigrationDependencies,
+  type MigrationCheckpoint,
 } from '../../src/lib/storageOverflowMigrationCore.ts';
 import {
   beginDesktopPOSStorageMigration,
@@ -44,6 +45,9 @@ const injectButton = document.getElementById('inject-quota') as HTMLButtonElemen
 const result = document.getElementById('result') as HTMLParagraphElement;
 const folderPathElement = document.getElementById('folder-path') as HTMLElement;
 const quotaDomainSelect = document.getElementById('quota-domain') as HTMLSelectElement;
+const interruptionPhaseSelect = document.getElementById('interruption-phase') as HTMLSelectElement;
+const interruptionButton = document.getElementById('run-interruption') as HTMLButtonElement;
+const recoveryButton = document.getElementById('verify-recovery') as HTMLButtonElement;
 let selectedFolder: string | null = null;
 let profileReady = false;
 let injectionUsed = false;
@@ -51,6 +55,7 @@ let quotaEventReceived = false;
 let migrationPromise: Promise<void> | null = null;
 let activeMigrationFixture: { latestState: POSState; stateSaved: boolean; queueSaved: boolean } | null = null;
 let sourceSnapshotAtCutover: LegacyPOSProfileSnapshot | null = null;
+let interruptionStarted = false;
 
 subscribeToStorageQuotaWarnings(window, detail => {
   if (detail.reason !== 'quota_exceeded' || migrationPromise) return;
@@ -222,7 +227,12 @@ async function readRequiredLegacySnapshot(): Promise<LegacyPOSProfileSnapshot> {
   throw new Error('The isolated QA IndexedDB profile was not found after fixture setup.');
 }
 
-async function migrateQaFixtureToEncryptedFolder(latestState: POSState, stateSaved: boolean, queueSaved: boolean): Promise<LegacyPOSProfileSnapshot> {
+async function migrateQaFixtureToEncryptedFolder(
+  latestState: POSState,
+  stateSaved: boolean,
+  queueSaved: boolean,
+  onCheckpoint?: (checkpoint: MigrationCheckpoint) => void | Promise<void>,
+): Promise<LegacyPOSProfileSnapshot> {
   sourceSnapshotAtCutover = null;
   const dependencies: MigrationDependencies<{ phase: string }, LegacyPOSProfileSnapshot, POSState> = {
     getProfileStatus: getDesktopPOSProfileStatus,
@@ -255,10 +265,189 @@ async function migrateQaFixtureToEncryptedFolder(latestState: POSState, stateSav
       setDesktopProfilePrimary(true);
     },
     onCutoverUncertain: message => { result.textContent = message; },
+    onCheckpoint,
   };
   await runEncryptedPOSFolderMigration(dependencies);
   if (!sourceSnapshotAtCutover) throw new Error('The IndexedDB source snapshot was not verified before adapter activation.');
   return sourceSnapshotAtCutover;
+}
+
+function findQaDraft(snapshot: LegacyPOSProfileSnapshot, runId: string) {
+  const draftKey = 'grn_working_draft_v1:qa:' + runId;
+  const draft = snapshot.meta.grnWorkingDrafts?.[draftKey];
+  if (!draft || typeof draft !== 'object' ||
+      (draft as { id?: unknown }).id !== 'QA-GRN-' + runId) {
+    throw new Error('The original IndexedDB GRN recovery draft is missing after restart.');
+  }
+  return { draftKey, draft };
+}
+
+async function verifyActiveAdapterAgainstSnapshot(snapshot: LegacyPOSProfileSnapshot, runId: string): Promise<void> {
+  const expectedState = snapshot.state;
+  if (!expectedState) throw new Error('The original IndexedDB POS state is missing after restart.');
+  const activeState = await idbLoadState();
+  const activeQueue = await idbListQueue();
+  const activeMeta = await idbGetMeta();
+  const activeCheckpoint = await idbLoadRestoreCheckpoint();
+  const { draftKey, draft } = findQaDraft(snapshot, runId);
+  const activeDraft = await idbGetMetaValue(draftKey);
+
+  if (JSON.stringify(activeState) !== JSON.stringify(expectedState) ||
+      snapshot.queue.some(entry => !activeQueue.some(item => item.id === entry.id)) ||
+      !Number.isFinite(activeMeta.autoBackupHours) ||
+      JSON.stringify(activeCheckpoint) !== JSON.stringify(snapshot.restoreCheckpoint) ||
+      JSON.stringify(activeDraft) !== JSON.stringify(draft)) {
+    throw new Error('The active encrypted-folder adapter does not match the original POS/GRN IndexedDB snapshot.');
+  }
+
+  const updatedDraft = {
+    ...(draft as Record<string, unknown>),
+    notes: String((draft as { notes?: unknown }).notes || '') + ' Verified after restart.',
+  };
+  if (!await idbPutMetaValue(draftKey, updatedDraft) ||
+      JSON.stringify(await idbGetMetaValue(draftKey)) !== JSON.stringify(updatedDraft)) {
+    throw new Error('The encrypted-folder adapter could not update and reread the GRN recovery draft after restart.');
+  }
+}
+
+async function validateInterruptedJournal(
+  phase: MigrationCheckpoint,
+  journal: Awaited<ReturnType<typeof getDesktopPOSMigrationJournal>>,
+): Promise<void> {
+  const order = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'] as const;
+  const copyIndex = phase.startsWith('after_copy_') ? order.indexOf(phase.slice('after_copy_'.length) as typeof order[number]) : -1;
+  if (phase === 'after_snapshot') {
+    if (journal !== null) throw new Error('An interruption immediately after snapshot must not have created a migration journal.');
+    return;
+  }
+  if (phase.startsWith('after_copy_')) {
+    if (!journal || journal.phase !== 'copying' || copyIndex < 0) {
+      throw new Error('The migration journal does not match the interrupted copy phase.');
+    }
+    for (let i = 0; i < order.length; i += 1) {
+      const expected = i <= copyIndex ? 'copied' : 'pending';
+      if (journal.entries[order[i]]?.status !== expected) {
+        throw new Error('The migration journal has an unexpected copy status at ' + order[i] + '.');
+      }
+    }
+    return;
+  }
+  const expectedPhase = phase === 'after_verification'
+    ? 'verifying'
+    : phase === 'before_folder_primary'
+      ? 'ready_to_cutover'
+      : 'folder_primary';
+  if (!journal || journal.phase !== expectedPhase ||
+      order.some(purpose => journal.entries[purpose]?.status !== 'verified')) {
+    throw new Error('The migration journal is incomplete for interrupted phase ' + phase + '.');
+  }
+}
+
+async function runInterruptedMigration(): Promise<void> {
+  if (!selectedFolder || !profileReady || interruptionStarted) return;
+  const folder = await getConfiguredPOSOverflowFolder();
+  if (!folder.ok || !folder.available || folder.storageMode !== 'indexeddb') {
+    throw new Error('Use a fresh disposable QA folder/profile before running an interruption test.');
+  }
+  interruptionStarted = true;
+  interruptionButton.disabled = true;
+  recoveryButton.disabled = true;
+  interruptionPhaseSelect.disabled = true;
+  result.textContent = 'Preparing a disposable POS + GRN source snapshot and arming a one-shot process stop…';
+
+  const runId = crypto.randomUUID();
+  const checkpoint = interruptionPhaseSelect.value as MigrationCheckpoint;
+  const fixture = await seedIndexedDbFixture(runId);
+  const latestSave = await idbSaveStateDetailed(fixture.latestState);
+  if (!latestSave.ok) throw new Error('Could not persist the disposable restart-test POS state.');
+  const profileStatus = await getDesktopPOSProfileStatus();
+  if (!profileStatus.unlocked || !profileStatus.profile?.profileId) {
+    throw new Error('Unlock the disposable encrypted QA profile before arming an interruption.');
+  }
+
+  await window.nexfixStorageQA.armInterruption({ runId, phase: checkpoint });
+  result.textContent = 'Armed ' + checkpoint + '. The QA application will close automatically at that durable migration checkpoint. Reopen the same QA app to verify/retry.';
+  await migrateQaFixtureToEncryptedFolder(
+    fixture.latestState,
+    true,
+    true,
+    async currentCheckpoint => {
+      const response = await window.nexfixStorageQA.phaseCheckpoint({ phase: currentCheckpoint });
+      if (response.stopScheduled) {
+        // Main process exits the isolated QA app; never let the migration continue.
+        await new Promise<void>(() => undefined);
+      }
+    },
+  );
+  throw new Error('The QA app reached the end without consuming the selected interruption checkpoint.');
+}
+
+async function verifyAndRecoverInterruptedMigration(): Promise<void> {
+  const last = await window.nexfixStorageQA.getLastInterruption();
+  if (!last) throw new Error('There is no previous one-shot interruption record to verify.');
+  const folder = await getConfiguredPOSOverflowFolder();
+  if (!folder.ok || !folder.available || !folder.folderPath) {
+    throw new Error('Reconnect the same disposable QA folder before checking its interrupted migration.');
+  }
+
+  const discovery = await discoverDesktopPOSProfiles(folder.folderPath);
+  if (discovery.duplicates.length > 0 || discovery.invalid.length > 0 ||
+      discovery.available.length !== 1 || discovery.available[0].profileId !== last.profileId) {
+    throw new Error('The selected folder does not contain the exact disposable profile from the interrupted run.');
+  }
+
+  const current = await getDesktopPOSProfileStatus();
+  if (current.unlocked && current.profile?.profileId !== last.profileId) {
+    await lockDesktopPOSProfile();
+  }
+  const rechecked = await getDesktopPOSProfileStatus();
+  if (!rechecked.unlocked) await unlockDesktopPOSProfileWithOS(discovery.available[0].directory);
+
+  const source = await readRequiredLegacySnapshot();
+  if (!source.state || !source.sales) throw new Error('The original IndexedDB snapshot is incomplete after restart.');
+  const runId = last.runId;
+  const { draftKey } = findQaDraft(source, runId);
+  if (!source.state.sales.some(sale => sale.id === 'QA-SALE-MEMORY-' + runId) ||
+      !source.queue.some(entry => entry.id === 'QA-QUEUE-' + runId) ||
+      !source.meta.grnWorkingDrafts?.[draftKey] ||
+      !source.restoreCheckpoint) {
+    throw new Error('The original POS, offline queue, GRN metadata or restore checkpoint did not survive process restart.');
+  }
+
+  const journal = await getDesktopPOSMigrationJournal();
+  await validateInterruptedJournal(last.phase as MigrationCheckpoint, journal);
+
+  if (last.phase === 'after_folder_primary_before_adapter_activation') {
+    if (folder.storageMode !== 'folder_primary') {
+      throw new Error('The durable folder-primary marker was not present after restart.');
+    }
+    const encryptedState = JSON.parse((await readDesktopProfilePayload('app_state')) || 'null');
+    const encryptedQueue = JSON.parse((await readDesktopProfilePayload('sync_queue')) || 'null');
+    const encryptedMeta = JSON.parse((await readDesktopProfilePayload('meta')) || 'null');
+    const encryptedCheckpoint = JSON.parse((await readDesktopProfilePayload('restore_checkpoint')) || 'null');
+    if (JSON.stringify(encryptedState) !== JSON.stringify(source.state) ||
+        !Array.isArray(encryptedQueue) ||
+        source.queue.some(entry => !encryptedQueue.some((item: { id?: string }) => item.id === entry.id)) ||
+        JSON.stringify(encryptedMeta?.grnWorkingDrafts?.[draftKey]) !== JSON.stringify(source.meta.grnWorkingDrafts?.[draftKey]) ||
+        JSON.stringify(encryptedCheckpoint) !== JSON.stringify(source.restoreCheckpoint)) {
+      throw new Error('The folder-primary encrypted payloads did not match the surviving IndexedDB source after restart.');
+    }
+    setDesktopProfilePrimary(true);
+  } else {
+    if (folder.storageMode !== 'indexeddb') {
+      throw new Error('The folder became primary before the interrupted migration had completed verification.');
+    }
+    result.textContent = 'Restart journal verified at ' + last.phase + '. Retrying the full migration from the preserved IndexedDB source…';
+    await migrateQaFixtureToEncryptedFolder(source.state, true, true);
+  }
+
+  await verifyActiveAdapterAgainstSnapshot(source, runId);
+  const cleared = await window.nexfixStorageQA.clearLastInterruption({ runId: last.runId });
+  if (!cleared.cleared) throw new Error('The interruption marker could not be cleared after successful recovery verification.');
+  interruptionStarted = false;
+  profileReady = true;
+  result.textContent = 'PASS: process restart after ' + last.phase + ' was verified. The original IndexedDB snapshot survived, migration retry/adapter activation completed safely, and the encrypted folder preserved POS + GRN recovery data.';
+  await refreshFolderStatus();
 }
 
 function createEphemeralPassphrase(): string {
@@ -273,15 +462,24 @@ async function refreshFolderStatus(): Promise<void> {
     const folder = await getConfiguredPOSOverflowFolder();
     if (folder.ok && folder.configured && folder.available && folder.folderPath) {
       selectedFolder = folder.folderPath;
+      const previousInterruption = await window.nexfixStorageQA.getLastInterruption();
+      recoveryButton.disabled = !previousInterruption || previousInterruption.profileId !== (await discoverDesktopPOSProfiles(folder.folderPath)).available[0]?.profileId;
       folderPathElement.textContent = selectedFolder;
       chooseButton.disabled = true;
       if (folder.storageMode === 'indexeddb') {
         profileButton.disabled = false;
-        result.textContent = 'Disposable QA folder is ready. Next, verify the encrypted profile and Windows OS unlock.';
+        interruptionPhaseSelect.disabled = !profileReady;
+        interruptionButton.disabled = !profileReady || interruptionStarted || injectionUsed;
+        if (!previousInterruption) result.textContent = 'Disposable QA folder is ready. Next, verify the encrypted profile and Windows OS unlock.';
       } else {
         profileButton.disabled = true;
         injectButton.disabled = true;
-        result.textContent = 'This QA folder is already marked primary. Do not inject another quota event.';
+        interruptionPhaseSelect.disabled = true;
+        interruptionButton.disabled = true;
+        if (!previousInterruption) result.textContent = 'This QA folder is already marked primary. Do not inject another quota event.';
+      }
+      if (previousInterruption) {
+        result.textContent = 'Previous QA process stop: ' + previousInterruption.phase + '. Reopen/verify the preserved source and safely retry the migration.';
       }
     } else if (folder.storageMode === 'folder_primary') {
       chooseButton.disabled = folder.available === true;
@@ -292,6 +490,9 @@ async function refreshFolderStatus(): Promise<void> {
       chooseButton.disabled = false;
       profileButton.disabled = true;
       injectButton.disabled = true;
+      interruptionPhaseSelect.disabled = true;
+      interruptionButton.disabled = true;
+      recoveryButton.disabled = true;
       if (folder.configured) result.textContent = folder.error || 'The saved QA folder is unavailable. Choose a new disposable QA folder.';
     }
   } catch (error) {
@@ -306,6 +507,9 @@ chooseButton.addEventListener('click', async () => {
   profileReady = false;
   profileButton.disabled = true;
   injectButton.disabled = true;
+  interruptionButton.disabled = true;
+  interruptionPhaseSelect.disabled = true;
+  recoveryButton.disabled = true;
   try {
     const selection = await window.nexfixStorageQA.chooseFolder();
     if (selection.canceled) {
@@ -379,13 +583,36 @@ profileButton.addEventListener('click', async () => {
     // the same OS-unlocked automatic migration path used by the desktop app.
     profileReady = true;
     quotaDomainSelect.disabled = false;
+    interruptionPhaseSelect.disabled = false;
     injectButton.disabled = false;
+    interruptionButton.disabled = injectionUsed;
     result.textContent = 'PASS: encrypted profile round-trip and Windows OS unlock verified for QA profile ' + profileId + '. Recovery key was not displayed or saved.';
   } catch (error) {
     try { await lockDesktopPOSProfile(); } catch { /* keep the QA profile locked after a failed test */ }
     result.textContent = 'Encrypted profile QA failed: ' + (error instanceof Error ? error.message : 'unknown error');
   } finally {
     profileButton.disabled = profileReady;
+  }
+});
+
+interruptionButton.addEventListener('click', async () => {
+  try {
+    await runInterruptedMigration();
+  } catch (error) {
+    result.textContent = 'Interruption QA could not start safely: ' + (error instanceof Error ? error.message : 'unknown error');
+    interruptionButton.disabled = false;
+    interruptionPhaseSelect.disabled = false;
+  }
+});
+
+recoveryButton.addEventListener('click', async () => {
+  recoveryButton.disabled = true;
+  result.textContent = 'Verifying the previous interruption marker, migration journal and preserved POS source…';
+  try {
+    await verifyAndRecoverInterruptedMigration();
+  } catch (error) {
+    result.textContent = 'Restart recovery verification failed safely: ' + (error instanceof Error ? error.message : 'unknown error');
+    recoveryButton.disabled = false;
   }
 });
 
