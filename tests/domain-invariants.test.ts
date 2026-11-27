@@ -710,3 +710,17 @@ test('cloud activity wrapper clears the indicator after success and failure', as
   assert.equal(failedState.lastSuccessAt, successfulState.lastSuccessAt);
   assert.equal(failedState.lastSuccessOperation, successfulState.lastSuccessOperation);
 });
+
+test('cloud sync details explain local queue, confirmed transfers, issues and safe retry', () => {
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8');
+  assert.ok(layoutSource.includes('aria-expanded={cloudDetailsOpen}'));
+  assert.ok(layoutSource.includes('aria-controls="nexfix-cloud-sync-details"'));
+  assert.ok(layoutSource.includes('Updates are saved on this PC and waiting to sync'));
+  assert.ok(layoutSource.includes("These updates are stored in this PC's local queue and are waiting for cloud confirmation."));
+  assert.ok(layoutSource.includes('Last successful transfer'));
+  assert.ok(layoutSource.includes('Latest issue:'));
+  assert.ok(layoutSource.includes('The Internet indicator does not guarantee the cloud server is reachable.'));
+  assert.ok(layoutSource.includes('onClick={() => { void runSyncNow(); }}'));
+  assert.ok(layoutSource.includes("syncManagerState.status !== 'conflict'"));
+  assert.ok(layoutSource.includes("connectivity === 'online'"));
+});
