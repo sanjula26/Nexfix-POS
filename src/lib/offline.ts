@@ -1,9 +1,9 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
-import { idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
 import { buildSaleCreateQueueInput } from './saleQueuePayload';
+import { recoverPendingSaleQueueIds } from './offlineSaleQueueRecovery';
 import { createDrainableWorkGate } from './drainableWorkGate';
-import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState } from './db';
+import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState, idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
@@ -157,33 +157,18 @@ export async function recoverPendingOfflineSaleQueues(): Promise<number> {
   if (!state) throw new Error('Could not read local POS state while recovering pending offline sales.');
 
   const queued = await idbListQueue();
-  const confirmedIds: string[] = [];
-  let restored = 0;
-
-  for (const saleId of pendingIds) {
-    const sale = state.sales.find(item => item.id === saleId);
-    // Keep the marker when the sale is not in the committed local snapshot.
-    // This avoids deleting a marker during a concurrent state-commit window.
-    if (!sale) continue;
-
-    const queueId = `sale:${saleId}`;
-    const existing = queued.find(op => op.type === 'sale_create' && op.id === queueId);
-    if (!existing) {
-      await queueSaleCreate(saleId, buildSaleCreateQueueInput(sale, state.settings.branchId));
-      restored += 1;
-    }
-
-    const readBack = await idbListQueue();
-    if (!readBack.some(op => op.type === 'sale_create' && op.id === queueId)) {
-      throw new Error(`Offline sale ${sale.billNo} is saved locally but its cloud sync queue could not be confirmed.`);
-    }
-    confirmedIds.push(saleId);
-  }
-
-  if (confirmedIds.length && !(await idbRemovePendingSaleQueueIds(confirmedIds))) {
-    throw new Error('Offline sale queue was written, but its recovery marker could not be cleared. It will be checked again safely.');
-  }
-  return restored;
+  const queuedSaleIds = new Set(
+    queued.filter(op => op.type === 'sale_create').map(op => op.id.slice('sale:'.length)),
+  );
+  return recoverPendingSaleQueueIds({
+    pendingSaleIds: pendingIds,
+    sales: state.sales,
+    queuedSaleIds,
+    enqueueSale: sale => queueSaleCreate(sale.id, buildSaleCreateQueueInput(sale, state.settings.branchId)),
+    confirmQueueEntry: async queueId => (await idbListQueue())
+      .some(op => op.type === 'sale_create' && op.id === queueId),
+    clearRecoveryMarkers: idbRemovePendingSaleQueueIds,
+  });
 }
 
 export async function getPendingSyncOperations(){return idbListQueue();}
