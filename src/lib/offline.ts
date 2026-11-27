@@ -239,48 +239,55 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};creditDue?:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          // Older pending jobs predate the explicit creditDue field. Upgrade
+          // those jobs from the durable original Sale record rather than
+          // silently dropping their outstanding credit during cloud replay.
+          const localSale = state?.sales.find(sale => sale.id === parsed.saleId);
+          const saleInput = parsed.input.creditDue === undefined && localSale
+            ? buildSaleCreateQueueInput(localSale, state?.settings.branchId)
+            : parsed.input;
           let customerIdMap: Record<string, string> = {};
           if(state) {
             const catalog=await syncNormalizedCatalog(state, shop.shopId);
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
             if(catalog.ok) customerIdMap = catalog.customerIdMap || {};
           }
-          const payments = buildSaleReplayPayments(parsed.input);
-          let cloudCustomerId = parsed.input.customerId
-            ? (customerIdMap[parsed.input.customerId] || parsed.input.customerId)
+          const payments = buildSaleReplayPayments(saleInput);
+          let cloudCustomerId = saleInput.customerId
+            ? (customerIdMap[saleInput.customerId] || saleInput.customerId)
             : undefined;
-          if (parsed.input.customerId && !customerIdMap[parsed.input.customerId] && state) {
-            const localCustomer = state.customers.find(customer => customer.id === parsed.input.customerId);
+          if (saleInput.customerId && !customerIdMap[saleInput.customerId] && state) {
+            const localCustomer = state.customers.find(customer => customer.id === saleInput.customerId);
             if (localCustomer) {
               const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
               if (resolvedCustomer.ok && resolvedCustomer.customerId) cloudCustomerId = resolvedCustomer.customerId;
-              else if (parsed.input.payment === 'credit') break;
+              else if (saleInput.payment === 'credit') break;
               else cloudCustomerId = undefined;
-            } else if (parsed.input.payment === 'credit') {
+            } else if (saleInput.payment === 'credit') {
               break;
             } else {
               cloudCustomerId = undefined;
             }
           }
-          const localSalesman = parsed.input.salesmanId && state
-            ? state.users.find(u => u.id === parsed.input.salesmanId && u.active)
+          const localSalesman = saleInput.salesmanId && state
+            ? state.users.find(u => u.id === saleInput.salesmanId && u.active)
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:cloudCustomerId,shipping:parsed.input.shipping,
-            discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
-            salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
+            shopId:shop.shopId,branchId:saleInput.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:cloudCustomerId,shipping:saleInput.shipping,
+            discount:saleInput.discount + (saleInput.tradeInValue || 0),taxPct:saleInput.taxPct,pointsRedeemed:saleInput.pointsRedeemed,note:saleInput.note,
+            salesmanId:cloudSalesmanId,lines:saleInput.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
           if(!result.ok) break;
-          if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
+          if (saleInput.tradeIn?.productId && saleInput.tradeIn.unitId) {
             const tradeIn = await registerTradeInAtomic({
               shopId: shop.shopId,
               saleId: parsed.saleId,
-              unitId: parsed.input.tradeIn.unitId,
-              productId: parsed.input.tradeIn.productId,
-              value: parsed.input.tradeIn.value,
-              imei: parsed.input.tradeIn.imei,
-              serial: parsed.input.tradeIn.serial,
+              unitId: saleInput.tradeIn.unitId,
+              productId: saleInput.tradeIn.productId,
+              value: saleInput.tradeIn.value,
+              imei: saleInput.tradeIn.imei,
+              serial: saleInput.tradeIn.serial,
             });
             if (!tradeIn.ok) break;
           }
