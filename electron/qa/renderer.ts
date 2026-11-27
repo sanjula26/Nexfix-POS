@@ -21,6 +21,12 @@ import {
 import { subscribeToStorageQuotaWarnings } from '../../src/lib/storageOverflowEvents.ts';
 import {
   idbEnqueueDetailed,
+  idbGetMeta,
+  idbGetMetaValue,
+  idbListQueue,
+  idbLoadRestoreCheckpoint,
+  idbLoadState,
+  idbPutMetaValue,
   idbReadLegacyProfileSnapshot,
   idbSaveRestoreCheckpointDetailed,
   idbSaveStateDetailed,
@@ -29,6 +35,7 @@ import {
 } from '../../src/lib/db.ts';
 import { ensureOfflineStateWriteMarker } from '../../src/lib/storageOverflowQueue.ts';
 import type { POSState } from '../../src/lib/types.ts';
+import { setDesktopProfilePrimary } from '../../src/lib/db.ts';
 import { installOneShotQaQuotaInjection, type QaQuotaDomain } from './quota-injector.ts';
 
 const chooseButton = document.getElementById('choose-folder') as HTMLButtonElement;
@@ -43,6 +50,7 @@ let injectionUsed = false;
 let quotaEventReceived = false;
 let migrationPromise: Promise<void> | null = null;
 let activeMigrationFixture: { latestState: POSState; stateSaved: boolean; queueSaved: boolean } | null = null;
+let sourceSnapshotAtCutover: LegacyPOSProfileSnapshot | null = null;
 
 subscribeToStorageQuotaWarnings(window, detail => {
   if (detail.reason !== 'quota_exceeded' || migrationPromise) return;
@@ -59,7 +67,7 @@ subscribeToStorageQuotaWarnings(window, detail => {
     migrate: async () => {
       const fixture = activeMigrationFixture;
       if (!fixture) throw new Error('The isolated QA migration fixture is not ready.');
-      await migrateQaFixtureToEncryptedFolder(fixture.latestState, fixture.stateSaved, fixture.queueSaved);
+      sourceSnapshotAtCutover = await migrateQaFixtureToEncryptedFolder(fixture.latestState, fixture.stateSaved, fixture.queueSaved);
     },
   }).then(async outcome => {
     if (outcome.status === 'migrated') {
@@ -214,7 +222,8 @@ async function readRequiredLegacySnapshot(): Promise<LegacyPOSProfileSnapshot> {
   throw new Error('The isolated QA IndexedDB profile was not found after fixture setup.');
 }
 
-async function migrateQaFixtureToEncryptedFolder(latestState: POSState, stateSaved: boolean, queueSaved: boolean): Promise<void> {
+async function migrateQaFixtureToEncryptedFolder(latestState: POSState, stateSaved: boolean, queueSaved: boolean): Promise<LegacyPOSProfileSnapshot> {
+  sourceSnapshotAtCutover = null;
   const dependencies: MigrationDependencies<{ phase: string }, LegacyPOSProfileSnapshot, POSState> = {
     getProfileStatus: getDesktopPOSProfileStatus,
     // No POS screens, cloud sync, backup timers or business mutation workers run in
@@ -239,10 +248,17 @@ async function migrateQaFixtureToEncryptedFolder(latestState: POSState, stateSav
     recordVerification: recordDesktopPOSMigrationVerification,
     writePayload: writeDesktopProfilePayload,
     readPayload: readDesktopProfilePayload,
-    setFolderPrimary: () => undefined,
+    setFolderPrimary: async () => {
+      // Prove the IndexedDB source remains intact immediately before switching
+      // the shared DB adapter. This read is forbidden after folder-primary mode.
+      sourceSnapshotAtCutover = await readRequiredLegacySnapshot();
+      setDesktopProfilePrimary(true);
+    },
     onCutoverUncertain: message => { result.textContent = message; },
   };
   await runEncryptedPOSFolderMigration(dependencies);
+  if (!sourceSnapshotAtCutover) throw new Error('The IndexedDB source snapshot was not verified before adapter activation.');
+  return sourceSnapshotAtCutover;
 }
 
 function createEphemeralPassphrase(): string {
@@ -445,7 +461,27 @@ injectButton.addEventListener('click', async () => {
       throw new Error('The encrypted QA migration journal is not fully verified and folder-primary.');
     }
 
-    const preservedSource = await readRequiredLegacySnapshot();
+    // Verify the production DB adapter now reads the encrypted folder, not IDB.
+    const activeState = await idbLoadState();
+    const activeQueue = await idbListQueue();
+    const activeMeta = await idbGetMeta();
+    const activeCheckpoint = await idbLoadRestoreCheckpoint();
+    const activeDraft = await idbGetMetaValue<typeof fixture.draft>(fixture.draftKey);
+    if (JSON.stringify(activeState) !== JSON.stringify(fixture.latestState) ||
+        !activeQueue.some(entry => entry.id === 'QA-QUEUE-' + runId) ||
+        !Number.isFinite(activeMeta.autoBackupHours) ||
+        JSON.stringify(activeCheckpoint) !== JSON.stringify(fixture.baselineState) ||
+        JSON.stringify(activeDraft) !== JSON.stringify(fixture.draft)) {
+      throw new Error('The active encrypted-folder DB adapter did not preserve POS/GRN data across cutover.');
+    }
+    const postCutoverDraft = { ...fixture.draft, notes: fixture.draft.notes + ' Verified after cutover.' };
+    if (!await idbPutMetaValue(fixture.draftKey, postCutoverDraft) ||
+        JSON.stringify(await idbGetMetaValue(fixture.draftKey)) !== JSON.stringify(postCutoverDraft)) {
+      throw new Error('The active encrypted-folder adapter could not save and reread the GRN recovery draft.');
+    }
+
+    const preservedSource = sourceSnapshotAtCutover;
+    if (!preservedSource) throw new Error('The IndexedDB source was not captured before folder cutover.');
     const expectedSourceState = domain === 'app_state' ? fixture.baselineState : fixture.latestState;
     if (JSON.stringify(preservedSource.state) !== JSON.stringify(expectedSourceState) ||
         !preservedSource.queue.some(entry => entry.id === 'QA-QUEUE-' + runId) ||
