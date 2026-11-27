@@ -2096,15 +2096,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         storageNotConfirmedMessage: 'This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.',
       });
 
-      if (committed.syncPending && requiresCloudQueue) {
-        window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
-          detail: { saleId, message: `Bill ${committed.sale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
-        }));
-      }
-      if (requiresCloudQueue) {
-        void idbListQueue().then(queued => setPendingQueueCount(queued.length)).catch(() => {});
-        void runSyncNow();
-      }
+      // The local sale has already been read back from primary storage. Finish
+      // outbox persistence/recovery-marker cleanup in the background so the
+      // cashier can see the durable receipt without waiting for queue I/O.
+      void committed.finalizeQueue().then(syncPending => {
+        if (syncPending && requiresCloudQueue) {
+          window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
+            detail: { saleId, message: `Bill ${committed.sale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
+          }));
+        }
+        if (requiresCloudQueue) {
+          void idbListQueue().then(queued => setPendingQueueCount(queued.length)).catch(() => {});
+          void runSyncNow();
+        }
+      }).catch(() => {
+        // A finalizer rejection must not hide the already-durable receipt. The
+        // recovery marker remains available for the next sync/reconnect pass.
+        if (requiresCloudQueue) void runSyncNow();
+      });
       return committed.sale;
     };
 

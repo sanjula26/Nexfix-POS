@@ -24,7 +24,8 @@ export interface LocalSaleDurabilityDependencies<TSale, TState> {
 
 export interface LocalSaleDurabilityResult<TSale> {
   sale: TSale;
-  syncPending: boolean;
+  /** Complete the normalized outbox write after the durable local receipt is available. */
+  finalizeQueue: () => Promise<boolean>;
 }
 
 /**
@@ -81,17 +82,28 @@ export async function commitLocalSaleDurably<TSale, TState>(
     throw new LocalSaleDurabilityError(dependencies.storageNotConfirmedMessage);
   }
 
-  let syncPending = false;
-  try {
-    await dependencies.enqueueSale(sale);
-    if (!(await dependencies.confirmQueueEntry(dependencies.saleId))) {
-      throw new Error('The normalized sale queue entry was not confirmed.');
-    }
-    if (!(await dependencies.clearRecoveryMarker())) syncPending = true;
-  } catch {
-    // The local bill is already durable; keep the recovery marker for replay.
-    syncPending = true;
-  }
+  // The local bill is now durable and read back from primary storage. Return
+  // it to the cashier without waiting for the cloud outbox file/transaction.
+  // The marker remains in durable metadata until this finalizer confirms the
+  // exact normalized queue entry. A crash before/during finalization is safe:
+  // the next sync pass reconstructs the same stable-ID job from the local sale.
+  let queueFinalization: Promise<boolean> | null = null;
+  const finalizeQueue = (): Promise<boolean> => {
+    if (queueFinalization) return queueFinalization;
+    queueFinalization = (async () => {
+      try {
+        await dependencies.enqueueSale(sale);
+        if (!(await dependencies.confirmQueueEntry(dependencies.saleId))) {
+          throw new Error('The normalized sale queue entry was not confirmed.');
+        }
+        return !(await dependencies.clearRecoveryMarker());
+      } catch {
+        // Keep the durable marker; reconnect/startup recovery can replay the sale.
+        return true;
+      }
+    })();
+    return queueFinalization;
+  };
 
-  return { sale, syncPending };
+  return { sale, finalizeQueue };
 }

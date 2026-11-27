@@ -26,14 +26,44 @@ function baseDependencies(overrides: Partial<Parameters<typeof commitLocalSaleDu
   return { dependencies, calls, sale, state };
 }
 
-test('local receipt is returned only after marker, state and queue are confirmed in order', async () => {
+test('durable local receipt returns before background queue finalization', async () => {
   const { dependencies, calls, sale } = baseDependencies();
   const result = await commitLocalSaleDurably(dependencies);
-  assert.deepEqual(result, { sale, syncPending: false });
+
+  assert.equal(result.sale, sale);
+  assert.deepEqual(calls, ['reserve', 'create', 'wait-state', 'persist', 'read-back-state']);
+
+  const firstFinalization = result.finalizeQueue();
+  assert.strictEqual(result.finalizeQueue(), firstFinalization, 'queue finalization must be idempotent');
+  assert.equal(await firstFinalization, false);
   assert.deepEqual(calls, [
     'reserve', 'create', 'wait-state', 'persist', 'read-back-state',
     'enqueue', 'read-back-queue', 'clear-marker',
   ]);
+});
+
+test('receipt does not wait for a slow normalized queue write', async () => {
+  let releaseQueue!: () => void;
+  const queueGate = new Promise<void>(resolve => { releaseQueue = resolve; });
+  const { dependencies, calls, sale } = baseDependencies({
+    enqueueSale: async () => {
+      calls.push('enqueue-start');
+      await queueGate;
+      calls.push('enqueue-finished');
+    },
+  });
+
+  const result = await commitLocalSaleDurably(dependencies);
+  assert.equal(result.sale, sale);
+  assert.deepEqual(calls, ['reserve', 'create', 'wait-state', 'persist', 'read-back-state']);
+
+  const finalization = result.finalizeQueue();
+  await Promise.resolve();
+  assert.equal(calls.includes('enqueue-start'), true);
+  assert.equal(calls.includes('enqueue-finished'), false);
+  releaseQueue();
+  assert.equal(await finalization, false);
+  assert.equal(calls.includes('enqueue-finished'), true);
 });
 
 test('queue failure preserves durable local receipt and recovery marker', async () => {
@@ -41,7 +71,8 @@ test('queue failure preserves durable local receipt and recovery marker', async 
     enqueueSale: async () => { calls.push('enqueue'); throw new Error('Queue quota reached'); },
   });
   const result = await commitLocalSaleDurably(dependencies);
-  assert.deepEqual(result, { sale, syncPending: true });
+  assert.equal(result.sale, sale);
+  assert.equal(await result.finalizeQueue(), true);
   assert.equal(calls.includes('clear-marker'), false);
 });
 
@@ -50,7 +81,8 @@ test('queue read-back failure preserves recovery marker for the next sync pass',
     confirmQueueEntry: async () => { calls.push('read-back-queue'); return false; },
   });
   const result = await commitLocalSaleDurably(dependencies);
-  assert.deepEqual(result, { sale, syncPending: true });
+  assert.equal(result.sale, sale);
+  assert.equal(await result.finalizeQueue(), true);
   assert.equal(calls.includes('clear-marker'), false);
 });
 
@@ -67,7 +99,8 @@ test('a failed state save is accepted only when read-back proves the exact sale 
     persistState: async () => { calls.push('persist'); return false; },
   });
   const result = await commitLocalSaleDurably(dependencies);
-  assert.deepEqual(result, { sale, syncPending: false });
+  assert.equal(result.sale, sale);
+  assert.equal(await result.finalizeQueue(), false);
 });
 
 test('missing sale on state read-back blocks the receipt and retains its recovery marker', async () => {
