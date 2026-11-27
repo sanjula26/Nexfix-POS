@@ -37,6 +37,7 @@ export function resolveLocalSaleFallbackId(input: {
   pendingMarkerRaw: string | null;
   markerReadable?: boolean;
   cloudShopId?: string;
+  allowMatchingPendingId?: boolean;
 }): LocalSaleFallbackIdResult {
   const requestedSaleId = input.requestedSaleId?.trim() || '';
   if (!input.cloudConfigured) {
@@ -65,7 +66,7 @@ export function resolveLocalSaleFallbackId(input: {
   }
 
   const pendingSaleId = typeof marker.saleId === 'string' ? marker.saleId.trim() : '';
-  if (!pendingSaleId || !requestedSaleId || pendingSaleId !== requestedSaleId) {
+  if (!input.allowMatchingPendingId || !pendingSaleId || !requestedSaleId || pendingSaleId !== requestedSaleId) {
     return {
       ok: false,
       error: 'A previous cloud sale is still awaiting reconciliation. Connect to the original shop and retry/check that bill before starting another local bill; this prevents a duplicate invoice.',
