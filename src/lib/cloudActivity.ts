@@ -56,12 +56,18 @@ export function reportCloudActivityFailure(error: unknown): void {
   publish();
 }
 
-export async function withCloudActivity<T>(operation: string, action: () => Promise<T>): Promise<T> {
+export async function withCloudActivity<T>(
+  operation: string,
+  action: () => Promise<T>,
+  didTransfer: (result: T) => boolean = () => true,
+): Promise<T> {
   const end = beginCloudActivity(operation);
   try {
     const result = await action();
-    lastSuccessAt = Date.now();
-    publish();
+    if (didTransfer(result)) {
+      lastSuccessAt = Date.now();
+      publish();
+    }
     return result;
   } catch (error) {
     reportCloudActivityFailure(error);
