@@ -37,7 +37,10 @@ for (const domain of Object.keys(targetStores) as QaQuotaDomain[]) {
     const injector = installOneShotQaQuotaInjection(
       domain,
       '12345678-1234-4234-8234-123456789abc',
-      error => messages.push(error.message),
+      error => {
+        assert.equal(error.name, 'QuotaExceededError');
+        messages.push(error.name + ': ' + error.message);
+      },
       prototype,
     );
 
