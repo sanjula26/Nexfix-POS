@@ -6,7 +6,11 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { setDesktopProfilePrimary } from './lib/db';
 import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
 import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigration';
-import { subscribeToStorageQuotaWarnings, type StorageQuotaWarning } from './lib/storageOverflowEvents';
+import {
+  STORAGE_PRIMARY_COMMITTED_EVENT,
+  subscribeToStorageQuotaWarnings,
+  type StorageQuotaWarning,
+} from './lib/storageOverflowEvents';
 import {
   createDesktopPOSProfile,
   finalizeDesktopPOSProfileCreation,
@@ -629,11 +633,11 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       });
     };
     window.addEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-    window.addEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+    window.addEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, reloadFolderStatus);
     window.addEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     return () => {
       window.removeEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-      window.removeEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+      window.removeEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, reloadFolderStatus);
       window.removeEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     };
   }, [desktopApi]);
