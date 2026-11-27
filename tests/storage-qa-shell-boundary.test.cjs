@@ -108,6 +108,7 @@ test('QA renderer uses production encrypted-profile APIs before one-shot isolate
   assert.match(qaInterruptionControl, /renameSync\(armedPath, lastPath\)/);
   assert.match(qaInterruptionControl, /clearLast/);
   assert.match(qaAsarVerifier, /'interruption-control\.cjs'/);
+  assert.match(qaAsarVerifier, /'dist\/assets\/seed\.js'/);
   assert.doesNotMatch(qaRenderer, /require\s*\(|process\.|ipcRenderer|fetch\s*\(|supabase|electron-updater/i);
 });
 
