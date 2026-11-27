@@ -143,6 +143,8 @@ export default function POS() {
   const [reprintWhatsAppSale, setReprintWhatsAppSale] = useState<Sale | null>(null);
   const [reprintWhatsAppPhone, setReprintWhatsAppPhone] = useState('');
   const [finishingSale, setFinishingSale] = useState(false);
+  const [saleStorageBlocked, setSaleStorageBlocked] = useState(false);
+  const [saleSyncNotice, setSaleSyncNotice] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
   const [reverseOpen, setReverseOpen] = useState(false);
@@ -154,6 +156,15 @@ export default function POS() {
   const billingRef = useRef<HTMLElement>(null);
 
   useEffect(() => { setSalesmanId(user?.id || ''); }, [user?.id]);
+
+  useEffect(() => {
+    const onOfflineSaleSyncPending = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message;
+      if (message) setSaleSyncNotice(message);
+    };
+    window.addEventListener('nexfix:offline-sale-sync-pending', onOfflineSaleSyncPending);
+    return () => window.removeEventListener('nexfix:offline-sale-sync-pending', onOfflineSaleSyncPending);
+  }, []);
 
   /* Import lines from Quotations → Convert to Sale */
   useEffect(() => {
@@ -571,8 +582,9 @@ export default function POS() {
 
   /* ---------- finish ---------- */
   const finish = async () => {
-    if (finishingSale) return;
+    if (finishingSale || saleStorageBlocked) return;
     setError('');
+    setSaleSyncNotice('');
     // Cash-session and branch matching are enforced authoritatively by completeSaleCloud,
     // which can distinguish a missing session from an unconfirmed opening float.
     if (lines.length === 0) return setError('Add at least one item to the cart');
@@ -682,6 +694,10 @@ export default function POS() {
     } catch (error) {
       if (whatsappWindow) whatsappWindow.close();
       const message = error instanceof Error ? error.message.trim() : '';
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+      if (code === 'LOCAL_SALE_STORAGE_BLOCKED') setSaleStorageBlocked(true);
       setError(message ? `Sale could not be completed: ${message}` : 'Sale could not be completed. Please try again.');
       return;
     } finally {
@@ -1543,6 +1559,8 @@ export default function POS() {
               onToggle={() => setWaReceipt(value => !value)}
             />
 
+            {saleSyncNotice && <p role="status" className="text-xs font-semibold text-amber-500">{saleSyncNotice}</p>}
+            {saleStorageBlocked && <p role="alert" className="text-xs font-bold text-rose-500">Storage confirmation failed. Complete Sale is locked to prevent duplicate billing. Check Sales History and POS storage before continuing.</p>}
             {error && <p className="text-xs font-semibold text-rose-500">{error}</p>}
 
             {/* D. actions */}
@@ -1553,10 +1571,10 @@ export default function POS() {
               <button
                 className="btn btn-primary !py-4 !text-[16px] !rounded-xl !font-extrabold tracking-wide shadow-xl shadow-violet-600/40"
                 onClick={finish}
-                disabled={lines.length === 0 || finishingSale}
+                disabled={lines.length === 0 || finishingSale || saleStorageBlocked}
                 title="Complete sale (F6)"
               >
-                <Zap size={17} /> {finishingSale ? 'Completing…' : `Complete Sale · ${fmtRs(total)}`}
+                <Zap size={17} /> {saleStorageBlocked ? 'Storage Check Required' : finishingSale ? 'Completing…' : `Complete Sale · ${fmtRs(total)}`}
               </button>
             </div>
           </div>
