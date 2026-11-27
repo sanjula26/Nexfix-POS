@@ -466,7 +466,7 @@ export default function AppLayout() {
           : syncManagerState.pending > 0
             ? `${syncManagerState.pending} cloud update(s) waiting to sync`
             : cloudSyncComplete
-              ? `Cloud sync complete — ${cloudActivity.lastSuccessAt ? new Date(cloudActivity.lastSuccessAt).toLocaleString() : syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
+              ? `Cloud sync complete${cloudActivity.lastSuccessOperation ? ` · ${cloudActivity.lastSuccessOperation}` : ''} — ${cloudActivity.lastSuccessAt ? new Date(cloudActivity.lastSuccessAt).toLocaleString() : syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
               : 'No data is being sent to the cloud right now';
 
   useEffect(() => {
