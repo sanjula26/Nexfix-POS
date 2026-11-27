@@ -2177,6 +2177,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
+    // Salesman resolution is read-only and independent of catalog/customer
+    // reconciliation. Start it now so its profile + membership lookups overlap
+    // the potentially larger catalog sync and customer lookup below.
+    const localSalesman = input.salesmanId
+      ? state.users.find(u => u.id === input.salesmanId && u.active)
+      : user;
+    const cloudSalesmanPromise = resolveCloudSalesmanId(shop.shopId, localSalesman).then(
+      value => ({ ok: true as const, value }),
+      error => ({ ok: false as const, error }),
+    );
+
     let customerIdMap: Record<string, string> = {};
     if (user.role === 'admin' || user.role === 'manager') {
       let catalog: Awaited<ReturnType<typeof syncNormalizedCatalog>>;
@@ -2222,18 +2233,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         cloudCustomerId = undefined;
       }
     }
-    const localSalesman = input.salesmanId
-      ? state.users.find(u => u.id === input.salesmanId && u.active)
-      : user;
     let cloudSalesmanId: string | undefined;
-    try {
-      cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
-    } catch (error) {
+    const salesmanResolution = await cloudSalesmanPromise;
+    if (!salesmanResolution.ok) {
       // No atomic sale RPC has started yet. The durable local-sale helper reuses
       // an explicitly supplied _saleId or allocates one stable ID for its outbox.
-      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
-      throw error;
+      if (isTransientCloudTransportError(salesmanResolution.error)) return completeLocallyAndQueue();
+      throw salesmanResolution.error;
     }
+    cloudSalesmanId = salesmanResolution.value;
 
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
