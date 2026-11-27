@@ -404,7 +404,7 @@ async function verifyAndRecoverInterruptedMigration(): Promise<void> {
   if (!rechecked.unlocked) await unlockDesktopPOSProfileWithOS(discovery.available[0].directory);
 
   const source = await readRequiredLegacySnapshot();
-  if (!source.state || !source.sales) throw new Error('The original IndexedDB snapshot is incomplete after restart.');
+  if (!source.state || !Array.isArray(source.state.sales)) throw new Error('The original IndexedDB snapshot is incomplete after restart.');
   const runId = last.runId;
   const { draftKey } = findQaDraft(source, runId);
   if (!source.state.sales.some(sale => sale.id === 'QA-SALE-MEMORY-' + runId) ||
@@ -469,7 +469,7 @@ async function refreshFolderStatus(): Promise<void> {
       if (folder.storageMode === 'indexeddb') {
         profileButton.disabled = false;
         interruptionPhaseSelect.disabled = !profileReady;
-        interruptionButton.disabled = !profileReady || interruptionStarted || injectionUsed;
+        interruptionButton.disabled = !profileReady || interruptionStarted || injectionUsed || Boolean(previousInterruption);
         if (!previousInterruption) result.textContent = 'Disposable QA folder is ready. Next, verify the encrypted profile and Windows OS unlock.';
       } else {
         profileButton.disabled = true;
