@@ -1,4 +1,4 @@
-import type { PaymentMethod, Sale } from './types';
+import type { PaymentLeg, PaymentMethod, Sale } from './types';
 
 export interface SaleCreateQueueInput {
   branchId?: string;
@@ -26,6 +26,7 @@ export interface SaleCreateQueueInput {
   }>;
   payment: PaymentMethod;
   amountPaid: number;
+  creditDue: number;
   payments?: Array<{ method: PaymentMethod; amount: number }>;
 }
 
@@ -65,6 +66,28 @@ export function buildSaleCreateQueueInput(sale: Sale, fallbackBranchId?: string)
     })),
     payment: sale.payment,
     amountPaid: sale.amountPaid,
+    creditDue: Math.max(0, Math.round((sale.total - sale.amountPaid) * 100) / 100),
     payments: sale.payments,
   };
+}
+
+/**
+ * Reconstruct the exact tender legs for an offline sale replay. Local Sale
+ * records keep real tender legs in payments[] and the outstanding credit
+ * balance separately as total - amountPaid.
+ */
+export function buildSaleReplayPayments(input: {
+  payment: PaymentMethod;
+  amountPaid: number;
+  creditDue?: number;
+  payments?: PaymentLeg[];
+}): PaymentLeg[] {
+  const tenders = (input.payments || []).filter(leg => leg.method !== 'credit' && leg.amount > 0);
+  const creditDue = Math.max(0, Math.round((Number(input.creditDue) || 0) * 100) / 100);
+  if (creditDue > 0.009) return [...tenders, { method: 'credit', amount: creditDue }];
+  if (tenders.length) return tenders;
+  if (input.payment !== 'credit' && input.amountPaid > 0) {
+    return [{ method: input.payment, amount: input.amountPaid }];
+  }
+  return [];
 }
