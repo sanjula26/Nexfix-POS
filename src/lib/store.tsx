@@ -24,7 +24,7 @@ import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { buildSaleCreateQueueInput } from './saleQueuePayload';
-import { isTransientCloudTransportError } from './cloudTransport';
+import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError } from './cloudTransport';
 import { runSyncNow } from './syncManager';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { createStatePersistenceGate, type StatePersistenceOptions, type StatePersistencePause } from './statePersistenceGate';
@@ -2387,7 +2387,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       throw new Error(`Cloud sale failed: ${detail}`);
     }
     if (!cloud.ok) {
-      if (cloud.rpcAttempted === false && isTransientCloudTransportError(cloud.error)) {
+      if (canFallbackToLocalSaleBeforeRpc(cloud.rpcAttempted, cloud.error)) {
         // The atomic sale RPC was definitely not sent. Reuse its already
         // persisted idempotency Sale ID for the local bill and queued replay.
         return completeLocallyAndQueue(saleId);
