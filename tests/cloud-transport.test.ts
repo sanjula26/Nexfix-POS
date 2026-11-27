@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError, resolveLocalSaleFallbackId } from '../src/lib/cloudTransport.ts';
+import { canFallbackToLocalSaleBeforeRpc, createCloudRequestDeadline, isTransientCloudTransportError, resolveLocalSaleFallbackId } from '../src/lib/cloudTransport.ts';
 
 test('classifies browser and Electron network transport failures as retryable', () => {
   for (const message of [
@@ -120,4 +120,27 @@ test('does not reuse a matching cloud marker without proof that the current RPC 
     allowMatchingPendingId: false,
   });
   assert.equal(result.ok, false);
+});
+
+
+test('cloud request deadline aborts the request signal and identifies the timeout', async () => {
+  const deadline = createCloudRequestDeadline(5);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(deadline.signal.aborted, true);
+  assert.equal(deadline.didTimeout(), true);
+  deadline.dispose();
+});
+
+test('disposing a completed cloud request deadline prevents a later abort', async () => {
+  const deadline = createCloudRequestDeadline(30);
+  deadline.dispose();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(deadline.signal.aborted, false);
+  assert.equal(deadline.didTimeout(), false);
+});
+
+test('a timed-out atomic sale response remains in the ambiguous post-RPC category', () => {
+  const timeout = 'Cloud sale response timed out after 15 seconds. The server may still have committed the bill.';
+  assert.equal(isTransientCloudTransportError(timeout), true);
+  assert.equal(canFallbackToLocalSaleBeforeRpc(true, timeout), false);
 });
