@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { withCloudActivity } from './cloudActivity';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
@@ -1796,6 +1797,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
+    let cloudSaleCommitted = false;
+    const execute = async (): Promise<Sale | null> => {
     if (!user) throw new Error('Sign in again before completing this sale.');
     if (!can('page:pos')) {
       pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
@@ -2104,6 +2107,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
+    cloudSaleCommitted = true;
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
       const tradeInCloud = await registerTradeInAtomic({
@@ -2224,6 +2228,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     scheduleGoogleBackup(() => stateRef.current, 'sale');
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
+    };
+    return typeof navigator !== 'undefined' && navigator.onLine
+      ? withCloudActivity('Cloud sale', execute, () => cloudSaleCommitted)
+      : execute();
   }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
