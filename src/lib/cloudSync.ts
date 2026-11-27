@@ -865,9 +865,10 @@ export async function completeSaleAtomic(input: {
   // Explicitly mark the boundary before the atomic transaction is sent. A
   // transport error after this line is ambiguous and must never trigger a new
   // local-only bill: PostgreSQL may have committed and only the response was lost.
-  let sessionData: Awaited<ReturnType<typeof supabase.auth.getSession>>['data'];
+  const getCloudSession = () => supabase.auth.getSession();
+  let sessionData: Awaited<ReturnType<typeof getCloudSession>>['data'];
   try {
-    const session = await supabase.auth.getSession();
+    const session = await getCloudSession();
     if (session.error) return { ok: false, rpcAttempted: false, error: session.error.message };
     sessionData = session.data;
   } catch (error) {
@@ -883,9 +884,10 @@ export async function completeSaleAtomic(input: {
   }
   if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
 
-  let rpcResponse: Awaited<ReturnType<typeof supabase.rpc>>;
+  const sendAtomicSale = () => supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  let rpcResponse: Awaited<ReturnType<typeof sendAtomicSale>>;
   try {
-    rpcResponse = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+    rpcResponse = await sendAtomicSale();
   } catch (error) {
     return { ok: false, rpcAttempted: true, error: error instanceof Error ? error.message : String(error) };
   }
