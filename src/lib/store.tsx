@@ -24,6 +24,7 @@ import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { buildSaleCreateQueueInput } from './saleQueuePayload';
+import { commitLocalSaleDurably } from './offlineSaleCommit';
 import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError } from './cloudTransport';
 import { runSyncNow } from './syncManager';
 import { createDrainableWorkGate } from './drainableWorkGate';
@@ -2036,69 +2037,46 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       const saleId = stableSaleId || input._saleId || uid();
       const requiresCloudQueue = supabaseConfigured;
-      if (requiresCloudQueue && !(await idbAddPendingSaleQueueId(saleId))) {
-        const error = new Error('Local POS storage could not reserve a safe sync record. No bill was completed; check the selected storage folder/IndexedDB before trying again.') as Error & { code?: string };
-        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
-        throw error;
-      }
+      const committed = await commitLocalSaleDurably<Sale, POSState>({
+        saleId,
+        reserveRecoveryMarker: async () => !requiresCloudQueue || idbAddPendingSaleQueueId(saleId),
+        createLocalSale: () => completeSale({ ...input, _saleId: saleId }),
+        waitForCommittedState: () => waitForLocalSaleState(saleId),
+        stateContainsSale: (snapshot, id) => snapshot.sales.some(sale => sale.id === id),
+        persistState: async snapshot => {
+          // Cancel the ordinary 120 ms debounce and await this transaction's
+          // explicit authoritative write; the helper then performs read-back.
+          if (persistTimer.current) {
+            clearTimeout(persistTimer.current);
+            persistTimer.current = null;
+          }
+          const latestState = stateRef.current.sales.some(sale => sale.id === saleId) ? stateRef.current : snapshot;
+          const result = await persistState(latestState, { enqueueOfflineQueue: false });
+          return result.stateSaved;
+        },
+        readBackState: idbLoadState,
+        enqueueSale: async sale => {
+          if (requiresCloudQueue) {
+            await queueSaleCreate(saleId, buildSaleCreateQueueInput(sale, stateRef.current.settings.branchId));
+          }
+        },
+        confirmQueueEntry: async id => !requiresCloudQueue || (await idbListQueue())
+          .some(operation => operation.type === 'sale_create' && operation.id === `sale:${id}`),
+        clearRecoveryMarker: async () => !requiresCloudQueue || idbRemovePendingSaleQueueIds([saleId]),
+        saleNotCreatedMessage: 'Offline sale was not completed. Check assigned-branch stock, cashier session, IMEI/serial selections, and payment details.',
+        storageNotConfirmedMessage: 'This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.',
+      });
 
-      const localSale = completeSale({ ...input, _saleId: saleId });
-      if (!localSale) {
-        if (requiresCloudQueue) await idbRemovePendingSaleQueueIds([saleId]);
-        throw new Error('Offline sale was not completed. Check assigned-branch stock, cashier session, IMEI/serial selections, and payment details.');
+      if (committed.syncPending && requiresCloudQueue) {
+        window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
+          detail: { saleId, message: `Bill ${committed.sale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
+        }));
       }
-
-      let committedState: POSState;
-      try {
-        committedState = await waitForLocalSaleState(saleId);
-      } catch (cause) {
-        const error = new Error('The bill was prepared but its local POS update could not be confirmed. Do not press Complete again; check Sales History and storage first.') as Error & { code?: string };
-        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
-        throw error;
-      }
-
-      // Cancel the ordinary 120 ms debounce and await the authoritative store
-      // write ourselves. The sale receipt is not returned until the exact sale
-      // is read back from the selected primary local storage.
-      if (persistTimer.current) {
-        clearTimeout(persistTimer.current);
-        persistTimer.current = null;
-      }
-      const latestState = stateRef.current.sales.some(sale => sale.id === saleId) ? stateRef.current : committedState;
-      const persisted = await persistState(latestState, { enqueueOfflineQueue: false });
-      let durableState: POSState | null = persisted.stateSaved ? latestState : await idbLoadState();
-      if (!durableState?.sales.some(sale => sale.id === saleId)) {
-        const error = new Error('This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.') as Error & { code?: string };
-        error.code = 'LOCAL_SALE_STORAGE_BLOCKED';
-        throw error;
-      }
-
       if (requiresCloudQueue) {
-        try {
-          await queueSaleCreate(saleId, buildSaleCreateQueueInput(localSale, durableState.settings.branchId));
-          const queued = await idbListQueue();
-          if (!queued.some(operation => operation.type === 'sale_create' && operation.id === `sale:${saleId}`)) {
-            throw new Error('The saved bill could not be confirmed in the offline cloud-sync queue.');
-          }
-          // Clear the recovery marker only after the exact stable-ID queue job
-          // has been read back from IndexedDB or the encrypted POS profile.
-          const markerCleared = await idbRemovePendingSaleQueueIds([saleId]);
-          if (!markerCleared) {
-            window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
-              detail: { saleId, message: `Bill ${localSale.billNo} is saved on this PC. Cloud sync is pending and will be retried; do not bill it again.` },
-            }));
-          }
-          setPendingQueueCount(queued.length);
-        } catch {
-          // The local bill is already durable. Keep its recovery marker so the
-          // next online sync can recreate the same sale_create job idempotently.
-          window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
-            detail: { saleId, message: `Bill ${localSale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
-          }));
-        }
+        void idbListQueue().then(queued => setPendingQueueCount(queued.length)).catch(() => {});
         void runSyncNow();
       }
-      return localSale;
+      return committed.sale;
     };
 
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
