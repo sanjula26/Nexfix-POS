@@ -12,7 +12,7 @@ import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetM
 import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueSaleCreate, getPendingSyncOperations, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueSaleCreate, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
@@ -2039,7 +2039,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const requiresCloudQueue = supabaseConfigured;
       const committed = await commitLocalSaleDurably<Sale, POSState>({
         saleId,
-        reserveRecoveryMarker: async () => !requiresCloudQueue || idbAddPendingSaleQueueId(saleId),
+        reserveRecoveryMarker: async () => {
+          if (!requiresCloudQueue) return true;
+          const reserved = await idbAddPendingSaleQueueId(saleId);
+          if (reserved && typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+          return reserved;
+        },
         createLocalSale: () => completeSale({ ...input, _saleId: saleId }),
         waitForCommittedState: () => waitForLocalSaleState(saleId),
         stateContainsSale: (snapshot, id) => snapshot.sales.some(sale => sale.id === id),
@@ -2062,7 +2067,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         },
         confirmQueueEntry: async id => !requiresCloudQueue || (await idbListQueue())
           .some(operation => operation.type === 'sale_create' && operation.id === `sale:${id}`),
-        clearRecoveryMarker: async () => !requiresCloudQueue || idbRemovePendingSaleQueueIds([saleId]),
+        clearRecoveryMarker: async () => {
+          if (!requiresCloudQueue) return true;
+          const cleared = await idbRemovePendingSaleQueueIds([saleId]);
+          if (cleared && typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+          return cleared;
+        },
         saleNotCreatedMessage: 'Offline sale was not completed. Check assigned-branch stock, cashier session, IMEI/serial selections, and payment details.',
         storageNotConfirmedMessage: 'This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.',
       });
