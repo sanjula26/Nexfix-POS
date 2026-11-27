@@ -11,6 +11,8 @@ const qaPreload = fs.readFileSync(path.join(root, 'electron/qa/preload.cjs'), 'u
 const qaHtml = fs.readFileSync(path.join(root, 'electron/qa/index.html'), 'utf8');
 const qaRenderer = fs.readFileSync(path.join(root, 'electron/qa/renderer.ts'), 'utf8');
 const qaQuotaInjector = fs.readFileSync(path.join(root, 'electron/qa/quota-injector.ts'), 'utf8');
+const qaInterruptionControl = fs.readFileSync(path.join(root, 'electron/qa/interruption-control.cjs'), 'utf8');
+const qaAsarVerifier = fs.readFileSync(path.join(root, 'scripts/verify-qa-asar.mjs'), 'utf8');
 const qaFolder = fs.readFileSync(path.join(root, 'electron/qa/prepare-qa-folder.cjs'), 'utf8');
 const qaBuilder = fs.readFileSync(path.join(root, 'electron-builder.qa.cjs'), 'utf8');
 const qaVite = fs.readFileSync(path.join(root, 'vite.config.qa.ts'), 'utf8');
@@ -37,6 +39,12 @@ test('QA main process keeps isolated identity, sentinel checks and trusted produ
   assert.match(qaMain, /verifyQaFolderSentinel/);
   assert.match(qaMain, /event\?\.sender === mainWindow\.webContents/);
   assert.match(qaMain, /prepareQaFolder/);
+  assert.match(qaMain, /createQaInterruptionController/);
+  assert.match(qaMain, /isTrustedQaRenderer\(event\)/);
+  assert.match(qaMain, /nexfix-storage-qa:arm-interruption/);
+  assert.match(qaMain, /nexfix-storage-qa:phase-checkpoint/);
+  assert.match(qaMain, /nexfix-storage-qa:last-interruption/);
+  assert.match(qaMain, /app\.exit\(86\)/);
   assert.match(qaMain, /dist', 'index\.html/);
   assert.doesNotMatch(withoutComments(qaMain), /electron-updater|supabase|fetch\s*\(/i);
 });
@@ -52,6 +60,10 @@ test('QA preload exposes only the profile/storage bridge and QA folder action', 
   assert.doesNotMatch(executable, /unlockPOSProfileWithPassphrase|unlockPOSProfileWithRecoveryKey|changePOSProfilePassphrase|resetPOSProfilePassphrase|choosePOSStorageRoot/);
   assert.match(executable, /recordPOSMigrationVerification/);
   assert.match(executable, /chooseFolder:\s*\(\)\s*=>\s*ipcRenderer\.invoke/);
+  assert.match(executable, /armInterruption/);
+  assert.match(executable, /phaseCheckpoint/);
+  assert.match(executable, /getLastInterruption/);
+  assert.match(executable, /clearLastInterruption/);
   assert.doesNotMatch(executable, /send\s*\(|fetch\s*\(|supabase|electron-updater|autoUpdater/i);
 });
 
@@ -88,11 +100,20 @@ test('QA renderer uses production encrypted-profile APIs before one-shot isolate
   assert.match(qaQuotaInjector, /QuotaExceededError/);
   assert.match(qaQuotaInjector, /prototype\.transaction = original/);
   assert.match(qaRenderer, /injectionUsed/);
+  assert.match(qaRenderer, /MigrationCheckpoint/);
+  assert.match(qaRenderer, /onCheckpoint/);
+  assert.match(qaRenderer, /runInterruptedMigration/);
+  assert.match(qaRenderer, /verifyAndRecoverInterruptedMigration/);
+  assert.match(qaInterruptionControl, /storage-qa-interruption-armed\.json/);
+  assert.match(qaInterruptionControl, /renameSync\(armedPath, lastPath\)/);
+  assert.match(qaInterruptionControl, /clearLast/);
+  assert.match(qaAsarVerifier, /'interruption-control\.cjs'/);
   assert.doesNotMatch(qaRenderer, /require\s*\(|process\.|ipcRenderer|fetch\s*\(|supabase|electron-updater/i);
 });
 
 test('QA builder and Vite config package only reviewed isolated QA and profile runtime assets', () => {
   assert.match(qaBuilder, /'profile-runtime\/\*\*\/\*'/);
+  assert.match(qaBuilder, /'interruption-control\.cjs'/);
   assert.match(qaBuilder, /'dist\/\*\*\/\*'/);
   assert.match(qaVite, /outDir: path\.join\(root, 'electron\/qa\/dist'\)/);
   assert.match(qaVite, /entryFileNames: 'assets\/qa-renderer\.js'/);
