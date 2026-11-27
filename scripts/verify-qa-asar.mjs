@@ -28,6 +28,10 @@ const allowedEntries = [
   'interruption-control.cjs',
   'dist/index.html',
   'dist/assets/qa-renderer.js',
+  // The production db.ts module contains a lazy seed fallback. Keep the exact
+  // compiled dependency in the QA ASAR allowlist; the disposable QA fixture
+  // seeds IndexedDB before reads, and no cloud APIs are included.
+  'dist/assets/seed.js',
   ...profileRuntimeFiles,
 ];
 
