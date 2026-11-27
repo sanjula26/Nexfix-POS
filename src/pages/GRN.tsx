@@ -9,6 +9,7 @@ import type { Purchase, PurchaseItem } from '../lib/types';
 import { findDuplicateSupplierInvoices, getGrnBarcodeScanAction, validatePurchaseUnitIdentifiers } from '../lib/purchaseReconciliation';
 import SearchableSelect from '../components/SearchableSelect';
 import { idbDeleteMetaValue, idbGetMetaValue, idbPutMetaValue } from '../lib/db';
+import { subscribeToStoragePrimaryCommitted } from '../lib/storageOverflowEvents';
 import { getCloudShopId } from '../lib/cloudSync';
 
 interface Row { productId: string; qty: number; cost: number; sellingPrice: number; updateSellingPrice: boolean; unitText: string; }
@@ -233,8 +234,7 @@ export default function GRN() {
       if (view !== 'form' || formMode !== 'receive' || !recoveryLoaded || recoveryLoadError) return;
       void persistWorkingDraft();
     };
-    window.addEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
-    return () => window.removeEventListener('nexfix:storage-primary-committed', onPrimaryStorageCommitted);
+    return subscribeToStoragePrimaryCommitted(window, onPrimaryStorageCommitted);
   }, [view, formMode, recoveryLoaded, recoveryLoadError, persistWorkingDraft]);
 
   const closeForm = async () => {
