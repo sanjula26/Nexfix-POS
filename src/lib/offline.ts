@@ -2,6 +2,7 @@
 import type { InventoryUnit, Product, Purchase } from './types';
 import { buildSaleCreateQueueInput, buildSaleReplayPayments } from './saleQueuePayload';
 import { recoverPendingSaleQueueIds } from './offlineSaleQueueRecovery';
+import { canUploadLegacySnapshot } from './offlineSnapshotGate';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState, idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
 import { getMachineIdentity } from './machine';
@@ -388,10 +389,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     // that has not committed must block the legacy whole-state snapshot.
     // Otherwise a failed sale_create could still publish the local sale record
     // through the snapshot path without its atomic stock/payment transaction.
-    const pendingNormalizedOps = remaining.filter(op =>
-      op.type !== 'state_write' && op.type !== 'backup' && op.type !== 'custom',
-    );
-    if (pendingNormalizedOps.length) {
+    if (!canUploadLegacySnapshot(remaining.map(op => op.type))) {
       return { flushed, pending: remaining.length, synced: false, conflict: false };
     }
 
