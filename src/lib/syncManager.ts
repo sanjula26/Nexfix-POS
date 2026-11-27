@@ -64,13 +64,27 @@ export async function runSyncNow(): Promise<SyncManagerState> {
   publish({ ...state, status: 'syncing', lastError: null });
   try {
     const result = await flushSyncQueue();
-    retryAttempt = 0;
     if (result.conflict) {
+      // A conflict needs an explicit reconciliation decision, not blind retries.
+      retryAttempt = 0;
       publish({ ...state, status: 'conflict', pending: result.pending });
+    } else if (result.pending > 0) {
+      // flushSyncQueue intentionally retains a failed normalized operation.
+      // A browser "online" event is not guaranteed when the adapter stays up
+      // but Internet/Supabase is unreachable, so retry with bounded backoff.
+      publish({
+        ...state,
+        status: 'error',
+        pending: result.pending,
+        lastError: 'Cloud sync is still pending. Nexfix will retry automatically when the service is reachable.',
+      });
+      scheduleRetry();
     } else if (result.synced) {
-      publish({ ...state, status: 'synced', pending: result.pending, lastSyncAt: new Date().toISOString() });
+      retryAttempt = 0;
+      publish({ ...state, status: 'synced', pending: 0, lastSyncAt: new Date().toISOString() });
     } else {
-      publish({ ...state, status: 'idle', pending: result.pending });
+      retryAttempt = 0;
+      publish({ ...state, status: 'idle', pending: 0 });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown sync error';
