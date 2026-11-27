@@ -528,6 +528,24 @@ test('normalized catalog sync fingerprint changes for catalog metadata, customer
 });
 
 
+test('sale preflight reuses the catalog customer mapping before issuing an individual cloud customer lookup', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const catalogMappingBranch = storeSource.indexOf('if (localCustomer && customerIdMap[input.customerId])');
+  const individualLookup = storeSource.indexOf('ensureCloudCustomerForSale(shop.shopId, localCustomer)', catalogMappingBranch);
+
+  assert.ok(catalogMappingBranch >= 0, 'expected the catalog customer mapping fast path');
+  assert.ok(individualLookup > catalogMappingBranch, 'expected the individual lookup to remain available as a fallback');
+  assert.match(
+    storeSource.slice(catalogMappingBranch, individualLookup),
+    /cloudCustomerId = customerIdMap\[input\.customerId\];/,
+  );
+  assert.match(
+    storeSource.slice(individualLookup - 250, individualLookup),
+    /else if \(localCustomer\) \{/,
+  );
+});
+
+
 test('catalog sync retry budget is not reset by unrelated POS state updates', () => {
   const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
   assert.ok(appSource.includes('const stateRef = useRef(state);'));
