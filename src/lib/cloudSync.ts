@@ -857,22 +857,46 @@ export async function completeSaleAtomic(input: {
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
-}): Promise<{ ok: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
-  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) return { ok: false, error: sessionError.message };
-  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
-  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
-  if (error) return { ok: false, error: error.message };
+}): Promise<{ ok: boolean; rpcAttempted?: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
+  if (!supabaseConfigured || !supabase) return { ok: false, rpcAttempted: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, rpcAttempted: false, error: 'offline' };
+  if (!input.shopId) return { ok: false, rpcAttempted: false, error: 'Cloud shop is not configured' };
+
+  // Explicitly mark the boundary before the atomic transaction is sent. A
+  // transport error after this line is ambiguous and must never trigger a new
+  // local-only bill: PostgreSQL may have committed and only the response was lost.
+  let sessionData: Awaited<ReturnType<typeof supabase.auth.getSession>>['data'];
+  try {
+    const session = await supabase.auth.getSession();
+    if (session.error) return { ok: false, rpcAttempted: false, error: session.error.message };
+    sessionData = session.data;
+  } catch (error) {
+    return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (!sessionData.session) return { ok: false, rpcAttempted: false, error: 'Cloud session is not available' };
+
+  let branch: Awaited<ReturnType<typeof resolveCloudBranchId>>;
+  try {
+    branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  } catch (error) {
+    return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
+
+  let rpcResponse: Awaited<ReturnType<typeof supabase.rpc>>;
+  try {
+    rpcResponse = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  } catch (error) {
+    return { ok: false, rpcAttempted: true, error: error instanceof Error ? error.message : String(error) };
+  }
+  const { data, error } = rpcResponse;
+  if (error) return { ok: false, rpcAttempted: true, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row?.ok || !row.sale) return { ok: false, error: String(row?.error || row?.message || 'Cloud sale was not committed') };
+  if (!row?.ok || !row.sale) return { ok: false, rpcAttempted: true, error: String(row?.error || row?.message || 'Cloud sale was not committed') };
   void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return {
     ok: true,
+    rpcAttempted: true,
     alreadyCommitted: row.already_committed === true,
     saleId: row.sale_id,
     billNo: row.bill_no,
