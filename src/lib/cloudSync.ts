@@ -6,6 +6,8 @@ import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
+import { createFingerprintSyncCoordinator } from './catalogSyncCoordinator';
+import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -453,7 +455,7 @@ export async function ensureCloudCustomerForSale(
   return { ok: false, error: inserted.error.message };
 }
 
-export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
+async function syncNormalizedCatalogRaw(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -779,6 +781,37 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
   return { ok: true, customerIdMap };
+}
+
+
+type NormalizedCatalogSyncResult = { ok: boolean; error?: string; customerIdMap?: Record<string, string> };
+const normalizedCatalogSyncCoordinator = createFingerprintSyncCoordinator<NormalizedCatalogSyncResult>();
+
+/**
+ * App startup/background reconciliation and POS sale preflight share this
+ * coordinator. A sale must wait for an unsynced catalog change, but it must
+ * not re-upload every supplier/product/customer for every bill.
+ */
+export async function syncNormalizedCatalog(
+  state: POSState,
+  shopId = getCloudShopId(),
+): Promise<NormalizedCatalogSyncResult> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  const userId = sessionData.session?.user.id;
+  if (!userId) return { ok: false, error: 'Cloud session is not available' };
+
+  const identity = `${shopId}:${userId}`;
+  const fingerprint = buildNormalizedCatalogSyncFingerprint(state);
+  return normalizedCatalogSyncCoordinator.run(
+    identity,
+    fingerprint,
+    () => syncNormalizedCatalogRaw(state, shopId),
+  );
 }
 
 export async function deleteInventoryUnitAtomic(input: {
