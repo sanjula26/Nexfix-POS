@@ -858,14 +858,15 @@ export async function completeSaleAtomic(input: {
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
 }): Promise<{ ok: boolean; rpcAttempted?: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
-  if (!supabaseConfigured || !supabase) return { ok: false, rpcAttempted: false, error: 'Cloud is not configured' };
+  const client = supabase;
+  if (!supabaseConfigured || !client) return { ok: false, rpcAttempted: false, error: 'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, rpcAttempted: false, error: 'offline' };
   if (!input.shopId) return { ok: false, rpcAttempted: false, error: 'Cloud shop is not configured' };
 
   // Explicitly mark the boundary before the atomic transaction is sent. A
   // transport error after this line is ambiguous and must never trigger a new
   // local-only bill: PostgreSQL may have committed and only the response was lost.
-  const getCloudSession = () => supabase.auth.getSession();
+  const getCloudSession = () => client.auth.getSession();
   let sessionData: Awaited<ReturnType<typeof getCloudSession>>['data'];
   try {
     const session = await getCloudSession();
@@ -884,7 +885,7 @@ export async function completeSaleAtomic(input: {
   }
   if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
 
-  const sendAtomicSale = () => supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
+  const sendAtomicSale = () => client.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   let rpcResponse: Awaited<ReturnType<typeof sendAtomicSale>>;
   try {
     rpcResponse = await sendAtomicSale();
