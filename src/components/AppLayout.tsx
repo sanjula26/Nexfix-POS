@@ -446,7 +446,7 @@ export default function AppLayout() {
     [state.reverseRequests],
   );
 
-  const cloudSyncActive = cloudActivity.active > 0 || syncManagerState.status === 'syncing';
+  const cloudSyncActive = cloudActivity.active > 0;
   const cloudSyncComplete = !cloudSyncActive
     && !cloudActivity.lastError
     && connectivity === 'online'
@@ -455,7 +455,7 @@ export default function AppLayout() {
     && syncManagerState.status !== 'error'
     && syncManagerState.pending === 0
     && (syncManagerState.status === 'synced' || cloudActivity.lastSuccessAt !== null);
-  const cloudSyncHealthy = cloudSyncActive || cloudSyncComplete;
+  const cloudSyncHealthy = cloudSyncActive;
   const cloudSyncTitle = cloudSyncActive
     ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
     : cloudActivity.lastError
@@ -638,7 +638,7 @@ export default function AppLayout() {
           >
             {cloudSyncActive ? <CloudUpload size={15} className="animate-pulse" /> : <Cloud size={15} />}
             <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? cloudSyncActive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500' : 'bg-rose-500'}`} />
-            <span className="hidden md:inline">{cloudSyncActive ? 'Syncing' : cloudSyncComplete ? 'Synced' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' ? 'Error' : connectivity !== 'online' ? 'Offline' : 'No sync'}</span>
+            <span className="hidden md:inline">{cloudSyncActive ? 'Syncing' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' ? 'Error' : connectivity !== 'online' ? 'Offline' : 'Idle'}</span>
             {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
           </span>
           {!ready && <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">Loading storage…</span>}
