@@ -28,6 +28,7 @@ import {
 } from './lib/desktopProfileStorage';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
+import { getPendingOfflineSaleQueueIds, getPendingSyncOperations } from './lib/offline';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { syncNormalizedCatalog } from './lib/cloudSync';
 import { refreshDesktopUpdaterCredentials } from './lib/cloudAuth';
@@ -161,8 +162,43 @@ function CloudSyncStateBridge() {
       cancelScheduledCloudSync();
       return;
     }
-    scheduleCloudSync();
-    return () => cancelScheduledCloudSync();
+
+    let cancelled = false;
+    let generation = 0;
+    const scheduleWhenSaleOutboxIsClear = async () => {
+      const attempt = ++generation;
+      try {
+        const [recoveryIds, operations] = await Promise.all([
+          getPendingOfflineSaleQueueIds(),
+          getPendingSyncOperations(),
+        ]);
+        if (cancelled || attempt !== generation) return;
+        const hasPendingNormalizedSale = recoveryIds.length > 0 ||
+          operations.some(operation => operation.type === 'sale_create');
+        if (hasPendingNormalizedSale) {
+          // A locally committed/offline bill must reach the atomic normalized
+          // sale RPC first. Never let the legacy full-state snapshot upload it
+          // in parallel and bypass branch-stock/idempotency enforcement.
+          cancelScheduledCloudSync();
+          return;
+        }
+        scheduleCloudSync();
+      } catch {
+        // Storage/outbox state could not be inspected. Fail closed rather than
+        // upload a local sale snapshot whose normalized commit is unconfirmed.
+        if (!cancelled && attempt === generation) cancelScheduledCloudSync();
+      }
+    };
+    const onOutboxChanged = () => { void scheduleWhenSaleOutboxIsClear(); };
+    window.addEventListener('nexfix:offline-sale-outbox-changed', onOutboxChanged);
+    void scheduleWhenSaleOutboxIsClear();
+
+    return () => {
+      cancelled = true;
+      generation += 1;
+      window.removeEventListener('nexfix:offline-sale-outbox-changed', onOutboxChanged);
+      cancelScheduledCloudSync();
+    };
   }, [cloudSnapshotTrigger, userId, connectivity]);
 
   useEffect(() => {
