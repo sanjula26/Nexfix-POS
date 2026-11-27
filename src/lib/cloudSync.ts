@@ -8,6 +8,7 @@ import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
 import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
 import { createSuccessfulSingleFlightCache } from './successfulSyncCache';
+import { reportCloudActivityFailure, withCloudActivity } from './cloudActivity';
 
 const normalizedCatalogSyncCache = createSuccessfulSingleFlightCache<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }>(8);
 
@@ -479,7 +480,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Assign this POS to an active branch before syncing catalog stock' };
 
   const cacheKey = [shopId, uid, selectedBranch.branchId, buildNormalizedCatalogSyncFingerprint(state)].join(':');
-  return cache.run(cacheKey, async () => {
+  const result = await cache.run(cacheKey, () => withCloudActivity('Catalog data', async () => {
   // The fingerprint deliberately excludes stock and tracked-unit mutations:
   // stock is committed by atomic sale/GRN RPCs and units use dedicated RPC/queue paths.
   const supplierRows = state.suppliers.map(s => ({
@@ -789,7 +790,9 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     }
   }
   return { ok: true, customerIdMap };
-  });
+  }, result => result.ok));
+  if (!result.ok) reportCloudActivityFailure(result.error || 'Catalog sync failed');
+  return result;
 }
 
 export async function deleteInventoryUnitAtomic(input: {
