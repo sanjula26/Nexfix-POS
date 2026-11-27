@@ -8,7 +8,7 @@ import { startSyncManager } from './lib/syncManager';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { syncNormalizedCatalog } from './lib/cloudSync';
 import { refreshDesktopUpdaterCredentials } from './lib/cloudAuth';
-import { reportCloudActivityFailure, withCloudActivity } from './lib/cloudActivity';
+import { reportCloudActivityFailure } from './lib/cloudActivity';
 import AppLayout from './components/AppLayout';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -166,7 +166,7 @@ function CloudSyncStateBridge() {
       inFlightCatalogSyncKeyRef.current = syncKey;
       let succeeded = false;
       try {
-        const result = await withCloudActivity('Catalog data', () => syncNormalizedCatalog(stateRef.current), result => result.ok);
+        const result = await syncNormalizedCatalog(stateRef.current);
         succeeded = result.ok;
         if (!result.ok) reportCloudActivityFailure(result.error || 'Catalog sync failed');
       } catch {
