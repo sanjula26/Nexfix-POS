@@ -30,9 +30,11 @@ Status: **Not yet run on a physical Windows PC.** This checklist is for a dispos
 
 ## Quota-triggered migration
 
-A controlled test-only quota injector or dedicated test harness is required. **Do not create artificial disk pressure on the Windows system drive.** If no safe test-only trigger is available in the candidate build, mark this section BLOCKED and request a dedicated QA build/harness.
+Use the separate **Nexfix POS Storage QA** application built from `electron-builder.qa.cjs`, not the production POS EXE. It has a different app identity and user-data directory, blocks all network access, and only accepts a new disposable folder with a QA sentinel. It does not read or write the production POS profile.
 
-- [ ] With the test profile only, trigger a genuine IndexedDB `QuotaExceededError` through the controlled test harness.
+The QA shell includes a controlled one-shot `QuotaExceededError` injector at the production IndexedDB transaction boundary and a named process-interruption/restart control. The Windows CI workflow currently verifies an unpacked QA app (`--dir`) only; it does not upload or publish a QA installer. Build and run the QA shell separately in a disposable Windows account/VM. **Do not create artificial disk pressure or fill the Windows system drive.**
+
+- [ ] With the isolated QA application only, choose one of the four production IndexedDB write domains and trigger the controlled one-shot `QuotaExceededError` at the transaction boundary.
 - [ ] Confirm the POS shows a storage error and warns not to repeat the sale.
 - [ ] Confirm migration starts automatically without requiring the operator to click the manual “prepare migration” action.
 - [ ] Confirm the app attempts Windows OS unlock. If OS unlock is deliberately unavailable in the test account, confirm it pauses for passphrase/recovery-key unlock.
