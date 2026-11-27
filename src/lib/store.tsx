@@ -2228,7 +2228,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return sale;
     };
     return typeof navigator !== 'undefined' && navigator.onLine
-      ? withCloudActivity('Cloud sale', execute)
+      ? withCloudActivity('Cloud sale', execute, result => result !== null)
       : execute();
   }, [user, state, pushAudit, completeSale, can]);
 
