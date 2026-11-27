@@ -741,6 +741,8 @@ export default function AppLayout() {
                     </button>
                   ) : syncManagerState.status === 'conflict' ? (
                     <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-300">Review conflict first</span>
+                  ) : cloudLastIssue ? (
+                    <span className="text-[10px] text-sub">Retry the original action after checking the connection</span>
                   ) : (
                     <span className="text-[10px] text-sub">No retry needed</span>
                   )}
