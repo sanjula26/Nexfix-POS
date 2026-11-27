@@ -682,7 +682,7 @@ export default function AppLayout() {
             {cloudDetailsOpen && (
               <div
                 id="nexfix-cloud-sync-details"
-                role="dialog"
+                role="region"
                 aria-label="Cloud sync details"
                 className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-line bg-surface p-4 text-ink shadow-2xl"
               >
@@ -714,7 +714,7 @@ export default function AppLayout() {
                     </div>
                   )}
                   <div className="flex items-start justify-between gap-4">
-                    <dt className="text-sub">Last successful transfer</dt>
+                    <dt className="text-sub">Last successful transfer (this session)</dt>
                     <dd className="max-w-[65%] text-right font-semibold">{cloudLastSuccessAt ? <>{cloudActivity.lastSuccessOperation || 'Cloud sync'} · {cloudLastSuccessAt}</> : 'Not recorded in this session'}</dd>
                   </div>
                   {cloudLastIssue && (
