@@ -1,4 +1,4 @@
-import { idbGetCloudSyncMeta, idbSetCloudSyncMeta } from './db';
+import { idbGetCloudSyncMeta, idbSetCloudSyncMeta } from './db.ts';
 
 export interface CloudActivityScope {
   shopId: string;
