@@ -25,6 +25,7 @@ const allowedEntries = [
   'package.json',
   'prepare-qa-folder.cjs',
   'folder-guard.cjs',
+  'interruption-control.cjs',
   'dist/index.html',
   'dist/assets/qa-renderer.js',
   ...profileRuntimeFiles,
