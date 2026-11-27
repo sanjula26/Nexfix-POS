@@ -107,3 +107,12 @@ test('offline sale replay preserves fully paid split tenders without adding a cr
     { method: 'card', amount: 805 },
   ]);
 });
+
+test('offline credit replay fails closed when saved tender legs do not match amount paid', () => {
+  assert.throws(() => buildSaleReplayPayments({
+    payment: 'credit',
+    amountPaid: 500,
+    creditDue: 705,
+    payments: undefined,
+  }), /payment details do not match/);
+});
