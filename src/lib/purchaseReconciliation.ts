@@ -15,14 +15,85 @@ export interface PurchaseReceivePlanResult extends PurchaseValidationResult {
   plan?: PurchaseReceivePlan;
 }
 
+export type GrnBarcodeScanAction =
+  | { type: 'increment'; index: number }
+  | { type: 'fill'; index: number }
+  | { type: 'append' };
+
+/** Prefer incrementing an existing GRN product line; otherwise fill an empty line or append one. */
+export function getGrnBarcodeScanAction(
+  rows: readonly { productId: string; qty: number }[],
+  productId: string,
+): GrnBarcodeScanAction {
+  const existingIndex = rows.findIndex(row => row.productId === productId);
+  if (existingIndex >= 0) return { type: 'increment', index: existingIndex };
+  const emptyIndex = rows.findIndex(row => !row.productId);
+  if (emptyIndex >= 0) return { type: 'fill', index: emptyIndex };
+  return { type: 'append' };
+}
+
+/** Normalizes supplier invoice references without removing meaningful punctuation. */
+export function normalizeSupplierInvoiceNumber(value: string | undefined | null): string {
+  return typeof value === 'string'
+    ? value.normalize('NFKC').trim().toUpperCase().replace(/\s+/g, '')
+    : '';
+}
+
+/** Finds an invoice already used by another GRN for the same supplier. */
+export function findDuplicateSupplierInvoices(
+  supplierId: string,
+  invoiceNo: string,
+  purchases: readonly Purchase[],
+  excludePurchaseId?: string,
+): Purchase[] {
+  const invoiceKey = normalizeSupplierInvoiceNumber(invoiceNo);
+  if (!supplierId.trim() || !invoiceKey) return [];
+  return purchases.filter(purchase =>
+    purchase.id !== excludePurchaseId
+    && purchase.supplierId === supplierId
+    && (purchase.status === 'pending' || purchase.status === 'received')
+    && normalizeSupplierInvoiceNumber(purchase.supplierInvoiceNo) === invoiceKey,
+  );
+}
+
+/** Duplicate supplier invoices require Admin/Manager approval; an explanation is optional. */
+export function validateDuplicateSupplierInvoiceOverride(
+  duplicates: readonly Purchase[],
+  role: string | undefined,
+): PurchaseValidationResult {
+  if (duplicates.length === 0) return { ok: true };
+  if (role !== 'admin' && role !== 'manager') {
+    return { ok: false, error: 'A duplicate supplier invoice was found. Only an Admin or Manager can approve an override.' };
+  }
+  return { ok: true };
+}
+
 /** Validates explicit IMEI/Serial values before a tracked purchase can be saved or received. */
 export function validatePurchaseUnitIdentifiers(
   po: Purchase,
   products: readonly Product[],
   existingUnits: readonly InventoryUnit[] = [],
+  pendingPurchases: readonly Purchase[] = [],
 ): PurchaseValidationResult {
   if (!po || !Array.isArray(po.items)) return { ok: false, error: 'GRN items are invalid.' };
   const productById = new Map(products.map(p => [p.id, p]));
+  const pendingImeiOwners = new Map<string, string>();
+  const pendingSerialOwners = new Map<string, string>();
+  for (const pendingPurchase of pendingPurchases) {
+    if (pendingPurchase.id === po.id || pendingPurchase.status !== 'pending') continue;
+    for (const pendingItem of pendingPurchase.items || []) {
+      const pendingProduct = productById.get(pendingItem.productId);
+      if (!pendingProduct) continue;
+      for (const unit of pendingItem.unitIdentifiers || []) {
+        if (pendingProduct.trackImei && unit.imei?.trim()) {
+          pendingImeiOwners.set(unit.imei.trim().toLowerCase(), pendingPurchase.poNo);
+        }
+        if (pendingProduct.trackSerial && unit.serial?.trim()) {
+          pendingSerialOwners.set(unit.serial.trim().toLowerCase(), pendingPurchase.poNo);
+        }
+      }
+    }
+  }
   const seenImei = new Set<string>();
   const seenSerial = new Set<string>();
   for (const unit of existingUnits) {
@@ -53,12 +124,16 @@ export function validatePurchaseUnitIdentifiers(
       if (!trackedSerial && serial) return { ok: false, error: item.name + ': Serial number was entered but this product does not track Serial.' };
       if (imei) {
         const key = imei.toLowerCase();
-        if (seenImei.has(key)) return { ok: false, error: 'IMEI ' + imei + ' already exists in stock.' };
+        if (seenImei.has(key)) return { ok: false, error: 'IMEI ' + imei + ' already exists in stock or is duplicated in this GRN.' };
+        const pendingOwner = pendingImeiOwners.get(key);
+        if (pendingOwner) return { ok: false, error: 'IMEI ' + imei + ' is already listed on another pending GRN ' + pendingOwner + '. Resolve that draft before receiving this GRN.' };
         seenImei.add(key);
       }
       if (serial) {
         const key = serial.toLowerCase();
-        if (seenSerial.has(key)) return { ok: false, error: 'Serial ' + serial + ' already exists in stock.' };
+        if (seenSerial.has(key)) return { ok: false, error: 'Serial ' + serial + ' already exists in stock or is duplicated in this GRN.' };
+        const pendingOwner = pendingSerialOwners.get(key);
+        if (pendingOwner) return { ok: false, error: 'Serial ' + serial + ' is already listed on another pending GRN ' + pendingOwner + '. Resolve that draft before receiving this GRN.' };
         seenSerial.add(key);
       }
     }

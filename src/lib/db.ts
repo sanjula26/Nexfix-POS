@@ -88,3 +88,41 @@ const DEFAULT_META:BackupMeta={autoBackupHours:6,backupCount:0};
 export async function idbGetMeta():Promise<BackupMeta>{try{const db=await getDB();const row=await idbReq<{key:string;value:BackupMeta}|undefined>(db.transaction(STORE_META,'readonly').objectStore(STORE_META).get('backup'));return{...DEFAULT_META,...(row?.value||{})};}catch{return{...DEFAULT_META};}}
 export async function idbSetMeta(patch:Partial<BackupMeta>):Promise<BackupMeta>{const current=await idbGetMeta();const next={...current,...patch};try{const db=await getDB();const tx=db.transaction(STORE_META,'readwrite');tx.objectStore(STORE_META).put({key:'backup',value:next});await idbTransactionComplete(tx,'Backup metadata write failed');}catch{/* metadata is best-effort */}return next;}
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
+
+/** Store feature-specific local metadata without changing the IndexedDB schema. */
+export async function idbGetMetaValue<T>(key: string): Promise<T | null> {
+  if (!key) return null;
+  // A missing key and a failed read are different states. Callers that protect
+  // user drafts must be able to stop rather than overwrite data they could not inspect.
+  const db = await getDB();
+  const row = await idbReq<{ key: string; value: T } | undefined>(
+    db.transaction(STORE_META, 'readonly').objectStore(STORE_META).get(key),
+  );
+  return row?.value ?? null;
+}
+
+export async function idbPutMetaValue<T>(key: string, value: T): Promise<boolean> {
+  if (!key) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).put({ key, value, updatedAt: new Date().toISOString() });
+    await idbTransactionComplete(tx, 'Local metadata save failed');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function idbDeleteMetaValue(key: string): Promise<boolean> {
+  if (!key) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    tx.objectStore(STORE_META).delete(key);
+    await idbTransactionComplete(tx, 'Local metadata delete failed');
+    return true;
+  } catch {
+    return false;
+  }
+}
