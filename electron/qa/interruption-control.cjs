@@ -43,6 +43,7 @@ function createQaInterruptionController(options = {}) {
 
   const armedPath = pathApi.join(userDataDirectory, 'storage-qa-interruption-armed.json');
   const lastPath = pathApi.join(userDataDirectory, 'storage-qa-interruption-last.json');
+  fsApi.mkdirSync(userDataDirectory, { recursive: true });
 
   function writeExclusive(filePath, value) {
     const descriptor = fsApi.openSync(filePath, 'wx', 0o600);
