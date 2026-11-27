@@ -207,6 +207,16 @@ function registerQaInterruptionIpc() {
     if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
     return qaInterruptionController.getLast();
   });
+
+  ipcMain.handle('nexfix-storage-qa:clear-last-interruption', (event, payload) => {
+    if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
+    return {
+      cleared: qaInterruptionController.clearLast({
+        runId: payload?.runId,
+        profileId: requireActiveQaProfileId(),
+      }),
+    };
+  });
 }
 
 function createWindow() {
