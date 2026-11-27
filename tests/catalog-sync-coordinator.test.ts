@@ -162,3 +162,27 @@ test('re-queues an earlier fingerprint after a newer snapshot has been queued', 
   assert.deepEqual(await finalA, { ok: true, version: 'A-final' });
   assert.deepEqual(started, ['A-first', 'B', 'A-final']);
 });
+
+
+test('invalidates an older success when a newer catalog sync fails part-way', async () => {
+  const coordinator = createFingerprintSyncCoordinator<{ ok: boolean; version: string }>();
+  let calls = 0;
+
+  const first = await coordinator.run('shop-a:user-a', 'catalog-v1', async () => {
+    calls += 1;
+    return { ok: true, version: 'v1' };
+  });
+  const changedFailure = await coordinator.run('shop-a:user-a', 'catalog-v2', async () => {
+    calls += 1;
+    return { ok: false, version: 'v2-partial-failure' };
+  });
+  const restored = await coordinator.run('shop-a:user-a', 'catalog-v1', async () => {
+    calls += 1;
+    return { ok: true, version: 'v1-reconciled-after-partial-write' };
+  });
+
+  assert.deepEqual(first, { ok: true, version: 'v1' });
+  assert.deepEqual(changedFailure, { ok: false, version: 'v2-partial-failure' });
+  assert.deepEqual(restored, { ok: true, version: 'v1-reconciled-after-partial-write' });
+  assert.equal(calls, 3);
+});
