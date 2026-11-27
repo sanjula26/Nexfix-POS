@@ -853,7 +853,7 @@ export interface CommittedCloudSale {
 }
 
 export async function completeSaleAtomic(input: {
-  shopId: string; branchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
+  shopId: string; branchId?: string; resolvedBranchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
@@ -878,10 +878,20 @@ export async function completeSaleAtomic(input: {
   if (!sessionData.session) return { ok: false, rpcAttempted: false, error: 'Cloud session is not available' };
 
   let branch: Awaited<ReturnType<typeof resolveCloudBranchId>>;
-  try {
-    branch = await resolveCloudBranchId(input.shopId, input.branchId);
-  } catch (error) {
-    return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+  const preResolvedBranchId = input.resolvedBranchId?.trim();
+  if (input.resolvedBranchId !== undefined) {
+    if (!preResolvedBranchId || preResolvedBranchId === 'local-main') {
+      return { ok: false, rpcAttempted: false, error: 'A valid resolved cloud branch is required' };
+    }
+    // The POS already resolved this branch for cashier-session validation.
+    // The atomic server RPC below still re-checks the authenticated device binding.
+    branch = { ok: true, branchId: preResolvedBranchId };
+  } else {
+    try {
+      branch = await resolveCloudBranchId(input.shopId, input.branchId);
+    } catch (error) {
+      return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
   if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
 
