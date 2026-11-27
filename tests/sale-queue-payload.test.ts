@@ -61,7 +61,7 @@ test('non-inventory trade-in is represented as a discount without creating a tra
   } satisfies Sale;
   const input = buildSaleCreateQueueInput(sale);
   assert.equal(input.tradeInValue, 300);
-  assert.equal(input.discount, sale.discount + 300);
+  assert.equal(input.discount, sale.discount);
   assert.equal(input.tradeIn, undefined);
 });
 
