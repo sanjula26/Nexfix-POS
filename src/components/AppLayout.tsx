@@ -16,7 +16,7 @@ import { hasRecoveryKey } from '../lib/backupCrypto';
 import { Avatar, Modal } from './ui';
 import CommandPalette from './CommandPalette';
 import { getCloudActivityState, subscribeCloudActivity } from '../lib/cloudActivity';
-import { getSyncManagerState, subscribeSyncManager } from '../lib/syncManager';
+import { getSyncManagerState, subscribeSyncManager, runSyncNow } from '../lib/syncManager';
 
 interface NavDef {
   to: string; label: string; icon: React.ElementType; perm?: string; group: string; adminOnly?: boolean; badge?: boolean;
@@ -434,6 +434,7 @@ export default function AppLayout() {
   const [sensitiveBusy, setSensitiveBusy] = useState(false);
   const [cloudActivity, setCloudActivity] = useState(getCloudActivityState);
   const [syncManagerState, setSyncManagerState] = useState(getSyncManagerState);
+  const [cloudDetailsOpen, setCloudDetailsOpen] = useState(false);
   const lastActivityRef = useRef(Date.now());
 
   const title = TITLES.find(([re]) => re.test(location.pathname))?.[1] || 'Dashboard';
@@ -455,28 +456,61 @@ export default function AppLayout() {
     && syncManagerState.status !== 'error'
     && syncManagerState.pending === 0
     && (syncManagerState.status === 'synced' || cloudActivity.lastSuccessAt !== null);
+  // The icon color follows the user's requested rule: green only during an
+  // actual transfer; red means no transfer is active (not automatically an error).
   const cloudSyncHealthy = cloudSyncActive;
+  const cloudLastSuccessAt = cloudActivity.lastSuccessAt
+    ? new Date(cloudActivity.lastSuccessAt).toLocaleString()
+    : syncManagerState.lastSyncAt
+      ? new Date(syncManagerState.lastSyncAt).toLocaleString()
+      : null;
+  const cloudLastIssue = cloudActivity.lastError || syncManagerState.lastError;
+  const cloudStatusLabel = cloudSyncActive
+    ? 'Sending data to cloud'
+    : syncManagerState.status === 'conflict'
+      ? 'A sync conflict needs review'
+      : cloudLastIssue || syncManagerState.status === 'error'
+        ? 'A cloud operation needs attention'
+        : syncManagerState.pending > 0
+          ? 'Updates are saved on this PC and waiting to sync'
+          : connectivity !== 'online'
+            ? 'Offline — no cloud transfer is active'
+            : cloudSyncComplete
+              ? 'No pending updates — no transfer is active'
+              : 'No cloud transfer is active';
   const cloudSyncTitle = cloudSyncActive
     ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
-    : cloudActivity.lastError
-      ? `Cloud sync failed: ${cloudActivity.lastError}`
-    : connectivity !== 'online'
-      ? `Offline — ${syncManagerState.pending} cloud update(s) waiting`
+    : cloudLastIssue
+      ? `Cloud operation needs attention: ${cloudLastIssue}`
       : syncManagerState.status === 'conflict'
         ? `Cloud sync conflict — ${syncManagerState.pending} update(s) need attention`
-        : syncManagerState.status === 'error'
-          ? `Cloud sync error: ${syncManagerState.lastError || 'retry pending'}`
+        : connectivity !== 'online'
+          ? `Offline — ${syncManagerState.pending} cloud update(s) waiting`
           : syncManagerState.pending > 0
             ? `${syncManagerState.pending} cloud update(s) waiting to sync`
             : cloudSyncComplete
-              ? `Cloud sync complete${cloudActivity.lastSuccessOperation ? ` · ${cloudActivity.lastSuccessOperation}` : ''} — ${cloudActivity.lastSuccessAt ? new Date(cloudActivity.lastSuccessAt).toLocaleString() : syncManagerState.lastSyncAt ? new Date(syncManagerState.lastSyncAt).toLocaleString() : 'no pending updates'}`
+              ? `No pending updates — last successful transfer: ${cloudActivity.lastSuccessOperation || 'Cloud sync'}`
               : 'No data is being sent to the cloud right now';
+  const canRetryCloudSync = connectivity === 'online'
+    && syncManagerState.pending > 0
+    && syncManagerState.status !== 'conflict'
+    && syncManagerState.status !== 'syncing'
+    && !cloudSyncActive;
 
   useEffect(() => {
     const stopActivity = subscribeCloudActivity(setCloudActivity);
     const stopSyncManager = subscribeSyncManager(setSyncManagerState);
     return () => { stopActivity(); stopSyncManager(); };
   }, []);
+
+  useEffect(() => {
+    if (!cloudDetailsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setCloudDetailsOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [cloudDetailsOpen]);
 
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
   useEffect(() => {
@@ -629,18 +663,84 @@ export default function AppLayout() {
           <span className={`hidden sm:inline-flex badge border ${connectivity === 'online' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'}`}>
             <Wifi size={11} /> {connectivity === 'online' ? 'Online' : 'Offline'} <span className={`w-1.5 h-1.5 rounded-full ${connectivity === 'online' ? 'bg-emerald-500 blink' : 'bg-rose-500'}`} />
           </span>
-          <span
-            role="status"
-            aria-live="polite"
-            className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${cloudSyncHealthy ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}
-            title={cloudSyncTitle}
-            aria-label={cloudSyncTitle}
-          >
-            {cloudSyncActive ? <CloudUpload size={15} className="animate-pulse" /> : <Cloud size={15} />}
-            <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? cloudSyncActive ? 'bg-emerald-500 animate-pulse' : 'bg-emerald-500' : 'bg-rose-500'}`} />
-            <span className="hidden md:inline">{cloudSyncActive ? 'Syncing' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' ? 'Error' : connectivity !== 'online' ? 'Offline' : 'Idle'}</span>
-            {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
-          </span>
+          <div className="relative">
+            <button
+              type="button"
+              aria-expanded={cloudDetailsOpen}
+              aria-controls="nexfix-cloud-sync-details"
+              aria-label={`${cloudSyncTitle}. Open cloud sync details`}
+              onClick={() => setCloudDetailsOpen(open => !open)}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500/50 ${cloudSyncHealthy ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'}`}
+              title={cloudSyncTitle}
+            >
+              {cloudSyncActive ? <CloudUpload size={15} className="animate-pulse" /> : <Cloud size={15} />}
+              <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+              <span className="hidden md:inline">{cloudSyncActive ? 'Sending' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' || cloudLastIssue ? 'Issue' : connectivity !== 'online' ? 'Offline' : 'Idle'}</span>
+              {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
+            </button>
+            {cloudDetailsOpen && (
+              <div
+                id="nexfix-cloud-sync-details"
+                role="dialog"
+                aria-label="Cloud sync details"
+                className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-line bg-surface p-4 text-ink shadow-2xl"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-bold">
+                    <Cloud size={16} /> Cloud sync details
+                  </div>
+                  <button type="button" className="icon-btn !h-7 !w-7" aria-label="Close cloud sync details" onClick={() => setCloudDetailsOpen(false)}>
+                    <X size={14} />
+                  </button>
+                </div>
+                <p className="mt-3 text-xs font-semibold text-ink" aria-live="polite">{cloudStatusLabel}</p>
+                <dl className="mt-3 space-y-2.5 text-[11px]">
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-sub">Internet</dt>
+                    <dd className="text-right font-semibold">{connectivity === 'online' ? 'Online (network detected)' : 'Offline'}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-sub">Active transfer</dt>
+                    <dd className="text-right font-semibold">{cloudSyncActive ? cloudActivity.operations.join(', ') || 'POS data' : 'None'}</dd>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-sub">Waiting updates</dt>
+                    <dd className="text-right font-semibold">{syncManagerState.pending}</dd>
+                  </div>
+                  {syncManagerState.pending > 0 && (
+                    <p className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                      These updates are stored in this PC's local queue and are waiting for cloud confirmation.
+                    </p>
+                  )}
+                  <div className="flex items-start justify-between gap-4">
+                    <dt className="text-sub">Last successful transfer</dt>
+                    <dd className="max-w-[65%] text-right font-semibold">{cloudLastSuccessAt ? <>{cloudActivity.lastSuccessOperation || 'Cloud sync'} · {cloudLastSuccessAt}</> : 'Not recorded in this session'}</dd>
+                  </div>
+                  {cloudLastIssue && (
+                    <div className="rounded-lg bg-rose-500/10 px-2.5 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                      <b>Latest issue:</b> {cloudLastIssue}
+                    </div>
+                  )}
+                  {syncManagerState.status === 'conflict' && (
+                    <div className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+                      Conflict protection kept local changes safe. Review the conflicting data before retrying.
+                    </div>
+                  )}
+                </dl>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <span className="text-[10px] text-sub">The Internet indicator does not guarantee the cloud server is reachable.</span>
+                  <button
+                    type="button"
+                    disabled={!canRetryCloudSync}
+                    onClick={() => { void runSyncNow(); }}
+                    className="shrink-0 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] font-bold text-violet-700 transition-colors hover:bg-violet-500/15 disabled:cursor-not-allowed disabled:opacity-40 dark:text-violet-300"
+                  >
+                    {syncManagerState.status === 'syncing' || cloudSyncActive ? 'Sending…' : 'Retry sync'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           {!ready && <span className="hidden sm:inline-flex badge bg-amber-500/10 text-amber-600 border border-amber-500/25">Loading storage…</span>}
           <Clock />
           <button onClick={() => navigate('/inventory?low=1')} className={`badge !py-1.5 !px-3 transition-all hover:brightness-110 cursor-pointer ${lowStock.length > 0 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30' : 'bg-raised text-faint border border-line'}`} title={lowStock.length ? 'View low stock items' : 'All products well stocked'}>
