@@ -25,7 +25,7 @@ import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAt
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { buildSaleCreateQueueInput } from './saleQueuePayload';
 import { commitLocalSaleDurably } from './offlineSaleCommit';
-import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError } from './cloudTransport';
+import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError, resolveLocalSaleFallbackId } from './cloudTransport';
 import { runSyncNow } from './syncManager';
 import { createDrainableWorkGate } from './drainableWorkGate';
 import { createStatePersistenceGate, type StatePersistenceOptions, type StatePersistencePause } from './statePersistenceGate';
@@ -2029,14 +2029,33 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const completeLocallyAndQueue = async (stableSaleId?: string): Promise<Sale> => {
       const shopId = getCloudShopId();
+      const requestedSaleId = stableSaleId || input._saleId;
+      const requiresCloudQueue = supabaseConfigured;
+      let pendingCloudSaleRaw: string | null = null;
+      let pendingCloudSaleReadable = true;
+      if (requiresCloudQueue) {
+        try {
+          pendingCloudSaleRaw = localStorage.getItem('nexfix_pending_cloud_sale_v2');
+        } catch {
+          pendingCloudSaleReadable = false;
+        }
+      }
+      const fallbackId = resolveLocalSaleFallbackId({
+        cloudConfigured: requiresCloudQueue,
+        requestedSaleId,
+        pendingMarkerRaw: pendingCloudSaleRaw,
+        markerReadable: pendingCloudSaleReadable,
+        cloudShopId: shopId,
+      });
+      if (!fallbackId.ok) throw new Error(fallbackId.error);
+
       const localBranchId = getPOSBranchId(shopId, stateRef.current.settings.branchId);
       if (hasMultipleCachedBranches(shopId) && localBranchId === 'local-main') {
         throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling offline.');
       }
       assertOpenSessionForBranch(localBranchId);
 
-      const saleId = stableSaleId || input._saleId || uid();
-      const requiresCloudQueue = supabaseConfigured;
+      const saleId = fallbackId.saleId || uid();
       const committed = await commitLocalSaleDurably<Sale, POSState>({
         saleId,
         reserveRecoveryMarker: async () => {
