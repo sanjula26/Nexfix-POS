@@ -5,6 +5,9 @@ import type { POSState } from '../src/lib/types.ts';
 import { subscribeToStorageQuotaWarnings } from '../src/lib/storageOverflowEvents.ts';
 import {
   idbAcknowledgeQueue,
+  idbAddPendingSaleQueueId,
+  idbGetPendingSaleQueueIds,
+  idbRemovePendingSaleQueueIds,
   idbClearQueue,
   idbClearRestoreCheckpoint,
   idbEnqueue,
@@ -493,3 +496,37 @@ test('all detailed IndexedDB write domains emit the quota warning used by automa
     else delete (globalThis as { window?: unknown }).window;
   }
 });
+
+test('pending offline sale queue markers survive reopen and clear only selected Sale IDs', async () => {
+  const saleIds = ['sale-recovery-a', 'sale-recovery-b'];
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[0]), true);
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[1]), true);
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[0]), true);
+
+  const reopenedDb = await import(`../src/lib/db.ts?pending-sale-reopen=${Date.now()}`);
+  assert.deepEqual((await reopenedDb.idbGetPendingSaleQueueIds()).sort(), saleIds);
+
+  assert.equal(await reopenedDb.idbRemovePendingSaleQueueIds([saleIds[0]]), true);
+  assert.deepEqual(await idbGetPendingSaleQueueIds(), [saleIds[1]]);
+  assert.equal(await idbRemovePendingSaleQueueIds([saleIds[1]]), true);
+  assert.deepEqual(await idbGetPendingSaleQueueIds(), []);
+});
+
+test('pending offline sale marker write fails closed when metadata transaction cannot commit', async () => {
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = Array.isArray(args[0]) ? args[0] : [args[0]];
+    if (stores.some(name => String(name) === 'meta') && args[1] === 'readwrite') {
+      throw new DOMException('Injected pending sale marker failure', 'QuotaExceededError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+  try {
+    assert.equal(await idbAddPendingSaleQueueId('sale-marker-failure'), false);
+    assert.equal((await idbGetPendingSaleQueueIds()).includes('sale-marker-failure'), false);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+
