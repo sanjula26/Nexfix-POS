@@ -573,10 +573,6 @@ export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta
   const result = await idbSetMetaDetailed(patch);
   return result.value ?? idbGetMeta();
 }
-export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta> {
-  const result = await idbSetMetaDetailed(patch);
-  return result.value ?? idbGetMeta();
-}
 
 /** Persist a recovery marker before applying a local sale to POS state. */
 export async function idbAddPendingSaleQueueId(saleId: string): Promise<boolean> {
