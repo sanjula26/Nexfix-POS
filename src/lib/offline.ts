@@ -27,7 +27,11 @@ export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { 
 const offlineQueueMutationWork = createDrainableWorkGate();
 function runQueueMutation<T>(operation: () => Promise<T>): Promise<T> {
   return offlineQueueMutationWork.run(
-    operation,
+    async () => {
+      const result = await operation();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+      return result;
+    },
     () => { throw new Error('POS local queue writes are temporarily paused for safe storage maintenance.'); },
   );
 }
