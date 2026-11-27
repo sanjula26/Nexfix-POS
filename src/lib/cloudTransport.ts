@@ -85,3 +85,33 @@ export function resolveLocalSaleFallbackId(input: {
   return { ok: true, saleId: pendingSaleId };
 }
 
+
+
+export interface CloudRequestDeadline {
+  signal: AbortSignal;
+  didTimeout: () => boolean;
+  dispose: () => void;
+}
+
+/**
+ * Bounded deadline for an explicitly abortable Supabase request.
+ * Aborting the client request does not prove a database transaction rolled
+ * back; callers must preserve idempotency/reconciliation state after sending
+ * an atomic sale RPC.
+ */
+export function createCloudRequestDeadline(timeoutMs: number): CloudRequestDeadline {
+  const controller = new AbortController();
+  const boundedMs = Number.isFinite(timeoutMs)
+    ? Math.min(120_000, Math.max(1, Math.floor(timeoutMs)))
+    : 15_000;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, boundedMs);
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    dispose: () => clearTimeout(timer),
+  };
+}
