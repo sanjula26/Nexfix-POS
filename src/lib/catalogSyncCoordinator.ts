@@ -1,3 +1,7 @@
+export interface FingerprintedSyncResult {
+  ok: boolean;
+}
+
 export function createFingerprintSyncCoordinator<T extends FingerprintedSyncResult>() {
   const completed = new Map<string, { fingerprint: string; result: T }>();
   const identityTails = new Map<string, { fingerprint: string; promise: Promise<T> }>();
