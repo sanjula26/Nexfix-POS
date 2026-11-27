@@ -4,13 +4,15 @@ export interface CloudActivityState {
   startedAt: number | null;
   lastError: string | null;
   lastSuccessAt: number | null;
+  lastSuccessOperation: string | null;
 }
 
-const INITIAL: CloudActivityState = { active: 0, operations: [], startedAt: null, lastError: null, lastSuccessAt: null };
+const INITIAL: CloudActivityState = { active: 0, operations: [], startedAt: null, lastError: null, lastSuccessAt: null, lastSuccessOperation: null };
 let state: CloudActivityState = INITIAL;
 let nextId = 0;
 let lastError: string | null = null;
 let lastSuccessAt: number | null = null;
+let lastSuccessOperation: string | null = null;
 const activeOperations = new Map<number, string>();
 const listeners = new Set<(next: CloudActivityState) => void>();
 
@@ -21,6 +23,7 @@ function publish(): void {
     startedAt: activeOperations.size ? state.startedAt ?? Date.now() : null,
     lastError,
     lastSuccessAt,
+    lastSuccessOperation,
   };
   listeners.forEach(listener => listener(state));
 }
@@ -66,6 +69,7 @@ export async function withCloudActivity<T>(
     const result = await action();
     if (didTransfer(result)) {
       lastSuccessAt = Date.now();
+      lastSuccessOperation = operation;
       publish();
     }
     return result;
