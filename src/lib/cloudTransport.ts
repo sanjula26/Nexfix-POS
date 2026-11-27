@@ -9,3 +9,12 @@ export function isTransientCloudTransportError(value: unknown): boolean {
         : String(value ?? '');
   return /(?:^|\b)(?:offline|failed to fetch|fetch failed|networkerror|network request failed|load failed|aborterror|err_internet_disconnected|err_network_changed|err_connection_(?:reset|refused|timed_out)|err_name_not_resolved|econnreset|econnrefused|enotfound|etimedout|connection timed out|request timeout|timed out)(?:\b|$)/i.test(message);
 }
+
+/**
+ * Local fallback is safe only when a cloud transport failed before the atomic
+ * sale RPC was sent. Once the RPC may have reached PostgreSQL, reconcile its
+ * stable Sale ID instead of creating a second local bill.
+ */
+export function canFallbackToLocalSaleBeforeRpc(rpcAttempted: boolean | undefined, error: unknown): boolean {
+  return rpcAttempted === false && isTransientCloudTransportError(error);
+}
