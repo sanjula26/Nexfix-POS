@@ -1852,12 +1852,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
     // remains a single clear gate and never triggers an automatic re-login.
-    const restored = await restoreCloudSession();
-    let shop = await ensureCloudShop('Nexfix Shop');
-    if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
-      await restoreCloudSession();
-      shop = await ensureCloudShop('Nexfix Shop');
-    }
+    // ensureCloudShop already restores durable Electron auth and performs one
+    // bounded retry when the session is briefly unavailable. Avoid repeating
+    // the same secure-storage/session work on every normal online checkout.
+    const shop = await ensureCloudShop('Nexfix Shop');
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
         const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
@@ -1910,12 +1908,22 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
-    let customerIdMap: Record<string, string> = {};
-    if (user.role === 'admin' || user.role === 'manager') {
-      const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
-      if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
-      customerIdMap = catalog.customerIdMap || {};
+    // Catalog reconciliation and salesman identity resolution are independent
+    // cloud reads. Run them together so checkout does not pay both network
+    // round-trips serially. The selected customer is resolved after catalog
+    // reconciliation because it may return a canonical customer ID mapping.
+    const localSalesman = input.salesmanId
+      ? state.users.find(u => u.id === input.salesmanId && u.active)
+      : user;
+    const catalogSyncPromise = user.role === 'admin' || user.role === 'manager'
+      ? syncNormalizedCatalog(stateRef.current, shop.shopId)
+      : Promise.resolve(null);
+    const salesmanPromise = resolveCloudSalesmanId(shop.shopId, localSalesman);
+    const [catalog, cloudSalesmanId] = await Promise.all([catalogSyncPromise, salesmanPromise]);
+    if (catalog && !catalog.ok) {
+      throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
     }
+    const customerIdMap = catalog?.customerIdMap || {};
     let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
@@ -1937,11 +1945,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         cloudCustomerId = undefined;
       }
     }
-    const localSalesman = input.salesmanId
-      ? state.users.find(u => u.id === input.salesmanId && u.active)
-      : user;
-    const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
-
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
       lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
