@@ -5,10 +5,14 @@ import type { POSState } from '../src/lib/types.ts';
 import { subscribeToStorageQuotaWarnings } from '../src/lib/storageOverflowEvents.ts';
 import {
   idbAcknowledgeQueue,
+  idbAddPendingSaleQueueId,
+  idbGetPendingSaleQueueIds,
+  idbRemovePendingSaleQueueIds,
   idbClearQueue,
   idbClearRestoreCheckpoint,
   idbEnqueue,
   idbListQueue,
+  idbHasQueueEntry,
   idbLoadRestoreCheckpoint,
   idbLoadState,
   idbReadLegacyProfileSnapshot,
@@ -19,6 +23,9 @@ import {
   idbSetMetaDetailed,
   idbInspectExistingState,
   idbAvailable,
+  idbGetMetaValue,
+  idbPutMetaValue,
+  idbDeleteMetaValue,
   setDesktopProfilePrimary,
   estimateIndexedDBQuota,
   classifyIndexedDBWriteFailure,
@@ -28,11 +35,13 @@ before(async () => {
   assert.ok(typeof indexedDB !== 'undefined', 'Node test runtime must provide IndexedDB');
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
 });
 
 after(async () => {
   await idbClearQueue();
   await idbClearRestoreCheckpoint();
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
 });
 
 test('folder-primary backend routes POS domains to encrypted profile and never falls back to IndexedDB', async () => {
@@ -69,6 +78,9 @@ test('folder-primary backend routes POS domains to encrypted profile and never f
     assert.deepEqual(await idbLoadState(), state);
     assert.equal(await idbEnqueue({ type: 'state_write', id: 'folder-queue-1', ts: '2026-11-23T01:00:00.000Z' }), true);
     assert.equal((await idbListQueue()).some(item => item.id === 'folder-queue-1'), true);
+    assert.equal(await idbHasQueueEntry('folder-queue-1', 'state_write'), true);
+    assert.equal(await idbHasQueueEntry('folder-queue-1', 'sale_create'), false);
+    assert.equal(await idbHasQueueEntry('folder-queue-missing'), false);
     assert.equal(await idbSaveRestoreCheckpoint(state), true);
     assert.deepEqual(await idbLoadRestoreCheckpoint(), state);
     assert.equal(await idbClearRestoreCheckpoint(), true);
@@ -77,6 +89,16 @@ test('folder-primary backend routes POS domains to encrypted profile and never f
     const metaWrite = await idbSetMetaDetailed({ autoBackupHours: 3 });
     assert.equal(metaWrite.ok, true);
     assert.equal((await idbGetMetaDetailed()).value?.autoBackupHours, 3);
+
+    const folderDraftKey = 'grn_working_draft_v1:profile-test';
+    const folderDraft = { id: 'folder-draft-1', supplierId: 'supplier-1', rows: [{ productId: 'product-1', qty: 2 }] };
+    assert.equal(await idbPutMetaValue(folderDraftKey, folderDraft), true);
+    assert.deepEqual(await idbGetMetaValue<typeof folderDraft>(folderDraftKey), folderDraft);
+    assert.deepEqual(JSON.parse(payloads.get('meta') || '{}').grnWorkingDrafts?.[folderDraftKey], folderDraft);
+    assert.equal((await idbGetMetaDetailed()).value?.autoBackupHours, 3);
+    assert.equal(await idbDeleteMetaValue(folderDraftKey), true);
+    assert.equal(await idbGetMetaValue(folderDraftKey), null);
+
     assert.equal((await idbInspectExistingState()).status, 'present');
     assert.equal((await idbReadLegacyProfileSnapshot()).status, 'unavailable');
 
@@ -86,6 +108,46 @@ test('folder-primary backend routes POS domains to encrypted profile and never f
     setDesktopProfilePrimary(false);
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test('GRN recovery metadata round-trips in the IndexedDB metadata domain', async () => {
+  const key = 'grn_working_draft_v1:indexeddb-test';
+  const baseline = await idbGetMetaDetailed();
+  assert.equal(baseline.ok, true);
+  const draft = {
+    id: 'indexeddb-draft-1',
+    editingId: null,
+    supplierId: 'supplier-1',
+    invoiceNo: 'INV-PARTIAL',
+    notes: 'Saved before quota migration',
+    rows: [{ productId: 'product-1', qty: 3, cost: 120, unitText: 'IMEI-PARTIAL' }],
+    savedAt: '2026-11-26T11:00:00.000Z',
+  };
+
+  assert.equal(await idbPutMetaValue(key, draft), true);
+  assert.deepEqual(await idbGetMetaValue<typeof draft>(key), draft);
+  const afterSave = await idbGetMetaDetailed();
+  assert.equal(afterSave.ok, true);
+  if (afterSave.ok && baseline.ok) {
+    assert.equal(afterSave.value.autoBackupHours, baseline.value.autoBackupHours);
+    assert.equal(afterSave.value.backupCount, baseline.value.backupCount);
+  }
+  assert.equal(await idbDeleteMetaValue(key), true);
+  assert.equal(await idbGetMetaValue(key), null);
+});
+
+test('GRN recovery metadata read failures are not mistaken for missing drafts', async () => {
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    if (args[0] === 'meta') throw new DOMException('Injected metadata read failure', 'InvalidStateError');
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    await assert.rejects(idbGetMetaValue('grn_working_draft_v1:read-failure'), /could not commit the requested data/i);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
   }
 });
 
@@ -107,6 +169,9 @@ test('IndexedDB queue commits operations and returns them in timestamp order', a
     queued.filter((item) => item.id.startsWith('test-')).map((item) => item.id),
     ['test-sale-earlier', 'test-state-later'],
   );
+  assert.equal(await idbHasQueueEntry('test-sale-earlier', 'sale_create'), true);
+  assert.equal(await idbHasQueueEntry('test-sale-earlier', 'state_write'), false);
+  assert.equal(await idbHasQueueEntry('test-sale-missing'), false);
 });
 
 test('IndexedDB acknowledgement removes only acknowledged operations', async () => {
@@ -126,6 +191,8 @@ test('IndexedDB acknowledgement removes only acknowledged operations', async () 
   const remainingIds = (await idbListQueue()).map((item) => item.id);
   assert.equal(remainingIds.includes('test-ack-one'), false);
   assert.equal(remainingIds.includes('test-keep-two'), true);
+  assert.equal(await idbHasQueueEntry('test-ack-one'), false);
+  assert.equal(await idbHasQueueEntry('test-keep-two', 'state_write'), true);
 });
 
 test('restore checkpoint can recover the previous IndexedDB state after a failed replacement', async () => {
@@ -175,6 +242,7 @@ test('IndexedDB queue read failures are surfaced instead of treated as an empty 
 
   try {
     await assert.rejects(reopenedDb.idbListQueue(), /Injected queue read failure/);
+    await assert.rejects(reopenedDb.idbHasQueueEntry('missing-sale'), /Injected queue read failure/);
   } finally {
     IDBDatabase.prototype.transaction = originalTransaction;
   }
@@ -440,3 +508,37 @@ test('all detailed IndexedDB write domains emit the quota warning used by automa
     else delete (globalThis as { window?: unknown }).window;
   }
 });
+
+test('pending offline sale queue markers survive reopen and clear only selected Sale IDs', async () => {
+  const saleIds = ['sale-recovery-a', 'sale-recovery-b'];
+  await idbRemovePendingSaleQueueIds(await idbGetPendingSaleQueueIds());
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[0]), true);
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[1]), true);
+  assert.equal(await idbAddPendingSaleQueueId(saleIds[0]), true);
+
+  const reopenedDb = await import(`../src/lib/db.ts?pending-sale-reopen=${Date.now()}`);
+  assert.deepEqual((await reopenedDb.idbGetPendingSaleQueueIds()).sort(), saleIds);
+
+  assert.equal(await reopenedDb.idbRemovePendingSaleQueueIds([saleIds[0]]), true);
+  assert.deepEqual(await idbGetPendingSaleQueueIds(), [saleIds[1]]);
+  assert.equal(await idbRemovePendingSaleQueueIds([saleIds[1]]), true);
+  assert.deepEqual(await idbGetPendingSaleQueueIds(), []);
+});
+
+test('pending offline sale marker write fails closed when metadata transaction cannot commit', async () => {
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = Array.isArray(args[0]) ? args[0] : [args[0]];
+    if (stores.some(name => String(name) === 'meta') && args[1] === 'readwrite') {
+      throw new DOMException('Injected pending sale marker failure', 'QuotaExceededError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+  try {
+    assert.equal(await idbAddPendingSaleQueueId('sale-marker-failure'), false);
+    assert.equal((await idbGetPendingSaleQueueIds()).includes('sale-marker-failure'), false);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+});
+

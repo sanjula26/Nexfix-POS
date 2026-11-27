@@ -8,23 +8,27 @@ import {
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
 import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
 import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
-import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
+import { idbLoadState, idbSaveState, idbSaveStateDetailed, idbAvailable, idbGetMetaDetailed, idbListQueue, idbHasQueueEntry, idbAddPendingSaleQueueId, idbRemovePendingSaleQueueIds, estimateIndexedDBQuota, isDesktopProfilePrimary, type BackupMeta } from './db';
 import { dispatchStorageQuotaWarning } from './storageOverflowEvents';
 import { downloadBackup, saveAutoBackupHours, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
-  getConnectivity, onConnectivityChange, queueWrite, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
+  getConnectivity, onConnectivityChange, queueWrite, queueSaleCreate, queueBranchStockAdjustment, queueInventoryUnitsAdd, queueInventoryUnitDelete, queueReturnCreate, queueSaleReversalRequest, queueSaleReversalApproval, queueSaleReversalRejection, queuePurchaseReceive, queueRepairDelivery, flushSyncQueue, registerServiceWorker,
   type Connectivity,
 } from './offline';
 import { syncToGoogleDrive, syncShopMetadataToGoogleDrive } from './driveSync';
 import { getMachineIdentity } from './machine';
-import { buildPurchaseReceivePlan, canDeletePurchase, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
+import { buildPurchaseReceivePlan, canDeletePurchase, findDuplicateSupplierInvoices, validateDuplicateSupplierInvoiceOverride, validatePurchaseUnitIdentifiers } from './purchaseReconciliation';
 import { applyInventoryLedger, type InventoryLedgerOperation } from './inventoryLedger';
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
-import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { supabase, supabaseConfigured } from './supabase';
+import { buildSaleCreateQueueInput } from './saleQueuePayload';
+import { commitLocalSaleDurably } from './offlineSaleCommit';
+import { canFallbackToLocalSaleBeforeRpc, isTransientCloudTransportError, resolveLocalSaleFallbackId } from './cloudTransport';
+import { runSyncNow } from './syncManager';
 import { createDrainableWorkGate } from './drainableWorkGate';
-import { createStatePersistenceGate, type StatePersistencePause } from './statePersistenceGate';
+import { createStatePersistenceGate, type StatePersistenceOptions, type StatePersistencePause } from './statePersistenceGate';
 import { createPOSWriteQuiescenceCoordinator, type POSWriteQuiescenceLease } from './posWriteQuiescence';
 import { pauseRestoreWork } from './restore';
 import { pauseAutoBackupWork, pauseBackupExecutionWork } from './backup';
@@ -46,6 +50,12 @@ export function pauseBackgroundPOSStateRefresh(): Promise<() => void> {
 }
 
 interface Session { userId: string; remember: boolean }
+
+interface LocalSaleStateWaiter {
+  resolve: (state: POSState) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 interface NewSaleLine {
   productId: string;
@@ -158,8 +168,8 @@ interface StoreCtx {
   savePurchase: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => void;
   saveGRNDraft: (p: Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>) => { ok: boolean; purchase?: Purchase; error?: string };
   updateGRNDraft: (id: string, patch: Partial<Omit<Purchase, 'id' | 'poNo' | 'date' | 'status'>>) => { ok: boolean; error?: string };
-  receivePurchase: (id: string, processorName?: string) => Promise<{ ok: boolean; error?: string }>;
-  processGRN: (id: string, processorName: string) => Promise<{ ok: boolean; error?: string }>;
+  receivePurchase: (id: string, processorName?: string, duplicateInvoiceOverrideReason?: string) => Promise<{ ok: boolean; error?: string }>;
+  processGRN: (id: string, processorName: string, duplicateInvoiceOverrideReason?: string) => Promise<{ ok: boolean; error?: string }>;
   createPurchaseReturn: (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }) => Promise<PurchaseReturn | null>;
   deletePurchase: (id: string) => void;
   // expenses
@@ -358,7 +368,7 @@ async function checkIndexedDBQuotaAfterWrite(): Promise<void> {
 export type POSStatePersistencePause = StatePersistencePause<POSState>;
 export type POSStorageMaintenanceLease = POSStatePersistencePause;
 
-async function persistStateWork(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
+async function persistStateWork(state: POSState, options: StatePersistenceOptions = {}): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
   // IndexedDB is the authoritative full-state store. Do not mirror the full
   // POS dataset into localStorage where it is easier to inspect/tamper with.
   if (idbAvailable()) {
@@ -404,7 +414,7 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
   // Track write for offline queue (future cloud sync)
   let queueSaved = true;
   let queueFailureKind: string | undefined;
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (options.enqueueOfflineQueue !== false && typeof navigator !== 'undefined' && !navigator.onLine) {
     try {
       await queueWrite('state_write_offline');
     } catch (error) {
@@ -434,8 +444,8 @@ async function persistStateWork(state: POSState): Promise<Omit<POSStatePersisten
 /** Normal debounced writes are tracked so migration can stop and drain them. */
 const statePersistenceGate = createStatePersistenceGate<POSState>(persistStateWork);
 
-function persistState(state: POSState): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
-  return statePersistenceGate.persist(state);
+function persistState(state: POSState, options?: StatePersistenceOptions): Promise<Omit<POSStatePersistencePause, 'release' | 'latestState'>> {
+  return statePersistenceGate.persist(state, options);
 }
 
 /**
@@ -474,6 +484,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   stateRef.current = state;
   const previousBackupStateRef = useRef(state);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLocalSaleStateWaitersRef = useRef(new Map<string, LocalSaleStateWaiter>());
+  const waitForLocalSaleState = useCallback((saleId: string): Promise<POSState> => {
+    const current = stateRef.current;
+    if (current.sales.some(sale => sale.id === saleId)) return Promise.resolve(current);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingLocalSaleStateWaitersRef.current.delete(saleId);
+        reject(new Error('The local POS sale update did not reach committed React state. Check Sales History before trying again.'));
+      }, 10000);
+      pendingLocalSaleStateWaitersRef.current.set(saleId, { resolve, reject, timer });
+      const latest = stateRef.current;
+      if (latest.sales.some(sale => sale.id === saleId)) {
+        const waiter = pendingLocalSaleStateWaitersRef.current.get(saleId);
+        if (waiter) clearTimeout(waiter.timer);
+        pendingLocalSaleStateWaitersRef.current.delete(saleId);
+        resolve(latest);
+      }
+    });
+  }, []);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
   const loginAtRef = useRef(0);
   const stockAdjustmentLockRef = useRef(false);
@@ -628,6 +657,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (persistTimer.current) clearTimeout(persistTimer.current);
     };
   }, [state, ready]);
+
+  // Resolve explicit offline-sale durability waiters only after React has
+  // committed the state containing the exact sale ID.
+  useEffect(() => {
+    const waiters = pendingLocalSaleStateWaitersRef.current;
+    if (!waiters.size) return;
+    for (const [saleId, waiter] of waiters) {
+      if (!state.sales.some(sale => sale.id === saleId)) continue;
+      clearTimeout(waiter.timer);
+      waiters.delete(saleId);
+      waiter.resolve(state);
+    }
+  }, [state]);
+
+  useEffect(() => () => {
+    for (const waiter of pendingLocalSaleStateWaitersRef.current.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('POS closed before the local sale could be durably confirmed.'));
+    }
+    pendingLocalSaleStateWaitersRef.current.clear();
+  }, []);
 
   // Refresh server-authoritative reversal requests so admin approvals are visible across PCs.
   useEffect(() => {
@@ -1977,46 +2027,138 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (todaySession.closed) throw new Error('Today\'s cash drawer is closed for the assigned branch. Open a new session before selling.');
     };
 
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
-      if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
+    const completeLocallyAndQueue = async (stableSaleId?: string, allowMatchingPendingId = false): Promise<Sale> => {
+      const shopId = getCloudShopId();
+      const requestedSaleId = stableSaleId || input._saleId;
+      const requiresCloudQueue = supabaseConfigured;
+      let pendingCloudSaleRaw: string | null = null;
+      let pendingCloudSaleReadable = true;
+      if (requiresCloudQueue) {
+        try {
+          pendingCloudSaleRaw = localStorage.getItem('nexfix_pending_cloud_sale_v2');
+        } catch {
+          pendingCloudSaleReadable = false;
+        }
+      }
+      const fallbackId = resolveLocalSaleFallbackId({
+        cloudConfigured: requiresCloudQueue,
+        requestedSaleId,
+        pendingMarkerRaw: pendingCloudSaleRaw,
+        markerReadable: pendingCloudSaleReadable,
+        cloudShopId: shopId,
+        allowMatchingPendingId,
+      });
+      if (!fallbackId.ok) throw new Error(fallbackId.error);
+
+      const localBranchId = getPOSBranchId(shopId, stateRef.current.settings.branchId);
+      if (hasMultipleCachedBranches(shopId) && localBranchId === 'local-main') {
         throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling offline.');
       }
       assertOpenSessionForBranch(localBranchId);
-      const localSale = completeSale(input);
-      if (!localSale) throw new Error('Offline sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
-      return localSale;
+
+      const saleId = fallbackId.saleId || uid();
+      const committed = await commitLocalSaleDurably<Sale, POSState>({
+        saleId,
+        reserveRecoveryMarker: async () => {
+          if (!requiresCloudQueue) return true;
+          const reserved = await idbAddPendingSaleQueueId(saleId);
+          if (reserved && typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+          return reserved;
+        },
+        createLocalSale: () => completeSale({ ...input, _saleId: saleId }),
+        waitForCommittedState: () => waitForLocalSaleState(saleId),
+        stateContainsSale: (snapshot, id) => snapshot.sales.some(sale => sale.id === id),
+        persistState: async snapshot => {
+          // Cancel the ordinary 120 ms debounce and await this transaction's
+          // explicit authoritative write; the helper then performs read-back.
+          if (persistTimer.current) {
+            clearTimeout(persistTimer.current);
+            persistTimer.current = null;
+          }
+          const latestState = stateRef.current.sales.some(sale => sale.id === saleId) ? stateRef.current : snapshot;
+          const result = await persistState(latestState, { enqueueOfflineQueue: false });
+          return result.stateSaved;
+        },
+        readBackState: idbLoadState,
+        enqueueSale: async sale => {
+          if (requiresCloudQueue) {
+            await queueSaleCreate(saleId, buildSaleCreateQueueInput(sale, stateRef.current.settings.branchId));
+          }
+        },
+        confirmQueueEntry: async id => !requiresCloudQueue || idbHasQueueEntry(`sale:${id}`, 'sale_create'),
+        clearRecoveryMarker: async () => {
+          if (!requiresCloudQueue) return true;
+          const cleared = await idbRemovePendingSaleQueueIds([saleId]);
+          if (cleared && typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+          return cleared;
+        },
+        saleNotCreatedMessage: 'Offline sale was not completed. Check assigned-branch stock, cashier session, IMEI/serial selections, and payment details.',
+        storageNotConfirmedMessage: 'This bill could not be confirmed in local POS storage. Do not press Complete again; check Sales History and the selected storage location first.',
+      });
+
+      // The local sale has already been read back from primary storage. Finish
+      // outbox persistence/recovery-marker cleanup in the background so the
+      // cashier can see the durable receipt without waiting for queue I/O.
+      void backgroundPOSStateRefreshWork.run(
+        () => committed.finalizeQueue(),
+        // Storage maintenance has closed background-work admission. Keep the
+        // durable marker and let reconnect/startup recovery finish this sale.
+        () => true,
+      ).then(syncPending => {
+        if (syncPending && requiresCloudQueue) {
+          window.dispatchEvent(new CustomEvent('nexfix:offline-sale-sync-pending', {
+            detail: { saleId, message: `Bill ${committed.sale.billNo} is saved on this PC, but cloud sync is pending. Do not bill it again; reconnect and check Pending Sync.` },
+          }));
+        }
+        if (requiresCloudQueue) {
+          void idbListQueue().then(queued => setPendingQueueCount(queued.length)).catch(() => {});
+          void runSyncNow();
+        }
+      }).catch(() => {
+        // A finalizer rejection must not hide the already-durable receipt. The
+        // recovery marker remains available for the next sync/reconnect pass.
+        if (requiresCloudQueue) void runSyncNow();
+      });
+      return committed.sale;
+    };
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return completeLocallyAndQueue();
     }
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
     // remains a single clear gate and never triggers an automatic re-login.
-    const restored = await restoreCloudSession();
-    let shop = await ensureCloudShop('Nexfix Shop');
-    if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
-      await restoreCloudSession();
+    let shop: Awaited<ReturnType<typeof ensureCloudShop>>;
+    try {
+      // ensureCloudShop owns the durable session restore and its one retry.
+      // Do not repeat those secure-storage/session operations in the sale path.
       shop = await ensureCloudShop('Nexfix Shop');
+    } catch (error) {
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+      throw error;
     }
     if (!shop.ok || !shop.shopId) {
-      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
-        const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
-        if (hasMultipleCachedBranches(getCloudShopId()) && localBranchId === 'local-main') {
-          throw new Error('This POS is not assigned to an active branch. Connect online to resolve the device branch before selling.');
-        }
-        assertOpenSessionForBranch(localBranchId);
-        const localSale = completeSale(input);
-        if (!localSale) throw new Error('Local sale was not completed. Check assigned-branch stock, IMEI/serial selections, and payment details.');
-        return localSale;
+      if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline' ||
+          isTransientCloudTransportError(shop.error)) {
+        return completeLocallyAndQueue();
       }
       if (/Cloud sign-in required once in Settings/i.test(shop.error || '')) {
         throw new Error('Cloud sign-in required once in Settings. Open Settings → Cloud account and sign in.');
       }
       throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
-    const branchResolution = await resolveCloudBranchId(
-      shop.shopId,
-      getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
-    );
+    let branchResolution: Awaited<ReturnType<typeof resolveCloudBranchId>>;
+    try {
+      branchResolution = await resolveCloudBranchId(
+        shop.shopId,
+        getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
+      );
+    } catch (error) {
+      if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+      throw error;
+    }
     if (!branchResolution.ok || !branchResolution.branchId) {
+      if (isTransientCloudTransportError(branchResolution.error)) return completeLocallyAndQueue();
       throw new Error(branchResolution.error || 'This POS is not assigned to an active branch.');
     }
     const saleBranchId = branchResolution.branchId;
@@ -2048,17 +2190,51 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
+    // Salesman resolution is read-only and independent of catalog/customer
+    // reconciliation. Start it now so its profile + membership lookups overlap
+    // the potentially larger catalog sync and customer lookup below.
+    const localSalesman = input.salesmanId
+      ? state.users.find(u => u.id === input.salesmanId && u.active)
+      : user;
+    const cloudSalesmanPromise = resolveCloudSalesmanId(shop.shopId, localSalesman).then(
+      value => ({ ok: true as const, value }),
+      error => ({ ok: false as const, error }),
+    );
+
     let customerIdMap: Record<string, string> = {};
     if (user.role === 'admin' || user.role === 'manager') {
-      const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
-      if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
+      let catalog: Awaited<ReturnType<typeof syncNormalizedCatalog>>;
+      try {
+        catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
+      } catch (error) {
+        if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+        throw error;
+      }
+      if (!catalog.ok) {
+        if (isTransientCloudTransportError(catalog.error)) return completeLocallyAndQueue();
+        throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
+      }
       customerIdMap = catalog.customerIdMap || {};
     }
     let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
-      if (localCustomer) {
-        const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+      if (localCustomer && customerIdMap[input.customerId]) {
+        // Admin/Manager catalog reconciliation already resolved this exact
+        // local customer ID (including phone de-duplication). Reuse its
+        // authoritative cloud ID instead of issuing a second customer lookup.
+        cloudCustomerId = customerIdMap[input.customerId];
+      } else if (localCustomer) {
+        let resolvedCustomer: Awaited<ReturnType<typeof ensureCloudCustomerForSale>>;
+        try {
+          resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        } catch (error) {
+          if (isTransientCloudTransportError(error)) return completeLocallyAndQueue();
+          throw error;
+        }
+        if (!resolvedCustomer.ok && isTransientCloudTransportError(resolvedCustomer.error)) {
+          return completeLocallyAndQueue();
+        }
         if (resolvedCustomer.ok && resolvedCustomer.customerId) {
           cloudCustomerId = resolvedCustomer.customerId;
         } else if ((input.creditDue || 0) > 0.009) {
@@ -2075,10 +2251,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         cloudCustomerId = undefined;
       }
     }
-    const localSalesman = input.salesmanId
-      ? state.users.find(u => u.id === input.salesmanId && u.active)
-      : user;
-    const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
+    const salesmanResolution = await cloudSalesmanPromise;
+    if (!salesmanResolution.ok) {
+      // No atomic sale RPC has started yet. The durable local-sale helper reuses
+      // an explicitly supplied _saleId or allocates one stable ID for its outbox.
+      if (isTransientCloudTransportError(salesmanResolution.error)) return completeLocallyAndQueue();
+      throw salesmanResolution.error;
+    }
+    const cloudSalesmanId = salesmanResolution.value;
 
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
@@ -2233,7 +2413,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
       cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
+      shopId: shop.shopId, branchId: saleBranchId, resolvedBranchId: saleBranchId,
+      deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
@@ -2243,7 +2424,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const detail = error instanceof Error ? error.message : String(error || 'unknown RPC error');
       throw new Error(`Cloud sale failed: ${detail}`);
     }
-    if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
+    if (!cloud.ok) {
+      if (canFallbackToLocalSaleBeforeRpc(cloud.rpcAttempted, cloud.error)) {
+        // The atomic sale RPC was definitely not sent. Reuse its already
+        // persisted idempotency Sale ID for the local bill and queued replay.
+        return completeLocallyAndQueue(saleId, true);
+      }
+      throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
+    }
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
@@ -2720,7 +2908,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Purchase', `Created PO for ${p.supplierName} · Rs. ${p.total.toLocaleString()}`);
   }, [pushAudit, user, can]);
 
-  const receivePurchase = useCallback(async (id: string, processorName?: string): Promise<{ ok: boolean; error?: string }> => {
+  const receivePurchase = useCallback(async (id: string, processorName?: string, duplicateInvoiceOverrideReason = ''): Promise<{ ok: boolean; error?: string }> => {
     if (purchaseReceiveLockRef.current) return { ok: false, error: 'A GRN process is already in progress. Please wait.' };
     if (!user || !can('page:purchases')) {
       pushAudit('DENIED', 'Purchase', 'Blocked purchase receive without purchase access');
@@ -2738,6 +2926,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const po = stateRef.current.purchases.find(x => x.id === id);
     if (!po) return { ok: false, error: 'GRN draft was not found.' };
     if (po.status !== 'pending') return { ok: false, error: 'This GRN is already processed and cannot be processed again.' };
+    const duplicateInvoiceMatches = findDuplicateSupplierInvoices(po.supplierId, po.supplierInvoiceNo || '', stateRef.current.purchases, po.id);
+    const overrideCheck = validateDuplicateSupplierInvoiceOverride(duplicateInvoiceMatches, user.role);
+    if (!overrideCheck.ok) {
+      pushAudit('DENIED', 'GRN', 'Blocked duplicate supplier invoice on ' + po.poNo);
+      return { ok: false, error: overrideCheck.error || 'Duplicate supplier invoice requires approval.' };
+    }
+    const approvedOverrideReason = duplicateInvoiceMatches.length ? duplicateInvoiceOverrideReason.trim() : '';
     const purchaseBranchId = effectiveBranch(po.branchId);
     if (multipleBranches && effectiveBranch(selectedBranchId) !== purchaseBranchId) {
       pushAudit('DENIED', 'Purchase', 'Blocked GRN receive because this draft belongs to a different branch. Switch this POS to the GRN branch first.');
@@ -2747,7 +2942,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const planResult = buildPurchaseReceivePlan(po, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(po, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
 
     purchaseReceiveLockRef.current = true;
@@ -2787,7 +2982,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           applyError = currentPlanResult.error || 'GRN validation failed before processing.';
           return s;
         }
-        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || []);
+        const currentUnitResult = validatePurchaseUnitIdentifiers(currentPo, s.products, s.units || [], s.purchases);
         if (!currentUnitResult.ok) {
           applyError = currentUnitResult.error || 'IMEI/Serial validation failed before processing.';
           return s;
@@ -2827,6 +3022,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (branchId !== 'local-main') applyBranchStockDeltas(branchId, deltas);
       }
       pushAudit('RECEIVE', 'Purchase', 'Received ' + po.poNo + ' from ' + po.supplierName + ' · recorded IMEI/Serial units' + (cloudEnabled ? ' · cloud-authoritative receive' : ''));
+      if (duplicateInvoiceMatches.length) {
+        const auditReason = approvedOverrideReason ? '; reason: ' + approvedOverrideReason : '; reason: not provided';
+        pushAudit('OVERRIDE', 'GRN', 'Admin/Manager approved duplicate supplier invoice "' + (po.supplierInvoiceNo || '').trim() + '" for ' + po.poNo + '; existing GRNs: ' + duplicateInvoiceMatches.map(match => match.poNo).join(', ') + auditReason);
+      }
       return { ok: true };
     } finally {
       purchaseReceiveLockRef.current = false;
@@ -2846,7 +3045,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const validation: Purchase = { ...p, id: 'validation', poNo: 'GRN-VALIDATION', date: new Date().toISOString(), status: 'pending' };
     const planResult = buildPurchaseReceivePlan(validation, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(validation, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     const created: Purchase = { ...p, branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId || p.branchId), id: uid(), poNo: 'GRN-' + String((stateRef.current.counters.grn ?? 0) + 1).padStart(4, '0'), date: new Date().toISOString(), status: 'pending', total: p.items.reduce((sum, item) => sum + item.qty * item.cost, 0) };
     setState(s => ({ ...s, purchases: [created, ...s.purchases], counters: { ...s.counters, grn: (s.counters.grn ?? 0) + 1 } }));
@@ -2865,14 +3064,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next: Purchase = { ...current, ...patch, total: (patch.items || current.items).reduce((sum, item) => sum + item.qty * item.cost, 0) };
     const planResult = buildPurchaseReceivePlan(next, stateRef.current.products);
     if (!planResult.ok) return { ok: false, error: planResult.error || 'GRN validation failed.' };
-    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || []);
+    const unitResult = validatePurchaseUnitIdentifiers(next, stateRef.current.products, stateRef.current.units || [], stateRef.current.purchases);
     if (!unitResult.ok) return { ok: false, error: unitResult.error || 'IMEI/Serial validation failed.' };
     setState(s => ({ ...s, purchases: s.purchases.map(x => x.id === id && x.status === 'pending' ? next : x) }));
     pushAudit('EDIT', 'GRN', 'Updated draft ' + current.poNo);
     return { ok: true };
   }, [pushAudit, user, can]);
 
-  const processGRN = useCallback((id: string, processorName: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName), [receivePurchase]);
+  const processGRN = useCallback((id: string, processorName: string, duplicateInvoiceOverrideReason?: string): Promise<{ ok: boolean; error?: string }> => receivePurchase(id, processorName, duplicateInvoiceOverrideReason), [receivePurchase]);
 
   const createPurchaseReturn = useCallback(async (input: { purchaseId: string; lines: Array<{ itemIdx: number; qty: number; unitIds?: string[] }>; reason: string }): Promise<PurchaseReturn | null> => {
     if (purchaseReturnLockRef.current) return null;

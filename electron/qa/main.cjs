@@ -6,6 +6,7 @@ const { app, BrowserWindow, dialog, ipcMain, safeStorage, session } = require('e
 const { prepareQaFolder } = require('./prepare-qa-folder.cjs');
 const { createOverflowFolderManager } = require('./profile-runtime/overflow-folder.cjs');
 const { registerPOSProfileIpc } = require('./profile-runtime/profile-ipc.cjs');
+const { createQaInterruptionController } = require('./interruption-control.cjs');
 
 const QA_APP_NAME = 'Nexfix POS Storage QA';
 const QA_USER_DATA_DIRECTORY = 'Nexfix POS Storage QA';
@@ -18,6 +19,7 @@ app.setPath('userData', path.join(app.getPath('appData'), QA_USER_DATA_DIRECTORY
 let mainWindow = null;
 let overflowFolderManager = null;
 let profileIpc = null;
+let qaInterruptionController = null;
 
 function protectedStorageRoots() {
   // Production POS userData is under appData; protecting appData protects it
@@ -157,6 +159,63 @@ function registerQaStorageIpc() {
     getConfiguredStorageRoot: getFolderPreference,
     markOverflowFolderPrimary: (directory, profileId) => overflowFolderManager.markPrimary(directory, profileId),
     markOverflowFolderIndexedDBPrimary: (profileId) => overflowFolderManager.markIndexedDBPrimary(profileId),
+  });
+  registerQaInterruptionIpc();
+}
+
+function requireActiveQaProfileId() {
+  const status = profileIpc?.session?.getStatus?.();
+  if (!status || status.unlocked !== true || !status.profile?.profileId) {
+    throw new Error('Unlock the disposable QA profile before running an interruption test.');
+  }
+  return status.profile.profileId;
+}
+
+function registerQaInterruptionIpc() {
+  qaInterruptionController = createQaInterruptionController({
+    userDataDirectory: app.getPath('userData'),
+  });
+
+  ipcMain.handle('nexfix-storage-qa:arm-interruption', (event, payload) => {
+    if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
+    const folder = getFolderPreference();
+    if (!folder.ok || !folder.available || folder.storageMode !== 'indexeddb') {
+      throw new Error('Arm an interruption only while the disposable QA profile still uses IndexedDB as its primary store.');
+    }
+    return qaInterruptionController.arm({
+      runId: payload?.runId,
+      phase: payload?.phase,
+      profileId: requireActiveQaProfileId(),
+    });
+  });
+
+  ipcMain.handle('nexfix-storage-qa:phase-checkpoint', (event, payload) => {
+    if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
+    const result = qaInterruptionController.checkpoint({
+      phase: payload?.phase,
+      profileId: requireActiveQaProfileId(),
+    });
+    if (result.stop) {
+      // The armed marker has already been atomically moved to the last-run file.
+      // Leave the renderer suspended until the test-only app exits at this point.
+      setTimeout(() => app.exit(86), 100);
+    }
+    return { stopScheduled: result.stop === true };
+  });
+
+  ipcMain.handle('nexfix-storage-qa:last-interruption', (event) => {
+    if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
+    return qaInterruptionController.getLast();
+  });
+
+  ipcMain.handle('nexfix-storage-qa:clear-last-interruption', (event, payload) => {
+    if (!isTrustedQaRenderer(event)) throw new Error('Untrusted QA renderer.');
+    return {
+      cleared: qaInterruptionController.clearLast({
+        runId: payload?.runId,
+        profileId: requireActiveQaProfileId(),
+      }),
+    };
   });
 }
 

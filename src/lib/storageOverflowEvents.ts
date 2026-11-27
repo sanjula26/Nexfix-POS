@@ -25,3 +25,20 @@ export function subscribeToStorageQuotaWarnings(
   target.addEventListener(STORAGE_QUOTA_WARNING_EVENT, handler);
   return () => target.removeEventListener(STORAGE_QUOTA_WARNING_EVENT, handler);
 }
+
+
+export const STORAGE_PRIMARY_COMMITTED_EVENT = 'nexfix:storage-primary-committed';
+
+/** Notify mounted POS pages after the encrypted profile adapter is active. */
+export function dispatchStoragePrimaryCommitted(target: EventTarget): void {
+  target.dispatchEvent(new Event(STORAGE_PRIMARY_COMMITTED_EVENT));
+}
+
+/** Subscribe to completed encrypted-folder cutovers. */
+export function subscribeToStoragePrimaryCommitted(
+  target: EventTarget,
+  listener: () => void,
+): () => void {
+  target.addEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, listener);
+  return () => target.removeEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, listener);
+}

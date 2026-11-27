@@ -73,6 +73,10 @@ export interface BackupMeta {
   autoBackupFailureCount?: number;
   autoBackupHours: number;
   backupCount: number;
+  /** Local feature metadata that must follow the encrypted profile on quota migration. */
+  grnWorkingDrafts?: Record<string, unknown>;
+  /** Sale IDs durably saved locally but not yet confirmed in the sync queue. */
+  pendingSaleQueueIds?: string[];
 }
 
 function openDB(): Promise<IDBDatabase> { return new Promise((resolve,reject)=>{ const req=indexedDB.open(DB_NAME,DB_VERSION); req.onerror=()=>reject(req.error||new Error('IDB open failed')); req.onsuccess=()=>resolve(req.result); req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains(STORE_STATE))db.createObjectStore(STORE_STATE,{keyPath:'key'});if(!db.objectStoreNames.contains(STORE_QUEUE)){const q=db.createObjectStore(STORE_QUEUE,{keyPath:'id'});q.createIndex('ts','ts',{unique:false});}if(!db.objectStoreNames.contains(STORE_META))db.createObjectStore(STORE_META,{keyPath:'key'});};}); }
@@ -466,7 +470,9 @@ export async function idbEnqueueDetailed(op: QueueInput): Promise<IndexedDBWrite
     try {
       await withProfileWriteLock('sync_queue', async () => {
         const queue = await readRequiredProfileJson<QueueOp[]>('sync_queue');
-        queue.push(entry);
+        const existingIndex = queue.findIndex(item => item.id === entry.id);
+        if (existingIndex >= 0) queue[existingIndex] = entry;
+        else queue.push(entry);
         await writeDesktopProfileJson('sync_queue', queue);
       });
       return { ok: true };
@@ -486,6 +492,29 @@ export async function idbEnqueue(op: QueueInput): Promise<boolean> {
   return (await idbEnqueueDetailed(op)).ok;
 }
 export async function idbListQueue():Promise<QueueOp[]>{if(desktopProfilePrimary){const all=await readRequiredProfileJson<QueueOp[]>('sync_queue');return all.sort((a,b)=>a.ts.localeCompare(b.ts));}if(!idbAvailable())return[];const db=await getDB();const all=await idbReq<QueueOp[]>(db.transaction(STORE_QUEUE,'readonly').objectStore(STORE_QUEUE).getAll());return(all||[]).sort((a,b)=>a.ts.localeCompare(b.ts));}
+/** Confirm one normalized outbox record without loading and sorting the entire queue. */
+export async function idbHasQueueEntry(id: string, expectedType?: QueueOp['type']): Promise<boolean> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) return false;
+
+  let entry: QueueOp | undefined;
+  if (desktopProfilePrimary) {
+    const queue = await readRequiredProfileJson<QueueOp[]>('sync_queue');
+    entry = queue.find(operation => operation.id === normalizedId);
+  } else {
+    if (!idbAvailable()) return false;
+    const db = await getDB();
+    const tx = db.transaction(STORE_QUEUE, 'readonly');
+    const transactionDone = idbTransactionComplete(tx, 'Offline queue lookup failed');
+    const [found] = await Promise.all([
+      idbReq<QueueOp | undefined>(tx.objectStore(STORE_QUEUE).get(normalizedId)),
+      transactionDone,
+    ]);
+    entry = found;
+  }
+
+  return !!entry && entry.id === normalizedId && (!expectedType || entry.type === expectedType);
+}
 export async function idbAcknowledgeQueue(ids:string[]):Promise<void>{if(!ids.length)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=await readRequiredProfileJson<QueueOp[]>('sync_queue');const remove=new Set(ids);await writeDesktopProfileJson('sync_queue',queue.filter(op=>!remove.has(op.id)));});}catch{/* keep unacknowledged queue entries safe */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');const store=tx.objectStore(STORE_QUEUE);for(const id of ids)store.delete(id);await idbTransactionComplete(tx,'Queue acknowledgement failed');}catch{/* best-effort cleanup */}}
 export async function idbDeleteQueue(id:string):Promise<void>{if(!id)return;if(desktopProfilePrimary){try{await withProfileWriteLock('sync_queue',async()=>{const queue=(await readDesktopProfileJson<QueueOp[]>('sync_queue'))||[];await writeDesktopProfileJson('sync_queue',queue.filter(op=>op.id!==id));});}catch{/* best-effort cleanup */}return;}try{const db=await getDB();const tx=db.transaction(STORE_QUEUE,'readwrite');tx.objectStore(STORE_QUEUE).delete(id);await idbTransactionComplete(tx,'Offline queue delete failed');}catch{/* best-effort cleanup */}}
 export async function idbClearQueue():Promise<void>{const ops=await idbListQueue();await idbAcknowledgeQueue(ops.map(op=>op.id));}
@@ -567,4 +596,59 @@ export async function idbSetMeta(patch: Partial<BackupMeta>): Promise<BackupMeta
   const result = await idbSetMetaDetailed(patch);
   return result.value ?? idbGetMeta();
 }
+
+/** Persist a recovery marker before applying a local sale to POS state. */
+export async function idbAddPendingSaleQueueId(saleId: string): Promise<boolean> {
+  const normalized = String(saleId || '').trim();
+  if (!normalized) return false;
+  const result = await idbSetMetaDetailed(current => ({
+    pendingSaleQueueIds: [...new Set([...(current.pendingSaleQueueIds || []), normalized])],
+  }));
+  return result.ok;
+}
+
+/** Read durable sale queue recovery markers; storage read failures must remain visible. */
+export async function idbGetPendingSaleQueueIds(): Promise<string[]> {
+  const result = await idbGetMetaDetailed();
+  if (!result.ok) throw new Error(result.error.message);
+  return [...new Set((result.value.pendingSaleQueueIds || []).filter(id => typeof id === 'string' && id.trim()))];
+}
+
+/** Clear only markers whose normalized sale queue item has been read back. */
+export async function idbRemovePendingSaleQueueIds(saleIds: string[]): Promise<boolean> {
+  const remove = new Set(saleIds.map(id => String(id || '').trim()).filter(Boolean));
+  if (!remove.size) return true;
+  const result = await idbSetMetaDetailed(current => ({
+    pendingSaleQueueIds: (current.pendingSaleQueueIds || []).filter(id => !remove.has(id)),
+  }));
+  return result.ok;
+}
+
+/** Store feature-specific local metadata inside the migratable metadata domain. */
+export async function idbGetMetaValue<T>(key: string): Promise<T | null> {
+  if (!key) return null;
+  const result = await idbGetMetaDetailed();
+  if (!result.ok) throw new Error(result.error.message);
+  const value = result.value.grnWorkingDrafts?.[key];
+  return value === undefined ? null : value as T;
+}
+
+export async function idbPutMetaValue<T>(key: string, value: T): Promise<boolean> {
+  if (!key) return false;
+  const result = await idbSetMetaDetailed(current => ({
+    grnWorkingDrafts: { ...(current.grnWorkingDrafts || {}), [key]: value },
+  }));
+  return result.ok;
+}
+
+export async function idbDeleteMetaValue(key: string): Promise<boolean> {
+  if (!key) return false;
+  const result = await idbSetMetaDetailed(current => {
+    const drafts = { ...(current.grnWorkingDrafts || {}) };
+    delete drafts[key];
+    return { grnWorkingDrafts: drafts };
+  });
+  return result.ok;
+}
+
 export function idbAvailable():boolean{return desktopProfilePrimary ? hasDesktopProfileRuntime() : typeof indexedDB!=='undefined';}

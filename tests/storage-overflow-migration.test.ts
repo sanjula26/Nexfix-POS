@@ -15,6 +15,7 @@ function harness(failAt?: string) {
   let released = 0;
   let primary = false;
   let sequence = 0;
+  const checkpoints: string[] = [];
   const lease = { latestState: { sales: [{ id: 'sale-1', total: 750 }] }, stateSaved: false, queueSaved: false, release: () => { released += 1; } };
   const journal = (): Journal => ({ phase, sequence: ++sequence });
   const dependencies: MigrationDependencies<Journal, { queue: unknown[] }> = {
@@ -54,8 +55,9 @@ function harness(failAt?: string) {
       if (activeFailure === 'activate-primary') throw new Error('adapter activation failed');
       primary = true;
     },
+    onCheckpoint: checkpoint => { checkpoints.push(checkpoint); },
   };
-  return { dependencies, files, copied, verified, transitions, lease, setFailure: (next?: string) => { activeFailure = next; }, get released() { return released; }, get primary() { return primary; }, get phase() { return phase; } };
+  return { dependencies, files, copied, verified, transitions, lease, checkpoints, setFailure: (next?: string) => { activeFailure = next; }, get released() { return released; }, get primary() { return primary; }, get phase() { return phase; } };
 }
 
 test('copies and verifies all four domains before switching folder storage primary', async () => {
@@ -70,6 +72,21 @@ test('copies and verifies all four domains before switching folder storage prima
   assert.equal(result.stateSavedToIndexedDB, false);
   assert.equal(result.queueMarkerSavedToIndexedDB, false);
   assert.deepEqual(JSON.parse(h.files.get('app_state')!), { sales: [{ id: 'sale-1', total: 750 }] });
+});
+
+test('emits durable checkpoints in order around every copy, verification and cutover boundary', async () => {
+  const h = harness();
+  await runEncryptedPOSFolderMigration(h.dependencies);
+  assert.deepEqual(h.checkpoints, [
+    'after_snapshot',
+    'after_copy_app_state',
+    'after_copy_sync_queue',
+    'after_copy_meta',
+    'after_copy_restore_checkpoint',
+    'after_verification',
+    'before_folder_primary',
+    'after_folder_primary_before_adapter_activation',
+  ]);
 });
 
 test('copy failure marks blocked recovery and releases maintenance so IndexedDB can continue', async () => {

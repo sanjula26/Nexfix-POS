@@ -64,3 +64,17 @@ test('unavailable IndexedDB aborts maintenance rather than copying an incomplete
   }));
   await assert.rejects(gate.pauseAndFlush(() => 9), /Could not safely read or flush/);
 });
+
+test('forwards transaction-owned offline queue options to the persistence worker', async () => {
+  const calls: Array<{ state: number; enqueueOfflineQueue?: boolean }> = [];
+  const gate = createStatePersistenceGate<number>(async (state, options) => {
+    calls.push({ state, enqueueOfflineQueue: options?.enqueueOfflineQueue });
+    return { stateSaved: true, queueSaved: true };
+  });
+  await gate.persist(17, { enqueueOfflineQueue: false });
+  await gate.persist(18);
+  assert.deepEqual(calls, [
+    { state: 17, enqueueOfflineQueue: false },
+    { state: 18, enqueueOfflineQueue: undefined },
+  ]);
+});

@@ -6,6 +6,11 @@ export type StatePersistResult = {
   failureKind?: string;
 };
 
+export type StatePersistenceOptions = {
+  /** Skip the generic offline snapshot enqueue when a transaction writes its own normalized job. */
+  enqueueOfflineQueue?: boolean;
+};
+
 export type StatePersistencePause<T> = StatePersistResult & {
   latestState: T;
   release: () => void;
@@ -17,14 +22,14 @@ export type StatePersistencePause<T> = StatePersistResult & {
  * other storage failures abort the maintenance window.
  */
 export function createStatePersistenceGate<T>(
-  persist: (state: T) => Promise<StatePersistResult>,
+  persist: (state: T, options?: StatePersistenceOptions) => Promise<StatePersistResult>,
 ) {
   const work = createDrainableWorkGate();
 
   return {
-    persist(state: T): Promise<StatePersistResult> {
+    persist(state: T, options: StatePersistenceOptions = {}): Promise<StatePersistResult> {
       return work.run(
-        () => persist(state),
+        () => persist(state, options),
         () => { throw new Error('POS state persistence is temporarily paused for safe storage maintenance.'); },
       );
     },

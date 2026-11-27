@@ -1,9 +1,12 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
+import { buildSaleCreateQueueInput, buildSaleReplayPayments } from './saleQueuePayload';
+import { recoverPendingSaleQueueIds } from './offlineSaleQueueRecovery';
+import { canUploadLegacySnapshot } from './offlineSnapshotGate';
 import { createDrainableWorkGate } from './drainableWorkGate';
-import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState } from './db';
+import { idbAcknowledgeQueue, idbEnqueueDetailed, idbListQueue, idbLoadState, idbGetPendingSaleQueueIds, idbRemovePendingSaleQueueIds } from './db';
 import { getMachineIdentity } from './machine';
-import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
+import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, ensureCloudCustomerForSale, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
 type QueueStorageError = Error & { storageFailureKind?: 'quota_exceeded' | 'write_failed' };
 
@@ -25,7 +28,11 @@ export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { 
 const offlineQueueMutationWork = createDrainableWorkGate();
 function runQueueMutation<T>(operation: () => Promise<T>): Promise<T> {
   return offlineQueueMutationWork.run(
-    operation,
+    async () => {
+      const result = await operation();
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+      return result;
+    },
     () => { throw new Error('POS local queue writes are temporarily paused for safe storage maintenance.'); },
   );
 }
@@ -48,30 +55,9 @@ async function queueWriteWork(note?:string):Promise<void>{
   );
   for(const sale of state.sales){
     if(existingSaleIds.has(sale.id)) continue;
-    const payload={
-      saleId:sale.id,
-      input:{
-        branchId:sale.branchId || state.settings.branchId || 'local-main',
-        customerId:sale.customerId,
-        shipping:sale.shipping,
-        discount:sale.discount,
-        tradeInValue:sale.tradeIn?.value || 0,
-        tradeIn: sale.tradeIn?.addToInventory && sale.tradeIn.productId ? {
-          unitId: sale.tradeIn.unitId,
-          productId: sale.tradeIn.productId,
-          value: sale.tradeIn.value,
-          imei: sale.tradeIn.imei,
-          serial: sale.tradeIn.serial,
-        } : undefined,
-        taxPct:Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))>0 ? (sale.tax / Math.max(0,sale.subtotal-sale.discount-(sale.tradeIn?.value || 0))) * 100 : 0,
-        pointsRedeemed:sale.pointsRedeemed,
-        note:sale.note,
-        salesmanId:sale.cashierId,
-        lines:sale.items.map(item=>({productId:item.productId,qty:item.qty,discount:item.discount,price:item.price,unitIds:item.unitIds})),
-        payment:sale.payment,
-        amountPaid:sale.amountPaid,
-        payments:sale.payments,
-      },
+    const payload = {
+      saleId: sale.id,
+      input: buildSaleCreateQueueInput(sale, state.settings.branchId),
     };
     const ok=await idbEnqueueChecked({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
     if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
@@ -141,7 +127,38 @@ export function queueSaleReversalRejection(requestId: string, note?: string): Pr
   return runQueueMutation(() => queueSaleReversalRejectionWork(requestId, note));
 }
 
+/**
+ * Recover the durable marker written before a local offline sale. State and
+ * queue are separate storage domains, so a crash or quota failure between
+ * them must leave a marker that lets the next sync attempt reconstruct the
+ * exact normalized sale job from the saved sale record.
+ */
+export async function recoverPendingOfflineSaleQueues(): Promise<number> {
+  const pendingIds = await idbGetPendingSaleQueueIds();
+  if (!pendingIds.length) return 0;
+
+  const state = await idbLoadState();
+  if (!state) throw new Error('Could not read local POS state while recovering pending offline sales.');
+
+  const queued = await idbListQueue();
+  const queuedSaleIds = new Set(
+    queued.filter(op => op.type === 'sale_create').map(op => op.id.slice('sale:'.length)),
+  );
+  const restored = await recoverPendingSaleQueueIds({
+    pendingSaleIds: pendingIds,
+    sales: state.sales,
+    queuedSaleIds,
+    enqueueSale: sale => queueSaleCreate(sale.id, buildSaleCreateQueueInput(sale, state.settings.branchId)),
+    confirmQueueEntry: async queueId => (await idbListQueue())
+      .some(op => op.type === 'sale_create' && op.id === queueId),
+    clearRecoveryMarkers: idbRemovePendingSaleQueueIds,
+  });
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+  return restored;
+}
+
 export async function getPendingSyncOperations(){return idbListQueue();}
+export async function getPendingOfflineSaleQueueIds(): Promise<string[]> { return idbGetPendingSaleQueueIds(); }
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 const offlineQueueWork = createDrainableWorkGate();
@@ -151,6 +168,7 @@ export function pauseOfflineQueueFlush(): Promise<() => void> { return offlineQu
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=offlineQueueWork.run(async()=>{
+    await recoverPendingOfflineSaleQueues();
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
@@ -219,35 +237,58 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};creditDue?:number;taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          // Older pending jobs predate the explicit creditDue field. Upgrade
+          // those jobs from the durable original Sale record rather than
+          // silently dropping their outstanding credit during cloud replay.
+          const localSale = state?.sales.find(sale => sale.id === parsed.saleId);
+          const saleInput = parsed.input.creditDue === undefined && localSale
+            ? buildSaleCreateQueueInput(localSale, state?.settings.branchId)
+            : parsed.input;
+          let customerIdMap: Record<string, string> = {};
           if(state) {
             const catalog=await syncNormalizedCatalog(state, shop.shopId);
             if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
+            if(catalog.ok) customerIdMap = catalog.customerIdMap || {};
           }
-          const payments=(parsed.input.payments&&parsed.input.payments.length)
-            ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
-            : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
-          const localSalesman = parsed.input.salesmanId && state
-            ? state.users.find(u => u.id === parsed.input.salesmanId && u.active)
+          const payments = buildSaleReplayPayments(saleInput);
+          let cloudCustomerId = saleInput.customerId
+            ? (customerIdMap[saleInput.customerId] || saleInput.customerId)
+            : undefined;
+          if (saleInput.customerId && !customerIdMap[saleInput.customerId] && state) {
+            const localCustomer = state.customers.find(customer => customer.id === saleInput.customerId);
+            if (localCustomer) {
+              const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+              if (resolvedCustomer.ok && resolvedCustomer.customerId) cloudCustomerId = resolvedCustomer.customerId;
+              else if (saleInput.payment === 'credit') break;
+              else cloudCustomerId = undefined;
+            } else if (saleInput.payment === 'credit') {
+              break;
+            } else {
+              cloudCustomerId = undefined;
+            }
+          }
+          const localSalesman = saleInput.salesmanId && state
+            ? state.users.find(u => u.id === saleInput.salesmanId && u.active)
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
-            discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
-            salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
+            shopId:shop.shopId,branchId:saleInput.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:cloudCustomerId,shipping:saleInput.shipping,
+            discount:saleInput.discount + (saleInput.tradeInValue || 0),taxPct:saleInput.taxPct,pointsRedeemed:saleInput.pointsRedeemed,note:saleInput.note,
+            salesmanId:cloudSalesmanId,lines:saleInput.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
           });
           if(!result.ok) break;
-          if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
+          if (saleInput.tradeIn?.productId && saleInput.tradeIn.unitId) {
             const tradeIn = await registerTradeInAtomic({
               shopId: shop.shopId,
               saleId: parsed.saleId,
-              unitId: parsed.input.tradeIn.unitId,
-              productId: parsed.input.tradeIn.productId,
-              value: parsed.input.tradeIn.value,
-              imei: parsed.input.tradeIn.imei,
-              serial: parsed.input.tradeIn.serial,
+              unitId: saleInput.tradeIn.unitId,
+              productId: saleInput.tradeIn.productId,
+              value: saleInput.tradeIn.value,
+              imei: saleInput.tradeIn.imei,
+              serial: saleInput.tradeIn.serial,
             });
             if (!tradeIn.ok) break;
           }
@@ -336,10 +377,22 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
     }
 
-    if(acknowledged.length) await idbAcknowledgeQueue(acknowledged);
+    if(acknowledged.length) {
+      await idbAcknowledgeQueue(acknowledged);
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('nexfix:offline-sale-outbox-changed'));
+    }
     const remaining=await idbListQueue();
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
+
+    // A normalized transaction (sale/GRN/return/repair/stock/unit/reversal)
+    // that has not committed must block the legacy whole-state snapshot.
+    // Otherwise a failed sale_create could still publish the local sale record
+    // through the snapshot path without its atomic stock/payment transaction.
+    if (!canUploadLegacySnapshot(remaining.map(op => op.type))) {
+      return { flushed, pending: remaining.length, synced: false, conflict: false };
+    }
+
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
 
     // Bootstrap the cloud snapshot even when the durable queue is empty.

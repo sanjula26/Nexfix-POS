@@ -15,6 +15,7 @@ import {
   type DesktopPOSMigrationPurpose,
 } from './desktopProfileStorage';
 import { setDesktopProfilePrimary } from './db';
+import { dispatchStoragePrimaryCommitted } from './storageOverflowEvents';
 import type { POSStorageMaintenanceLease } from './store';
 import { runEncryptedPOSFolderMigration } from './storageOverflowMigrationCore.ts';
 
@@ -74,6 +75,13 @@ export async function migrateIndexedDBToEncryptedPOSFolder(
         const error = new Error('Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.') as Error & { code?: string };
         error.code = 'ERR_POS_STORAGE_CUTOVER_UNCERTAIN';
         throw error;
+      }
+      // Notify mounted pages only after the encrypted adapter is active. GRN
+      // uses this to retry an in-memory recovery draft whose IndexedDB write
+      // failed at the quota boundary.
+      if (typeof window !== 'undefined') {
+        try { dispatchStoragePrimaryCommitted(window); }
+        catch { /* Storage is already active; UI status refresh is best-effort. */ }
       }
     },
     onCutoverUncertain: message => {

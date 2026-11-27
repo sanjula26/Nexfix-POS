@@ -10,6 +10,16 @@ export type MigrationLease<TState = unknown> = {
 export type MigrationSnapshot = unknown;
 export type MigrationJournal = { phase: string };
 
+export type MigrationCheckpoint =
+  | 'after_snapshot'
+  | 'after_copy_app_state'
+  | 'after_copy_sync_queue'
+  | 'after_copy_meta'
+  | 'after_copy_restore_checkpoint'
+  | 'after_verification'
+  | 'before_folder_primary'
+  | 'after_folder_primary_before_adapter_activation';
+
 export type MigrationDependencies<J extends MigrationJournal, S extends MigrationSnapshot, TState = unknown> = {
   getProfileStatus: () => Promise<{ unlocked: boolean; profile?: { profileId?: string } }>;
   pauseStorageMaintenance: () => Promise<MigrationLease<TState>>;
@@ -22,8 +32,10 @@ export type MigrationDependencies<J extends MigrationJournal, S extends Migratio
   recordVerification: (purpose: MigrationPurpose, details: { revision: number; bytes: number; sha256: string }) => Promise<J>;
   writePayload: (purpose: MigrationPurpose, serialized: string) => Promise<{ revision: number; bytes: number }>;
   readPayload: (purpose: MigrationPurpose) => Promise<string | null>;
-  setFolderPrimary: () => void;
+  setFolderPrimary: () => void | Promise<void>;
   onCutoverUncertain?: (message: string) => void;
+  /** Test-only callers may pause at durable checkpoints; production leaves this unset. */
+  onCheckpoint?: (checkpoint: MigrationCheckpoint) => void | Promise<void>;
 };
 
 const PURPOSES: MigrationPurpose[] = ['app_state', 'sync_queue', 'meta', 'restore_checkpoint'];
@@ -59,6 +71,7 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
   let releaseOnFinish = true;
   try {
     const snapshot = await dependencies.readSnapshot();
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_snapshot');
     const payloads = dependencies.buildPayloads(snapshot, lease.latestState, lease.queueSaved);
     const serialized = {} as Record<MigrationPurpose, string>;
     const copied = {} as Record<MigrationPurpose, { revision: number; bytes: number; sha256: string }>;
@@ -78,6 +91,7 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
       const sha256 = await sha256Hex(payload);
       copied[purpose] = { revision: result.revision, bytes: result.bytes, sha256 };
       journal = await dependencies.recordCopy(purpose, copied[purpose]);
+      if (dependencies.onCheckpoint) await dependencies.onCheckpoint(('after_copy_' + purpose) as MigrationCheckpoint);
     }
 
     await dependencies.transition('verifying');
@@ -93,10 +107,13 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
       }
       journal = await dependencies.recordVerification(purpose, copied[purpose]);
     }
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_verification');
 
     await dependencies.transition('ready_to_cutover');
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('before_folder_primary');
     try {
       journal = await dependencies.transition('folder_primary');
+      if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_folder_primary_before_adapter_activation');
     } catch (error) {
       if (isCutoverUncertain(error)) {
         releaseOnFinish = false;
@@ -106,7 +123,8 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
     }
 
     try {
-      dependencies.setFolderPrimary();
+      const activation = dependencies.setFolderPrimary();
+      if (activation) await activation;
     } catch {
       releaseOnFinish = false;
       const message = 'Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.';

@@ -6,6 +6,9 @@ import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
+import { createCloudRequestDeadline } from './cloudTransport';
+import { createFingerprintSyncCoordinator } from './catalogSyncCoordinator';
+import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
 
 const DEVICE_KEY = 'nexfix_device_id';
 const SHOP_KEY = 'nexfix_cloud_shop_id';
@@ -388,19 +391,25 @@ export async function findCloudCustomerByPhone(
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  // Keep the paged fallback compatible with legacy phone formats, but transfer
-  // only the fields needed to identify a match. Fetch details for one matched row.
-  const rows: Array<{ id: string; phone: string | null; name: string }> = [];
-  for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from('customers').select('id,phone,name')
-      .eq('shop_id', shopId).order('id').range(offset, offset + 499);
-    if (error) return { ok: false, error: error.message };
-    const page = data || [];
-    rows.push(...page);
-    if (page.length < 500) break;
+  // Most saved customers use the same phone formatting on each POS. Try
+  // the indexed exact value first so a normal match does not scan every
+  // customer page. Keep the paged normalized fallback for legacy formats.
+  const exactLookup = await supabase.from('customers').select('id,phone,name')
+    .eq('shop_id', shopId).eq('phone', phone.trim()).order('id').limit(1).maybeSingle();
+  if (exactLookup.error) return { ok: false, error: exactLookup.error.message };
+  let match: { id: string; phone: string | null; name: string } | undefined = exactLookup.data || undefined;
+  if (!match) {
+    const rows: Array<{ id: string; phone: string | null; name: string }> = [];
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase.from('customers').select('id,phone,name')
+        .eq('shop_id', shopId).order('id').range(offset, offset + 499);
+      if (error) return { ok: false, error: error.message };
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < 500) break;
+    }
+    match = rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
   }
-  const exact = rows.find(row => String(row.phone || '').trim() === phone.trim());
-  const match = exact || rows.find(row => row.phone && normalizeWhatsAppPhone(row.phone) === normalized);
   if (!match) return { ok: true };
 
   const { data: customer, error: detailError } = await supabase.from('customers')
@@ -453,7 +462,7 @@ export async function ensureCloudCustomerForSale(
   return { ok: false, error: inserted.error.message };
 }
 
-export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
+async function syncNormalizedCatalogRaw(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
@@ -781,6 +790,37 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
   return { ok: true, customerIdMap };
 }
 
+
+type NormalizedCatalogSyncResult = { ok: boolean; error?: string; customerIdMap?: Record<string, string> };
+const normalizedCatalogSyncCoordinator = createFingerprintSyncCoordinator<NormalizedCatalogSyncResult>();
+
+/**
+ * App startup/background reconciliation and POS sale preflight share this
+ * coordinator. A sale must wait for an unsynced catalog change, but it must
+ * not re-upload every supplier/product/customer for every bill.
+ */
+export async function syncNormalizedCatalog(
+  state: POSState,
+  shopId = getCloudShopId(),
+): Promise<NormalizedCatalogSyncResult> {
+  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
+  if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
+
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) return { ok: false, error: sessionError.message };
+  const userId = sessionData.session?.user.id;
+  if (!userId) return { ok: false, error: 'Cloud session is not available' };
+
+  const identity = `${shopId}:${userId}`;
+  const fingerprint = buildNormalizedCatalogSyncFingerprint(state);
+  return normalizedCatalogSyncCoordinator.run(
+    identity,
+    fingerprint,
+    () => syncNormalizedCatalogRaw(state, shopId),
+  );
+}
+
 export async function deleteInventoryUnitAtomic(input: {
   shopId: string; branchId?: string; deviceId: string; unitId: string;
 }): Promise<{ ok: boolean; productId?: string; productStock?: number; error?: string }> {
@@ -820,26 +860,76 @@ export interface CommittedCloudSale {
 }
 
 export async function completeSaleAtomic(input: {
-  shopId: string; branchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
+  shopId: string; branchId?: string; resolvedBranchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
-}): Promise<{ ok: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
-  if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'offline' };
-  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  if (sessionError) return { ok: false, error: sessionError.message };
-  if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
-  if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
-  const { data, error } = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
-  if (error) return { ok: false, error: error.message };
+}): Promise<{ ok: boolean; rpcAttempted?: boolean; alreadyCommitted?: boolean; saleId?: string; billNo?: string; total?: number; error?: string; committed?: CommittedCloudSale }> {
+  const client = supabase;
+  if (!supabaseConfigured || !client) return { ok: false, rpcAttempted: false, error: 'Cloud is not configured' };
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, rpcAttempted: false, error: 'offline' };
+  if (!input.shopId) return { ok: false, rpcAttempted: false, error: 'Cloud shop is not configured' };
+
+  // Explicitly mark the boundary before the atomic transaction is sent. A
+  // transport error after this line is ambiguous and must never trigger a new
+  // local-only bill: PostgreSQL may have committed and only the response was lost.
+  const getCloudSession = () => client.auth.getSession();
+  let sessionData: Awaited<ReturnType<typeof getCloudSession>>['data'];
+  try {
+    const session = await getCloudSession();
+    if (session.error) return { ok: false, rpcAttempted: false, error: session.error.message };
+    sessionData = session.data;
+  } catch (error) {
+    return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (!sessionData.session) return { ok: false, rpcAttempted: false, error: 'Cloud session is not available' };
+
+  let branch: Awaited<ReturnType<typeof resolveCloudBranchId>>;
+  const preResolvedBranchId = input.resolvedBranchId?.trim();
+  if (input.resolvedBranchId !== undefined) {
+    if (!preResolvedBranchId || preResolvedBranchId === 'local-main') {
+      return { ok: false, rpcAttempted: false, error: 'A valid resolved cloud branch is required' };
+    }
+    // The POS already resolved this branch for cashier-session validation.
+    // The atomic server RPC below still re-checks the authenticated device binding.
+    branch = { ok: true, branchId: preResolvedBranchId };
+  } else {
+    try {
+      branch = await resolveCloudBranchId(input.shopId, input.branchId);
+    } catch (error) {
+      return { ok: false, rpcAttempted: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  if (!branch.ok || !branch.branchId) return { ok: false, rpcAttempted: false, error: branch.error || 'Branch is required' };
+
+  // Bound the cashier wait if the Supabase RPC stops responding. Aborting
+  // the HTTP request does not prove PostgreSQL rolled back, so keep this as an
+  // ambiguous post-RPC result and leave the caller's stable Sale ID marker intact.
+  const deadline = createCloudRequestDeadline(15_000);
+  const timeoutMessage = 'Cloud sale request timed out after 15 seconds. The server may still have committed this bill. Reconnect and retry the same cart to reconcile its original Sale ID; do not create a new bill.';
+  const sendAtomicSale = () => client.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId!, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments }).abortSignal(deadline.signal);
+  let rpcResponse: Awaited<ReturnType<typeof sendAtomicSale>>;
+  try {
+    rpcResponse = await sendAtomicSale();
+  } catch (error) {
+    const message = deadline.didTimeout()
+      ? timeoutMessage
+      : error instanceof Error ? error.message : String(error);
+    return { ok: false, rpcAttempted: true, error: message };
+  } finally {
+    deadline.dispose();
+  }
+  // Some client versions surface an aborted fetch as a resolved PostgREST
+  // error result. Preserve the same ambiguous-commit warning in either case.
+  if (deadline.didTimeout()) return { ok: false, rpcAttempted: true, error: timeoutMessage };
+  const { data, error } = rpcResponse;
+  if (error) return { ok: false, rpcAttempted: true, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
-  if (!row?.ok || !row.sale) return { ok: false, error: String(row?.error || row?.message || 'Cloud sale was not committed') };
+  if (!row?.ok || !row.sale) return { ok: false, rpcAttempted: true, error: String(row?.error || row?.message || 'Cloud sale was not committed') };
   void refreshCloudBranchStock(input.shopId, branch.branchId).catch(() => {});
   return {
     ok: true,
+    rpcAttempted: true,
     alreadyCommitted: row.already_committed === true,
     saleId: row.sale_id,
     billNo: row.bill_no,

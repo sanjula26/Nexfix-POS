@@ -6,7 +6,11 @@ import { AlertTriangle, Download, Loader2, Sparkles } from 'lucide-react';
 import { setDesktopProfilePrimary } from './lib/db';
 import { migrateIndexedDBToEncryptedPOSFolder } from './lib/storageOverflowMigration';
 import { runAutomaticPOSOverflowMigration } from './lib/storageOverflowAutoMigration';
-import { subscribeToStorageQuotaWarnings, type StorageQuotaWarning } from './lib/storageOverflowEvents';
+import {
+  STORAGE_PRIMARY_COMMITTED_EVENT,
+  subscribeToStorageQuotaWarnings,
+  type StorageQuotaWarning,
+} from './lib/storageOverflowEvents';
 import {
   createDesktopPOSProfile,
   finalizeDesktopPOSProfileCreation,
@@ -24,6 +28,7 @@ import {
 } from './lib/desktopProfileStorage';
 import { POSProvider, usePOS } from './lib/store';
 import { startSyncManager } from './lib/syncManager';
+import { getPendingOfflineSaleQueueIds, getPendingSyncOperations } from './lib/offline';
 import { scheduleCloudSync, cancelScheduledCloudSync } from './lib/cloudSyncBridge';
 import { syncNormalizedCatalog } from './lib/cloudSync';
 import { refreshDesktopUpdaterCredentials } from './lib/cloudAuth';
@@ -157,8 +162,42 @@ function CloudSyncStateBridge() {
       cancelScheduledCloudSync();
       return;
     }
-    scheduleCloudSync();
-    return () => cancelScheduledCloudSync();
+
+    let cancelled = false;
+    let generation = 0;
+    const scheduleWhenSaleOutboxIsClear = async () => {
+      const attempt = ++generation;
+      try {
+        const [recoveryIds, operations] = await Promise.all([
+          getPendingOfflineSaleQueueIds(),
+          getPendingSyncOperations(),
+        ]);
+        if (cancelled || attempt !== generation) return;
+        const hasPendingQueueWork = recoveryIds.length > 0 || operations.length > 0;
+        if (hasPendingQueueWork) {
+          // A durable offline transaction (or snapshot write) must be processed
+          // by the ordered sync queue first. Never race a legacy full-state
+          // snapshot against a normalized sale/GRN/return operation.
+          cancelScheduledCloudSync();
+          return;
+        }
+        scheduleCloudSync();
+      } catch {
+        // Storage/outbox state could not be inspected. Fail closed rather than
+        // upload a local sale snapshot whose normalized commit is unconfirmed.
+        if (!cancelled && attempt === generation) cancelScheduledCloudSync();
+      }
+    };
+    const onOutboxChanged = () => { void scheduleWhenSaleOutboxIsClear(); };
+    window.addEventListener('nexfix:offline-sale-outbox-changed', onOutboxChanged);
+    void scheduleWhenSaleOutboxIsClear();
+
+    return () => {
+      cancelled = true;
+      generation += 1;
+      window.removeEventListener('nexfix:offline-sale-outbox-changed', onOutboxChanged);
+      cancelScheduledCloudSync();
+    };
   }, [cloudSnapshotTrigger, userId, connectivity]);
 
   useEffect(() => {
@@ -629,11 +668,11 @@ function DesktopOverflowFolderSetup({ children }: { children: ReactNode }) {
       });
     };
     window.addEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-    window.addEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+    window.addEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, reloadFolderStatus);
     window.addEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     return () => {
       window.removeEventListener('nexfix:storage-primary-error', onPrimaryStorageError);
-      window.removeEventListener('nexfix:storage-primary-committed', reloadFolderStatus);
+      window.removeEventListener(STORAGE_PRIMARY_COMMITTED_EVENT, reloadFolderStatus);
       window.removeEventListener('nexfix:storage-folder-updated', reloadFolderStatus);
     };
   }, [desktopApi]);

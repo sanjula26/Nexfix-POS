@@ -27,10 +27,30 @@
     <p>Choose a parent folder used only for disposable QA data. The app creates a new child folder and an exclusive QA sentinel; it never clears or reuses existing folder contents.</p>
     <button id="choose-folder" type="button">Choose disposable QA folder</button>
     <button id="create-profile" type="button" disabled>Verify encrypted QA profile</button>
-    <button id="inject-quota" type="button" disabled>Run one-shot quota event test</button>
+    <label for="quota-domain">Inject one-shot quota failure at:</label>
+    <select id="quota-domain" disabled>
+      <option value="app_state">POS state save</option>
+      <option value="restore_checkpoint">Restore checkpoint save</option>
+      <option value="sync_queue">Offline sync queue save</option>
+      <option value="meta">Backup / GRN recovery metadata save</option>
+    </select>
+    <button id="inject-quota" type="button" disabled>Run real IndexedDB quota-path test</button>
+    <label for="interruption-phase">Stop migration after this durable checkpoint:</label>
+    <select id="interruption-phase" disabled>
+      <option value="after_snapshot">After source snapshot</option>
+      <option value="after_copy_app_state">After app state copy</option>
+      <option value="after_copy_sync_queue">After offline queue copy</option>
+      <option value="after_copy_meta">After backup / GRN metadata copy</option>
+      <option value="after_copy_restore_checkpoint">After restore checkpoint copy</option>
+      <option value="after_verification">After all read-back verification</option>
+      <option value="before_folder_primary">Before folder-primary cutover</option>
+      <option value="after_folder_primary_before_adapter_activation">After durable folder-primary marker, before adapter activation</option>
+    </select>
+    <button id="run-interruption" type="button" disabled>Run restart-recovery test (app will close)</button>
+    <button id="verify-recovery" type="button" disabled>Verify / recover previous interrupted run</button>
     <p id="result" role="status" aria-live="polite">No QA folder selected.</p>
     <code id="folder-path"></code>
-    <div class="notice">The encrypted-profile test uses the reviewed production profile/session and OS-unlock modules against disposable QA data. The one-shot synthetic quota event invokes the automatic migration coordinator and verifies encrypted copy/read-back for all four data domains. It does not fill a disk or test process interruption/restart recovery yet.</div>
+    <div class="notice">This isolated QA app uses its own Windows user-data folder and IndexedDB database. Quota tests throw a controlled QuotaExceededError at one production IndexedDB write boundary without consuming disk space. Restart tests stop only this QA app at a named durable migration checkpoint; reopen the same QA app and press Verify / recover to inspect the journal and safely retry from the preserved IndexedDB snapshot. Use a fresh disposable QA folder/profile for every run. Never use a live POS profile or data folder.</div>
   </main>
   <script type="module" src="./renderer.ts"></script>
 </body>

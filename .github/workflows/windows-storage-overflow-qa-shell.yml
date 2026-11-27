@@ -2,7 +2,7 @@ name: Windows Storage Overflow QA Shell (No Publish)
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/local-pos-data-profile-20261122]
     paths:
       - 'electron/qa/**'
       - 'tests/storage-qa-profile-runtime-parity.test.cjs'

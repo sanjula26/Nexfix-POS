@@ -25,4 +25,8 @@ contextBridge.exposeInMainWorld('nexfixStorageQA', Object.freeze({
   appName: 'Nexfix POS Storage QA',
   mode: 'offline-only-encrypted-profile-and-quota-fixture',
   chooseFolder: () => ipcRenderer.invoke('pos-overflow-folder:choose'),
+  armInterruption: payload => ipcRenderer.invoke('nexfix-storage-qa:arm-interruption', payload),
+  phaseCheckpoint: payload => ipcRenderer.invoke('nexfix-storage-qa:phase-checkpoint', payload),
+  getLastInterruption: () => ipcRenderer.invoke('nexfix-storage-qa:last-interruption'),
+  clearLastInterruption: payload => ipcRenderer.invoke('nexfix-storage-qa:clear-last-interruption', payload),
 }));
