@@ -71,6 +71,9 @@ export async function withCloudActivity<T>(
       lastSuccessAt = Date.now();
       lastSuccessOperation = operation;
       publish();
+    } else if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' && result.error) {
+      lastError = result.error;
+      publish();
     }
     return result;
   } catch (error) {
