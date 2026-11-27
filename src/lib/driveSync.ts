@@ -12,6 +12,7 @@ import {
 } from './backupCrypto';
 import { ensureCloudShop } from './cloudSync';
 import { isValidGoogleBackupManifest, type GoogleBackupManifest } from './backupManifest';
+import { reportCloudActivityFailure, withCloudActivity } from './cloudActivity';
 
 const URL_KEY = 'nexfix_google_script_url_v2';
 const ENABLED_KEY = 'nexfix_google_sync_enabled';
@@ -581,7 +582,8 @@ async function getGoogleDeploymentError(shopId: string, shopProof: string): Prom
   }
 }
 
-export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{ ok: boolean; error?: string }> {
+export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto' = 'manual'): Promise<{
+  const result = await withCloudActivity('Google Drive backup', async () => { ok: boolean; error?: string }> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google backup requires an online connection.' };
   let shopId = '';
@@ -707,9 +709,14 @@ export async function backupStateToGoogle(state: unknown, kind: 'manual' | 'auto
     console.error('[Google Backup] encryption/upload failed', error);
     return { ok: false, error: message };
   }
+
+  }, result => result.ok);
+  if (!result.ok) reportCloudActivityFailure(result.error || 'Google Drive backup failed');
+  return result;
 }
 
-export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ ok: boolean; error?: string }> {
+export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{
+  const result = await withCloudActivity('Google Drive metadata', async () => { ok: boolean; error?: string }> {
   if (!isGoogleSyncEnabled() || !getGoogleScriptUrl()) return { ok: false, error: 'Central Google Drive backup is not configured.' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok: false, error: 'Google Drive requires an online connection.' };
 
@@ -769,6 +776,10 @@ export async function syncShopMetadataToGoogleDrive(state: unknown): Promise<{ o
     console.error('[Google Backup] shop metadata sync failed', error);
     return { ok: false, error: message };
   }
+
+  }, result => result.ok);
+  if (!result.ok) reportCloudActivityFailure(result.error || 'Google Drive metadata failed');
+  return result;
 }
 
 export async function syncToGoogleDrive(_tableName: string, _dataRows: unknown[]): Promise<boolean> {
