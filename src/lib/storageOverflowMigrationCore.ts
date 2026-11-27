@@ -71,7 +71,7 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
   let releaseOnFinish = true;
   try {
     const snapshot = await dependencies.readSnapshot();
-    await dependencies.onCheckpoint?.('after_snapshot');
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_snapshot');
     const payloads = dependencies.buildPayloads(snapshot, lease.latestState, lease.queueSaved);
     const serialized = {} as Record<MigrationPurpose, string>;
     const copied = {} as Record<MigrationPurpose, { revision: number; bytes: number; sha256: string }>;
@@ -91,7 +91,7 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
       const sha256 = await sha256Hex(payload);
       copied[purpose] = { revision: result.revision, bytes: result.bytes, sha256 };
       journal = await dependencies.recordCopy(purpose, copied[purpose]);
-      await dependencies.onCheckpoint?.(('after_copy_' + purpose) as MigrationCheckpoint);
+      if (dependencies.onCheckpoint) await dependencies.onCheckpoint(('after_copy_' + purpose) as MigrationCheckpoint);
     }
 
     await dependencies.transition('verifying');
@@ -107,13 +107,13 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
       }
       journal = await dependencies.recordVerification(purpose, copied[purpose]);
     }
-    await dependencies.onCheckpoint?.('after_verification');
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_verification');
 
     await dependencies.transition('ready_to_cutover');
-    await dependencies.onCheckpoint?.('before_folder_primary');
+    if (dependencies.onCheckpoint) await dependencies.onCheckpoint('before_folder_primary');
     try {
       journal = await dependencies.transition('folder_primary');
-      await dependencies.onCheckpoint?.('after_folder_primary_before_adapter_activation');
+      if (dependencies.onCheckpoint) await dependencies.onCheckpoint('after_folder_primary_before_adapter_activation');
     } catch (error) {
       if (isCutoverUncertain(error)) {
         releaseOnFinish = false;
@@ -123,7 +123,8 @@ export async function runEncryptedPOSFolderMigration<J extends MigrationJournal,
     }
 
     try {
-      await dependencies.setFolderPrimary();
+      const activation = dependencies.setFolderPrimary();
+      if (activation) await activation;
     } catch {
       releaseOnFinish = false;
       const message = 'Folder-primary cutover committed but the file-backed database adapter could not be activated. Keep POS closed and restart Nexfix.';
