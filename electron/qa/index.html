@@ -27,10 +27,17 @@
     <p>Choose a parent folder used only for disposable QA data. The app creates a new child folder and an exclusive QA sentinel; it never clears or reuses existing folder contents.</p>
     <button id="choose-folder" type="button">Choose disposable QA folder</button>
     <button id="create-profile" type="button" disabled>Verify encrypted QA profile</button>
-    <button id="inject-quota" type="button" disabled>Run one-shot quota event test</button>
+    <label for="quota-domain">Inject one-shot quota failure at:</label>
+    <select id="quota-domain" disabled>
+      <option value="app_state">POS state save</option>
+      <option value="restore_checkpoint">Restore checkpoint save</option>
+      <option value="sync_queue">Offline sync queue save</option>
+      <option value="meta">Backup / GRN recovery metadata save</option>
+    </select>
+    <button id="inject-quota" type="button" disabled>Run real IndexedDB quota-path test</button>
     <p id="result" role="status" aria-live="polite">No QA folder selected.</p>
     <code id="folder-path"></code>
-    <div class="notice">The encrypted-profile test uses the reviewed production profile/session and OS-unlock modules against disposable QA data. The one-shot synthetic quota event invokes the automatic migration coordinator and verifies encrypted copy/read-back for all four data domains. It does not fill a disk or test process interruption/restart recovery yet.</div>
+    <div class="notice">This isolated QA app uses its own Windows user-data folder and IndexedDB database. The one-shot test throws a controlled QuotaExceededError at the selected production IndexedDB transaction boundary, then verifies the real quota-warning listener and automatic encrypted-folder migration. It does not consume disk space or write to the production POS profile. Run one domain per fresh disposable QA profile; named interruption/restart tests are separate.</div>
   </main>
   <script type="module" src="./renderer.ts"></script>
 </body>
