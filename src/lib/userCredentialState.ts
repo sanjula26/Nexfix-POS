@@ -79,10 +79,14 @@ export function saveManagedUserIfCurrent(
     return null;
   }
 
+  const nextUsers = targetSnapshot
+    ? state.users.map(user => user.id === targetSnapshot.id ? nextUser : user)
+    : [...state.users, nextUser];
+  // Never allow a staff edit to remove the final active Admin account.
+  if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;
+
   return {
     ...state,
-    users: targetSnapshot
-      ? state.users.map(user => user.id === targetSnapshot.id ? nextUser : user)
-      : [...state.users, nextUser],
+    users: nextUsers,
   };
 }
