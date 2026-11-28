@@ -131,20 +131,20 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           if(state){
-            const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId);
+            const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId,parsed.branchId);
             if(!catalog.ok) break;
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit]});
+          const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit],requireExactBranch:true});
           if(!restored.ok) break;
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id});
+          const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id,requireExactBranch:true});
           if(!deleted.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
@@ -171,14 +171,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             const additions=new Map<string,number>();
             for(const unit of parsed.units||[]) if(newIds.has(unit.id)) additions.set(unit.productId,(additions.get(unit.productId)||0)+1);
             const bootstrapState={...state,units:[],products:state.products.map(product=>({...product,stock:Math.max(0,product.stock-(additions.get(product.id)||0))}))};
-            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
+            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
             if(!catalog.ok) break;
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId});
+          const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId,requireExactBranch:true});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
           continue;
@@ -202,20 +202,20 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           if(parsed.baseProduct && state){
             const hasBaseProduct=state.products.some(product=>product.id===parsed.baseProduct!.id); const bootstrapState={...state,products:hasBaseProduct?state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product):[...state.products,parsed.baseProduct!]};
-            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
+            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
             if(!catalog.ok) break;
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId});
+          const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId,requireExactBranch:true});
           if(!result.ok && result.error?.includes('Product is not synced to this cloud shop yet') && state){
             if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
               blockedUnsafeScopedTransactionReplay = true;
               break;
             }
-            const catalog=await syncNormalizedCatalog(state,shop.shopId);
+            const catalog=await syncNormalizedCatalog(state,shop.shopId,parsed.branchId);
             if(!catalog.ok) break;
             // Catalog bootstrap already includes this local product's final stock.
             acknowledged.push(op.id); flushed++;
@@ -269,7 +269,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           if (state) {
-            const catalog = await syncNormalizedCatalog(state, shop.shopId);
+            const queuedBranchId = parsed.input.branchId || 'local-main';
+            const catalog = await syncNormalizedCatalog(state, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
               await markRetry(catalog.error || 'Product/customer data could not be prepared for Cloud sync.');
               break;
@@ -290,7 +291,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const result = await completeSaleAtomic({
             shopId: shop.shopId,
-            branchId: parsed.input.branchId || state?.settings.branchId || 'local-main',
+            branchId: queuedBranchId,
+            requireExactBranch: true,
             deviceId: getMachineIdentity().id,
             saleId: parsed.saleId,
             customerId: parsed.input.customerId,
@@ -396,7 +398,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const catalogState = state || undefined;
           if (catalogState) {
-            const catalog = await syncNormalizedCatalog(catalogState, shop.shopId);
+            const queuedBranchId = parsed.input.purchase.branchId || 'local-main';
+            const catalog = await syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
               await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
               break;
@@ -410,7 +413,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const result = await receivePurchaseAtomic({
             shopId: shop.shopId,
-            branchId: parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',
+            branchId: queuedBranchId,
+            requireExactBranch: true,
             deviceId: parsed.input.deviceId,
             purchaseId: parsed.purchaseId,
             purchase: parsed.input.purchase,
