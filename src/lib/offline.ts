@@ -1,6 +1,8 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { getCloudActivityScope } from './cloudActivity';
+import { acknowledgeCloudRecordQueue, notifyCloudRecordSyncChanged } from './cloudRecordSync';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
@@ -54,6 +56,7 @@ export async function queueWrite(note?:string):Promise<void>{
     const ok=await idbEnqueue({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
     if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
   }
+  notifyCloudRecordSyncChanged();
 }
 
 export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product}):Promise<void>{
@@ -69,7 +72,7 @@ export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:st
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
 export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
-export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
+export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
 export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
@@ -183,7 +186,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             });
             if (!tradeIn.ok) break;
           }
-          acknowledged.push(op.id); flushed++;
+          const scope = getCloudActivityScope();
+          if (!scope || scope.shopId !== shop.shopId) break;
+          const saved = await acknowledgeCloudRecordQueue(scope, 'sale', parsed.saleId, op.id, 'Offline sale sync');
+          if (!saved) break;
+          flushed++;
           continue;
         }catch{break;}
       }
@@ -200,7 +207,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const result=await receivePurchaseAtomic({shopId:shop.shopId,branchId:parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',deviceId:parsed.input.deviceId,purchaseId:parsed.purchaseId,purchase:parsed.input.purchase});
           if(!result.ok) break;
-          acknowledged.push(op.id); flushed++;
+          const scope = getCloudActivityScope();
+          if (!scope || scope.shopId !== shop.shopId) break;
+          const saved = await acknowledgeCloudRecordQueue(scope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync');
+          if (!saved) break;
+          flushed++;
           continue;
         }catch{break;}
       }
