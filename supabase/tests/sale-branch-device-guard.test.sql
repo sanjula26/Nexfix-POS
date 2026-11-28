@@ -2,7 +2,7 @@
 -- Every row is inserted inside a transaction and rolled back; no hosted data is used.
 begin;
 
-select plan(22);
+select plan(26);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password,
@@ -277,6 +277,26 @@ select ok(
   and not has_function_privilege('anon', 'public.register_trade_in_atomic_for_device_branch(uuid,text,uuid,uuid,uuid,numeric,text,text)', 'EXECUTE')
   and not has_function_privilege('anon', 'public.request_sale_reversal_for_device_branch(uuid,uuid,uuid,text,text)', 'EXECUTE'),
   'anon cannot execute any guarded sale transaction RPC'
+);
+
+
+select ok(
+  has_function_privilege('authenticated', 'public.process_sale_return_atomic(uuid,uuid,uuid,text,text,text,jsonb)', 'EXECUTE'),
+  'older authenticated clients can reach the sale-return upgrade stub'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.register_trade_in_atomic(uuid,uuid,uuid,uuid,numeric,text,text)', 'EXECUTE'),
+  'older authenticated clients can reach the trade-in upgrade stub'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.request_sale_reversal(uuid,uuid,uuid,text)', 'EXECUTE'),
+  'older authenticated clients can reach the bill-reversal upgrade stub'
+);
+select ok(
+  not has_function_privilege('anon', 'public.process_sale_return_atomic(uuid,uuid,uuid,text,text,text,jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.register_trade_in_atomic(uuid,uuid,uuid,uuid,numeric,text,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.request_sale_reversal(uuid,uuid,uuid,text)', 'EXECUTE'),
+  'anon cannot execute any legacy sale-transaction RPC'
 );
 
 select * from finish();
