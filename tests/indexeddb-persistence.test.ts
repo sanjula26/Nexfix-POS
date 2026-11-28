@@ -10,6 +10,9 @@ import {
   idbEnqueue,
   idbGetCloudSyncMeta,
   idbSetCloudSyncMeta,
+  idbGetCloudRecordSyncStatuses,
+  idbMarkCloudRecordSynced,
+  idbAcknowledgeCloudRecordQueue,
   idbListQueue,
   idbLoadRestoreCheckpoint,
   idbLoadState,
@@ -39,6 +42,88 @@ test('cloud sync metadata persists independently per shop and cloud user', async
   assert.equal(await idbGetCloudSyncMeta('shop-a', 'cloud-user-b'), null);
   assert.equal(await idbSetCloudSyncMeta('shop-a', 'cloud-user-a', { ...first, lastSuccessAt: 'invalid' }), false);
   assert.equal((await idbGetCloudSyncMeta('shop-a', 'cloud-user-a'))?.lastSuccessAt, first.lastSuccessAt);
+});
+
+test('Cloud record confirmations persist independently per shop and Cloud user', async () => {
+  const saleEntry = { confirmedAt: '2026-11-28T04:00:00.000Z', operation: 'Cloud sale' };
+  const purchaseEntry = { confirmedAt: '2026-11-28T04:01:00.000Z', operation: 'GRN receive' };
+
+  assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'sale', 'sale-001', 'Cloud sale', saleEntry.confirmedAt), true);
+  assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'purchase', 'purchase-001', 'GRN receive', purchaseEntry.confirmedAt), true);
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-shop-a', 'record-user-a'), {
+    'sale:sale-001': saleEntry,
+    'purchase:purchase-001': purchaseEntry,
+  });
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-shop-b', 'record-user-a'), {});
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-shop-a', 'record-user-b'), {});
+  assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'sale', '', 'Cloud sale'), false);
+  assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'sale', 'sale-001', 'Cloud sale', 'invalid'), false);
+});
+
+test('offline sale and GRN queue acknowledgements save Cloud proof and remove only the matching queue entry', async () => {
+  assert.equal(await idbEnqueue({
+    type: 'sale_create',
+    id: 'sale:record-queued-sale',
+    payload: JSON.stringify({ saleId: 'record-queued-sale' }),
+  }), true);
+  assert.equal(await idbEnqueue({
+    type: 'purchase_receive',
+    id: 'purchase-receive:record-queued-grn',
+    payload: JSON.stringify({ purchaseId: 'record-queued-grn' }),
+  }), true);
+  assert.equal(await idbEnqueue({ type: 'state_write', id: 'record-keep-state' }), true);
+
+  assert.equal(await idbAcknowledgeCloudRecordQueue(
+    'record-queue-shop', 'record-queue-user', 'sale', 'record-queued-sale',
+    'sale:record-queued-sale', 'Offline sale sync', '2026-11-28T04:02:00.000Z',
+  ), true);
+  assert.equal(await idbAcknowledgeCloudRecordQueue(
+    'record-queue-shop', 'record-queue-user', 'purchase', 'record-queued-grn',
+    'purchase-receive:record-queued-grn', 'Offline GRN sync', '2026-11-28T04:03:00.000Z',
+  ), true);
+
+  const remaining = (await idbListQueue()).map(item => item.id);
+  assert.equal(remaining.includes('sale:record-queued-sale'), false);
+  assert.equal(remaining.includes('purchase-receive:record-queued-grn'), false);
+  assert.equal(remaining.includes('record-keep-state'), true);
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-queue-shop', 'record-queue-user'), {
+    'sale:record-queued-sale': { confirmedAt: '2026-11-28T04:02:00.000Z', operation: 'Offline sale sync' },
+    'purchase:record-queued-grn': { confirmedAt: '2026-11-28T04:03:00.000Z', operation: 'Offline GRN sync' },
+  });
+  assert.equal(await idbAcknowledgeCloudRecordQueue(
+    'record-queue-shop', 'record-queue-user', 'sale', 'record-queued-sale',
+    'sale:another-record', 'Offline sale sync',
+  ), false);
+});
+
+test('failed Cloud confirmation persistence leaves the offline queue item untouched', async () => {
+  const queueId = 'purchase-receive:record-meta-failure';
+  assert.equal(await idbEnqueue({
+    type: 'purchase_receive',
+    id: queueId,
+    payload: JSON.stringify({ purchaseId: 'record-meta-failure' }),
+  }), true);
+
+  const originalTransaction = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function (...args: Parameters<IDBDatabase['transaction']>) {
+    const stores = Array.isArray(args[0]) ? args[0] : [args[0]];
+    if (stores.includes('sync_queue') && stores.includes('meta')) {
+      throw new DOMException('Injected confirmation transaction failure', 'InvalidStateError');
+    }
+    return originalTransaction.apply(this, args);
+  } as IDBDatabase['transaction'];
+
+  try {
+    assert.equal(await idbAcknowledgeCloudRecordQueue(
+      'record-failure-shop', 'record-failure-user', 'purchase', 'record-meta-failure',
+      queueId, 'Offline GRN sync',
+    ), false);
+  } finally {
+    IDBDatabase.prototype.transaction = originalTransaction;
+  }
+
+  assert.ok((await idbListQueue()).some(item => item.id === queueId));
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-failure-shop', 'record-failure-user'), {});
 });
 
 test('cloud activity restores only the active cloud user/shop and persists successful transfers', async () => {
