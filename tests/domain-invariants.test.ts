@@ -1353,7 +1353,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
 
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedQueueScope)'));
-  assert.ok(syncManagerSource.includes('sign in to the original shop or ask Admin to reconcile before Cloud sync can continue'));
+  assert.ok(syncManagerSource.includes('restore the original shop/branch or ask Admin to reconcile before Cloud sync can continue'));
   assert.ok(syncManagerSource.includes('if (result.pendingTransactions)'));
   assert.ok(syncManagerSource.includes('full-state Cloud snapshot sync is paused until the queued transactions are confirmed'));
 });
@@ -1390,9 +1390,9 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
   assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId)');
   assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)', 'receivePurchaseAtomic({');
   assert.ok(saleReplay.includes("const queuedBranchId = parsed.input.branchId || 'local-main';"));
-  assert.ok(saleReplay.includes('branchId: queuedBranchId,\\n            requireExactBranch: true,'));
+  assert.ok(saleReplay.includes('branchId: queuedBranchId,') && saleReplay.includes('requireExactBranch: true,'));
   assert.ok(purchaseReplay.includes("const queuedBranchId = parsed.input.purchase.branchId || 'local-main';"));
-  assert.ok(purchaseReplay.includes('branchId: queuedBranchId,\\n            requireExactBranch: true,'));
+  assert.ok(purchaseReplay.includes('branchId: queuedBranchId,') && purchaseReplay.includes('requireExactBranch: true,'));
 
   const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
   assert.ok(cloudSyncSource.includes('requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, branches[0].id, branches.length)'));
