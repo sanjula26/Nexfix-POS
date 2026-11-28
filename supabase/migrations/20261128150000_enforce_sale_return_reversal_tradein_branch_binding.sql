@@ -491,3 +491,174 @@ grant execute on function public.resolve_sale_return_target(text)
   to authenticated;
 grant execute on function public.resolve_sale_return_items(uuid, uuid, jsonb)
   to authenticated;
+
+
+-- Reversal request lists are loaded into every authenticated POS session.
+-- Return only the rows visible to the current terminal's branch. A cloud Admin
+-- remains the shop-wide reviewer; other shop roles are limited to their branch.
+
+create or replace function private.list_sale_reversal_requests_for_device_branch(
+  p_shop_id uuid,
+  p_device_id text
+)
+returns setof jsonb
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare
+  v_uid uuid := auth.uid();
+  v_role text;
+  v_active_branch_count integer := 0;
+  v_branch_id uuid;
+  v_device_branch_id uuid;
+  v_has_binding boolean := false;
+begin
+  if v_uid is null then
+    raise exception 'Authentication required';
+  end if;
+  if p_shop_id is null
+     or nullif(btrim(coalesce(p_device_id, '')), '') is null
+     or length(p_device_id) > 200 then
+    raise exception 'Shop and valid POS device are required';
+  end if;
+
+  select m.role
+    into v_role
+  from public.shop_memberships m
+  where m.shop_id = p_shop_id
+    and m.user_id = v_uid
+    and m.active = true
+  limit 1;
+  if v_role is null then
+    raise exception 'Active shop membership required';
+  end if;
+
+  perform 1
+  from public.pos_devices pd
+  where pd.shop_id = p_shop_id::text
+    and pd.device_id = btrim(p_device_id)
+    and pd.user_id = v_uid
+    and pd.revoked_at is null
+  for share;
+  if not found then
+    raise exception 'POS device is not registered to this user for this shop';
+  end if;
+
+  select count(*)::integer
+    into v_active_branch_count
+  from public.branches b
+  where b.shop_id = p_shop_id
+    and b.active = true;
+  if v_active_branch_count = 0 then
+    raise exception 'Shop has no active branch';
+  end if;
+
+  if v_role <> 'admin' then
+    select d.branch_id
+      into v_device_branch_id
+    from public.pos_device_branches d
+    where d.shop_id = p_shop_id
+      and d.device_id = btrim(p_device_id)
+    for share;
+    v_has_binding := found;
+
+    if v_active_branch_count > 1 then
+      if not v_has_binding then
+        raise exception 'This POS device is not assigned to an active branch';
+      end if;
+      v_branch_id := v_device_branch_id;
+    else
+      select b.id
+        into v_branch_id
+      from public.branches b
+      where b.shop_id = p_shop_id
+        and b.active = true
+      limit 1
+      for share;
+      if v_has_binding and v_device_branch_id is distinct from v_branch_id then
+        raise exception 'This POS device has a stale branch assignment';
+      end if;
+    end if;
+
+    perform 1
+    from public.branches b
+    where b.id = v_branch_id
+      and b.shop_id = p_shop_id
+      and b.active = true
+    for share;
+    if not found then
+      raise exception 'Assigned POS branch is not active in this shop';
+    end if;
+  end if;
+
+  return query
+  select jsonb_build_object(
+    'id', r.id,
+    'saleId', r.sale_id,
+    'billNo', r.bill_no,
+    'reason', r.reason,
+    'requestedBy', coalesce(p.full_name, au.email, r.requested_by::text),
+    'requestedAt', r.requested_at,
+    'status', r.status,
+    'reviewedBy', r.reviewed_by::text,
+    'reviewedAt', r.reviewed_at,
+    'reviewNote', r.review_note
+  )
+  from public.sale_reversal_requests r
+  join public.sales s
+    on s.id = r.sale_id
+   and s.shop_id = r.shop_id
+  left join public.profiles p on p.id = r.requested_by
+  left join auth.users au on au.id = r.requested_by
+  where r.shop_id = p_shop_id
+    and (v_role = 'admin' or s.branch_id = v_branch_id)
+  order by r.requested_at desc
+  limit 200;
+end;
+$function$;
+
+create or replace function public.list_sale_reversal_requests_for_device_branch(
+  p_shop_id uuid,
+  p_device_id text
+)
+returns setof jsonb
+language sql
+security invoker
+set search_path to ''
+as $wrapper$
+  select * from private.list_sale_reversal_requests_for_device_branch(p_shop_id, p_device_id);
+$wrapper$;
+
+-- The original shop-wide list has no terminal identity. Keep it as an upgrade
+-- notice so an old client cannot silently load another branch's reversal queue.
+create or replace function public.list_sale_reversal_requests(p_shop_id uuid)
+returns setof jsonb
+language plpgsql
+security invoker
+set search_path to ''
+as $legacy$
+begin
+  raise exception 'This Nexfix POS client is outdated. Update the POS before loading Cloud bill reversal requests.';
+end;
+$legacy$;
+
+revoke all on function private.list_sale_reversal_requests(uuid)
+  from public, anon, authenticated;
+revoke all on function public.list_sale_reversal_requests_for_device_branch(uuid, text)
+  from public, anon;
+revoke all on function private.list_sale_reversal_requests_for_device_branch(uuid, text)
+  from public, anon;
+
+revoke all on function public.list_sale_reversal_requests(uuid)
+  from public, anon;
+
+grant usage on schema private to authenticated;
+grant execute on function private.list_sale_reversal_requests_for_device_branch(uuid, text)
+  to authenticated;
+grant execute on function public.list_sale_reversal_requests_for_device_branch(uuid, text)
+  to authenticated;
+
+-- Old public list remains executable only to produce its explicit upgrade message.
+grant execute on function public.list_sale_reversal_requests(uuid)
+  to authenticated;
