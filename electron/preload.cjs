@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke('app:version'),
   beginLocalAuthAttempt: (scope) => ipcRenderer.invoke('local-auth:begin', { scope }),
-  completeLocalAuthAttempt: ({ ...payload, scope: payload.scope }) => ipcRenderer.invoke('local-auth:complete', payload),
+  completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload),
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   exitApp: () => ipcRenderer.invoke('app:exit'),
