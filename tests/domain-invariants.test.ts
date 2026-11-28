@@ -888,3 +888,15 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
   assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId)');
   assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)', 'receivePurchaseAtomic({');
 });
+
+
+test('cloud sync conflicts take precedence over pending labels and disable retry actions', () => {
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8');
+
+  assert.ok(layoutSource.includes(`const showRetryCloudSync = syncManagerState.status !== 'conflict'
+    && (syncManagerState.pending > 0 || syncManagerState.status === 'error');`));
+  assert.ok(layoutSource.includes(`syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.pending > 0 ? 'Pending'`));
+  assert.ok(layoutSource.indexOf(`syncManagerState.status === 'conflict'
+      ? \`Cloud sync conflict`) < layoutSource.indexOf(`: cloudLastIssue
+        ? \`Cloud operation needs attention`));
+});
