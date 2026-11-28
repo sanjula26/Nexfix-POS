@@ -662,3 +662,7 @@ grant execute on function public.list_sale_reversal_requests_for_device_branch(u
 -- Old public list remains executable only to produce its explicit upgrade message.
 grant execute on function public.list_sale_reversal_requests(uuid)
   to authenticated;
+
+
+-- Ensure Supabase/PostgREST discovers the newly created guarded RPC signatures.
+notify pgrst, 'reload schema';
