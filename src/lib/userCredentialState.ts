@@ -47,7 +47,7 @@ export function replaceUserPasswordIfCurrent(
 export function saveManagedUserIfCurrent(
   state: POSState,
   adminSnapshot: UserCredentialSnapshot,
-  targetSnapshot: UserCredentialSnapshot | null,
+  targetSnapshot: AppUser | null,
   nextUser: AppUser,
 ): POSState | null {
   const currentAdmin = state.users.find(user => user.id === adminSnapshot.id);
@@ -59,9 +59,15 @@ export function saveManagedUserIfCurrent(
 
   if (targetSnapshot) {
     const currentTarget = state.users.find(user => user.id === targetSnapshot.id);
-    if (nextUser.id !== targetSnapshot.id || !currentTarget
-      || currentTarget.active !== targetSnapshot.active || currentTarget.role !== targetSnapshot.role
-      || currentTarget.password !== targetSnapshot.password) {
+    if (nextUser.id !== targetSnapshot.id || !currentTarget) return null;
+    const currentKeys = Object.keys(currentTarget).sort();
+    const snapshotKeys = Object.keys(targetSnapshot).sort();
+    if (currentKeys.length !== snapshotKeys.length
+      || currentKeys.some((key, index) => key !== snapshotKeys[index]
+        || !Object.is(
+          currentTarget[key as keyof AppUser],
+          targetSnapshot[key as keyof AppUser],
+        ))) {
       return null;
     }
   } else if (state.users.some(user => user.id === nextUser.id)) {
