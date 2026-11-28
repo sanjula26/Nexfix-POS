@@ -701,6 +701,9 @@ test('staff account saves await PBKDF2 and report success only after the current
   assert.ok(credentialSource.includes('currentAdmin.password !== adminSnapshot.password'));
   assert.ok(credentialSource.includes('currentTarget.password !== targetSnapshot.password'));
   assert.ok(credentialSource.includes('state.users.some(user => user.id !== nextUser.id'));
+  assert.ok(saveHandler.includes('const leavesActiveAdmin = stateRef.current.users.some('));
+  assert.ok(saveHandler.includes('At least one active Admin account must remain.'));
+  assert.ok(credentialSource.includes("if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;"));
 });
 
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
