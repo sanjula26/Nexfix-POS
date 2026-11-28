@@ -40,9 +40,12 @@ export function hasStoredLocalBusinessDataFromEntries(
   entries: Array<{ key: string; raw: string | null }>,
 ): boolean {
   const relevant = entries.filter(entry =>
-    entry.key === 'nexfix_pos_v2'
-    || entry.key === 'nexfix_pos_v1'
-    || entry.key.startsWith('nexfix_shop_state_cache_v1:'),
+    entry.raw !== null
+    && (
+      entry.key === 'nexfix_pos_v2'
+      || entry.key === 'nexfix_pos_v1'
+      || entry.key.startsWith('nexfix_shop_state_cache_v1:')
+    ),
   );
   for (const entry of relevant) {
     if (entry.raw === null) return true;
