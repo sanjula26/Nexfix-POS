@@ -195,6 +195,7 @@ export default function MobileTodaySales() {
   const [remoteError, setRemoteError] = useState('');
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [pinBusy, setPinBusy] = useState(false);
   const [pinVerified, setPinVerified] = useState(!!requestedToken);
   const [openId, setOpenId] = useState<string | null>(null);
   const today = dateKeyInTimeZone(new Date(), requestedTimeZone);
@@ -338,13 +339,21 @@ export default function MobileTodaySales() {
     );
   }, [requestedToken, selectedDate, requestedTimeZone]);
 
-  const submitPin = () => {
+  const submitPin = async () => {
     const value = pin.trim();
     if (!value) { setPinError('Enter the Admin PIN.'); return; }
-    if (!verifyAdminPin(value, 'Today sales')) { setPinError('Incorrect Admin PIN.'); return; }
-    setPinError('');
-    setPinVerified(true);
-    setPin('');
+    if (pinBusy) return;
+    setPinBusy(true);
+    try {
+      if (!(await verifyAdminPin(value, 'Today sales'))) { setPinError('Incorrect Admin PIN.'); return; }
+      setPinError('');
+      setPinVerified(true);
+      setPin('');
+    } catch {
+      setPinError('Could not verify the Admin PIN. Please try again.');
+    } finally {
+      setPinBusy(false);
+    }
   };
 
 
