@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db';
-import { getCloudActivityScope, subscribeCloudActivity, type CloudActivityScope } from './cloudActivity';
+import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db.ts';
+import { getCloudActivityScope, subscribeCloudActivity, type CloudActivityScope } from './cloudActivity.ts';
 
 export interface CloudRecordSyncSnapshot {
   ready: boolean;
