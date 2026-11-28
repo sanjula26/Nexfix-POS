@@ -629,6 +629,36 @@ test('async sensitive admin re-auth is invalidated on logout and role switch', (
 });
 
 
+test('staff account saves await PBKDF2 and report success only after the current Admin and target are revalidated', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const usersSource = readFileSync(new URL('../src/pages/Users.tsx', import.meta.url), 'utf8');
+  const credentialSource = readFileSync(new URL('../src/lib/userCredentialState.ts', import.meta.url), 'utf8');
+
+  const storeStart = storeSource.indexOf('const saveUser = useCallback(async');
+  const storeEnd = storeSource.indexOf('const toggleUserActive =', storeStart);
+  assert.ok(storeStart >= 0 && storeEnd > storeStart);
+  const saveHandler = storeSource.slice(storeStart, storeEnd);
+  assert.ok(saveHandler.includes('await hashPasswordAsync(suppliedPassword)'));
+  assert.ok(saveHandler.includes('await confirmSensitiveAdmin('));
+  assert.ok(saveHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(saveHandler.includes('saveManagedUserIfCurrent(stateRef.current'));
+  assert.ok(saveHandler.includes('setState(current => saveManagedUserIfCurrent(current'));
+  assert.ok(saveHandler.includes('return { ok: true };'));
+
+  const pageStart = usersSource.indexOf('const save = async () => {');
+  const pageEnd = usersSource.indexOf('  return (', pageStart);
+  assert.ok(pageStart >= 0 && pageEnd > pageStart);
+  const pageSave = usersSource.slice(pageStart, pageEnd);
+  assert.ok(pageSave.includes('const result = await saveUser(toSave);'));
+  assert.ok(pageSave.indexOf('if (!result.ok)') < pageSave.indexOf("setFormOk(isNew ? 'User created'"));
+  assert.ok(usersSource.includes('saving ? \'Saving…\''));
+  assert.ok(usersSource.includes('disabled={saving}'));
+
+  assert.ok(credentialSource.includes('currentAdmin.password !== adminSnapshot.password'));
+  assert.ok(credentialSource.includes('currentTarget.password !== targetSnapshot.password'));
+  assert.ok(credentialSource.includes('state.users.some(user => user.id !== nextUser.id'));
+});
+
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
