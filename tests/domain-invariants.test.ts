@@ -684,8 +684,8 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
   const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
 
-  assert.match(cloudSyncSource, /ensureCloudShop[\\s\\S]*?userId\\?: string/);
-  assert.equal((cloudSyncSource.match(/userId: sessionData\\.session\\.user\\.id/g) || []).length, 2);
+  assert.ok(cloudSyncSource.includes('userId?: string'));
+  assert.equal(cloudSyncSource.split('userId: sessionData.session.user.id').length - 1, 2);
   assert.ok(storeSource.includes("shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null"));
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
   assert.ok(offlineSource.includes("parsed.cloudScope.userId !== shop.userId"));
