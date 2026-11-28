@@ -8,8 +8,8 @@ const STORE_QUEUE = 'sync_queue';
 const STORE_META = 'meta';
 
 export type QueueOp =
-  | { id: string; ts: string; type: 'state_write'; note?: string }
-  | { id: string; ts: string; type: 'backup'; note?: string }
+  | { id: string; ts: string; type: 'state_write'; note?: string; payload?: string }
+  | { id: string; ts: string; type: 'backup'; note?: string; payload?: string }
   | { id: string; ts: string; type: 'custom'; note: string; payload?: string }
   | { id: string; ts: string; type: 'sale_create'; payload: string }
   | { id: string; ts: string; type: 'return_create'; payload: string }
