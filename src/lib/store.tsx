@@ -2636,14 +2636,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       if (cloudEnabled && online) {
         if (!shop.ok || !shop.shopId) return { ok: false, error: shop.error || 'Cloud shop is not available for GRN receive.' };
+        const cloudRecordScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+        // Publish the verified identity before catalog reconciliation too, because
+        // catalog sync itself is a tracked Cloud write during GRN preflight.
+        if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
         if (user.role === 'admin' || user.role === 'manager') {
           const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
-        const cloudRecordScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
-        // Use the freshly verified Cloud membership scope for the real GRN write;
-        // do not wait for IndexedDB status restoration before receiving stock.
-        if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
         const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
           shopId: shop.shopId!,
           branchId: receiveBranchId,
