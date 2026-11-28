@@ -3738,7 +3738,7 @@ const deletePurchase = useCallback((id: string) => {
     // This prevents a stale IDB snapshot from making user temporarily null and
     // triggering Protected -> /login.
     const current = stateRef.current;
-    const activeSession = session;
+    const activeSession = sessionRef.current;
     try {
       if (ready) await persistState(current);
 
@@ -3769,6 +3769,12 @@ const deletePurchase = useCallback((id: string) => {
         }
       }
 
+      if (sessionRef.current?.userId !== activeSession?.userId) {
+        // An account switch or logout happened while storage was loading.
+        // Do not restore an older session or overwrite the newer account's state.
+        setState(stateRef.current);
+        return;
+      }
       setState(refreshed);
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
