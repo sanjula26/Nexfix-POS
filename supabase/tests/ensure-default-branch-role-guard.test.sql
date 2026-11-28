@@ -90,6 +90,14 @@ select is(
   'cashier branch lookup leaves the active branch count unchanged'
 );
 
+select ok(
+  not exists (
+    select 1 from public.branch_stock
+    where shop_id='c2000000-0000-4000-8000-000000000001'
+  ),
+  'cashier branch lookup does not initialize or rewrite branch stock'
+);
+
 select throws_ok(
   $$select public.ensure_default_branch('c2000000-0000-4000-8000-000000000002'::uuid)$$,
   '42501',
