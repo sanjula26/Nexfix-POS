@@ -1463,3 +1463,21 @@ test('cloud sync conflicts take precedence over pending labels and disable retry
   assert.ok(layoutSource.indexOf(conflictTitle) >= 0, 'conflict title must be present');
   assert.ok(layoutSource.indexOf(conflictTitle) < layoutSource.indexOf(issueTitle), 'conflict must take precedence over the generic issue title');
 });
+
+
+test('safe verification workflows trigger for integration and focused fix pull requests', () => {
+  const workflowPaths = [
+    '../.github/workflows/ci.yml',
+    '../.github/workflows/security-audit.yml',
+    '../.github/workflows/desktop-build-only.yml',
+    '../.github/workflows/windows-no-publish-qa.yml',
+    '../.github/workflows/database-tests.yml',
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const source = readFileSync(new URL(workflowPath, import.meta.url), 'utf8').replace(/\\r\\n/g, '\\n');
+    const pullRequestBlock = source.match(/^  pull_request:\\n([\\s\\S]*?)(?=^  [a-zA-Z_]+:|^permissions:|^jobs:)/m)?.[1] || '';
+    assert.ok(pullRequestBlock.includes("'integration/**'"), `${workflowPath} must run for integration PRs`);
+    assert.ok(pullRequestBlock.includes("'fix/**'"), `${workflowPath} must run for focused fix PRs`);
+  }
+});
