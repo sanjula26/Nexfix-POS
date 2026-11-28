@@ -357,10 +357,10 @@ select is(
 );
 
 select throws_ok(
-  $select public.resolve_sale_return_target_for_device_branch(
+  $$select public.resolve_sale_return_target_for_device_branch(
     'SG-B-001',
     'guard-device-a'
-  )$,
+  )$$,
   'P0001',
   'This POS device is not assigned to the sale branch',
   'a Branch A device cannot resolve a Branch B bill number'
@@ -378,30 +378,30 @@ select is(
 );
 
 select throws_ok(
-  $select public.resolve_sale_return_items_for_device_branch(
+  $$select public.resolve_sale_return_items_for_device_branch(
     'b2000000-0000-4000-8000-000000000001',
     'b4000000-0000-4000-8000-000000000002',
     'guard-device-a',
     '[{"product_id":"b6000000-0000-4000-8000-000000000001","qty":1,"unit_ids":[]}]'::jsonb
-  )$,
+  )$$,
   'P0001',
   'This POS device is not assigned to the sale branch',
   'a Branch A device cannot resolve items for a Branch B sale'
 );
 
 select throws_ok(
-  $select public.resolve_sale_return_target('SG-A-001')$,
+  $$select public.resolve_sale_return_target('SG-A-001')$$,
   'P0001',
   'This Nexfix POS client is outdated. Update the POS before looking up a Cloud return bill.',
   'the old bill-number resolver fails closed with an upgrade message'
 );
 
 select throws_ok(
-  $select public.resolve_sale_return_items(
+  $$select public.resolve_sale_return_items(
     'b2000000-0000-4000-8000-000000000001',
     'b4000000-0000-4000-8000-000000000001',
     '[{"product_id":"b6000000-0000-4000-8000-000000000001","qty":1,"unit_ids":[]}]'::jsonb
-  )$,
+  )$$,
   'P0001',
   'This Nexfix POS client is outdated. Update the POS before looking up Cloud return items.',
   'the old return-item resolver fails closed with an upgrade message'
@@ -447,10 +447,10 @@ select is(
 );
 
 select throws_ok(
-  $select * from public.list_sale_reversal_requests_for_device_branch(
+  $$select * from public.list_sale_reversal_requests_for_device_branch(
     'b2000000-0000-4000-8000-000000000001',
     'unregistered-reversal-list-device'
-  )$,
+  )$$,
   'P0001',
   'POS device is not registered to this user for this shop',
   'an unregistered terminal cannot read reversal requests'
@@ -473,9 +473,9 @@ select is(
 );
 
 select throws_ok(
-  $select * from public.list_sale_reversal_requests(
+  $$select * from public.list_sale_reversal_requests(
     'b2000000-0000-4000-8000-000000000001'
-  )$,
+  )$$,
   'P0001',
   'This Nexfix POS client is outdated. Update the POS before loading Cloud bill reversal requests.',
   'the old shop-wide reversal list fails closed with an upgrade message'
