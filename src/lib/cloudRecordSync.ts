@@ -17,7 +17,7 @@ export function cloudRecordSyncKey(type: CloudRecordType, recordId: string): str
  
 /** A queued transaction may only be replayed into the exact authenticated shop/user that created it. */
 export function isCloudRecordReplayScopeValid(
-  queuedScope: CloudActivityScope | null | undefined,
+  queuedScope: Partial<CloudActivityScope> | null | undefined,
   verifiedScope: CloudActivityScope | null | undefined,
   activeScope: CloudActivityScope | null | undefined,
 ): boolean {
