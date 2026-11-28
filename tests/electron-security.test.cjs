@@ -219,6 +219,12 @@ test('corrupt packaged local-auth guard state fails closed but repairs the persi
   assert.equal((reader.match(/failClosedLocalAuthGuardState\(\)/g) || []).length, 2);
 });
 
+test('Electron reads persisted local-auth state only after strict schema validation', () => {
+  assert.ok(mainSource.includes("isValidLocalAuthGuardState } = require('./local-auth-guard.cjs')"));
+  assert.ok(mainSource.includes('if(!isValidLocalAuthGuardState(parsed,Date.now())){'));
+  assert.ok(mainSource.includes('return failClosedLocalAuthGuardState();'));
+});
+
 test('async administrator authentication callers await verification before granting access', () => {
   const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
   const posSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'POS.tsx'), 'utf8');
