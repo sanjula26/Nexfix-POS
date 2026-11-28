@@ -27,6 +27,14 @@ function getQueuedSnapshotCloudScope(op: QueueOp): { shopId?: string; userId?: s
   }
 }
 
+function isQueuedBranchMismatch(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason || '');
+  return message.includes('Queued transaction branch no longer matches')
+    || message.includes('not assigned to an active branch')
+    || message.includes('No active branch is configured')
+    || message.includes('No active branch exists for this shop');
+}
+
 export async function queueWrite(note?:string):Promise<void>{
   const cloudScope = getCloudActivityScope();
   const scopeKey = cloudScope
@@ -52,7 +60,7 @@ export async function queueWrite(note?:string):Promise<void>{
       cloudScope: sale.cloudScope || undefined,
       saleId:sale.id,
       input:{
-        branchId:sale.branchId || state.settings.branchId || 'local-main',
+        branchId:sale.branchId || 'local-main',
         customerId:sale.customerId,
         shipping:sale.shipping,
         discount:sale.discount,
@@ -92,7 +100,7 @@ export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:st
   const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
-export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
+export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string,branchId:string):Promise<void>{if(!branchId)throw new Error('Repair delivery needs a verified branch before it can be queued safely.');const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId,branchId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
 export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
@@ -131,21 +139,21 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           if(state){
-            const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId);
-            if(!catalog.ok) break;
+            const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId,parsed.branchId);
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit]});
-          if(!restored.ok) break;
+          const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit],requireExactBranch:true});
+          if(!restored.ok) { if(isQueuedBranchMismatch(restored.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id});
-          if(!deleted.ok) break;
+          const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id,requireExactBranch:true});
+          if(!deleted.ok) { if(isQueuedBranchMismatch(deleted.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -171,15 +179,15 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             const additions=new Map<string,number>();
             for(const unit of parsed.units||[]) if(newIds.has(unit.id)) additions.set(unit.productId,(additions.get(unit.productId)||0)+1);
             const bootstrapState={...state,units:[],products:state.products.map(product=>({...product,stock:Math.max(0,product.stock-(additions.get(product.id)||0))}))};
-            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
-            if(!catalog.ok) break;
+            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId});
-          if(!result.ok) break;
+          const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId,requireExactBranch:true});
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -202,26 +210,26 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           if(parsed.baseProduct && state){
             const hasBaseProduct=state.products.some(product=>product.id===parsed.baseProduct!.id); const bootstrapState={...state,products:hasBaseProduct?state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product):[...state.products,parsed.baseProduct!]};
-            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
-            if(!catalog.ok) break;
+            const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId});
+          const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId,requireExactBranch:true});
           if(!result.ok && result.error?.includes('Product is not synced to this cloud shop yet') && state){
             if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
               blockedUnsafeScopedTransactionReplay = true;
               break;
             }
-            const catalog=await syncNormalizedCatalog(state,shop.shopId);
-            if(!catalog.ok) break;
+            const catalog=await syncNormalizedCatalog(state,shop.shopId,parsed.branchId);
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
             // Catalog bootstrap already includes this local product's final stock.
             acknowledged.push(op.id); flushed++;
             continue;
           }
-          if(!result.ok) break;
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -268,9 +276,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
+          const queuedBranchId = parsed.input.branchId || 'local-main';
           if (state) {
-            const catalog = await syncNormalizedCatalog(state, shop.shopId);
+            const catalog = await syncNormalizedCatalog(state, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              if (isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true;
               await markRetry(catalog.error || 'Product/customer data could not be prepared for Cloud sync.');
               break;
             }
@@ -290,7 +300,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const result = await completeSaleAtomic({
             shopId: shop.shopId,
-            branchId: parsed.input.branchId || state?.settings.branchId || 'local-main',
+            branchId: queuedBranchId,
+            requireExactBranch: true,
             deviceId: getMachineIdentity().id,
             saleId: parsed.saleId,
             customerId: parsed.input.customerId,
@@ -306,6 +317,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             payments,
           });
           if (!result.ok) {
+            if (isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true;
             await markRetry(result.error || 'Cloud did not confirm this sale. The same sale ID will be retried safely.');
             break;
           }
@@ -394,10 +406,12 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
+          const queuedBranchId = parsed.input.purchase.branchId || 'local-main';
           const catalogState = state || undefined;
           if (catalogState) {
-            const catalog = await syncNormalizedCatalog(catalogState, shop.shopId);
+            const catalog = await syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              if (isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true;
               await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
               break;
             }
@@ -410,12 +424,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const result = await receivePurchaseAtomic({
             shopId: shop.shopId,
-            branchId: parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',
+            branchId: queuedBranchId,
+            requireExactBranch: true,
             deviceId: parsed.input.deviceId,
             purchaseId: parsed.purchaseId,
             purchase: parsed.input.purchase,
           });
           if (!result.ok) {
+            if (isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true;
             await markRetry(result.error || 'Cloud did not confirm this GRN. The same GRN ID will be retried safely.');
             break;
           }
@@ -451,7 +467,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='repair_delivery'){
         try{
-          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string;cloudScope?:{shopId?:string;userId?:string}};
+          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string;branchId?:string;cloudScope?:{shopId?:string;userId?:string}};
           if (!hasCloudRecordScope(parsed.cloudScope) ||
               !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
             blockedUnsafeScopedTransactionReplay = true;
@@ -464,8 +480,16 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await processRepairDeliveryAtomic({shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,repair:parsed.repair});
-          if(!result.ok) break;
+          const queuedBranchId = parsed.branchId || 'local-main';
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
+          const result=await processRepairDeliveryAtomic({
+            shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,
+            branchId:queuedBranchId,requireExactBranch:true,repair:parsed.repair,
+          });
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
