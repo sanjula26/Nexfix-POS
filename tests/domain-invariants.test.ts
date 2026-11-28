@@ -721,6 +721,35 @@ test('staff account saves await PBKDF2 and report success only after the current
   assert.ok(credentialSource.includes('targetSnapshot.id === adminSnapshot.id) return null;'));
 });
 
+test('managed password change and POS reset enforce sensitive Admin confirmation in the store', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8');
+
+  const managedStart = storeSource.indexOf('const changeManagedPassword = useCallback(async');
+  const managedEnd = storeSource.indexOf('const signOut = useCallback', managedStart);
+  assert.ok(managedStart >= 0 && managedEnd > managedStart);
+  const managedHandler = storeSource.slice(managedStart, managedEnd);
+  assert.ok(managedHandler.includes("await confirmSensitiveAdmin('managed account password change')"));
+  assert.ok(managedHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+
+  const resetStart = storeSource.indexOf('const resetData = useCallback(async');
+  const resetEnd = storeSource.indexOf('const refreshPOS = useCallback', resetStart);
+  assert.ok(resetStart >= 0 && resetEnd > resetStart);
+  const resetHandler = storeSource.slice(resetStart, resetEnd);
+  assert.ok(resetHandler.includes("await confirmSensitiveAdmin('clear local POS data')"));
+  assert.ok(resetHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(resetHandler.includes('latestAdmin.password !== adminSnapshot.password'));
+  assert.ok(resetHandler.includes('return true;'));
+
+  const managedUiStart = settingsSource.indexOf('const submitManagedPassword = async () => {');
+  const managedUiEnd = settingsSource.indexOf('const submitPin = async () => {', managedUiStart);
+  assert.ok(managedUiStart >= 0 && managedUiEnd > managedUiStart);
+  assert.ok(settingsSource.slice(managedUiStart, managedUiEnd).includes('await changeManagedPassword('));
+  assert.equal(settingsSource.slice(managedUiStart, managedUiEnd).includes('confirmSensitiveAdmin('), false);
+
+  assert.match(settingsSource, /if \(await resetData\(\)\) setConfirmReset\(false\)/);
+});
+
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
