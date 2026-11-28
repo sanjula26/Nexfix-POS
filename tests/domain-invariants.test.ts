@@ -825,6 +825,33 @@ test('first online Sale and GRN publish the verified Cloud scope before tracking
 });
 
 
+test('legacy Sale and GRN replay receipts are saved only under a reverified current Cloud member', () => {
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  assert.ok(offlineSource.includes('async function reverifyLegacyReceiptScope('));
+  assert.ok(offlineSource.includes('current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId'));
+
+  const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
+  const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
+  const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
+  assert.ok(saleStart >= 0 && purchaseStart > saleStart && repairStart > purchaseStart);
+  const saleReplay = offlineSource.slice(saleStart, purchaseStart);
+  const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
+
+  const assertLegacyReceipt = (source: string, kind: 'sale' | 'purchase', id: 'saleId' | 'purchaseId', operation: string) => {
+    const accepted = source.indexOf('if (!result.ok)');
+    const reverified = source.indexOf('await reverifyLegacyReceiptScope(verifiedScope)');
+    const receipt = source.indexOf(`acknowledgeCloudRecordQueue(`);
+    assert.ok(accepted >= 0 && reverified > accepted, `${kind} receipt scope must be reverified only after positive server acknowledgement`);
+    assert.ok(receipt > reverified, `${kind} acknowledgement must use the reverified uploader scope`);
+    assert.ok(source.includes(`const receiptScope = parsed.cloudScope`));
+    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}'`));
+    assert.ok(!source.includes('idbAcknowledgeQueue([op.id])'), `${kind} must not delete a legacy row without saving its receipt`);
+  };
+
+  assertLegacyReceipt(saleReplay, 'sale', 'saleId', 'Offline sale sync');
+  assertLegacyReceipt(purchaseReplay, 'purchase', 'purchaseId', 'Offline GRN sync');
+});
+
 test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
   const queued = { shopId: 'shop-original', userId: 'cloud-user-original' };
   const verified = { ...queued };
