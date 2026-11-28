@@ -29,7 +29,9 @@ function getQueuedSnapshotCloudScope(op: QueueOp): { shopId?: string; userId?: s
 
 function isQueuedBranchMismatch(reason: unknown): boolean {
   const message = reason instanceof Error ? reason.message : String(reason || '');
-  return message.includes('Queued transaction branch no longer matches');
+  return message.includes('Queued transaction branch no longer matches')
+    || message.includes('not assigned to an active branch')
+    || message.includes('No active branch is configured');
 }
 
 export async function queueWrite(note?:string):Promise<void>{
