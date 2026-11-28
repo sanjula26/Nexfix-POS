@@ -416,9 +416,9 @@ export default function MobileTodaySales() {
           <h1 className="text-xl font-black">Today’s Sales</h1>
           <p className="mt-2 text-sm leading-relaxed text-sub">After login, the Admin PIN is required to view this read-only sales page.</p>
           <label className="mt-5 block text-xs font-bold text-sub">Admin PIN</label>
-          <input className="mt-2 min-h-12 w-full rounded-xl border border-line bg-raised text-ink px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitPin(); }} autoFocus />
+          <input className="mt-2 min-h-12 w-full rounded-xl border border-line bg-raised text-ink px-4 text-lg tracking-[0.3em] outline-none focus:border-violet-500" type="password" inputMode="text" autoComplete="off" value={pin} onChange={e => { setPin(e.target.value); setPinError(''); }} onKeyDown={e => { if (e.key === 'Enter' && !pinBusy) void submitPin(); }} autoFocus disabled={pinBusy} />
           {pinError && <p className="mt-2 text-xs font-bold text-rose-600">{pinError}</p>}
-          <button type="button" onClick={submitPin} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white">Unlock today’s sales</button>
+          <button type="button" onClick={() => void submitPin()} disabled={pinBusy || !pin.trim()} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:opacity-50">{pinBusy ? 'Checking…' : 'Unlock today’s sales'}</button>
           <button type="button" onClick={() => { signOut(); navigate('/login'); }} className="mt-2 min-h-11 w-full rounded-xl border border-line bg-raised px-4 text-sm font-bold text-ink">Logout</button>
         </div>
       </main>
