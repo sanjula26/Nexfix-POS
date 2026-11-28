@@ -1175,6 +1175,20 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   }
 
   const snapshotStart = offlineSource.indexOf('const snapshotOps=remaining.filter');
+  const snapshotScopeCheck = offlineSource.indexOf('const snapshotScopeBlocked = snapshotOps.some');
+  const snapshotScopeReturn = offlineSource.indexOf('if (snapshotScopeBlocked) {');
+
+  assert.ok(snapshotScopeCheck > snapshotStart && snapshotScopeReturn > snapshotScopeCheck && snapshotScopeReturn < snapshotUpload,
+    'snapshot queue identity must be checked before any full-state upload');
+  const queueWriter = offlineSource.slice(
+    offlineSource.indexOf('export async function queueWrite'),
+    offlineSource.indexOf('export async function queueBranchStockAdjustment'),
+  );
+  assert.ok(queueWriter.includes("id:`state-write:${scopeKey}`"));
+  assert.ok(queueWriter.includes('payload:JSON.stringify({cloudScope:cloudScope||undefined})'));
+  assert.ok(queueWriter.includes("const scopeKey = cloudScope"));
+  assert.ok(offlineSource.includes('function getQueuedSnapshotCloudScope(op: QueueOp)'));
+  assert.ok(offlineSource.includes('blockedQueueScope: true'));
   const pendingCheck = offlineSource.indexOf('const pendingTransactions = remaining.some');
   const blockedReturn = offlineSource.indexOf('if (blockedUnsafeScopedTransactionReplay || pendingTransactions) {');
   const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
