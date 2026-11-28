@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
+import type { QueueOp } from '../src/lib/db.ts';
+import { getPendingCloudRecordKeys } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -676,6 +678,29 @@ test('catalog sync cache separates shops, users, branches and changed fingerprin
   assert.equal(calls, keys.length);
 });
 
+
+test('per-record Cloud pending markers never leak across shops or Cloud users', () => {
+  const queue: QueueOp[] = [
+    { id: 'sale:sale-a', ts: '2026-11-28T04:00:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-a' } }) },
+    { id: 'purchase-receive:purchase-a', ts: '2026-11-28T04:01:00.000Z', type: 'purchase_receive', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-a' } }) },
+    { id: 'sale:sale-other-user', ts: '2026-11-28T04:02:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-b' } }) },
+    { id: 'sale:sale-other-shop', ts: '2026-11-28T04:03:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-b', userId: 'user-a' } }) },
+    { id: 'sale:sale-legacy', ts: '2026-11-28T04:04:00.000Z', type: 'sale_create', payload: JSON.stringify({ saleId: 'sale-legacy' }) },
+  ];
+
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-a', userId: 'user-a' })],
+    ['sale:sale-a', 'purchase:purchase-a'],
+  );
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-a', userId: 'user-b' })],
+    ['sale:sale-other-user'],
+  );
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-b', userId: 'user-a' })],
+    ['sale:sale-other-shop'],
+  );
+});
 
 test('cloud activity indicator tracks overlapping uploads and clears when each completes', () => {
   const finishSale = beginCloudActivity('Cloud sale');
