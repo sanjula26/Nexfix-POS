@@ -3783,14 +3783,20 @@ const deletePurchase = useCallback((id: string) => {
         setSession(activeSession);
       }
     } catch {
-      // A refresh failure must leave the authenticated POS session untouched.
+      // A refresh failure must leave the current account untouched. If the
+      // operator logged out or switched accounts while storage was loading,
+      // never restore the older session captured at the start of this request.
+      if (sessionRef.current?.userId !== activeSession?.userId) {
+        setState(stateRef.current);
+        return;
+      }
       setState(current);
       if (activeSession) {
         sessionRef.current = activeSession;
         setSession(activeSession);
       }
     }
-  }, [ready, session]);
+  }, [ready]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback(async (u: InventoryUnit): Promise<boolean> => {
