@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
-import { getPendingCloudRecordKeys } from '../src/lib/cloudRecordSync.ts';
+import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -690,6 +690,31 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
   assert.ok(offlineSource.includes("parsed.cloudScope.userId !== shop.userId"));
   assert.ok(!storeSource.includes('getCloudActivityScope'));
+});
+
+test('per-record Cloud retry status is distinct from waiting, synced and unverified', () => {
+  const snapshot: CloudRecordSyncSnapshot = {
+    ready: true,
+    confirmed: {
+      'sale:sale-retry': {
+        status: 'retry',
+        attemptedAt: '2026-11-28T05:00:00.000Z',
+        operation: 'Offline sale sync',
+        error: 'Cloud request timed out',
+      },
+      'sale:sale-confirmed': {
+        confirmedAt: '2026-11-28T04:59:00.000Z',
+        operation: 'Cloud sale',
+      },
+    },
+    pending: new Set(['sale:sale-retry', 'sale:sale-waiting']),
+  };
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-retry'), 'retry');
+  assert.equal(getCloudRecordSyncIssue(snapshot, 'sale', 'sale-retry'), 'Cloud request timed out');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-waiting'), 'pending');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-confirmed'), 'synced');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-unknown'), 'unknown');
+  assert.equal(getCloudRecordSyncStatus({ ...snapshot, ready: false }, 'sale', 'sale-unknown'), 'checking');
 });
 
 test('per-record Cloud pending markers never leak across shops or Cloud users', () => {

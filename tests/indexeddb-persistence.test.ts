@@ -12,6 +12,7 @@ import {
   idbSetCloudSyncMeta,
   idbGetCloudRecordSyncStatuses,
   idbMarkCloudRecordSynced,
+  idbMarkCloudRecordSyncRetry,
   idbAcknowledgeCloudRecordQueue,
   idbListQueue,
   idbLoadRestoreCheckpoint,
@@ -58,6 +59,35 @@ test('Cloud record confirmations persist independently per shop and Cloud user',
   assert.deepEqual(await idbGetCloudRecordSyncStatuses('record-shop-a', 'record-user-b'), {});
   assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'sale', '', 'Cloud sale'), false);
   assert.equal(await idbMarkCloudRecordSynced('record-shop-a', 'record-user-a', 'sale', 'sale-001', 'Cloud sale', 'invalid'), false);
+});
+
+test('retryable Cloud sync failures persist by shop/user and are cleared by a later positive receipt', async () => {
+  assert.equal(await idbMarkCloudRecordSyncRetry(
+    'retry-shop-a', 'retry-user-a', 'sale', 'retry-sale-001',
+    'Offline sale sync', 'Cloud request timed out; record not confirmed',
+    '2026-11-28T05:00:00.000Z',
+  ), true);
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('retry-shop-a', 'retry-user-a'), {
+    'sale:retry-sale-001': {
+      status: 'retry',
+      attemptedAt: '2026-11-28T05:00:00.000Z',
+      operation: 'Offline sale sync',
+      error: 'Cloud request timed out; record not confirmed',
+    },
+  });
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('retry-shop-b', 'retry-user-a'), {});
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('retry-shop-a', 'retry-user-b'), {});
+
+  assert.equal(await idbMarkCloudRecordSynced(
+    'retry-shop-a', 'retry-user-a', 'sale', 'retry-sale-001',
+    'Offline sale sync', '2026-11-28T05:02:00.000Z',
+  ), true);
+  assert.deepEqual(await idbGetCloudRecordSyncStatuses('retry-shop-a', 'retry-user-a'), {
+    'sale:retry-sale-001': {
+      confirmedAt: '2026-11-28T05:02:00.000Z',
+      operation: 'Offline sale sync',
+    },
+  });
 });
 
 test('offline sale and GRN queue acknowledgements save Cloud proof and remove only the matching queue entry', async () => {

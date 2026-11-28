@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { getCloudRecordSyncStatus, useCloudRecordSyncSnapshot } from '../lib/cloudRecordSync';
+import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, useCloudRecordSyncSnapshot } from '../lib/cloudRecordSync';
 import {
   ReceiptText, Eye, RotateCcw, Printer, MessageCircle, TrendingUp, Banknote, CalendarDays, ShieldCheck, CheckCircle2, X,
 } from 'lucide-react';
@@ -161,6 +161,11 @@ export default function SalesHistory() {
                     <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{salePaymentLabel(s)}</Badge></td>
                     <td className="td">
                       {getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'synced' ? <Badge tone="emerald">CLOUD OK</Badge> :
+                       getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'retry' ? (
+                         <span title={`Last Cloud sync attempt needs retry. ${getCloudRecordSyncIssue(cloudSync, 'sale', s.id) || 'No positive Cloud receipt is saved on this PC.'} The queue is kept; use Retry sync in the Cloud panel.`}>
+                           <Badge tone="rose">RETRY</Badge>
+                         </span>
+                       ) :
                        getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'pending' ? <Badge tone="amber">WAITING</Badge> :
                        getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'checking' ? <Badge tone="slate">CHECKING</Badge> :
                        <Badge tone="slate">UNVERIFIED</Badge>}

@@ -133,8 +133,12 @@ export async function idbSetCloudSyncMeta(shopId: string, userId: string, meta: 
 
 export type CloudRecordType = 'sale' | 'purchase';
 export interface CloudRecordSyncEntry {
-  confirmedAt: string;
+  confirmedAt?: string;
+  attemptedAt?: string;
   operation: string;
+  /** A failed last attempt is not proof that the server lacks the record; its queue row remains retryable. */
+  status?: 'retry';
+  error?: string;
 }
 
 const MAX_CLOUD_RECORD_SYNC_ENTRIES = 5000;
@@ -155,8 +159,13 @@ function cloudRecordKey(type: CloudRecordType, recordId: string): string | null 
 function validCloudRecordEntry(value: unknown): value is CloudRecordSyncEntry {
   if (!value || typeof value !== 'object') return false;
   const entry = value as Partial<CloudRecordSyncEntry>;
-  return typeof entry.confirmedAt === 'string' && Number.isFinite(Date.parse(entry.confirmedAt)) &&
-    typeof entry.operation === 'string' && !!entry.operation.trim() && entry.operation.length <= 80;
+  if (typeof entry.operation !== 'string' || !entry.operation.trim() || entry.operation.length > 80) return false;
+  if (entry.status === 'retry') {
+    return typeof entry.attemptedAt === 'string' && Number.isFinite(Date.parse(entry.attemptedAt)) &&
+      typeof entry.error === 'string' && !!entry.error.trim() && entry.error.length <= 240;
+  }
+  // Entries written before retry-state support have no status field; keep reading them as confirmed receipts.
+  return entry.status === undefined && typeof entry.confirmedAt === 'string' && Number.isFinite(Date.parse(entry.confirmedAt));
 }
 
 function mergeCloudRecordEntry(
@@ -174,7 +183,8 @@ function mergeCloudRecordEntry(
   records[key] = entry;
   const keys = Object.keys(records);
   if (keys.length > MAX_CLOUD_RECORD_SYNC_ENTRIES) {
-    keys.sort((a, b) => Date.parse(records[a].confirmedAt) - Date.parse(records[b].confirmedAt));
+    const timestamp = (entry: CloudRecordSyncEntry) => Date.parse(entry.status === 'retry' ? entry.attemptedAt || '' : entry.confirmedAt || '');
+    keys.sort((a, b) => timestamp(records[a]) - timestamp(records[b]));
     for (const oldKey of keys.slice(0, keys.length - MAX_CLOUD_RECORD_SYNC_ENTRIES)) delete records[oldKey];
   }
   return records;
@@ -223,6 +233,38 @@ export async function idbMarkCloudRecordSynced(
     const store = tx.objectStore(STORE_META);
     const row = await idbReq<{ key: string; value?: unknown } | undefined>(store.get(metaKey));
     const records = mergeCloudRecordEntry(row?.value, recordKey, { confirmedAt, operation });
+    store.put({ key: metaKey, value: { records }, updatedAt: new Date().toISOString() });
+    await completed;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Persist a retryable last-attempt failure without removing or changing the durable queue row. */
+export async function idbMarkCloudRecordSyncRetry(
+  shopId: string,
+  userId: string,
+  type: CloudRecordType,
+  recordId: string,
+  operation: string,
+  error: string,
+  attemptedAt = new Date().toISOString(),
+): Promise<boolean> {
+  const metaKey = cloudRecordSyncMetaKey(shopId, userId);
+  const recordKey = cloudRecordKey(type, recordId);
+  const safeError = typeof error === 'string' ? error.trim().replace(/\s+/g, ' ').slice(0, 240) : '';
+  if (!metaKey || !recordKey || typeof operation !== 'string' || !operation.trim() || operation.length > 80 ||
+      !safeError || !Number.isFinite(Date.parse(attemptedAt))) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    const completed = idbTransactionComplete(tx, 'Cloud record retry status write failed');
+    const store = tx.objectStore(STORE_META);
+    const row = await idbReq<{ key: string; value?: unknown } | undefined>(store.get(metaKey));
+    const records = mergeCloudRecordEntry(row?.value, recordKey, {
+      status: 'retry', attemptedAt, operation, error: safeError,
+    });
     store.put({ key: metaKey, value: { records }, updatedAt: new Date().toISOString() });
     await completed;
     return true;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db.ts';
+import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, idbMarkCloudRecordSyncRetry, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db.ts';
 import { getCloudActivityScope, subscribeCloudActivity, type CloudActivityScope } from './cloudActivity.ts';
 
 export interface CloudRecordSyncSnapshot {
@@ -31,6 +31,30 @@ export async function markCloudRecordSynced(
   return saved;
 }
 
+/** Record a retryable attempt failure under the queued record's original shop/user scope. */
+export async function markCloudRecordSyncRetry(
+  type: CloudRecordType,
+  recordId: string,
+  operation: string,
+  error: unknown,
+  scope: CloudActivityScope | null = getCloudActivityScope(),
+): Promise<boolean> {
+  if (!scope) return false;
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const safeError = raw
+    .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted credential]')
+    .replace(/https?:\/\/[^\s]+/gi, '[Cloud request]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 220) || 'Cloud did not confirm this record.';
+  const saved = await idbMarkCloudRecordSyncRetry(
+    scope.shopId, scope.userId, type, recordId, operation, safeError,
+  );
+  if (saved) notifyCloudRecordSyncChanged();
+  return saved;
+}
+
 /** Save a positive server acknowledgement and remove its queue item in one IndexedDB transaction. */
 export async function acknowledgeCloudRecordQueue(
   scope: CloudActivityScope | null,
@@ -51,12 +75,22 @@ export function getCloudRecordSyncStatus(
   snapshot: CloudRecordSyncSnapshot,
   type: CloudRecordType,
   recordId: string,
-): 'checking' | 'synced' | 'pending' | 'unknown' {
+): 'checking' | 'synced' | 'pending' | 'retry' | 'unknown' {
   if (!snapshot.ready) return 'checking';
   const key = cloudRecordSyncKey(type, recordId);
+  if (snapshot.confirmed[key]?.status === 'retry') return 'retry';
   if (snapshot.pending.has(key)) return 'pending';
   if (snapshot.confirmed[key]) return 'synced';
   return 'unknown';
+}
+
+export function getCloudRecordSyncIssue(
+  snapshot: CloudRecordSyncSnapshot,
+  type: CloudRecordType,
+  recordId: string,
+): string | null {
+  const entry = snapshot.confirmed[cloudRecordSyncKey(type, recordId)];
+  return entry?.status === 'retry' ? entry.error || 'Cloud did not confirm this record.' : null;
 }
 
 export function getPendingCloudRecordKeys(
