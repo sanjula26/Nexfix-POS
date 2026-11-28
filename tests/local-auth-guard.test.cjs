@@ -1,12 +1,36 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { beginLocalAuthAttempt, completeLocalAuthAttempt } = require('../electron/local-auth-guard.cjs');
+const { beginLocalAuthAttempt, completeLocalAuthAttempt, isValidLocalAuthGuardState } = require('../electron/local-auth-guard.cjs');
 
 function failAttempt(state, now, id) {
   const begun = beginLocalAuthAttempt(state, now, id);
   assert.equal(begun.result.ok, true);
   return completeLocalAuthAttempt(begun.state, id, false, now).state;
 }
+
+
+test('persisted desktop guard validation rejects negative counters and malformed pending leases', () => {
+  const now = 100_000;
+  const valid = { version: 1, failures: 2, lockedUntil: 0, pending: { id: 'attempt-1', startedAt: now - 1000 } };
+  assert.equal(isValidLocalAuthGuardState(valid, now), true);
+  assert.equal(isValidLocalAuthGuardState({ ...valid, pending: null }, now), true);
+
+  for (const invalid of [
+    { ...valid, failures: -1 },
+    { ...valid, failures: 1001 },
+    { ...valid, lockedUntil: -1 },
+    { ...valid, pending: {} },
+    { ...valid, pending: { id: '', startedAt: now - 1000 } },
+    { ...valid, pending: { id: 'attempt-1'.repeat(20), startedAt: now - 1000 } },
+    { ...valid, pending: { id: 'attempt-1', startedAt: Number.NaN } },
+    { ...valid, pending: { id: 'attempt-1', startedAt: now + 1 } },
+    { ...valid, pending: 'corrupt' },
+    { ...valid, pending: [] },
+  ]) {
+    assert.equal(isValidLocalAuthGuardState(invalid, now), false, JSON.stringify(invalid));
+  }
+});
+
 
 test('shared local-auth guard permits attempts then applies exponential backoff', () => {
   let state = {};
