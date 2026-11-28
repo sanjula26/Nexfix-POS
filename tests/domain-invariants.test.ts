@@ -1153,6 +1153,23 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
 
   assertLegacyQueueBlocked(saleReplay, 'Sale');
   assertLegacyQueueBlocked(purchaseReplay, 'GRN');
+
+  assert.ok(offlineSource.includes('let blockedUnscopedLegacyWrite = false;'));
+  assert.equal(
+    (offlineSource.match(/blockedUnscopedLegacyWrite = true;/g) || []).length,
+    2,
+    'both legacy Sale and GRN branches must mark the sync cycle as blocked',
+  );
+  const blockedReturn = offlineSource.indexOf('if (blockedUnscopedLegacyWrite) {');
+  const snapshotStart = offlineSource.indexOf('const snapshotOps = remaining.filter');
+  const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
+  assert.ok(blockedReturn > repairStart, 'the blocked-cycle return must happen after queue processing');
+  assert.ok(snapshotStart > blockedReturn, 'the snapshot logic must come after the blocked-cycle guard');
+  assert.ok(snapshotUpload > snapshotStart, 'the blocked-cycle guard must precede every generic snapshot upload');
+  assert.ok(offlineSource.slice(blockedReturn, snapshotStart).includes('blockedLegacy: true'));
+  const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
+  assert.ok(syncManagerSource.includes('if (result.blockedLegacy)'));
+  assert.ok(syncManagerSource.includes('need Admin reconciliation before Cloud sync can continue'));
 });
 
 test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
