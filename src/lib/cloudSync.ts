@@ -1,6 +1,6 @@
 import type { InventoryUnit, POSState, Purchase } from './types';
-import { idbLoadState } from './db';
-import { hasLocalBusinessData, hasStoredLocalBusinessData } from './shopBindingSafety';
+import { idbListQueue, idbLoadState } from './db';
+import { canAutoBindCloudShop, hasStoredLocalBusinessData } from './shopBindingSafety';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
 import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
@@ -60,14 +60,24 @@ export function getCloudShopId(): string {
   } catch { return ''; }
 }
 
-export function setCloudShopId(id: string): void {
+export function setCloudShopId(id: string): boolean {
   const normalized = id.trim();
-  if (!normalized || normalized.length > MAX_SHOP_ID_LENGTH) return;
-  const changed = getCloudShopId() !== normalized;
-  try { storage()?.setItem(SHOP_KEY, normalized); } catch { /* ignore */ }
-  if (changed && typeof window !== 'undefined') {
+  if (!normalized || normalized.length > MAX_SHOP_ID_LENGTH) return false;
+  const previous = getCloudShopId();
+  if (previous === normalized) return true;
+  const target = storage();
+  if (!target) return false;
+  try {
+    target.setItem(SHOP_KEY, normalized);
+    const storageValue = target.getItem(SHOP_KEY)?.trim() || '';
+    if (storageValue !== normalized) return false;
+  } catch {
+    return false;
+  }
+  if (previous !== normalized && typeof window !== 'undefined') {
     window.dispatchEvent(new Event('nexfix:cloud-shop-changed'));
   }
+  return true;
 }
 
 /** Resolve an explicitly provisioned active shop membership for the authenticated user. */
@@ -125,17 +135,31 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
     // persisted POS state before associating it with the first cloud membership.
     // This guard lives here as well as in ShopSwitcher because background
     // Settings/backup/queue paths also call ensureCloudShop().
-    const localState = await idbLoadState();
-    if (!localState) {
-      return { ok: false, error: 'Could not safely inspect local POS data. Cloud-shop binding was not changed; retry after local storage is available.' };
+    const [localState, pendingQueue] = await Promise.all([
+      idbLoadState(),
+      idbListQueue().catch(() => null),
+    ]);
+    if (!localState || !pendingQueue) {
+      return { ok: false, error: 'Could not safely inspect local POS data and offline queue. Cloud-shop binding was not changed; retry after local storage is available.' };
     }
-    if (hasLocalBusinessData(localState) || hasStoredLocalBusinessData()) {
+    if (pendingQueue.length > 0) {
+      return {
+        ok: false,
+        error: 'This PC has pending offline operations but no saved cloud-shop binding. For safety, cloud sync is blocked; reconnect to the original shop or request an Admin reconciliation before first Cloud setup.',
+      };
+    }
+    if (!canAutoBindCloudShop(localState, pendingQueue.length, hasStoredLocalBusinessData())) {
       return {
         ok: false,
         error: 'This PC has existing local POS data but no saved cloud-shop binding. For safety, cloud sync is blocked; restore the original shop binding or request a verified migration before syncing.',
       };
     }
-    setCloudShopId(membership.shop_id);
+    if (!setCloudShopId(membership.shop_id)) {
+      return {
+        ok: false,
+        error: 'Could not save the Cloud shop binding on this PC. No Cloud sync was started; check local storage permissions and retry.',
+      };
+    }
     return { ok: true, shopId: membership.shop_id, userId: sessionData.session.user.id };
   }
 
