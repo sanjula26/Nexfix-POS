@@ -1095,6 +1095,12 @@ test('cloud activity wrapper clears the indicator after success and failure', as
   assert.equal(successfulState.lastError, null);
   assert.equal(typeof successfulState.lastSuccessAt, 'number');
   assert.equal(successfulState.lastSuccessOperation, 'POS data');
+  await withCloudActivity('Catalog data', async () => ({ ok: false, error: 'catalog upload failed' }));
+  const unconfirmedState = getCloudActivityState();
+  assert.equal(unconfirmedState.active, 0);
+  assert.equal(unconfirmedState.lastError, 'catalog upload failed');
+  assert.equal(unconfirmedState.lastSuccessAt, successfulState.lastSuccessAt);
+  assert.equal(unconfirmedState.lastSuccessOperation, successfulState.lastSuccessOperation);
   await assert.rejects(
     withCloudActivity('POS data', async () => { throw new Error('network failure'); }),
     /network failure/,
