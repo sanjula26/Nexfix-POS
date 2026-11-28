@@ -607,7 +607,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const attempt = await runLocalAuthAttempt(async () => {
       verification = await verifyPasswordWithLegacyUpgrade(pin, storedHash);
       return verification.valid;
-    });
+    }, user.role === 'admin' ? 'admin' : 'cashier-unlock');
     if (!attempt.success) {
       pushAudit('DENIED', 'Security', attempt.allowed
         ? `Failed admin verification${reason ? ` for ${reason}` : ''} (${actor.name})`
@@ -1133,7 +1133,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           }
           verificationResult.value = { kind: 'admin-password', admin: matchedAdmin };
           return true;
-        });
+        }, 'cashier-unlock');
         if (!attempt.success) {
           setState(st => ({ ...st, audit: [{
             id: uid(), time: new Date().toISOString(), user: user.email,
