@@ -653,6 +653,26 @@ test('async sensitive admin re-auth is invalidated on logout and role switch', (
 });
 
 
+test('initial Admin setup is serialized and rechecks account state after async PBKDF2', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const start = storeSource.indexOf('const createInitialAdmin = useCallback(async');
+  const end = storeSource.indexOf('const changePassword = useCallback(', start);
+  assert.ok(start >= 0 && end > start);
+  const setup = storeSource.slice(start, end);
+
+  assert.ok(setup.includes('runWithAsyncLock(initialAdminSetupLockRef'));
+  const firstEmptyCheck = setup.indexOf("if ((stateRef.current.users || []).length > 0)");
+  const pinHash = setup.indexOf('const initialAdminPinHash = await hashPasswordAsync(next)');
+  const finalEmptyCheck = setup.indexOf("if ((stateRef.current.users || []).length > 0)", firstEmptyCheck + 1);
+  const commit = setup.indexOf('const nextState =', pinHash);
+
+  assert.ok(firstEmptyCheck >= 0);
+  assert.ok(pinHash > firstEmptyCheck);
+  assert.ok(finalEmptyCheck > pinHash);
+  assert.ok(commit > finalEmptyCheck);
+  assert.ok(setup.slice(finalEmptyCheck, commit).includes("Administrator setup is already complete"));
+});
+
 test('staff account saves await PBKDF2 and report success only after the current Admin and target are revalidated', () => {
   const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
   const usersSource = readFileSync(new URL('../src/pages/Users.tsx', import.meta.url), 'utf8');
