@@ -2,7 +2,7 @@
 import type { InventoryUnit, Product, Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
 import { getCloudActivityScope } from './cloudActivity';
-import { acknowledgeCloudRecordQueue, isCloudRecordReplayScopeValid, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
+import { acknowledgeCloudRecordQueue, hasCloudRecordScope, isCloudRecordReplayScopeValid, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
@@ -82,19 +82,6 @@ export async function queueSaleReversalRejection(requestId:string,note?:string):
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
-
-/** Legacy queue rows lack the original cloud user. Re-verify the same authenticated
- * membership after the positive write and record the receipt under that uploader,
- * never by guessing which user created the old local record. */
-async function reverifyLegacyReceiptScope(
-  expectedScope: { shopId: string; userId: string } | null,
-): Promise<{ shopId: string; userId: string } | null> {
-  if (!expectedScope?.shopId || !expectedScope.userId) return null;
-  const current = await ensureCloudShop('Nexfix Shop');
-  if (!current.ok || !current.shopId || !current.userId ||
-      current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId) return null;
-  return { shopId: current.shopId, userId: current.userId };
-}
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
@@ -181,6 +168,9 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         };
         let parsed: ParsedSaleQueue;
         try { parsed = JSON.parse(op.payload) as ParsedSaleQueue; } catch { break; }
+        // Historical Sale jobs did not store their original Cloud shop/user.
+        // Keep those rows local until an explicit reconciliation can bind them.
+        if (!hasCloudRecordScope(parsed.cloudScope)) break;
         const markRetry = async (reason: unknown) => {
           if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
           await markCloudRecordSyncRetry(
@@ -196,7 +186,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -215,7 +205,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const activeScopeBeforeSale = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
             await markRetry('The Cloud account or shop changed before the sale write; no Sale was sent to the new account.');
             break;
           }
@@ -242,7 +232,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
             const activeScopeBeforeTradeIn = getCloudActivityScope();
-            if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
+            if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
               await markRetry('The Cloud account or shop changed before trade-in reconciliation; the queue was kept.');
               break;
             }
@@ -261,16 +251,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             }
           }
           const activeScope = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
-          // For legacy rows, the original user cannot be recovered. Only attach a
-          // positive receipt after re-verifying that the same shop/user still owns this
-          // completed upload. The server response remains the proof of Sale acceptance.
-          const receiptScope = parsed.cloudScope
-            ? activeScope
-            : await reverifyLegacyReceiptScope(verifiedScope);
+          const receiptScope = activeScope;
           if (!receiptScope) {
             const reason = 'Cloud accepted the sale, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
             if (verifiedScope) {
@@ -283,8 +268,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           );
           if (!saved) {
             const reason = 'Cloud accepted the sale, but this PC could not save its receipt. The queue was kept for retry.';
-            if (parsed.cloudScope) await markRetry(reason);
-            else await markCloudRecordSyncRetry('sale', parsed.saleId, 'Offline sale sync', reason, receiptScope);
+            await markRetry(reason);
             break;
           }
           flushed++;
@@ -303,6 +287,9 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         };
         let parsed: ParsedPurchaseQueue;
         try { parsed = JSON.parse(op.payload) as ParsedPurchaseQueue; } catch { break; }
+        // Historical GRN jobs did not store their original Cloud shop/user.
+        // Keep those rows local until an explicit reconciliation can bind them.
+        if (!hasCloudRecordScope(parsed.cloudScope)) break;
         const markRetry = async (reason: unknown) => {
           if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
           await markCloudRecordSyncRetry(
@@ -318,7 +305,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -331,7 +318,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             }
           }
           const activeScopeBeforeReceive = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
             await markRetry('The Cloud account or shop changed before the GRN write; no GRN was sent to the new account.');
             break;
           }
@@ -347,15 +334,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           const activeScope = getCloudActivityScope();
-          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+          if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
-          // Attribute a legacy GRN receipt only to the same freshly re-verified
-          // Cloud shop/user that completed this upload; never invent its old scope.
-          const receiptScope = parsed.cloudScope
-            ? activeScope
-            : await reverifyLegacyReceiptScope(verifiedScope);
+          const receiptScope = activeScope;
           if (!receiptScope) {
             const reason = 'Cloud accepted the GRN, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
             if (verifiedScope) {
@@ -368,8 +351,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           );
           if (!saved) {
             const reason = 'Cloud accepted the GRN, but this PC could not save its receipt. The queue was kept for retry.';
-            if (parsed.cloudScope) await markRetry(reason);
-            else await markCloudRecordSyncRetry('purchase', parsed.purchaseId, 'Offline GRN sync', reason, receiptScope);
+            await markRetry(reason);
             break;
           }
           flushed++;
