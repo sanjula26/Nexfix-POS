@@ -3437,7 +3437,7 @@ const deletePurchase = useCallback((id: string) => {
     if (!toSave.name.trim() || !toSave.email.trim()) {
       return { ok: false, error: 'Name and email are required.' };
     }
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(toSave.email.trim())) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toSave.email.trim())) {
       return { ok: false, error: 'Enter a valid email address.' };
     }
     if (sessionRef.current?.userId !== adminSnapshot.id) {
