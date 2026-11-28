@@ -155,8 +155,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_create'){
         try{
-          const recordScope = getCloudActivityScope();
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
+          const parsed=JSON.parse(op.payload) as {cloudScope?:{shopId?:string;userId?:string};saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           if(state) {
@@ -189,9 +188,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             if (!tradeIn.ok) break;
           }
           const activeScope = getCloudActivityScope();
-          if (!recordScope || recordScope.shopId !== shop.shopId || activeScope?.shopId !== recordScope.shopId || activeScope?.userId !== recordScope.userId) break;
-          const saved = await acknowledgeCloudRecordQueue(recordScope, 'sale', parsed.saleId, op.id, 'Offline sale sync');
-          if (!saved) break;
+          if (parsed.cloudScope) {
+            if (!activeScope || parsed.cloudScope.shopId !== shop.shopId || activeScope.shopId !== parsed.cloudScope.shopId || activeScope.userId !== parsed.cloudScope.userId) break;
+            const saved = await acknowledgeCloudRecordQueue(activeScope, 'sale', parsed.saleId, op.id, 'Offline sale sync');
+            if (!saved) break;
+          } else {
+            // Legacy queue rows predate per-record receipts; preserve their existing replay behavior without inventing a confirmation.
+            await idbAcknowledgeQueue([op.id]);
+          }
           flushed++;
           continue;
         }catch{break;}
@@ -200,7 +204,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       if(op.type==='purchase_receive'){
         try{
           const recordScope = getCloudActivityScope();
-          const parsed=JSON.parse(op.payload) as {purchaseId:string;input:{deviceId:string;purchase:Purchase}};
+          const parsed=JSON.parse(op.payload) as {cloudScope?:{shopId?:string;userId?:string};purchaseId:string;input:{deviceId:string;purchase:Purchase}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
           const catalogState=state || undefined;
@@ -211,9 +215,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const result=await receivePurchaseAtomic({shopId:shop.shopId,branchId:parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',deviceId:parsed.input.deviceId,purchaseId:parsed.purchaseId,purchase:parsed.input.purchase});
           if(!result.ok) break;
           const activeScope = getCloudActivityScope();
-          if (!recordScope || recordScope.shopId !== shop.shopId || activeScope?.shopId !== recordScope.shopId || activeScope?.userId !== recordScope.userId) break;
-          const saved = await acknowledgeCloudRecordQueue(recordScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync');
-          if (!saved) break;
+          if (parsed.cloudScope) {
+            if (!activeScope || parsed.cloudScope.shopId !== shop.shopId || activeScope.shopId !== parsed.cloudScope.shopId || activeScope.userId !== parsed.cloudScope.userId) break;
+            const saved = await acknowledgeCloudRecordQueue(activeScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync');
+            if (!saved) break;
+          } else {
+            // Legacy queue rows predate per-record receipts; preserve their existing replay behavior without inventing a confirmation.
+            await idbAcknowledgeQueue([op.id]);
+          }
           flushed++;
           continue;
         }catch{break;}
