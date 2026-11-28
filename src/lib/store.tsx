@@ -691,7 +691,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } catch { /* an invalid or unreadable PIN must not unlock the session */ }
       verificationResult.value = null;
       return false;
-    });
+    }, current.role === 'admin' ? 'admin' : 'cashier-unlock');
     if (!attempt.success) {
       pushAudit('DENIED', 'Auth', attempt.allowed
         ? 'Failed idle-lock unlock attempt'
