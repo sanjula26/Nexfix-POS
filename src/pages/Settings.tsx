@@ -665,12 +665,27 @@ export default function Settings() {
   };
   const submitPin = async () => {
     setPinMsg(null);
-    if (!(await confirmSensitiveAdmin('admin unlock password change'))) { setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' }); return; }
-    if (pinNew !== pinConfirm) return setPinMsg({ ok: false, text: 'New passwords do not match' });
-    const res = await changeAdminPin(pinCur, pinNew);
-    if (!res.ok) return setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
-    setPinMsg({ ok: true, text: 'Admin unlock PIN updated' });
-    setPinCur(''); setPinNew(''); setPinConfirm('');
+    try {
+      if (!(await confirmSensitiveAdmin('admin unlock password change'))) {
+        setPinMsg({ ok: false, text: 'Administrator confirmation cancelled.' });
+        return;
+      }
+      if (pinNew !== pinConfirm) {
+        setPinMsg({ ok: false, text: 'New passwords do not match' });
+        return;
+      }
+      const res = await changeAdminPin(pinCur, pinNew);
+      if (!res.ok) {
+        setPinMsg({ ok: false, text: res.error || 'Failed to update password' });
+        return;
+      }
+      setPinMsg({ ok: true, text: 'Admin unlock PIN updated' });
+      setPinCur('');
+      setPinNew('');
+      setPinConfirm('');
+    } catch {
+      setPinMsg({ ok: false, text: 'Could not update the admin unlock PIN. Please try again.' });
+    }
   };
 
   const onImport = async (files: File[]) => {
