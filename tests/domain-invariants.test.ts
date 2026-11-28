@@ -1346,6 +1346,35 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
     }
   };
   assertScopedLegacyTransaction('repair_delivery', 'queueRepairDelivery', 'processRepairDeliveryAtomic(');
+  const repairQueueWriterStart = offlineSource.indexOf('export async function queueRepairDelivery');
+  const repairQueueWriterEnd = offlineSource.indexOf('export async function queuePurchaseReceive', repairQueueWriterStart);
+  const repairQueueWriter = offlineSource.slice(repairQueueWriterStart, repairQueueWriterEnd);
+  assert.ok(repairQueueWriter.includes('branchId') && repairQueueWriter.includes('cloudScope:getCloudActivityScope()||undefined'),
+    'repair delivery queue must persist immutable branch and Cloud scope at enqueue time');
+  const repairReplayStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
+  const saleReversalStart = offlineSource.indexOf("if(op.type==='sale_reversal_request')", repairReplayStart);
+  const repairReplay = offlineSource.slice(repairReplayStart, saleReversalStart);
+  assert.ok(repairReplay.includes('const queuedBranchId = parsed.branchId || \'local-main\';'));
+  assert.ok(repairReplay.includes('branchId:queuedBranchId,requireExactBranch:true') ||
+    (repairReplay.includes('branchId:queuedBranchId') && repairReplay.includes('requireExactBranch:true')),
+    'repair replay must pass the captured branch and require an exact match');
+
+  const cloudSyncSourceForRepair = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  assert.ok(cloudSyncSourceForRepair.includes('resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true, input.deviceId)'),
+    'repair RPC client must check the original branch using the queued device id');
+  assert.ok(cloudSyncSourceForRepair.includes('branchId: branch.branchId'),
+    'repair RPC payload must carry the expected branch into the atomic SQL function');
+  const storeSourceForRepair = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  assert.ok(storeSourceForRepair.includes('getCachedPOSDeviceBranchId(shop.shopId)'));
+  assert.ok(storeSourceForRepair.includes('await queueRepairDelivery(id, next, machine.id, repairBranchId)'));
+  assert.ok(storeSourceForRepair.includes('branchId: resolvedBranch.branchId!, requireExactBranch: true'));
+
+  const repairMigration = readFileSync(new URL('../supabase/migrations/20261128123000_enforce_repair_delivery_original_branch.sql', import.meta.url), 'utf8');
+  assert.ok(repairMigration.includes("v_expected_branch_id := nullif(btrim(coalesce(p_repair->>'branchId','')), '');"));
+  assert.ok(repairMigration.includes('v_expected_branch_id <> v_branch_id::text'));
+  assert.ok(repairMigration.includes('Queued transaction branch no longer matches this POS device assignment'));
+  assert.ok(repairMigration.indexOf('v_expected_branch_id <> v_branch_id::text') < repairMigration.indexOf("if coalesce(p_repair->>'status','') <> 'delivered'"),
+    'SQL must verify expected branch before changing repair status or deducting parts');
   assertScopedLegacyTransaction('sale_reversal_request', 'queueSaleReversalRequest', 'requestSaleReversal(');
   assertScopedLegacyTransaction('sale_reversal_approve', 'queueSaleReversalApproval', 'approveSaleReversal(');
   assertScopedLegacyTransaction('sale_reversal_reject', 'queueSaleReversalRejection', 'rejectSaleReversal(');
