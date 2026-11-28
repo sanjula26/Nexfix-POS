@@ -758,6 +758,31 @@ test('managed password change and POS reset enforce sensitive Admin confirmation
   assert.ok(settingsHandler.includes('use the guarded PIN change flow'));
 });
 
+
+test('Settings Admin PIN change uses its store-level guarded current credential once without a duplicate confirmation modal', () => {
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8');
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const submitStart = settingsSource.indexOf('const submitPin = async () => {');
+  const submitEnd = settingsSource.indexOf('const onImport =', submitStart);
+  assert.ok(submitStart >= 0 && submitEnd > submitStart);
+  const submit = settingsSource.slice(submitStart, submitEnd);
+  assert.ok(submit.includes('await changeAdminPin(pinCur, pinNew)'));
+  assert.ok(!submit.includes('confirmSensitiveAdmin('));
+  assert.ok(submit.includes('if (pinBusy) return;'));
+  assert.ok(submit.includes('finally {\n      setPinBusy(false);'));
+  assert.ok(settingsSource.includes('disabled={pinBusy || !pinNew || !pinConfirm || !pinCur}'));
+
+  const changeStart = storeSource.indexOf('const changeAdminPin = useCallback(');
+  const changeEnd = storeSource.indexOf('/* ---------------- products ---------------- */', changeStart);
+  assert.ok(changeStart >= 0 && changeEnd > changeStart);
+  const change = storeSource.slice(changeStart, changeEnd);
+  assert.ok(change.includes('runLocalAuthAttempt(async () =>'));
+  assert.ok(change.includes('verifyPasswordWithLegacyUpgrade(currentSecret, storedPinHash)'));
+  assert.ok(change.includes('verifyPasswordAsync(currentSecret, adminSnapshot.password)'));
+  assert.ok(change.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+});
+
+
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
