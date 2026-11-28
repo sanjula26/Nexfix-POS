@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { setCloudActivityScope, withCloudActivity } from './cloudActivity';
+import { getCloudActivityScope, setCloudActivityScope, withCloudActivity } from './cloudActivity';
 import { markCloudRecordSynced } from './cloudRecordSync';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
@@ -2020,7 +2020,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const machine = getMachineIdentity();
     const tradeInUnitId = tradeIn?.addToInventory ? uid() : undefined;
     const sale: Sale = {
-      id: input._saleId || uid(), branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId), billNo, date: new Date().toISOString(),
+      id: input._saleId || uid(), branchId: getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId), cloudScope: getCloudActivityScope() || undefined, billNo, date: new Date().toISOString(),
       cashierId: byUser.id, cashierName: byUser.name,
       salesmanId: input.salesmanId || undefined,
       machineId: machine.id, machineName: machine.name,
@@ -2457,7 +2457,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     });
     const paymentRows: PaymentLeg[] = committed.payments.map(p => ({ method: String(p.method) as PaymentMethod, amount: n(p.amount) }));
     const sale: Sale = {
-      id: String(row.id), branchId: String(row.branch_id || getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId)), billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
+      id: String(row.id), branchId: String(row.branch_id || getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId)), cloudScope: cloudRecordScope || undefined, billNo: String(row.bill_no ?? cloud.billNo), date: String(row.created_at ?? new Date().toISOString()),
       cashierId: String(row.cashier_id ?? user.id), cashierName: String(row.cashier_name ?? user.name),
       machineId: getMachineIdentity().id, machineName: getMachineIdentity().name,
       // Preserve the selected local customer ID in local history when phone
