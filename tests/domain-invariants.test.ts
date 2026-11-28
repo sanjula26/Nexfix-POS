@@ -775,7 +775,7 @@ test('cloud activity wrapper clears the indicator after success and failure', as
 });
 
 test('cloud sync details explain local queue, confirmed transfers, issues and safe retry', () => {
-  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8');
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   assert.ok(layoutSource.includes('aria-expanded={cloudDetailsOpen}'));
   assert.ok(layoutSource.includes('aria-controls="nexfix-cloud-sync-details"'));
   assert.ok(layoutSource.includes('Updates are saved on this PC and waiting to sync'));
@@ -891,7 +891,7 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
 
 
 test('cloud sync conflicts take precedence over pending labels and disable retry actions', () => {
-  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8');
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
   assert.ok(layoutSource.includes("const showRetryCloudSync = syncManagerState.status !== 'conflict'\n    && (syncManagerState.pending > 0 || syncManagerState.status === 'error');"));
   assert.ok(layoutSource.includes("syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.pending > 0 ? 'Pending'"));
