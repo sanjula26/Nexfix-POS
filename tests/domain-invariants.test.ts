@@ -1188,6 +1188,17 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(queueWriter.includes("id:`state-write:${scopeKey}`"));
   assert.ok(queueWriter.includes('payload:JSON.stringify({cloudScope:cloudScope||undefined})'));
   assert.ok(queueWriter.includes("const scopeKey = cloudScope"));
+  assert.ok(queueWriter.includes('cloudScope: sale.cloudScope || undefined'));
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  assert.ok(storeSource.includes('cloudScope: getCloudActivityScope() || undefined'),
+    'new locally completed Sales must capture their original Cloud scope');
+  assert.ok(storeSource.includes('cloudScope: cloudRecordScope || undefined'),
+    'Cloud-committed Sales must retain the verified shop/user identity');
+  const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  assert.ok(cloudSyncSource.includes('sales: state.sales.map(({ cloudScope: _localCloudScope, ...sale }) => sale)'),
+    'local Sale provenance must not be copied into the Cloud snapshot');
+  assert.ok(cloudSyncSource.includes('sales: cloudState.sales.map(sale => ({ ...sale, cloudScope }))'),
+    'Sales downloaded from the authenticated shop must receive that verified source scope');
   assert.ok(offlineSource.includes('function getQueuedSnapshotCloudScope(op: QueueOp)'));
   assert.ok(offlineSource.includes('blockedQueueScope: true'));
   const pendingCheck = offlineSource.indexOf('const pendingTransactions = remaining.some');
