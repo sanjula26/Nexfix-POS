@@ -1185,7 +1185,13 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(offlineSource.slice(blockedReturn, snapshotUpload).includes('pendingTransactions: true'));
   assert.ok(offlineSource.slice(blockedReturn, snapshotUpload).includes('blockedQueueScope: blockedUnsafeScopedTransactionReplay || undefined'));
 
-  const assertInventoryQueueScope = (operation: string, writeCall: string) => {
+  const assertInventoryQueueScope = (operation: string, queueFunction: string, writeCall: string) => {
+    const writerStart = offlineSource.indexOf('export async function ' + queueFunction);
+    const writerEnd = offlineSource.indexOf('\n}', writerStart);
+    const writer = offlineSource.slice(writerStart, writerEnd < 0 ? offlineSource.length : writerEnd);
+    assert.ok(writerStart >= 0 && writer.includes('payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})'),
+      operation + ' queue creation must persist enqueue-time Cloud scope');
+
     const start = offlineSource.indexOf("if(op.type==='" + operation + "')");
     assert.ok(start >= 0, operation + ' replay block must exist');
     const nextStart = offlineSource.indexOf("if(op.type==='", start + 12);
@@ -1199,11 +1205,10 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
     assert.ok(scopeGuard >= 0 && shopResolve > scopeGuard, operation + ' must block unscoped legacy rows before shop resolution');
     assert.ok(serverScopeGuard > shopResolve && catalog > serverScopeGuard, operation + ' must verify the resolved Cloud identity before catalog bootstrap');
     assert.ok(write > scopeBeforeWrite && scopeBeforeWrite > catalog, operation + ' must re-check identity after catalog bootstrap and before the atomic write');
-    assert.ok(block.includes('cloudScope:getCloudActivityScope()||undefined'), operation + ' must persist enqueue-time Cloud scope');
   };
-  assertInventoryQueueScope('inventory_unit_delete', 'addInventoryUnitsAtomic(');
-  assertInventoryQueueScope('inventory_units_add', 'addInventoryUnitsAtomic(');
-  assertInventoryQueueScope('branch_stock_adjustment', 'adjustBranchStockAtomic(');
+  assertInventoryQueueScope('inventory_unit_delete', 'queueInventoryUnitDelete', 'addInventoryUnitsAtomic(');
+  assertInventoryQueueScope('inventory_units_add', 'queueInventoryUnitsAdd', 'addInventoryUnitsAtomic(');
+  assertInventoryQueueScope('branch_stock_adjustment', 'queueBranchStockAdjustment', 'adjustBranchStockAtomic(');
 
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedQueueScope)'));
