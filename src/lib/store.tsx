@@ -10,7 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade
 import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
 import { runWithAsyncLock } from './authConcurrency';
 import { runLocalAuthAttempt } from './localAuthGuard';
-import { replaceUserPasswordIfCurrent, saveManagedUserIfCurrent } from './userCredentialState';
+import { deleteManagedUserIfCurrent, replaceUserPasswordIfCurrent, saveManagedUserIfCurrent, setManagedUserActiveIfCurrent } from './userCredentialState';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -3472,31 +3472,67 @@ const deletePurchase = useCallback((id: string) => {
   }, [user, pushAudit, confirmSensitiveAdmin]);
 
   const toggleUserActive = useCallback(async (id: string) => {
-    if (!user || user.role !== 'admin') {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(account => account.id === user.id && account.role === 'admin' && account.active)
+      : undefined;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
       pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);
       return;
     }
+    const targetSnapshot = stateRef.current.users.find(account => account.id === id);
+    if (!targetSnapshot) return;
+    if (targetSnapshot.id === adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked self-deactivation of the active administrator');
+      return;
+    }
     if (!(await confirmSensitiveAdmin('user activation change'))) return;
-    const u = state.users.find(x => x.id === id);
-    setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
-    if (u?.role === 'admin') sensitiveAuthRef.current = null;
-    if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
-  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked user status change after administrator session changed');
+      return;
+    }
+
+    const nextActive = !targetSnapshot.active;
+    const nextState = setManagedUserActiveIfCurrent(stateRef.current, adminSnapshot, targetSnapshot, nextActive);
+    if (!nextState) {
+      pushAudit('DENIED', 'User', 'Blocked stale user status change or removal of the final active administrator');
+      return;
+    }
+    stateRef.current = nextState;
+    setState(current => setManagedUserActiveIfCurrent(current, adminSnapshot, targetSnapshot, nextActive) || current);
+    if (targetSnapshot.role === 'admin') sensitiveAuthRef.current = null;
+    pushAudit('UPDATE', 'User', `${nextActive ? 'Activated' : 'Deactivated'} user ${targetSnapshot.name}`);
+  }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const deleteUser = useCallback(async (id: string) => {
-    if (!user || user.role !== 'admin') {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(account => account.id === user.id && account.role === 'admin' && account.active)
+      : undefined;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
       pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);
       return;
     }
+    const targetSnapshot = stateRef.current.users.find(account => account.id === id);
+    if (!targetSnapshot || targetSnapshot.id === adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked deletion of the current administrator account');
+      return;
+    }
     if (!(await confirmSensitiveAdmin('user deletion'))) return;
-    const u = state.users.find(x => x.id === id);
-    if (!u || u.id === user?.id) return;
-    setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
-    if (u.role === 'admin') sensitiveAuthRef.current = null;
-    pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
-  }, [state.users, user?.id, pushAudit, user, confirmSensitiveAdmin]);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked user delete after administrator session changed');
+      return;
+    }
 
-  /* ---------------- admin ---------------- */
+    const nextState = deleteManagedUserIfCurrent(stateRef.current, adminSnapshot, targetSnapshot);
+    if (!nextState) {
+      pushAudit('DENIED', 'User', 'Blocked stale user deletion or removal of the final active administrator');
+      return;
+    }
+    stateRef.current = nextState;
+    setState(current => deleteManagedUserIfCurrent(current, adminSnapshot, targetSnapshot) || current);
+    if (targetSnapshot.role === 'admin') sensitiveAuthRef.current = null;
+    pushAudit('DELETE', 'User', `Deleted user ${targetSnapshot.name}`);
+  }, [pushAudit, user, confirmSensitiveAdmin]);
+/* ---------------- admin ---------------- */
   const setPermission = useCallback(async (role: Role, key: string, value: boolean) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);
