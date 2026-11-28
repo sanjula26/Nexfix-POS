@@ -31,7 +31,8 @@ function isQueuedBranchMismatch(reason: unknown): boolean {
   const message = reason instanceof Error ? reason.message : String(reason || '');
   return message.includes('Queued transaction branch no longer matches')
     || message.includes('not assigned to an active branch')
-    || message.includes('No active branch is configured');
+    || message.includes('No active branch is configured')
+    || message.includes('No active branch exists for this shop');
 }
 
 export async function queueWrite(note?:string):Promise<void>{
