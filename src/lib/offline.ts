@@ -2,7 +2,7 @@
 import type { InventoryUnit, Product, Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
 import { getCloudActivityScope } from './cloudActivity';
-import { acknowledgeCloudRecordQueue, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
+import { acknowledgeCloudRecordQueue, isCloudRecordReplayScopeValid, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
@@ -181,6 +181,12 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry(shop.error || 'Cloud shop access could not be verified.');
             break;
           }
+          const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+          const activeScopeBeforeCatalog = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
+            break;
+          }
           if (state) {
             const catalog = await syncNormalizedCatalog(state, shop.shopId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
@@ -195,6 +201,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             ? state.users.find(user => user.id === parsed.input.salesmanId && user.active)
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
+          const activeScopeBeforeSale = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
+            await markRetry('The Cloud account or shop changed before the sale write; no Sale was sent to the new account.');
+            break;
+          }
           const result = await completeSaleAtomic({
             shopId: shop.shopId,
             branchId: parsed.input.branchId || state?.settings.branchId || 'local-main',
@@ -217,6 +228,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
+            const activeScopeBeforeTradeIn = getCloudActivityScope();
+            if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
+              await markRetry('The Cloud account or shop changed before trade-in reconciliation; the queue was kept.');
+              break;
+            }
             const tradeIn = await registerTradeInAtomic({
               shopId: shop.shopId,
               saleId: parsed.saleId,
@@ -233,9 +249,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (parsed.cloudScope) {
-            if (!activeScope || !shop.userId || parsed.cloudScope.shopId !== shop.shopId ||
-                parsed.cloudScope.userId !== shop.userId || activeScope.shopId !== shop.shopId ||
-                activeScope.userId !== shop.userId) {
+            if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
               await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
               break;
             }
@@ -279,6 +293,12 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry(shop.error || 'Cloud shop access could not be verified.');
             break;
           }
+          const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+          const activeScopeBeforeCatalog = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
+            break;
+          }
           const catalogState = state || undefined;
           if (catalogState) {
             const catalog = await syncNormalizedCatalog(catalogState, shop.shopId);
@@ -286,6 +306,11 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
               await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
               break;
             }
+          }
+          const activeScopeBeforeReceive = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
+            await markRetry('The Cloud account or shop changed before the GRN write; no GRN was sent to the new account.');
+            break;
           }
           const result = await receivePurchaseAtomic({
             shopId: shop.shopId,
@@ -300,9 +325,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (parsed.cloudScope) {
-            if (!activeScope || !shop.userId || parsed.cloudScope.shopId !== shop.shopId ||
-                parsed.cloudScope.userId !== shop.userId || activeScope.shopId !== shop.shopId ||
-                activeScope.userId !== shop.userId) {
+            if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
               await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
               break;
             }
