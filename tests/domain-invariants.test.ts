@@ -724,3 +724,17 @@ test('cloud sync details explain local queue, confirmed transfers, issues and sa
   assert.ok(layoutSource.includes("syncManagerState.status !== 'conflict'"));
   assert.ok(layoutSource.includes("connectivity === 'online'"));
 });
+
+
+test('cloud sale activity highlights only the atomic sale and trade-in writes', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const start = storeSource.indexOf('const completeSaleCloud =');
+  const end = storeSource.indexOf('const refundSale =', start);
+  assert.ok(start >= 0 && end > start, 'cloud sale handler should be present');
+  const saleHandler = storeSource.slice(start, end);
+
+  assert.ok(saleHandler.includes("withCloudActivity('Cloud sale', () => completeSaleAtomic("));
+  assert.ok(saleHandler.includes("withCloudActivity('Trade-in unit', () => registerTradeInAtomic("));
+  assert.ok(!saleHandler.includes("withCloudActivity('Cloud sale', execute"));
+  assert.ok(!saleHandler.includes('cloudSaleCommitted'));
+});
