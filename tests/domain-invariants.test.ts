@@ -1161,7 +1161,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
     'both legacy Sale and GRN branches must mark the sync cycle as blocked',
   );
   const blockedReturn = offlineSource.indexOf('if (blockedUnscopedLegacyWrite) {');
-  const snapshotStart = offlineSource.indexOf('const snapshotOps = remaining.filter');
+  const snapshotStart = offlineSource.indexOf('const snapshotOps=remaining.filter');
   const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
   assert.ok(blockedReturn > repairStart, 'the blocked-cycle return must happen after queue processing');
   assert.ok(snapshotStart > blockedReturn, 'the snapshot logic must come after the blocked-cycle guard');
