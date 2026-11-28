@@ -660,14 +660,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return true;
         }
       }
-      matchingAdmin = await findActiveAdminByCredential(stateRef.current, async admin => {
+      const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async admin => {
         try {
           return isHashed(admin.password)
             ? await verifyPasswordAsync(credential, admin.password)
             : credential === admin.password;
         } catch { return false; }
       });
-      if (matchingAdmin) return true;
+      matchingAdmin = matchedAdmin;
+      if (matchedAdmin) return true;
       try {
         pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
         return pinVerification.valid;
@@ -893,7 +894,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     stateRef.current = nextState;
     setState(nextState);
 
-    const sess = { userId: nextUser.id, remember };
+    const sess = { userId: accountAtCommit.id, remember };
     loginAtRef.current = Date.now();
     setSession(sess);
     try {
@@ -1059,14 +1060,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             pinVerification = await verifyPasswordWithLegacyUpgrade(secret, adminSnapshot.adminPinHash);
             if (pinVerification.valid) return true;
           } catch { /* check the active admin login credentials next */ }
-          matchingAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
+          const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
             try {
               return isHashed(candidate.password)
                 ? await verifyPasswordAsync(secret, candidate.password)
                 : verifyPassword(secret, candidate.password || '');
             } catch { return false; }
           });
-          return !!matchingAdmin;
+          matchingAdmin = matchedAdmin;
+          return !!matchedAdmin;
         });
         if (!attempt.success) {
           setState(st => ({ ...st, audit: [{
