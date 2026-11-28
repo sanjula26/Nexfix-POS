@@ -51,6 +51,16 @@ values
   ('c3000000-0000-4000-8000-000000000002', 'c2000000-0000-4000-8000-000000000001', 'Branch B', 'BRANCH-B', true, false),
   ('c3000000-0000-4000-8000-000000000003', 'c2000000-0000-4000-8000-000000000002', 'Main', 'MAIN', false, true);
 
+insert into public.products (id, shop_id, name, cost, price, stock)
+values (
+  'c4000000-0000-4000-8000-000000000001',
+  'c2000000-0000-4000-8000-000000000001',
+  'Ensure Branch Guard Product',
+  50,
+  100,
+  7
+);
+
 -- Regular cashier: Settings can read an active branch, but this lookup must not
 -- reactivate the inactive default or create a new branch.
 select set_config('request.jwt.claim.sub', 'c1000000-0000-4000-8000-000000000002', true);
@@ -94,8 +104,9 @@ select ok(
   not exists (
     select 1 from public.branch_stock
     where shop_id='c2000000-0000-4000-8000-000000000001'
+      and branch_id='c3000000-0000-4000-8000-000000000001'
   ),
-  'cashier branch lookup does not initialize or rewrite branch stock'
+  'cashier branch lookup does not initialize stock for the inactive Main branch'
 );
 
 select throws_ok(
