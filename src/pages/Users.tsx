@@ -14,8 +14,10 @@ export default function Users() {
   const [confirmPass, setConfirmPass] = useState('');
   const [formErr, setFormErr] = useState('');
   const [formOk, setFormOk] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     setFormErr('');
     setFormOk('');
     if (!editing || !editing.name.trim() || !editing.email.trim()) {
@@ -31,7 +33,10 @@ export default function Users() {
       setFormErr('This email is already used by another user');
       return;
     }
-    if (editing.commissionPct != null && (!Number.isFinite(Number(editing.commissionPct)) || Number(editing.commissionPct) < 0 || Number(editing.commissionPct) > 100)) { setFormErr('Commission rate must be between 0% and 100%.'); return; }
+    if (editing.commissionPct != null && (!Number.isFinite(Number(editing.commissionPct)) || Number(editing.commissionPct) < 0 || Number(editing.commissionPct) > 100)) {
+      setFormErr('Commission rate must be between 0% and 100%.');
+      return;
+    }
     const existing = state.users.find(u => u.id === editing.id);
     const newPass = editing.password.trim();
     if (isNew && !newPass) {
@@ -58,10 +63,22 @@ export default function Users() {
       setFormErr('Password is required');
       return;
     }
-    saveUser(toSave);
-    setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
-    setConfirmPass('');
-    setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
+
+    setSaving(true);
+    try {
+      const result = await saveUser(toSave);
+      if (!result.ok) {
+        setFormErr(result.error || 'The staff account could not be saved.');
+        return;
+      }
+      setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
+      setConfirmPass('');
+      setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
+    } catch {
+      setFormErr('Could not save this staff account. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -121,19 +138,19 @@ export default function Users() {
         ))}
       </div>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add user' : 'Edit user'} sub={editing?.email}>
+      <Modal open={!!editing} onClose={() => { if (!saving) setEditing(null); }} title={isNew ? 'Add user' : 'Edit user'} sub={editing?.email}>
         {editing && (
           <div className="space-y-4">
             <Field label="Full name">
               <span className="relative block">
                 <UserCog size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-                <input className="input pl-9" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Cashier name" />
+                <input className="input pl-9" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Cashier name" disabled={saving} />
               </span>
             </Field>
             <Field label="Email / username (login)">
               <span className="relative block">
                 <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-                <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" />
+                <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" disabled={saving} />
               </span>
             </Field>
             <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored securely as a password hash' : 'Leave blank to keep current password'}>
@@ -145,7 +162,7 @@ export default function Users() {
                   value={editing.password}
                   onChange={e => { setEditing({ ...editing, password: e.target.value }); setFormErr(''); }}
                   placeholder={isNew ? 'Min 12 characters' : 'Type only if changing password'}
-                  autoComplete="new-password"
+                  autoComplete="new-password" disabled={saving}
                 />
               </span>
             </Field>
@@ -157,14 +174,14 @@ export default function Users() {
                   value={confirmPass}
                   onChange={e => { setConfirmPass(e.target.value); setFormErr(''); }}
                   placeholder="Repeat password"
-                  autoComplete="new-password"
+                  autoComplete="new-password" disabled={saving}
                 />
               </Field>
             )}
             {formErr && <p className="text-sm font-medium text-rose-500">{formErr}</p>}
             {formOk && <p className="text-sm font-medium text-emerald-500">{formOk}</p>}
             <Field label="Commission rate (%)" hint="Optional; used for estimated salesman commission reports only. Leave blank for no rate.">
-              <input className="input num" type="number" min="0" max="100" step="0.25" value={editing.commissionPct ?? ''} onChange={e => setEditing({ ...editing, commissionPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="e.g. 2.5" />
+              <input className="input num" type="number" min="0" max="100" step="0.25" value={editing.commissionPct ?? ''} onChange={e => setEditing({ ...editing, commissionPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="e.g. 2.5" disabled={saving} />
             </Field>
             <Field label="Role">
               <div className="grid grid-cols-2 gap-2">
@@ -173,6 +190,7 @@ export default function Users() {
                     key={r}
                     className={`btn ${editing.role === r ? (r === 'admin' ? 'btn-primary' : 'btn-emerald') : 'btn-soft'}`}
                     onClick={() => setEditing({ ...editing, role: r })}
+                    disabled={saving}
                   >
                     {r === 'admin' ? <ShieldCheck size={14} /> : <UserRound size={14} />}
                     {r === 'admin' ? 'Administrator' : 'Cashier'}
@@ -183,12 +201,12 @@ export default function Users() {
             <div className="flex gap-2.5 pt-1">
               <button
                 className="btn btn-primary flex-1"
-                onClick={save}
-                disabled={!editing.name.trim() || !editing.email.trim() || (isNew && !editing.password.trim())}
+                onClick={() => void save()}
+                disabled={saving || !editing.name.trim() || !editing.email.trim() || (isNew && !editing.password.trim())}
               >
-                {isNew ? 'Create account' : 'Save changes'}
+                {saving ? 'Saving…' : isNew ? 'Create account' : 'Save changes'}
               </button>
-              <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
+              <button className="btn btn-soft" onClick={() => setEditing(null)} disabled={saving}>Cancel</button>
             </div>
           </div>
         )}
