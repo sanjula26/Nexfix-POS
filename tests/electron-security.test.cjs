@@ -228,7 +228,7 @@ test('Electron reads persisted local-auth state only after strict schema validat
 test('Electron stores Admin and cashier idle-unlock attempts in separate validated guard files', () => {
   const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
   assert.ok(mainSource.includes("new Set(['admin','cashier-unlock'])"));
-  assert.ok(mainSource.includes("local-auth-guard-${scope}.json"));
+  assert.ok(mainSource.includes("scope==='admin' ? 'local-auth-guard.json' : 'local-auth-guard-cashier-unlock.json'"));
   assert.ok(mainSource.includes("if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'}"));
   assert.ok(mainSource.includes('readLocalAuthGuard(scope)'));
   assert.ok(mainSource.includes('writeLocalAuthGuard(next.state,scope)'));
