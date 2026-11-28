@@ -1479,9 +1479,11 @@ test('safe verification workflows trigger for integration and focused fix pull r
   ];
 
   for (const workflowPath of workflowPaths) {
-    const source = readFileSync(new URL(workflowPath, import.meta.url), 'utf8').replace(/\\r\\n/g, '\\n');
-    const pullRequestBlock = source.match(/^  pull_request:\\n([\\s\\S]*?)(?=^  [a-zA-Z_]+:|^permissions:|^jobs:)/m)?.[1] || '';
-    assert.ok(pullRequestBlock.includes("'integration/**'"), `${workflowPath} must run for integration PRs`);
-    assert.ok(pullRequestBlock.includes("'fix/**'"), `${workflowPath} must run for focused fix PRs`);
+    const source = readFileSync(new URL(workflowPath, import.meta.url), 'utf8').split('\\r\\n').join('\\n');
+    const expectedPullRequestFilter = [
+      '  pull_request:',
+      "    branches: [main, 'integration/**', 'fix/**']",
+    ].join('\\n');
+    assert.ok(source.includes(expectedPullRequestFilter), `${workflowPath} must run for main, integration and fix PRs`);
   }
 });
