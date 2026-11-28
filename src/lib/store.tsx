@@ -593,62 +593,122 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user?.email]);
 
-  const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
-    if (!user) return false;
-    const ok = verifyPassword(pin || '', state.settings.adminPinHash);
-    if (!ok) {
-      setState(s => ({
-        ...s,
-        audit: [{
-          id: uid(), time: new Date().toISOString(),
-          user: user?.email || 'unknown', action: 'DENIED', entity: 'Security',
-          details: `Failed admin verification${reason ? ` for ${reason}` : ''} (${user?.name || 'unknown'})`,
-        }, ...s.audit].slice(0, 500),
-      }));
+  const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
+    if (!user || !pin) return false;
+    const actor = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!actor) return false;
+    const storedHash = stateRef.current.settings.adminPinHash || '';
+    let verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    const attempt = await runLocalAuthAttempt(async () => {
+      verification = await verifyPasswordWithLegacyUpgrade(pin, storedHash);
+      return verification.valid;
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? `Failed admin verification${reason ? ` for ${reason}` : ''} (${actor.name})`
+        : `Admin verification temporarily locked${reason ? ` for ${reason}` : ''}`);
+      return false;
     }
-    return ok;
-  }, [state.settings.adminPinHash, user]);
+    const latestActor = stateRef.current.users.find(u => u.id === actor.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedHash
+      || !latestActor || !latestActor.active || latestActor.role !== actor.role || latestActor.password !== actor.password) {
+      return false;
+    }
+    if (verification.upgradedHash && !commitAdminPinHashIfCurrent(storedHash, verification.upgradedHash)) return false;
+    return true;
+  }, [user, pushAudit, commitAdminPinHashIfCurrent]);
 
-  const unlockSession = useCallback((credential: string): boolean => {
+  const unlockSession = useCallback(async (credential: string): Promise<boolean> => {
     if (!user || !credential) return false;
     const current = stateRef.current.users.find(u => u.id === user.id);
     if (!current || !current.active || current.mustChangePassword) return false;
-
-    let passwordOk = false;
-    try {
-      passwordOk = isHashed(current.password)
-        ? verifyPassword(credential, current.password)
-        : credential === current.password;
-    } catch { passwordOk = false; }
-
-    // An unattended terminal can be recovered by the current account or by
-    // an active administrator credential, without destroying the current cart.
-    let elevatedOk = false;
-    try {
-      elevatedOk = stateRef.current.users
-        .filter(u => u.role === 'admin' && u.active)
-        .some(admin => isHashed(admin.password)
-          ? verifyPassword(credential, admin.password)
-          : credential === admin.password);
-    } catch { elevatedOk = false; }
-    const adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
-
-    if (passwordOk || elevatedOk || adminPinOk) {
-      loginAtRef.current = Date.now();
-      pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
-      return true;
+    const initiatingUser = { ...current };
+    // Cashiers can unlock their own idle session without consuming the shared
+    // administrator attempt budget. A failed entry then proceeds to the guarded
+    // administrator fallback because this same prompt also accepts admin credentials.
+    if (current.role !== 'admin') {
+      let ownPasswordOk = false;
+      try {
+        ownPasswordOk = isHashed(current.password)
+          ? await verifyPasswordAsync(credential, current.password)
+          : credential === current.password;
+      } catch { ownPasswordOk = false; }
+      const latestCurrent = stateRef.current.users.find(u => u.id === current.id);
+      if (ownPasswordOk) {
+        if (!latestCurrent || !latestCurrent.active || latestCurrent.mustChangePassword || latestCurrent.password !== initiatingUser.password) return false;
+        loginAtRef.current = Date.now();
+        pushAudit('UNLOCK', 'Auth', 'User session unlocked after idle lock');
+        return true;
+      }
     }
-    pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
-    return false;
-  }, [pushAudit, user]);
-  const sensitiveAuthAtRef = useRef(0);
+
+    const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
+    const storedPinHash = adminSnapshot.adminPinHash;
+    let matchingAdmin: AppUser | null = null;
+    let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    const attempt = await runLocalAuthAttempt(async () => {
+      if (current.role === 'admin') {
+        let ownAdminOk = false;
+        try {
+          ownAdminOk = isHashed(initiatingUser.password)
+            ? await verifyPasswordAsync(credential, initiatingUser.password)
+            : credential === initiatingUser.password;
+        } catch { ownAdminOk = false; }
+        if (ownAdminOk) {
+          matchingAdmin = initiatingUser;
+          return true;
+        }
+      }
+      matchingAdmin = await findActiveAdminByCredential(stateRef.current, async admin => {
+        try {
+          return isHashed(admin.password)
+            ? await verifyPasswordAsync(credential, admin.password)
+            : credential === admin.password;
+        } catch { return false; }
+      });
+      if (matchingAdmin) return true;
+      try {
+        pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
+        return pinVerification.valid;
+      } catch { return false; }
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Auth', attempt.allowed
+        ? 'Failed idle-lock unlock attempt'
+        : 'Administrator idle unlock temporarily locked');
+      return false;
+    }
+    if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) return false;
+    const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+    if (!latestInitiator || !latestInitiator.active || latestInitiator.role !== initiatingUser.role
+      || latestInitiator.password !== initiatingUser.password || latestInitiator.mustChangePassword) return false;
+    if (matchingAdmin) {
+      const latestAdmin = findActiveAdminById(stateRef.current, matchingAdmin.id);
+      if (!latestAdmin || latestAdmin.password !== matchingAdmin.password) return false;
+    }
+    if (pinVerification.upgradedHash && !commitAdminPinHashIfCurrent(storedPinHash, pinVerification.upgradedHash)) return false;
+    loginAtRef.current = Date.now();
+    pushAudit('UNLOCK', 'Auth', 'Session unlocked after administrator credential verification');
+    return true;
+  }, [pushAudit, user, commitAdminPinHashIfCurrent]);
+
+  const sensitiveAuthRef = useRef<{ at: number; userId: string; snapshot: AdminCredentialSnapshot } | null>(null);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
     if (user?.role !== 'admin') {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
       return Promise.resolve(false);
     }
+    const activeAdmin = findActiveAdminById(stateRef.current, user.id);
+    if (!activeAdmin) {
+      pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator account is no longer active');
+      return Promise.resolve(false);
+    }
     const FRESH_MS = 5 * 60 * 1000;
-    if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return Promise.resolve(true);
+    const cachedAuth = sensitiveAuthRef.current;
+    if (cachedAuth && cachedAuth.userId === user.id
+      && adminCredentialSnapshotMatches(stateRef.current, cachedAuth.snapshot)
+      && Date.now() - cachedAuth.at < FRESH_MS) return Promise.resolve(true);
+    sensitiveAuthRef.current = null;
     if (sensitiveAdminResolverRef.current) {
       sensitiveAdminResolverRef.current(false);
       sensitiveAdminResolverRef.current = null;
@@ -658,28 +718,52 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return new Promise<boolean>(resolve => { sensitiveAdminResolverRef.current = resolve; });
   }, [pushAudit, user]);
 
-  const resolveSensitiveAdmin = useCallback((credential: string): boolean => {
+  const resolveSensitiveAdmin = useCallback(async (credential: string): Promise<boolean> => {
     const resolver = sensitiveAdminResolverRef.current;
-    if (!resolver || !sensitiveAdminPrompt) return false;
+    const prompt = sensitiveAdminPrompt;
+    if (!user || user.role !== 'admin' || !resolver || !prompt || !credential) return false;
+    const actorSnapshot = findActiveAdminById(stateRef.current, user.id);
+    if (!actorSnapshot) return false;
     const secret = String(credential || '');
-    const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
+    const storedPinHash = stateRef.current.settings.adminPinHash || '';
+    let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
     let passwordOk = false;
-    try {
-      passwordOk = !!admin && (isHashed(admin.password) ? verifyPassword(secret, admin.password) : secret === admin.password);
-    } catch { passwordOk = false; }
     let pinOk = false;
-    try { pinOk = !!secret && verifyPassword(secret, stateRef.current.settings.adminPinHash || ''); } catch { pinOk = false; }
-    if (!passwordOk && !pinOk) {
-      pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
+    const attempt = await runLocalAuthAttempt(async () => {
+      try {
+        passwordOk = isHashed(actorSnapshot.password)
+          ? await verifyPasswordAsync(secret, actorSnapshot.password)
+          : secret === actorSnapshot.password;
+      } catch { passwordOk = false; }
+      if (passwordOk) return true;
+      try {
+        pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash);
+        pinOk = pinVerification.valid;
+        return pinOk;
+      } catch { return false; }
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? 'Failed administrator confirmation for ' + prompt.reason
+        : 'Administrator confirmation temporarily locked for ' + prompt.reason);
       return false;
     }
-    sensitiveAuthAtRef.current = Date.now();
-    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
+    const latestActor = findActiveAdminById(stateRef.current, actorSnapshot.id);
+    if (sensitiveAdminResolverRef.current !== resolver || !sensitiveAdminPrompt
+      || !latestActor || latestActor.password !== actorSnapshot.password
+      || (stateRef.current.settings.adminPinHash || '') !== storedPinHash) return false;
+    if (pinVerification.upgradedHash && !commitAdminPinHashIfCurrent(storedPinHash, pinVerification.upgradedHash)) return false;
+    sensitiveAuthRef.current = {
+      at: Date.now(),
+      userId: actorSnapshot.id,
+      snapshot: captureAdminCredentialSnapshot(stateRef.current),
+    };
+    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + prompt.reason);
     resolver(true);
     sensitiveAdminResolverRef.current = null;
     setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, sensitiveAdminPrompt]);
+  }, [pushAudit, sensitiveAdminPrompt, commitAdminPinHashIfCurrent, user]);
 
   const cancelSensitiveAdmin = useCallback(() => {
     const resolver = sensitiveAdminResolverRef.current;
