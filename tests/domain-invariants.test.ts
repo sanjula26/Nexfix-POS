@@ -34,6 +34,7 @@ import {
   getCachedBranchStock,
   isBranchStockCacheReady,
   isLocalMainStockReady,
+  isQueuedOperationBranchValid,
   shouldReadBranchStockProductFallback,
   invalidateCachedBranchStockProduct,
   isStaleBranchStockConflict,
@@ -206,6 +207,19 @@ test('cloud-bound POS cannot use legacy local-main stock before branch resolutio
   assert.equal(isLocalMainStockReady('shop-1', true), false, 'multi-branch cloud shops must never fall back to aggregate stock');
   assert.equal(isLocalMainStockReady('', true), false, 'a multi-branch local cache must not use the local-main sentinel');
   assert.equal(isLocalMainStockReady('', false), true, 'legacy local-only single-branch mode remains available');
+});
+
+test('queued offline mutations retain their exact branch and only allow the single-branch legacy sentinel', () => {
+  assert.equal(isQueuedOperationBranchValid('branch-a', 'branch-a', 2), true);
+  assert.equal(isQueuedOperationBranchValid('branch-a', 'branch-b', 2), false, 'a queued Branch A write must not be remapped to Branch B');
+  assert.equal(isQueuedOperationBranchValid('local-main', 'branch-a', 2), false, 'the sentinel is unsafe in a multi-branch shop');
+  assert.equal(isQueuedOperationBranchValid('branch-a', 'branch-a', 1), true, 'an exact single active branch remains valid');
+  assert.equal(isQueuedOperationBranchValid('local-main', 'branch-a', 1), true, 'legacy single-branch queues can resolve the only branch');
+  assert.equal(isQueuedOperationBranchValid('retired-branch', 'branch-b', 1), false, 'a retired original branch must not be silently mapped to the only remaining branch');
+  assert.equal(isQueuedOperationBranchValid(undefined, 'branch-a', 1), false, 'a missing original branch is not guessed');
+  assert.equal(isQueuedOperationBranchValid('branch-a', '', 1), false);
+  assert.equal(isQueuedOperationBranchValid('branch-a', 'branch-a', 0), false);
+  assert.equal(isQueuedOperationBranchValid('branch-a', 'branch-a', 1.5), false);
 });
 
 test('branch stock cache applies valid deltas and rejects negative stock', () => {
@@ -1370,11 +1384,29 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
     assert.ok(writeIndex >= 0, `missing Cloud write: ${write}`);
     assert.ok(guardIndex < writeIndex, `identity guard must run before Cloud write: ${write}`);
   };
-  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(state, shop.shopId)');
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(state, shop.shopId, queuedBranchId)');
   assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)', 'completeSaleAtomic({');
   assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)', 'registerTradeInAtomic({');
-  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId)');
+  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId)');
   assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)', 'receivePurchaseAtomic({');
+  assert.ok(saleReplay.includes("const queuedBranchId = parsed.input.branchId || 'local-main';"));
+  assert.ok(saleReplay.includes('branchId: queuedBranchId,\\n            requireExactBranch: true,'));
+  assert.ok(purchaseReplay.includes("const queuedBranchId = parsed.input.purchase.branchId || 'local-main';"));
+  assert.ok(purchaseReplay.includes('branchId: queuedBranchId,\\n            requireExactBranch: true,'));
+
+  const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  assert.ok(cloudSyncSource.includes('requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, branches[0].id, branches.length)'));
+  assert.ok(cloudSyncSource.includes('requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, boundBranch.id, branches.length)'));
+  assert.ok(cloudSyncSource.includes('input.requireExactBranch === true'));
+  assert.ok(cloudSyncSource.includes('expectedBranchId !== undefined'));
+
+  for (const operation of ['inventory_unit_delete', 'inventory_units_add', 'branch_stock_adjustment']) {
+    const start = offlineSource.indexOf("if(op.type==='" + operation + "')");
+    const next = offlineSource.indexOf("if(op.type==='", start + 12);
+    const block = offlineSource.slice(start, next < 0 ? offlineSource.length : next);
+    assert.ok(start >= 0 && block.includes('requireExactBranch:true'), operation + ' replay must require its enqueue-time branch');
+    assert.ok(block.includes('syncNormalizedCatalog(') && block.includes(',parsed.branchId)'), operation + ' catalog bootstrap must be branch-bound');
+  }
 });
 
 
