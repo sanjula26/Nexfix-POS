@@ -162,11 +162,11 @@ export function getPendingCloudRecordKeys(
 /** Read per-record Cloud confirmations and pending queue IDs for the active Cloud shop/user only. */
 export function useCloudRecordSyncSnapshot(): CloudRecordSyncSnapshot {
   const [snapshot, setSnapshot] = useState<CloudRecordSyncSnapshot>(EMPTY_SNAPSHOT);
+  const scopeKeyRef = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
     let revision = 0;
-    const scopeKeyRef = useRef<string | null | undefined>(undefined);
 
     const refresh = async () => {
       const requestRevision = ++revision;
