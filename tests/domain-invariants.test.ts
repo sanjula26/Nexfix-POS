@@ -1371,6 +1371,11 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
   assert.equal(isCloudRecordReplayScopeValid(undefined, verified, active), false);
 
   const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  const queueWriteStart = offlineSource.indexOf('export async function queueWrite');
+  const queueWriteEnd = offlineSource.indexOf('export async function queueBranchStockAdjustment', queueWriteStart);
+  const queueWriteSource = offlineSource.slice(queueWriteStart, queueWriteEnd);
+  assert.ok(queueWriteSource.includes("branchId:sale.branchId || 'local-main'"));
+  assert.ok(!queueWriteSource.includes('state.settings.branchId'), 'historical Sales without branch provenance must not inherit the currently selected branch');
   const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
   const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
   const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
