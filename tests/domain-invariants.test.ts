@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
-import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
+import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, hasCloudRecordScope, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -897,6 +897,30 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
   assert.ok(offlineSource.includes("isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)"));
   assert.ok(!storeSource.includes('getCloudActivityScope'));
+});
+
+test('legacy offline Sale and GRN jobs without an original Cloud scope are blocked before replay', () => {
+  const legacySale = { saleId: 'sale-legacy' };
+  const legacyGrn = { purchaseId: 'purchase-legacy' };
+  const scoped = { shopId: 'shop-a', userId: 'user-a' };
+
+  assert.equal(hasCloudRecordScope(undefined), false);
+  assert.equal(hasCloudRecordScope(null), false);
+  assert.equal(hasCloudRecordScope(legacySale), false);
+  assert.equal(hasCloudRecordScope(legacyGrn), false);
+  assert.equal(hasCloudRecordScope({ shopId: ' ', userId: 'user-a' }), false);
+  assert.equal(hasCloudRecordScope({ shopId: 'shop-a', userId: '' }), false);
+  assert.equal(hasCloudRecordScope(scoped), true);
+
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
+  const grnStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
+  assert.ok(saleStart >= 0 && grnStart > saleStart);
+  const saleReplay = offlineSource.slice(saleStart, grnStart);
+  const grnReplay = offlineSource.slice(grnStart, offlineSource.indexOf("if(op.type==='repair_delivery')", grnStart));
+  assert.ok(saleReplay.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;') < saleReplay.indexOf("ensureCloudShop('Nexfix Shop')"));
+  assert.ok(grnReplay.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;') < grnReplay.indexOf("ensureCloudShop('Nexfix Shop')"));
+  assert.ok(!offlineSource.includes('reverifyLegacyReceiptScope'));
 });
 
 test('per-record Cloud receipt snapshots clear stale statuses immediately when the Cloud scope changes', () => {
