@@ -59,8 +59,8 @@ export function saveManagedUserIfCurrent(
 
   if (targetSnapshot) {
     const currentTarget = state.users.find(user => user.id === targetSnapshot.id);
-    if (nextUser.id !== targetSnapshot.id || !currentTarget || !currentTarget.active
-      || !targetSnapshot.active || currentTarget.role !== targetSnapshot.role
+    if (nextUser.id !== targetSnapshot.id || !currentTarget
+      || currentTarget.active !== targetSnapshot.active || currentTarget.role !== targetSnapshot.role
       || currentTarget.password !== targetSnapshot.password) {
       return null;
     }
