@@ -3,7 +3,7 @@ import { idbListQueue, idbLoadState } from './db';
 import { canAutoBindCloudShop, hasStoredLocalBusinessData } from './shopBindingSafety';
 import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
 import { getMachineIdentity } from './machine';
-import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId } from './branchStock';
+import { cacheBranchStock, cacheBranchStockProduct, cacheDefaultBranchId, cachePOSDeviceBranchId, clearCachedPOSDeviceBranchId, isQueuedOperationBranchValid } from './branchStock';
 import { normalizeWhatsAppPhone } from './utils';
 import { buildBranchStockAdjustmentRpcRequest } from './branchStockRpc';
 import { buildNormalizedCatalogSyncFingerprint } from './cloudSyncFingerprint';
@@ -172,13 +172,13 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
 }
 
 export async function adjustBranchStockAtomic(input: {
-  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string; expectedBranchQty?: number; refreshCache?: boolean;
+  shopId: string; branchId?: string; deviceId: string; productId: string; delta: number; note: string; adjustmentId: string; expectedBranchQty?: number; refreshCache?: boolean; requireExactBranch?: boolean;
 }): Promise<{ ok: boolean; alreadyCommitted?: boolean; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
   const { rpcName, rpcArgs } = buildBranchStockAdjustmentRpcRequest(input, branch.branchId);
   const { data, error } = await supabase.rpc(rpcName, rpcArgs);
@@ -195,14 +195,14 @@ export async function adjustBranchStockAtomic(input: {
 // Atomically create tracked units or fill GRN-created placeholder identifiers.
 // The database RPC also reconciles branch and shop stock, and is idempotent by unit ID.
 export async function addInventoryUnitsAtomic(input: {
-  shopId: string; branchId?: string; deviceId: string; units: InventoryUnit[];
+  shopId: string; branchId?: string; deviceId: string; units: InventoryUnit[]; requireExactBranch?: boolean;
 }): Promise<{ ok: boolean; inserted?: number; updated?: number; productStocks?: Record<string, number>; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!input.units.length || input.units.length > 500) return { ok: false, error: 'Provide between 1 and 500 units' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
   const unitRows = input.units.map(unit => ({
     id: unit.id,
@@ -284,7 +284,7 @@ export async function refreshCloudBranchStock(shopId: string, branchId: string):
 }
 
 /** Resolve a branch from the server-authoritative device binding in multi-branch shops. */
-export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string): Promise<{ ok: boolean; branchId?: string; error?: string }> {
+export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string, requireExactBranchMatch = false): Promise<{ ok: boolean; branchId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   const { data: rows, error } = await supabase.from('branches')
@@ -306,6 +306,9 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
   // A single active branch is unambiguous and preserves legacy single-branch
   // operation even when the local Settings value points to a retired branch.
   if (branches.length === 1) {
+    if (requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, branches[0].id, branches.length)) {
+      return { ok: false, error: 'Queued transaction branch no longer matches this POS device assignment. Its offline queue entry was retained; ask Admin to reconcile it before syncing.' };
+    }
     cachePOSDeviceBranchId(shopId, branches[0].id);
     return { ok: true, branchId: branches[0].id };
   }
@@ -325,6 +328,9 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
   if (!boundBranch) {
     clearCachedPOSDeviceBranchId(shopId);
     return { ok: false, error: 'This POS is not assigned to an active branch. Ask the shop admin to assign this PC to an active branch.' };
+  }
+  if (requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, boundBranch.id, branches.length)) {
+    return { ok: false, error: 'Queued transaction branch no longer matches this POS device assignment. Its offline queue entry was retained; ask Admin to reconcile it before syncing.' };
   }
   if (preferredBranchId && preferredBranchId !== 'local-main' && preferredBranchId !== boundBranch.id) {
     // The server binding is authoritative. Cache it so the POS can recover from
@@ -487,7 +493,7 @@ export async function ensureCloudCustomerForSale(
   return { ok: false, error: inserted.error.message };
 }
 
-export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId()): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
+export async function syncNormalizedCatalog(state: POSState, shopId = getCloudShopId(), expectedBranchId?: string): Promise<{ ok: boolean; error?: string; customerIdMap?: Record<string, string> }> {
   const cache = normalizedCatalogSyncCache;
   const client = supabase;
   if (!supabaseConfigured || !client) return { ok: false, error: 'Cloud is not configured' };
@@ -505,7 +511,7 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
     .select('id,is_default').eq('shop_id', shopId).eq('active', true);
   if (branchLookupError) return { ok: false, error: `Branches lookup: ${branchLookupError.message}` };
   const defaultBranch = (activeBranches || []).find(branch => branch.is_default);
-  const selectedBranch = await resolveCloudBranchId(shopId, state.settings.branchId);
+  const selectedBranch = await resolveCloudBranchId(shopId, expectedBranchId ?? state.settings.branchId, expectedBranchId !== undefined);
   if (!selectedBranch.ok || !selectedBranch.branchId) return { ok: false, error: selectedBranch.error || 'Assign this POS to an active branch before syncing catalog stock' };
 
   const cacheKey = [shopId, uid, selectedBranch.branchId, buildNormalizedCatalogSyncFingerprint(state)].join(':');
@@ -824,13 +830,13 @@ export async function syncNormalizedCatalog(state: POSState, shopId = getCloudSh
 }
 
 export async function deleteInventoryUnitAtomic(input: {
-  shopId: string; branchId?: string; deviceId: string; unitId: string;
+  shopId: string; branchId?: string; deviceId: string; unitId: string; requireExactBranch?: boolean;
 }): Promise<{ ok: boolean; productId?: string; productStock?: number; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
   const { data, error } = await supabase.rpc('delete_inventory_unit_atomic', {
     p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId, p_unit_id: input.unitId,
@@ -862,7 +868,7 @@ export interface CommittedCloudSale {
 }
 
 export async function completeSaleAtomic(input: {
-  shopId: string; branchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number;
+  shopId: string; branchId?: string; deviceId?: string; saleId: string; customerId?: string; shipping?: number; discount?: number; taxPct?: number; requireExactBranch?: boolean;
   pointsRedeemed?: number; note?: string; salesmanId?: string;
   lines: Array<{ product_id: string; qty: number; discount?: number; price?: number; unit_ids?: string[] }>;
   payments: Array<{ method: string; amount: number }>;
@@ -873,7 +879,7 @@ export async function completeSaleAtomic(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId) return { ok: false, error: 'Cloud shop is not configured' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true);
   if (!branch.ok || !branch.branchId) return { ok: false, error: branch.error || 'Branch is required' };
   const { data, error } = await supabase.rpc('complete_sale_atomic_for_device_branch', { p_shop_id: input.shopId, p_branch_id: branch.branchId, p_device_id: input.deviceId || deviceId(), p_sale_id: input.saleId, p_customer_id: input.customerId || null, p_shipping: input.shipping ?? 0, p_discount: input.discount ?? 0, p_tax_pct: input.taxPct ?? 0, p_points_redeemed: input.pointsRedeemed ?? 0, p_note: input.note || null, p_salesman_id: input.salesmanId || null, p_lines: input.lines, p_payments: input.payments });
   if (error) return { ok: false, error: error.message };
@@ -1050,7 +1056,7 @@ export async function processSaleReturnAtomic(input: {
 }
 
 export async function receivePurchaseAtomic(input: {
-  shopId: string; branchId?: string; purchaseId: string; deviceId: string; purchase: Purchase;
+  shopId: string; branchId?: string; purchaseId: string; deviceId: string; purchase: Purchase; requireExactBranch?: boolean;
 }): Promise<{ok:boolean; alreadyCommitted?:boolean; purchaseId?:string; total?:number; error?:string}> {
   if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
@@ -1058,7 +1064,7 @@ export async function receivePurchaseAtomic(input: {
   if (sessionError) return { ok:false, error:sessionError.message };
   if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
   if (!input.shopId || !input.purchaseId || !input.deviceId) return { ok:false, error:'Missing GRN identifiers' };
-  const branch = await resolveCloudBranchId(input.shopId, input.branchId);
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true);
   if (!branch.ok || !branch.branchId) return { ok:false, error:branch.error || 'Branch is required' };
   const { data, error } = await supabase.rpc('receive_purchase_atomic_for_device_branch', {
     p_shop_id: input.shopId, p_branch_id: branch.branchId,
