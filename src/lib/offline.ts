@@ -57,7 +57,7 @@ export async function queueWrite(note?:string):Promise<void>{
       cloudScope: sale.cloudScope || undefined,
       saleId:sale.id,
       input:{
-        branchId:sale.branchId || state.settings.branchId || 'local-main',
+        branchId:sale.branchId || 'local-main',
         customerId:sale.customerId,
         shipping:sale.shipping,
         discount:sale.discount,
