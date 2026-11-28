@@ -905,8 +905,8 @@ export async function registerTradeInAtomic(input: {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const { data, error } = await supabase.rpc('register_trade_in_atomic', {
-    p_shop_id: input.shopId, p_sale_id: input.saleId, p_unit_id: input.unitId, p_product_id: input.productId,
+  const { data, error } = await supabase.rpc('register_trade_in_atomic_for_device_branch', {
+    p_shop_id: input.shopId, p_device_id: deviceId(), p_sale_id: input.saleId, p_unit_id: input.unitId, p_product_id: input.productId,
     p_value: input.value, p_imei: input.imei || null, p_serial: input.serial || null,
   });
   if (error) return { ok: false, error: error.message };
@@ -968,8 +968,8 @@ export async function requestSaleReversal(input: {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const { data, error } = await supabase.rpc('request_sale_reversal', {
-    p_shop_id: input.shopId, p_request_id: input.requestId, p_sale_id: input.saleId, p_reason: input.reason.trim().slice(0, 500),
+  const { data, error } = await supabase.rpc('request_sale_reversal_for_device_branch', {
+    p_shop_id: input.shopId, p_request_id: input.requestId, p_sale_id: input.saleId, p_device_id: deviceId(), p_reason: input.reason.trim().slice(0, 500),
   });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
@@ -1040,7 +1040,7 @@ export async function processSaleReturnAtomic(input: {
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId || !input.returnId || !input.saleId) return { ok: false, error: 'Missing return identifiers' };
   if (!input.lines.length) return { ok: false, error: 'Return lines are required' };
-  const { data, error } = await supabase.rpc('process_sale_return_atomic', { p_shop_id: input.shopId, p_return_id: input.returnId, p_sale_id: input.saleId, p_reason: input.reason?.trim().slice(0, 500) || '', p_mode: input.mode, p_payment_method: input.paymentMethod || null, p_lines: input.lines });
+  const { data, error } = await supabase.rpc('process_sale_return_atomic_for_device_branch', { p_shop_id: input.shopId, p_return_id: input.returnId, p_sale_id: input.saleId, p_device_id: deviceId(), p_reason: input.reason?.trim().slice(0, 500) || '', p_mode: input.mode, p_payment_method: input.paymentMethod || null, p_lines: input.lines });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok) return { ok: false, error: 'Cloud return was not committed' };
