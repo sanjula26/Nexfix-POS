@@ -3,6 +3,21 @@ const BASE_LOCK_MS = 15_000;
 const MAX_LOCK_MS = 300_000;
 const PENDING_TTL_MS = 30_000;
 
+/** Reject malformed persisted records before normalization can reset their attempt budget. */
+function isValidLocalAuthGuardState(value, now = Date.now()) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.version !== 1
+    || !Number.isInteger(value.failures) || value.failures < 0 || value.failures > 1000
+    || !Number.isFinite(value.lockedUntil) || value.lockedUntil < 0) {
+    return false;
+  }
+  if (value.pending === null) return true;
+  const pending = value.pending;
+  return !!pending && typeof pending === 'object' && !Array.isArray(pending)
+    && typeof pending.id === 'string' && pending.id.length > 0 && pending.id.length <= 128
+    && Number.isFinite(pending.startedAt) && pending.startedAt >= 0 && pending.startedAt <= now;
+}
+
 function normalizeState(value) {
   const source = value && typeof value === 'object' ? value : {};
   return {
@@ -65,4 +80,4 @@ function completeLocalAuthAttempt(value, attemptId, success, now) {
   return { state: recordFailure(state, now), result: { ok: true } };
 }
 
-module.exports = { beginLocalAuthAttempt, completeLocalAuthAttempt, normalizeState, lockDuration, PENDING_TTL_MS };
+module.exports = { beginLocalAuthAttempt, completeLocalAuthAttempt, normalizeState, isValidLocalAuthGuardState, lockDuration, PENDING_TTL_MS };
