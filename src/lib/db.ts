@@ -130,4 +130,147 @@ export async function idbSetCloudSyncMeta(shopId: string, userId: string, meta: 
     return false;
   }
 }
+
+export type CloudRecordType = 'sale' | 'purchase';
+export interface CloudRecordSyncEntry {
+  confirmedAt: string;
+  operation: string;
+}
+
+const MAX_CLOUD_RECORD_SYNC_ENTRIES = 5000;
+
+function cloudRecordSyncMetaKey(shopId: string, userId: string): string | null {
+  const shop = shopId.trim();
+  const user = userId.trim();
+  if (!shop || !user || shop.length > 100 || user.length > 100) return null;
+  return `cloud_record_sync:${encodeURIComponent(shop)}:${encodeURIComponent(user)}`;
+}
+
+function cloudRecordKey(type: CloudRecordType, recordId: string): string | null {
+  const id = recordId.trim();
+  if ((type !== 'sale' && type !== 'purchase') || !id || id.length > 200) return null;
+  return `${type}:${encodeURIComponent(id)}`;
+}
+
+function validCloudRecordEntry(value: unknown): value is CloudRecordSyncEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<CloudRecordSyncEntry>;
+  return typeof entry.confirmedAt === 'string' && Number.isFinite(Date.parse(entry.confirmedAt)) &&
+    typeof entry.operation === 'string' && !!entry.operation.trim() && entry.operation.length <= 80;
+}
+
+function mergeCloudRecordEntry(
+  previous: unknown,
+  key: string,
+  entry: CloudRecordSyncEntry,
+): Record<string, CloudRecordSyncEntry> {
+  const records: Record<string, CloudRecordSyncEntry> = {};
+  if (previous && typeof previous === 'object' && 'records' in previous && (previous as { records?: unknown }).records &&
+      typeof (previous as { records?: unknown }).records === 'object') {
+    for (const [existingKey, value] of Object.entries((previous as { records: Record<string, unknown> }).records)) {
+      if (validCloudRecordEntry(value)) records[existingKey] = value;
+    }
+  }
+  records[key] = entry;
+  const keys = Object.keys(records);
+  if (keys.length > MAX_CLOUD_RECORD_SYNC_ENTRIES) {
+    keys.sort((a, b) => Date.parse(records[a].confirmedAt) - Date.parse(records[b].confirmedAt));
+    for (const oldKey of keys.slice(0, keys.length - MAX_CLOUD_RECORD_SYNC_ENTRIES)) delete records[oldKey];
+  }
+  return records;
+}
+
+export async function idbGetCloudRecordSyncStatuses(
+  shopId: string,
+  userId: string,
+): Promise<Record<string, CloudRecordSyncEntry>> {
+  const key = cloudRecordSyncMetaKey(shopId, userId);
+  if (!key) return {};
+  try {
+    const db = await getDB();
+    const row = await idbReq<{ key: string; value?: unknown } | undefined>(
+      db.transaction(STORE_META, 'readonly').objectStore(STORE_META).get(key),
+    );
+    if (!row?.value || typeof row.value !== 'object' || !('records' in row.value)) return {};
+    const raw = (row.value as { records?: unknown }).records;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const safe: Record<string, CloudRecordSyncEntry> = {};
+    for (const [recordKey, value] of Object.entries(raw)) {
+      if (validCloudRecordEntry(value)) safe[recordKey] = value;
+    }
+    return safe;
+  } catch {
+    return {};
+  }
+}
+
+export async function idbMarkCloudRecordSynced(
+  shopId: string,
+  userId: string,
+  type: CloudRecordType,
+  recordId: string,
+  operation: string,
+  confirmedAt = new Date().toISOString(),
+): Promise<boolean> {
+  const metaKey = cloudRecordSyncMetaKey(shopId, userId);
+  const recordKey = cloudRecordKey(type, recordId);
+  if (!metaKey || !recordKey || typeof operation !== 'string' || !operation.trim() || operation.length > 80 ||
+      !Number.isFinite(Date.parse(confirmedAt))) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_META, 'readwrite');
+    const completed = idbTransactionComplete(tx, 'Cloud record confirmation write failed');
+    const store = tx.objectStore(STORE_META);
+    const row = await idbReq<{ key: string; value?: unknown } | undefined>(store.get(metaKey));
+    const records = mergeCloudRecordEntry(row?.value, recordKey, { confirmedAt, operation });
+    store.put({ key: metaKey, value: { records }, updatedAt: new Date().toISOString() });
+    await completed;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Atomically retain the positive Cloud acknowledgement and remove its matching queue item. */
+export async function idbAcknowledgeCloudRecordQueue(
+  shopId: string,
+  userId: string,
+  type: CloudRecordType,
+  recordId: string,
+  queueId: string,
+  operation: string,
+  confirmedAt = new Date().toISOString(),
+): Promise<boolean> {
+  const metaKey = cloudRecordSyncMetaKey(shopId, userId);
+  const recordKey = cloudRecordKey(type, recordId);
+  const expectedQueueId = type === 'sale' ? `sale:${recordId}` : `purchase-receive:${recordId}`;
+  if (!metaKey || !recordKey || !queueId || queueId !== expectedQueueId ||
+      typeof operation !== 'string' || !operation.trim() || operation.length > 80 ||
+      !Number.isFinite(Date.parse(confirmedAt))) return false;
+  try {
+    const db = await getDB();
+    const tx = db.transaction([STORE_QUEUE, STORE_META], 'readwrite');
+    const completed = idbTransactionComplete(tx, 'Cloud queue acknowledgement failed');
+    const queueStore = tx.objectStore(STORE_QUEUE);
+    const metaStore = tx.objectStore(STORE_META);
+    const [queued, meta] = await Promise.all([
+      idbReq<QueueOp | undefined>(queueStore.get(queueId)),
+      idbReq<{ key: string; value?: unknown } | undefined>(metaStore.get(metaKey)),
+    ]);
+    if (!queued || queued.id !== queueId || (type === 'sale' && queued.type !== 'sale_create') ||
+        (type === 'purchase' && queued.type !== 'purchase_receive')) {
+      try { tx.abort(); } catch { /* transaction may already be inactive */ }
+      await completed.catch(() => {});
+      return false;
+    }
+    const records = mergeCloudRecordEntry(meta?.value, recordKey, { confirmedAt, operation });
+    metaStore.put({ key: metaKey, value: { records }, updatedAt: new Date().toISOString() });
+    queueStore.delete(queueId);
+    await completed;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function idbAvailable():boolean{return typeof indexedDB!=='undefined';}
