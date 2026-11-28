@@ -206,7 +206,7 @@ test('local admin authentication guard IPC is limited to the trusted renderer an
 test('corrupt packaged local-auth guard state fails closed but repairs the persisted lockout timer', () => {
   const guardStart = mainSource.indexOf('function failClosedLocalAuthGuardState()');
   const readerStart = mainSource.indexOf('function readLocalAuthGuard()');
-  const writerStart = mainSource.indexOf('function writeLocalAuthGuard()', readerStart);
+  const writerStart = mainSource.indexOf('function writeLocalAuthGuard(', readerStart);
   assert.ok(guardStart >= 0 && readerStart > guardStart && writerStart > readerStart);
 
   const repair = mainSource.slice(guardStart, readerStart);
