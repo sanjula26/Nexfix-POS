@@ -748,6 +748,14 @@ test('managed password change and POS reset enforce sensitive Admin confirmation
   assert.equal(settingsSource.slice(managedUiStart, managedUiEnd).includes('confirmSensitiveAdmin('), false);
 
   assert.match(settingsSource, /if \(await resetData\(\)\) setConfirmReset\(false\)/);
+
+  const settingsStart = storeSource.indexOf('const updateSettings = useCallback(');
+  const settingsEnd = storeSource.indexOf('const closeSession = useCallback', settingsStart);
+  assert.ok(settingsStart >= 0 && settingsEnd > settingsStart);
+  const settingsHandler = storeSource.slice(settingsStart, settingsEnd);
+  assert.ok(settingsHandler.includes("Object.prototype.hasOwnProperty.call(patch, 'adminPinHash')"));
+  assert.ok(settingsHandler.includes('Blocked direct Admin PIN hash update'));
+  assert.ok(settingsHandler.includes('use the guarded PIN change flow'));
 });
 
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
