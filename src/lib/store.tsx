@@ -1871,6 +1871,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
+    // Capture the validated non-empty shop ID before entering async callbacks.
+    const cloudShopId = shop.shopId;
     const branchResolution = await resolveCloudBranchId(
       shop.shopId,
       getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
@@ -2097,7 +2099,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
       cloud = await withCloudActivity('Cloud sale', () => completeSaleAtomic({
-      shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
+      shopId: cloudShopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
@@ -2112,7 +2114,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
       const tradeInCloud = await withCloudActivity('Trade-in unit', () => registerTradeInAtomic({
-        shopId: shop.shopId,
+        shopId: cloudShopId,
         saleId,
         unitId: tradeInUnitId!,
         productId: tradeIn.productId,
