@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { replaceUserPasswordIfCurrent, saveManagedUserIfCurrent } from '../src/lib/userCredentialState.ts';
+import { deleteManagedUserIfCurrent, replaceUserPasswordIfCurrent, saveManagedUserIfCurrent, setManagedUserActiveIfCurrent } from '../src/lib/userCredentialState.ts';
 import type { AppUser, POSState } from '../src/lib/types.ts';
 
 const admin: AppUser = {
@@ -156,6 +156,59 @@ test('managed user save cannot demote or deactivate the final active Admin', () 
   });
   assert.equal(demoted?.users.some(user => user.role === 'admin' && user.active), true);
   assert.equal(demoted?.users.find(user => user.id === secondAdmin.id)?.role, 'cashier');
+});
+
+
+test('staff activation and deletion cannot remove the last active Admin or edit the current Admin session', () => {
+  const singleAdmin = stateWithUsers([admin, cashier]);
+
+  assert.equal(setManagedUserActiveIfCurrent(singleAdmin, admin, admin, false), null);
+  assert.equal(deleteManagedUserIfCurrent(singleAdmin, admin, admin), null);
+
+  const deactivatedCashier = setManagedUserActiveIfCurrent(singleAdmin, admin, cashier, false);
+  assert.equal(deactivatedCashier?.users.find(user => user.id === cashier.id)?.active, false);
+  assert.equal(deactivatedCashier?.users.some(user => user.role === 'admin' && user.active), true);
+
+  const deletedCashier = deleteManagedUserIfCurrent(singleAdmin, admin, cashier);
+  assert.equal(deletedCashier?.users.some(user => user.id === cashier.id), false);
+  assert.equal(deletedCashier?.users.some(user => user.role === 'admin' && user.active), true);
+});
+
+test('an Admin can deactivate or delete another Admin only while one active Admin remains', () => {
+  const secondAdmin: AppUser = {
+    ...admin,
+    id: 'admin-2',
+    name: 'Second Admin',
+    email: 'admin2@example.test',
+    password: 'second-admin-password',
+  };
+  const initial = stateWithUsers([admin, secondAdmin, cashier]);
+
+  const deactivated = setManagedUserActiveIfCurrent(initial, admin, secondAdmin, false);
+  assert.equal(deactivated?.users.find(user => user.id === secondAdmin.id)?.active, false);
+  assert.equal(deactivated?.users.find(user => user.id === admin.id)?.active, true);
+
+  const deleted = deleteManagedUserIfCurrent(initial, admin, secondAdmin);
+  assert.equal(deleted?.users.some(user => user.id === secondAdmin.id), false);
+  assert.equal(deleted?.users.some(user => user.id === admin.id && user.active && user.role === 'admin'), true);
+});
+
+test('staff activation and deletion reject stale Admin or target snapshots', () => {
+  const secondAdmin: AppUser = {
+    ...admin,
+    id: 'admin-2',
+    email: 'admin2@example.test',
+    password: 'second-admin-password',
+  };
+  const initial = stateWithUsers([admin, secondAdmin, cashier]);
+  const changedAdmin = stateWithUsers([{ ...admin, password: 'rotated-admin-password' }, secondAdmin, cashier]);
+  const changedTarget = stateWithUsers([admin, { ...secondAdmin, active: false }, cashier]);
+
+  assert.equal(setManagedUserActiveIfCurrent(changedAdmin, admin, secondAdmin, false), null);
+  assert.equal(deleteManagedUserIfCurrent(changedAdmin, admin, secondAdmin), null);
+  assert.equal(setManagedUserActiveIfCurrent(changedTarget, admin, secondAdmin, false), null);
+  assert.equal(deleteManagedUserIfCurrent(changedTarget, admin, secondAdmin), null);
+  assert.equal(initial.users.find(user => user.id === secondAdmin.id)?.active, true);
 });
 
 test('managed user profile update preserves latest unrelated POS state', () => {
