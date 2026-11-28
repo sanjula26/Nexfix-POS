@@ -79,7 +79,9 @@ export default function Users() {
     } finally {
       setSaving(false);
     }
-  };  return (
+  };
+
+  return (
     <div>
       <PageHeading
         chip="Team" chipTone="violet"
@@ -142,13 +144,13 @@ export default function Users() {
             <Field label="Full name">
               <span className="relative block">
                 <UserCog size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-                <input className="input pl-9" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Cashier name" />
+                <input className="input pl-9" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Cashier name" disabled={saving} />
               </span>
             </Field>
             <Field label="Email / username (login)">
               <span className="relative block">
                 <Mail size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint" />
-                <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" />
+                <input className="input pl-9" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })} placeholder="name@nexfixsolution.com" disabled={saving} />
               </span>
             </Field>
             <Field label={isNew ? 'Password' : 'New password (optional)'} hint={isNew ? 'Stored securely as a password hash' : 'Leave blank to keep current password'}>
@@ -160,7 +162,7 @@ export default function Users() {
                   value={editing.password}
                   onChange={e => { setEditing({ ...editing, password: e.target.value }); setFormErr(''); }}
                   placeholder={isNew ? 'Min 12 characters' : 'Type only if changing password'}
-                  autoComplete="new-password"
+                  autoComplete="new-password" disabled={saving}
                 />
               </span>
             </Field>
@@ -172,14 +174,14 @@ export default function Users() {
                   value={confirmPass}
                   onChange={e => { setConfirmPass(e.target.value); setFormErr(''); }}
                   placeholder="Repeat password"
-                  autoComplete="new-password"
+                  autoComplete="new-password" disabled={saving}
                 />
               </Field>
             )}
             {formErr && <p className="text-sm font-medium text-rose-500">{formErr}</p>}
             {formOk && <p className="text-sm font-medium text-emerald-500">{formOk}</p>}
             <Field label="Commission rate (%)" hint="Optional; used for estimated salesman commission reports only. Leave blank for no rate.">
-              <input className="input num" type="number" min="0" max="100" step="0.25" value={editing.commissionPct ?? ''} onChange={e => setEditing({ ...editing, commissionPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="e.g. 2.5" />
+              <input className="input num" type="number" min="0" max="100" step="0.25" value={editing.commissionPct ?? ''} onChange={e => setEditing({ ...editing, commissionPct: e.target.value === '' ? undefined : Number(e.target.value) })} placeholder="e.g. 2.5" disabled={saving} />
             </Field>
             <Field label="Role">
               <div className="grid grid-cols-2 gap-2">
@@ -188,6 +190,7 @@ export default function Users() {
                     key={r}
                     className={`btn ${editing.role === r ? (r === 'admin' ? 'btn-primary' : 'btn-emerald') : 'btn-soft'}`}
                     onClick={() => setEditing({ ...editing, role: r })}
+                    disabled={saving}
                   >
                     {r === 'admin' ? <ShieldCheck size={14} /> : <UserRound size={14} />}
                     {r === 'admin' ? 'Administrator' : 'Cashier'}
