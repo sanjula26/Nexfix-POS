@@ -39,6 +39,58 @@ export function replaceUserPasswordIfCurrent(
 }
 
 
+function isSameAppUserSnapshot(current: AppUser, snapshot: AppUser): boolean {
+  const currentKeys = Object.keys(current).sort();
+  const snapshotKeys = Object.keys(snapshot).sort();
+  return currentKeys.length === snapshotKeys.length
+    && currentKeys.every((key, index) => key === snapshotKeys[index]
+      && Object.is(
+        current[key as keyof AppUser],
+        snapshot[key as keyof AppUser],
+      ));
+}
+
+function hasCurrentAdmin(state: POSState, adminSnapshot: UserCredentialSnapshot): boolean {
+  const currentAdmin = state.users.find(user => user.id === adminSnapshot.id);
+  return !!currentAdmin && currentAdmin.active && currentAdmin.role === 'admin'
+    && adminSnapshot.active && adminSnapshot.role === 'admin'
+    && currentAdmin.password === adminSnapshot.password;
+}
+
+/** Change another staff account's active status only while both accounts remain unchanged. */
+export function setManagedUserActiveIfCurrent(
+  state: POSState,
+  adminSnapshot: UserCredentialSnapshot,
+  targetSnapshot: AppUser,
+  nextActive: boolean,
+): POSState | null {
+  if (!hasCurrentAdmin(state, adminSnapshot) || targetSnapshot.id === adminSnapshot.id) return null;
+  const currentTarget = state.users.find(user => user.id === targetSnapshot.id);
+  if (!currentTarget || !isSameAppUserSnapshot(currentTarget, targetSnapshot)) return null;
+
+  const nextUsers = state.users.map(user => user.id === targetSnapshot.id
+    ? { ...user, active: nextActive }
+    : user);
+  if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;
+  return { ...state, users: nextUsers };
+}
+
+/** Delete another staff account only while both the Admin and target snapshots remain current. */
+export function deleteManagedUserIfCurrent(
+  state: POSState,
+  adminSnapshot: UserCredentialSnapshot,
+  targetSnapshot: AppUser,
+): POSState | null {
+  if (!hasCurrentAdmin(state, adminSnapshot) || targetSnapshot.id === adminSnapshot.id) return null;
+  const currentTarget = state.users.find(user => user.id === targetSnapshot.id);
+  if (!currentTarget || !isSameAppUserSnapshot(currentTarget, targetSnapshot)) return null;
+
+  const nextUsers = state.users.filter(user => user.id !== targetSnapshot.id);
+  if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;
+  return { ...state, users: nextUsers };
+}
+
+
 /**
  * Save a managed local user only while the initiating Admin and any existing
  * target account still match the credential snapshots captured before awaits.
