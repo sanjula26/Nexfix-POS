@@ -823,9 +823,16 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
   assert.ok(saleStart >= 0 && purchaseStart > saleStart && repairStart > purchaseStart);
   const saleReplay = offlineSource.slice(saleStart, purchaseStart);
   const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
-  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)') < saleReplay.indexOf('syncNormalizedCatalog(state, shop.shopId)'));
-  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)') < saleReplay.indexOf('completeSaleAtomic({'));
-  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)') < saleReplay.indexOf('registerTradeInAtomic({'));
-  assert.ok(purchaseReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)') < purchaseReplay.indexOf('syncNormalizedCatalog(catalogState, shop.shopId)'));
-  assert.ok(purchaseReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)') < purchaseReplay.indexOf('receivePurchaseAtomic({'));
+  const assertBefore = (source: string, guard: string, write: string) => {
+    const guardIndex = source.indexOf(guard);
+    const writeIndex = source.indexOf(write);
+    assert.ok(guardIndex >= 0, `missing pre-write identity guard: ${guard}`);
+    assert.ok(writeIndex >= 0, `missing Cloud write: ${write}`);
+    assert.ok(guardIndex < writeIndex, `identity guard must run before Cloud write: ${write}`);
+  };
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(state, shop.shopId)');
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)', 'completeSaleAtomic({');
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)', 'registerTradeInAtomic({');
+  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId)');
+  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)', 'receivePurchaseAtomic({');
 });
