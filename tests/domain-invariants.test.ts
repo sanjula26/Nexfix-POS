@@ -639,10 +639,10 @@ test('async sensitive admin re-auth is invalidated on logout and role switch', (
   assert.ok(unlockStart >= 0 && unlockEnd > unlockStart);
   assert.ok(storeSource.slice(unlockStart, unlockEnd).includes('sessionRef.current?.userId !== initiatingUser.id'));
 
-  const roleSwitchStart = storeSource.indexOf('const switchRole = useCallback(');
-  const roleSwitchEnd = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart);
-  assert.ok(roleSwitchStart >= 0 && roleSwitchEnd > roleSwitchStart);
-  const roleSwitchSource = storeSource.slice(roleSwitchStart, roleSwitchEnd);
+  const roleSwitchStart2 = storeSource.indexOf('const switchRole = useCallback(');
+  const roleSwitchEnd2 = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart2);
+  assert.ok(roleSwitchStart2 >= 0 && roleSwitchEnd2 > roleSwitchStart2);
+  const roleSwitchSource = storeSource.slice(roleSwitchStart2, roleSwitchEnd2);
   assert.ok(roleSwitchSource.includes('clearSensitiveAdminAuthorization();'));
   assert.ok(roleSwitchSource.includes('sessionRef.current?.userId !== initiatingUser.id'));
 
