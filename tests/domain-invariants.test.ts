@@ -803,6 +803,25 @@ test('cloud sale activity highlights only the atomic sale and trade-in writes', 
   assert.ok(saleHandler.indexOf("withCloudActivity('Trade-in unit'") < saleHandler.indexOf("markCloudRecordSynced('sale'"), 'bill receipt must wait until the optional trade-in Cloud write succeeds');
 });
 
+test('first online Sale and GRN publish the verified Cloud scope before tracking the atomic write', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const saleStart = storeSource.indexOf('const completeSaleCloud =');
+  const saleEnd = storeSource.indexOf('const refundSale =', saleStart);
+  const receiveStart = storeSource.indexOf('const receivePurchase =');
+  const receiveEnd = storeSource.indexOf('const processGRN =', receiveStart);
+  assert.ok(saleStart >= 0 && saleEnd > saleStart);
+  assert.ok(receiveStart >= 0 && receiveEnd > receiveStart);
+  const saleHandler = storeSource.slice(saleStart, saleEnd);
+  const receiveHandler = storeSource.slice(receiveStart, receiveEnd);
+  const saleScope = saleHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
+  const saleWrite = saleHandler.indexOf("withCloudActivity('Cloud sale', () => completeSaleAtomic(");
+  const grnScope = receiveHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
+  const grnWrite = receiveHandler.indexOf("withCloudActivity('GRN receive', () => receivePurchaseAtomic(");
+  assert.ok(saleScope >= 0 && saleScope < saleWrite, 'verified Sale scope must be published before its atomic Cloud write');
+  assert.ok(grnScope >= 0 && grnScope < grnWrite, 'verified GRN scope must be published before its atomic Cloud write');
+  assert.ok(storeSource.includes("import { setCloudActivityScope, withCloudActivity } from './cloudActivity';"));
+});
+
 
 test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
   const queued = { shopId: 'shop-original', userId: 'cloud-user-original' };
