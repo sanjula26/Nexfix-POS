@@ -203,7 +203,6 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='purchase_receive'){
         try{
-          const recordScope = getCloudActivityScope();
           const parsed=JSON.parse(op.payload) as {cloudScope?:{shopId?:string;userId?:string};purchaseId:string;input:{deviceId:string;purchase:Purchase}};
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
