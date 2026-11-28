@@ -84,7 +84,7 @@ export async function getPendingSyncOperations(){return idbListQueue();}
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
-export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean;blockedQueueScope?:boolean}>{
+export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean;blockedQueueScope?:boolean;pendingTransactions?:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=(async()=>{
     const ops=await idbListQueue();
@@ -441,21 +441,25 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
     if(acknowledged.length) await idbAcknowledgeQueue(acknowledged);
     const remaining=await idbListQueue();
-    // Do not publish a full POS snapshot while an unscoped legacy Sale/GRN
-    // remains unresolved: that snapshot could otherwise copy it into the
-    // currently active Cloud shop even though normalized replay was blocked.
-    if (blockedUnsafeSaleOrGrnReplay) {
+    const latestState=await idbLoadState();
+    if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
+    const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
+    // Business transaction queue rows must be positively acknowledged before
+    // the full-state snapshot can publish. Otherwise an unconfirmed Sale, GRN,
+    // stock, repair or return could be copied into the currently active shop.
+    const pendingTransactions = remaining.some(op =>
+      op.type !== 'state_write' && op.type !== 'backup' && op.type !== 'custom'
+    );
+    if (blockedUnsafeSaleOrGrnReplay || pendingTransactions) {
       return {
         flushed,
         pending: remaining.length,
         synced: false,
         conflict: false,
-        blockedQueueScope: true,
+        blockedQueueScope: blockedUnsafeSaleOrGrnReplay || undefined,
+        pendingTransactions: true,
       };
     }
-    const latestState=await idbLoadState();
-    if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
-    const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
 
     // Bootstrap the cloud snapshot even when the durable queue is empty.
     // This is important for a freshly connected POS: otherwise the first
