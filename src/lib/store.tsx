@@ -7,8 +7,12 @@ import {
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
-import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
-import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
+import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
+import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
+import { runWithAsyncLock } from './authConcurrency';
+import { runLocalAuthAttempt } from './localAuthGuard';
+import { deleteManagedUserIfCurrent, replaceUserPasswordIfCurrent, saveManagedUserIfCurrent, setManagedUserActiveIfCurrent } from './userCredentialState';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -106,15 +110,15 @@ interface StoreCtx {
   signOut: (force?: boolean) => void;
   /** Switching to the other POS role always authenticates the target account; admin → cashier uses cashier credentials, cashier → admin accepts the admin unlock PIN or admin login password. */
   switchRole: (role: Role, credential?: string, email?: string) => Promise<{ ok: boolean; error?: string }>;
-  changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
+  changeAdminPin: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>;
   /** verify the admin password without switching role (used for price overrides etc.) */
-  verifyAdminPin: (pin: string, reason?: string) => boolean;
+  verifyAdminPin: (pin: string, reason?: string) => Promise<boolean>;
   /** Fresh admin confirmation for sensitive destructive/security actions. */
   confirmSensitiveAdmin: (reason: string) => Promise<boolean>;
   sensitiveAdminPrompt: { reason: string } | null;
-  resolveSensitiveAdmin: (credential: string) => boolean;
+  resolveSensitiveAdmin: (credential: string) => Promise<boolean>;
   cancelSensitiveAdmin: () => void;
-  unlockSession: (credential: string) => boolean;
+  unlockSession: (credential: string) => Promise<boolean>;
   // products
   saveProduct: (p: Product) => Promise<boolean>;
   deleteProduct: (id: string) => void;
@@ -154,7 +158,7 @@ interface StoreCtx {
   // exchanges
   processExchange: (saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => void;
   // users
-  saveUser: (u: AppUser) => void;
+  saveUser: (u: AppUser) => Promise<{ ok: boolean; error?: string }>;
   toggleUserActive: (id: string) => void;
   deleteUser: (id: string) => void;
   // admin
@@ -167,7 +171,7 @@ interface StoreCtx {
   clearAudit: () => void;
   exportData: () => Promise<string>;
   importData: (json: string) => Promise<boolean>;
-  resetData: () => void;
+  resetData: () => Promise<boolean>;
   /** Reload the current POS data without destroying the authenticated session or route. */
   refreshPOS: () => Promise<void>;
   /** Phase 2: connectivity + backup */
@@ -365,6 +369,8 @@ function loadSession(): Session | null {
 export function POSProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<POSState>(loadState);
   const [session, setSession] = useState<Session | null>(loadSession);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const [dark, setDark] = useState<boolean>(() => {
     try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch { return false; }
   });
@@ -378,6 +384,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const commitAdminPinHashIfCurrent = useCallback((expectedHash: string, replacementHash: string): boolean => {
+    const nextState = replaceAdminPinHashIfCurrent(stateRef.current, expectedHash, replacementHash);
+    if (!nextState) return false;
+    stateRef.current = nextState;
+    setState(current => replaceAdminPinHashIfCurrent(current, expectedHash, replacementHash) || current);
+    return true;
+  }, []);
   const previousBackupStateRef = useRef(state);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
@@ -398,6 +411,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.customerCreditPayments]);
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
+  const initialAdminSetupLockRef = useRef(false);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -442,6 +456,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (raw) {
             const sess = JSON.parse(raw) as Session;
             // Prefer the just-loaded state (stateRef updates on next render; use functional check later via setSession)
+            sessionRef.current = sess;
             setSession(sess);
           }
         } catch { /* ignore */ }
@@ -585,62 +600,143 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
   }, [user?.email]);
 
-  const verifyAdminPin = useCallback((pin: string, reason?: string): boolean => {
-    if (!user) return false;
-    const ok = verifyPassword(pin || '', state.settings.adminPinHash);
-    if (!ok) {
-      setState(s => ({
-        ...s,
-        audit: [{
-          id: uid(), time: new Date().toISOString(),
-          user: user?.email || 'unknown', action: 'DENIED', entity: 'Security',
-          details: `Failed admin verification${reason ? ` for ${reason}` : ''} (${user?.name || 'unknown'})`,
-        }, ...s.audit].slice(0, 500),
-      }));
+  const verifyAdminPin = useCallback(async (pin: string, reason?: string): Promise<boolean> => {
+    if (!user || !pin) return false;
+    const actor = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!actor) return false;
+    const storedHash = stateRef.current.settings.adminPinHash || '';
+    let verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    const attempt = await runLocalAuthAttempt(async () => {
+      verification = await verifyPasswordWithLegacyUpgrade(pin, storedHash);
+      return verification.valid;
+    }, user.role === 'admin' ? 'admin' : 'cashier-unlock');
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? `Failed admin verification${reason ? ` for ${reason}` : ''} (${actor.name})`
+        : `Admin verification temporarily locked${reason ? ` for ${reason}` : ''}`);
+      return false;
     }
-    return ok;
-  }, [state.settings.adminPinHash, user]);
+    if (sessionRef.current?.userId !== actor.id) return false;
+    const latestActor = stateRef.current.users.find(u => u.id === actor.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedHash
+      || !latestActor || !latestActor.active || latestActor.role !== actor.role || latestActor.password !== actor.password) {
+      return false;
+    }
+    if (verification.upgradedHash && !commitAdminPinHashIfCurrent(storedHash, verification.upgradedHash)) return false;
+    return true;
+  }, [user, pushAudit, commitAdminPinHashIfCurrent]);
 
-  const unlockSession = useCallback((credential: string): boolean => {
+  const unlockSession = useCallback(async (credential: string): Promise<boolean> => {
     if (!user || !credential) return false;
     const current = stateRef.current.users.find(u => u.id === user.id);
     if (!current || !current.active || current.mustChangePassword) return false;
-
-    let passwordOk = false;
-    try {
-      passwordOk = isHashed(current.password)
-        ? verifyPassword(credential, current.password)
-        : credential === current.password;
-    } catch { passwordOk = false; }
-
-    // An unattended terminal can be recovered by the current account or by
-    // an active administrator credential, without destroying the current cart.
-    let elevatedOk = false;
-    try {
-      elevatedOk = stateRef.current.users
-        .filter(u => u.role === 'admin' && u.active)
-        .some(admin => isHashed(admin.password)
-          ? verifyPassword(credential, admin.password)
-          : credential === admin.password);
-    } catch { elevatedOk = false; }
-    const adminPinOk = verifyPassword(credential, stateRef.current.settings.adminPinHash || '');
-
-    if (passwordOk || elevatedOk || adminPinOk) {
-      loginAtRef.current = Date.now();
-      pushAudit('UNLOCK', 'Auth', 'Session unlocked after idle lock');
-      return true;
+    const initiatingUser = { ...current };
+    // Cashiers can unlock their own idle session without consuming the shared
+    // administrator attempt budget. A failed entry then proceeds to the guarded
+    // administrator fallback because this same prompt also accepts admin credentials.
+    if (current.role !== 'admin') {
+      let ownPasswordOk = false;
+      try {
+        ownPasswordOk = isHashed(current.password)
+          ? await verifyPasswordAsync(credential, current.password)
+          : credential === current.password;
+      } catch { ownPasswordOk = false; }
+      const latestCurrent = stateRef.current.users.find(u => u.id === current.id);
+      if (ownPasswordOk) {
+        if (sessionRef.current?.userId !== initiatingUser.id
+          || !latestCurrent || !latestCurrent.active || latestCurrent.mustChangePassword
+          || latestCurrent.password !== initiatingUser.password) return false;
+        loginAtRef.current = Date.now();
+        pushAudit('UNLOCK', 'Auth', 'User session unlocked after idle lock');
+        return true;
+      }
     }
-    pushAudit('DENIED', 'Auth', 'Failed idle-lock unlock attempt');
-    return false;
-  }, [pushAudit, user]);
-  const sensitiveAuthAtRef = useRef(0);
+
+    const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
+    const storedPinHash = adminSnapshot.adminPinHash;
+    type AdminUnlockVerification =
+      | { kind: 'admin-password'; admin: AppUser }
+      | { kind: 'admin-pin'; verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> };
+    const verificationResult: { value: AdminUnlockVerification | null } = { value: null };
+    const attempt = await runLocalAuthAttempt(async () => {
+      if (current.role === 'admin') {
+        let ownAdminOk = false;
+        try {
+          ownAdminOk = isHashed(initiatingUser.password)
+            ? await verifyPasswordAsync(credential, initiatingUser.password)
+            : credential === initiatingUser.password;
+        } catch { ownAdminOk = false; }
+        if (ownAdminOk) {
+          verificationResult.value = { kind: 'admin-password', admin: initiatingUser };
+          return true;
+        }
+      }
+
+      const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async admin => {
+        try {
+          return isHashed(admin.password)
+            ? await verifyPasswordAsync(credential, admin.password)
+            : credential === admin.password;
+        } catch { return false; }
+      });
+      if (matchedAdmin) {
+        verificationResult.value = { kind: 'admin-password', admin: matchedAdmin };
+        return true;
+      }
+
+      try {
+        const pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
+        if (pinVerification.valid) {
+          verificationResult.value = { kind: 'admin-pin', verification: pinVerification };
+          return true;
+        }
+      } catch { /* an invalid or unreadable PIN must not unlock the session */ }
+      verificationResult.value = null;
+      return false;
+    }, current.role === 'admin' ? 'admin' : 'cashier-unlock');
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Auth', attempt.allowed
+        ? 'Failed idle-lock unlock attempt'
+        : 'Administrator idle unlock temporarily locked');
+      return false;
+    }
+    if (sessionRef.current?.userId !== initiatingUser.id) return false;
+    if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) return false;
+    const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+    if (!latestInitiator || !latestInitiator.active || latestInitiator.role !== initiatingUser.role
+      || latestInitiator.password !== initiatingUser.password || latestInitiator.mustChangePassword) return false;
+    const verified = verificationResult.value;
+    if (!verified) return false;
+    if (verified.kind === 'admin-password') {
+      const latestAdmin = findActiveAdminById(stateRef.current, verified.admin.id);
+      if (!latestAdmin || latestAdmin.password !== verified.admin.password) return false;
+    } else if (verified.verification.upgradedHash
+      && !commitAdminPinHashIfCurrent(storedPinHash, verified.verification.upgradedHash)) {
+      return false;
+    }
+    loginAtRef.current = Date.now();
+    pushAudit('UNLOCK', 'Auth', 'Session unlocked after administrator credential verification');
+    return true;
+  }, [pushAudit, user, commitAdminPinHashIfCurrent]);
+
+  const sensitiveAuthRef = useRef<{ at: number; userId: string; snapshot: AdminCredentialSnapshot } | null>(null);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
-    if (user?.role !== 'admin') {
+    if (!user || sessionRef.current?.userId !== user.id) return Promise.resolve(false);
+    if (user.role !== 'admin') {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
       return Promise.resolve(false);
     }
+    const activeAdmin = findActiveAdminById(stateRef.current, user.id);
+    if (!activeAdmin) {
+      pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator account is no longer active');
+      return Promise.resolve(false);
+    }
     const FRESH_MS = 5 * 60 * 1000;
-    if (Date.now() - sensitiveAuthAtRef.current < FRESH_MS) return Promise.resolve(true);
+    const cachedAuth = sensitiveAuthRef.current;
+    if (cachedAuth && cachedAuth.userId === user.id
+      && adminCredentialSnapshotMatches(stateRef.current, cachedAuth.snapshot)
+      && Date.now() - cachedAuth.at < FRESH_MS) return Promise.resolve(true);
+    sensitiveAuthRef.current = null;
     if (sensitiveAdminResolverRef.current) {
       sensitiveAdminResolverRef.current(false);
       sensitiveAdminResolverRef.current = null;
@@ -650,28 +746,53 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     return new Promise<boolean>(resolve => { sensitiveAdminResolverRef.current = resolve; });
   }, [pushAudit, user]);
 
-  const resolveSensitiveAdmin = useCallback((credential: string): boolean => {
+  const resolveSensitiveAdmin = useCallback(async (credential: string): Promise<boolean> => {
     const resolver = sensitiveAdminResolverRef.current;
-    if (!resolver || !sensitiveAdminPrompt) return false;
+    const prompt = sensitiveAdminPrompt;
+    if (!user || user.role !== 'admin' || !resolver || !prompt || !credential) return false;
+    const actorSnapshot = findActiveAdminById(stateRef.current, user.id);
+    if (!actorSnapshot) return false;
     const secret = String(credential || '');
-    const admin = stateRef.current.users.find(u => u.role === 'admin' && u.active);
+    const storedPinHash = stateRef.current.settings.adminPinHash || '';
+    let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
     let passwordOk = false;
-    try {
-      passwordOk = !!admin && (isHashed(admin.password) ? verifyPassword(secret, admin.password) : secret === admin.password);
-    } catch { passwordOk = false; }
     let pinOk = false;
-    try { pinOk = !!secret && verifyPassword(secret, stateRef.current.settings.adminPinHash || ''); } catch { pinOk = false; }
-    if (!passwordOk && !pinOk) {
-      pushAudit('DENIED', 'Security', 'Failed administrator confirmation for ' + sensitiveAdminPrompt.reason);
+    const attempt = await runLocalAuthAttempt(async () => {
+      try {
+        passwordOk = isHashed(actorSnapshot.password)
+          ? await verifyPasswordAsync(secret, actorSnapshot.password)
+          : secret === actorSnapshot.password;
+      } catch { passwordOk = false; }
+      if (passwordOk) return true;
+      try {
+        pinVerification = await verifyPasswordWithLegacyUpgrade(secret, storedPinHash);
+        pinOk = pinVerification.valid;
+        return pinOk;
+      } catch { return false; }
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? 'Failed administrator confirmation for ' + prompt.reason
+        : 'Administrator confirmation temporarily locked for ' + prompt.reason);
       return false;
     }
-    sensitiveAuthAtRef.current = Date.now();
-    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + sensitiveAdminPrompt.reason);
+    if (sessionRef.current?.userId !== actorSnapshot.id) return false;
+    const latestActor = findActiveAdminById(stateRef.current, actorSnapshot.id);
+    if (sensitiveAdminResolverRef.current !== resolver || !sensitiveAdminPrompt
+      || !latestActor || latestActor.password !== actorSnapshot.password
+      || (stateRef.current.settings.adminPinHash || '') !== storedPinHash) return false;
+    if (pinVerification.upgradedHash && !commitAdminPinHashIfCurrent(storedPinHash, pinVerification.upgradedHash)) return false;
+    sensitiveAuthRef.current = {
+      at: Date.now(),
+      userId: actorSnapshot.id,
+      snapshot: captureAdminCredentialSnapshot(stateRef.current),
+    };
+    pushAudit('AUTH', 'Security', 'Administrator re-authenticated for ' + prompt.reason);
     resolver(true);
     sensitiveAdminResolverRef.current = null;
     setSensitiveAdminPrompt(null);
     return true;
-  }, [pushAudit, sensitiveAdminPrompt]);
+  }, [pushAudit, sensitiveAdminPrompt, commitAdminPinHashIfCurrent, user]);
 
   const cancelSensitiveAdmin = useCallback(() => {
     const resolver = sensitiveAdminResolverRef.current;
@@ -682,6 +803,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     setSensitiveAdminPrompt(null);
   }, [pushAudit]);
+
+  const clearSensitiveAdminAuthorization = useCallback(() => {
+    sensitiveAuthRef.current = null;
+    const resolver = sensitiveAdminResolverRef.current;
+    if (resolver) {
+      resolver(false);
+      sensitiveAdminResolverRef.current = null;
+    }
+    setSensitiveAdminPrompt(null);
+  }, []);
   const toggleTheme = useCallback(() => setDark(d => !d), []);
 
 
@@ -724,11 +855,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let passwordOk = false;
-    if (isHashed(u.password)) {
-      passwordOk = await verifyPasswordAsync(password, u.password);
-      if (!passwordOk) {
-        try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
+    if (u.role === 'admin') {
+      const attempt = await runLocalAuthAttempt(async () => {
+        if (!u.active) return false;
+        return isHashed(u.password)
+          ? await verifyPasswordAsync(password, u.password)
+          : u.password === password;
+      });
+      if (!attempt.allowed) return { ok: false, error: 'Too many administrator login attempts. Please wait before trying again.' };
+      passwordOk = attempt.success;
+      const latestAdmin = stateRef.current.users.find(candidate => candidate.id === u!.id);
+      if (passwordOk && (!latestAdmin || !latestAdmin.active || latestAdmin.role !== 'admin' || latestAdmin.password !== u.password)) {
+        return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
       }
+    } else if (isHashed(u.password)) {
+      passwordOk = await verifyPasswordAsync(password, u.password);
     } else {
       passwordOk = u.password === password;
     }
@@ -745,21 +886,44 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
-    const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
-    if (needsUpgrade) {
-      const nextUsers = users.map(x => x.id === u.id ? nextUser : x);
-      stateRef.current = { ...stateRef.current, users: nextUsers };
+    const latestStateBeforeCommit = stateRef.current;
+    const latestSignedInUser = latestStateBeforeCommit.users.find(x => x.id === u.id);
+    if (!latestSignedInUser || latestSignedInUser.password !== u.password
+      || !latestSignedInUser.active || latestSignedInUser.role !== u.role) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
     }
-    const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
-    setState(s => ({
-      ...s,
-      users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: hashPin(password) } : s.settings,
-      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
-    }));
 
-    const sess = { userId: nextUser.id, remember };
+    const pinWasUnset = !latestStateBeforeCommit.settings?.adminPinHash && latestSignedInUser.role === 'admin';
+    const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
+    const latestState = stateRef.current;
+    const accountAtCommit = latestState.users.find(x => x.id === u.id);
+    if (!accountAtCommit || accountAtCommit.password !== u.password
+      || !accountAtCommit.active || accountAtCommit.role !== u.role) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
+    }
+
+    const nextState: POSState = {
+      ...latestState,
+      users: needsUpgrade
+        ? latestState.users.map(x => x.id === u.id && x.password === u.password && x.active && x.role === u.role
+          ? { ...x, password: upgradedPassword }
+          : x)
+        : latestState.users,
+      settings: pinWasUnset && !latestState.settings.adminPinHash
+        ? { ...latestState.settings, adminPinHash: initialAdminPinHash }
+        : latestState.settings,
+      audit: [{
+        id: uid(), time: new Date().toISOString(), user: accountAtCommit.email,
+        action: 'LOGIN', entity: 'Auth',
+        details: `${accountAtCommit.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}`,
+      }, ...(latestState.audit || [])].slice(0, 500),
+    };
+    stateRef.current = nextState;
+    setState(nextState);
+
+    const sess = { userId: accountAtCommit.id, remember };
     loginAtRef.current = Date.now();
+    sessionRef.current = sess;
     setSession(sess);
     try {
       // Keep the authenticated POS session durable across a normal browser refresh.
@@ -773,6 +937,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const createInitialAdmin = useCallback(async (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => {
+    return runWithAsyncLock(initialAdminSetupLockRef, () => ({ ok: false, error: 'Administrator setup is already in progress' }), async () => {
     const cleanName = name.trim();
     const mail = email.trim().toLowerCase();
     const next = password.trim();
@@ -801,18 +966,24 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       id: uid(), name: cashierName, email: cashierMail, password: cashierHashed, role: 'cashier',
       active: true, createdAt: nowIso, mustChangePassword: false,
     } : null;
-    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
+    const initialAdminPinHash = await hashPasswordAsync(next);
+    if ((stateRef.current.users || []).length > 0) {
+      return { ok: false, error: 'Administrator setup is already complete' };
+    }
+    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: initialAdminPinHash } };
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
     const sess = { userId: admin.id, remember: true };
     loginAtRef.current = Date.now();
+    sessionRef.current = sess;
     setSession(sess);
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
     } catch { /* ignore */ }
     return { ok: true };
+    });
   }, [pushAudit]);
 
   const changePassword = useCallback(async (nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
@@ -820,12 +991,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
+    const currentUserSnapshot = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!currentUserSnapshot) return { ok: false, error: 'Your account is no longer active.' };
     const hashed = await hashPasswordAsync(next);
-    setState(s => ({
-      ...s,
-      users: s.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u),
-    }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    if (sessionRef.current?.userId !== currentUserSnapshot.id) {
+      return { ok: false, error: 'Your POS session changed during password update. Please try again.' };
+    }
+    const nextState = replaceUserPasswordIfCurrent(stateRef.current, currentUserSnapshot, hashed);
+    if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    stateRef.current = nextState;
+    setState(current => replaceUserPasswordIfCurrent(current, currentUserSnapshot, hashed) || current);
+    if (currentUserSnapshot.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
     return { ok: true };
   }, [user, pushAudit]);
@@ -835,14 +1011,32 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
-    const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier'));
+    const adminSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    const target = stateRef.current.users.find(u => u.id === targetUserId
+      && (u.role === 'admin' || u.role === 'cashier') && u.active);
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator account is no longer active.' };
+    }
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
+    if (!(await confirmSensitiveAdmin('managed account password change'))) {
+      return { ok: false, error: 'Administrator confirmation was cancelled.' };
+    }
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during confirmation. Please try again.' };
+    }
+
     const hashed = await hashPasswordAsync(next);
-    setState(s => ({ ...s, users: s.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during password update. Please try again.' };
+    }
+    const nextState = replaceUserPasswordIfCurrent(stateRef.current, target, hashed, adminSnapshot);
+    if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    stateRef.current = nextState;
+    setState(current => replaceUserPasswordIfCurrent(current, target, hashed, adminSnapshot) || current);
+    if (target.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
-  }, [user, pushAudit]);
+  }, [user, pushAudit, confirmSensitiveAdmin]);
   const signOut = useCallback((force = false) => {
     // Ignore only spurious/effect-driven signOut calls during the first 8s after login.
     // An explicit user action can always sign out immediately.
@@ -850,109 +1044,219 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
+    clearSensitiveAdminAuthorization();
+    sessionRef.current = null;
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit]);
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit, clearSensitiveAdminAuthorization]);
 
   // Role switches create a real authenticated session; App.tsx enforces mustChangePassword on the target user.
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
-    // Switching changes the authenticated POS identity. It is never a cosmetic
-    // "view" switch and must always authenticate the target account.
     if (!user) return { ok: false, error: 'You must be signed in' };
     if (role === user.role) return { ok: true };
     if (!['admin', 'cashier'].includes(role)) return { ok: false, error: 'Unsupported role switch' };
+    const initiatingUser = stateRef.current.users.find(u => u.id === user.id && u.role === user.role && u.active);
+    if (!initiatingUser) return { ok: false, error: 'Your account changed. Sign in again before switching roles.' };
 
-    let target: AppUser | undefined;
-    const secret = credential || '';
-    if (roleSwitchLockRef.current) return { ok: false, error: 'Please wait and try again' };
-    const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
-    let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
-    try {
-      const raw = localStorage.getItem(SWITCH_RATE_KEY);
-      if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
-    } catch { /* ignore malformed limiter state */ }
-    const now = Date.now();
-    if (guard.lockedUntil > now) {
-      return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
-    }
-
-    if (role === 'cashier' && user.role === 'admin') {
-      const mail = (email || '').trim().toLowerCase();
-      if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
-      target = state.users.find(u => u.role === 'cashier' && u.active && u.email.trim().toLowerCase() === mail);
-      if (!target) return { ok: false, error: 'Incorrect cashier email or password' };
-      const passwordOk = isHashed(target.password)
-        ? await verifyPasswordAsync(secret, target.password)
-        : verifyPassword(secret, target.password || '');
-      if (!passwordOk) {
-        setState(st => ({ ...st, audit: [{
-          id: uid(), time: new Date().toISOString(), user: user.email,
-          action: 'DENIED', entity: 'Auth',
-          details: 'Failed CASHIER switch authentication by ' + user.name,
-        }, ...st.audit].slice(0, 500) }));
-        const failures = guard.failures + 1;
-        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
-        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
-        return { ok: false, error: 'Incorrect cashier email or password' };
+    return runWithAsyncLock(roleSwitchLockRef, () => ({ ok: false, error: 'Please wait and try again' }), async () => {
+      let target: AppUser | undefined;
+      let targetPasswordSnapshot = '';
+      const secret = credential || '';
+      const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
+      let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
+      try {
+        const raw = localStorage.getItem(SWITCH_RATE_KEY);
+        if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
+      } catch { /* ignore malformed limiter state */ }
+      const now = Date.now();
+      if (guard.lockedUntil > now) {
+        return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
       }
-    } else if (role === 'admin' && user.role === 'cashier') {
-      target = state.users.find(u => u.role === 'admin' && u.active);
-      if (!target) return { ok: false, error: 'No active administrator account exists' };
-      const pinOk = verifyPassword(secret, state.settings.adminPinHash);
-      const passwordOk = isHashed(target.password)
-        ? await verifyPasswordAsync(secret, target.password)
-        : verifyPassword(secret, target.password || '');
-      if (!pinOk && !passwordOk) {
-        setState(st => ({ ...st, audit: [{
-          id: uid(), time: new Date().toISOString(), user: user.email,
-          action: 'DENIED', entity: 'Auth',
-          details: 'Failed ADMIN unlock attempt by ' + user.name,
-        }, ...st.audit].slice(0, 500) }));
-        const failures = guard.failures + 1;
-        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
-        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
-        return { ok: false, error: 'Incorrect admin unlock PIN or admin login password' };
+
+      let adminPinHashSnapshot = '';
+      let adminPinUpgradeHash: string | undefined;
+      if (role === 'cashier' && user.role === 'admin') {
+        const mail = (email || '').trim().toLowerCase();
+        if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
+        target = stateRef.current.users.find(u => u.role === 'cashier' && u.active && u.email.trim().toLowerCase() === mail);
+        if (!target) return { ok: false, error: 'Incorrect cashier email or password' };
+        targetPasswordSnapshot = target.password;
+        let passwordOk = false;
+        try {
+          passwordOk = isHashed(targetPasswordSnapshot)
+            ? await verifyPasswordAsync(secret, targetPasswordSnapshot)
+            : verifyPassword(secret, targetPasswordSnapshot || '');
+        } catch { passwordOk = false; }
+        const latestCashier = stateRef.current.users.find(u => u.id === target!.id);
+        const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+        if (passwordOk && (sessionRef.current?.userId !== initiatingUser.id
+          || !latestCashier || latestCashier.role !== 'cashier' || !latestCashier.active || latestCashier.password !== targetPasswordSnapshot
+          || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password)) {
+          return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
+        }
+        if (!passwordOk) {
+          setState(st => ({ ...st, audit: [{
+            id: uid(), time: new Date().toISOString(), user: user.email,
+            action: 'DENIED', entity: 'Auth',
+            details: 'Failed CASHIER switch authentication by ' + user.name,
+          }, ...st.audit].slice(0, 500) }));
+          const failures = guard.failures + 1;
+          const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+          try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
+          return { ok: false, error: 'Incorrect cashier email or password' };
+        }
+      } else if (role === 'admin' && user.role === 'cashier') {
+        const activeAdmins = stateRef.current.users.filter(u => u.role === 'admin' && u.active);
+        if (!activeAdmins.length) return { ok: false, error: 'No active administrator account exists' };
+        const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
+        adminPinHashSnapshot = adminSnapshot.adminPinHash;
+        type AdminSwitchVerification =
+          | { kind: 'admin-pin'; verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> }
+          | { kind: 'admin-password'; admin: AppUser };
+        const verificationResult: { value: AdminSwitchVerification | null } = { value: null };
+        const attempt = await runLocalAuthAttempt(async () => {
+          try {
+            const pinVerification = await verifyPasswordWithLegacyUpgrade(secret, adminSnapshot.adminPinHash);
+            if (pinVerification.valid) {
+              verificationResult.value = { kind: 'admin-pin', verification: pinVerification };
+              return true;
+            }
+          } catch { /* check the active admin login credentials next */ }
+
+          const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
+            try {
+              return isHashed(candidate.password)
+                ? await verifyPasswordAsync(secret, candidate.password)
+                : verifyPassword(secret, candidate.password || '');
+            } catch { return false; }
+          });
+          if (!matchedAdmin) {
+            verificationResult.value = null;
+            return false;
+          }
+          verificationResult.value = { kind: 'admin-password', admin: matchedAdmin };
+          return true;
+        }, 'cashier-unlock');
+        if (!attempt.success) {
+          setState(st => ({ ...st, audit: [{
+            id: uid(), time: new Date().toISOString(), user: user.email,
+            action: 'DENIED', entity: 'Auth',
+            details: 'Failed ADMIN unlock attempt by ' + user.name,
+          }, ...st.audit].slice(0, 500) }));
+          if (attempt.allowed) {
+            const failures = guard.failures + 1;
+            const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+            try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
+          }
+          return { ok: false, error: attempt.allowed ? 'Incorrect admin unlock PIN or admin login password' : 'Too many administrator attempts. Wait before trying again.' };
+        }
+        if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) {
+          return { ok: false, error: 'Administrator accounts changed during verification. Please try again.' };
+        }
+        const verified = verificationResult.value;
+        if (!verified) return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+        if (verified.kind === 'admin-pin') {
+          adminPinUpgradeHash = verified.verification.upgradedHash;
+          target = findActiveAdminById(stateRef.current, activeAdmins[0].id) || undefined;
+        } else {
+          target = findActiveAdminById(stateRef.current, verified.admin.id) || undefined;
+          if (!target || target.password !== verified.admin.password) {
+            return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+          }
+        }
+        if (!target) return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+        targetPasswordSnapshot = target.password;
+        if (adminPinUpgradeHash && !commitAdminPinHashIfCurrent(adminPinHashSnapshot, adminPinUpgradeHash)) {
+          return { ok: false, error: 'Administrator PIN changed during verification. Please try again.' };
+        }
       }
-    }
 
-    if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
-    try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
+      if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
+      try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
+      const latestTarget = stateRef.current.users.find(u => u.id === target!.id);
+      const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+      if (sessionRef.current?.userId !== initiatingUser.id
+        || !latestTarget || !latestTarget.active || latestTarget.role !== role || latestTarget.password !== targetPasswordSnapshot
+        || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password) {
+        return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
+      }
+      clearSensitiveAdminAuthorization();
 
-    const prev = session ? loadSession() : null;
-    const sess = { userId: target.id, remember: prev?.remember ?? true };
-    setSession(sess);
-    try {
-      // Keep the authenticated POS session durable across a normal browser refresh.
-      // "Remember me" is retained in the session metadata for compatibility, but
-      // refresh must never force an already-authenticated cashier/admin back to Login.
-      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
-    } catch { /* ignore */ }
-    setState(st => ({
-      ...st,
-      audit: [{
-        id: uid(), time: new Date().toISOString(), user: target!.email, action: 'SWITCH', entity: 'Auth',
-        details: 'Authenticated switch to ' + role.toUpperCase() + ' (' + target!.name + ')',
-      }, ...st.audit].slice(0, 500),
-    }));
-    return { ok: true };
-  }, [state.users, state.settings.adminPinHash, session, user]);
-  const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
+      const prev = sessionRef.current ? loadSession() : null;
+      const sess = { userId: target.id, remember: prev?.remember ?? true };
+      sessionRef.current = sess;
+      setSession(sess);
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
+      } catch { /* ignore */ }
+      setState(st => ({
+        ...st,
+        audit: [{
+          id: uid(), time: new Date().toISOString(), user: target!.email, action: 'SWITCH', entity: 'Auth',
+          details: 'Authenticated switch to ' + role.toUpperCase() + ' (' + target!.name + ')',
+        }, ...st.audit].slice(0, 500),
+      }));
+      return { ok: true };
+    });
+  }, [state.users, user, commitAdminPinHashIfCurrent, clearSensitiveAdminAuthorization]);
+  const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
-    let currentOk = false;
-    if (state.settings.adminPinHash) {
-      try { currentOk = verifyPassword(currentSecret, state.settings.adminPinHash); } catch { currentOk = false; }
-    } else {
-      const admin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
-      try { currentOk = !!admin && (isHashed(admin.password) ? verifyPassword(currentSecret, admin.password) : currentSecret === admin.password); } catch { currentOk = false; }
+    const nextSecret = String(next || '').trim();
+    if (!currentSecret) return { ok: false, error: 'Enter the current administrator credential' };
+    if (nextSecret.length < 8) return { ok: false, error: 'New admin unlock PIN must be at least 8 characters' };
+    const adminSnapshot = findActiveAdminById(stateRef.current, user.id);
+    if (!adminSnapshot) return { ok: false, error: 'Administrator account is no longer active' };
+    const storedPinHash = stateRef.current.settings.adminPinHash || '';
+    let currentValid = false;
+    let currentPinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    const attempt = await runLocalAuthAttempt(async () => {
+      if (storedPinHash) {
+        currentPinVerification = await verifyPasswordWithLegacyUpgrade(currentSecret, storedPinHash);
+        currentValid = currentPinVerification.valid;
+      } else {
+        currentValid = isHashed(adminSnapshot.password)
+          ? await verifyPasswordAsync(currentSecret, adminSnapshot.password)
+          : currentSecret === adminSnapshot.password;
+      }
+      return currentValid;
+    });
+    if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? 'Failed administrator unlock PIN change'
+        : 'Administrator unlock PIN change temporarily locked');
+      return {
+        ok: false,
+        error: attempt.allowed
+          ? (storedPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect')
+          : 'Too many administrator attempts. Wait before trying again.',
+      };
     }
-    if (!currentOk) return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
-    if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
-    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
-    pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during PIN verification. Please try again.' };
+    }
+    const latestAdmin = findActiveAdminById(stateRef.current, user.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
+      || !latestAdmin || latestAdmin.password !== adminSnapshot.password) {
+      return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+    }
+    const replacementHash = await hashPasswordAsync(nextSecret);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed while saving the new PIN. Please try again.' };
+    }
+    const latestAfterHash = findActiveAdminById(stateRef.current, user.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
+      || !latestAfterHash || latestAfterHash.password !== adminSnapshot.password) {
+      return { ok: false, error: 'Administrator credentials changed while saving the new PIN. Please try again.' };
+    }
+    if (!commitAdminPinHashIfCurrent(storedPinHash, replacementHash)) {
+      return { ok: false, error: 'Administrator PIN changed while saving. Please try again.' };
+    }
+    sensitiveAuthRef.current = null;
+    pushAudit('SETTINGS', 'Security', 'Admin unlock PIN changed');
     return { ok: true };
-  }, [user, state.settings.adminPinHash, pushAudit]);
+  }, [user, pushAudit, commitAdminPinHashIfCurrent]);
 
   /* ---------------- products ---------------- */
   const saveKitItems = useCallback((items: KitItem[]) => {
@@ -3147,54 +3451,122 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
-  const saveUser = useCallback(async (u: AppUser) => {
-    if (!user || user.role !== 'admin') {
+  const saveUser = useCallback(async (u: AppUser): Promise<{ ok: boolean; error?: string }> => {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(x => x.id === user.id && x.role === 'admin' && x.active)
+      : undefined;
+    if (!adminSnapshot) {
       pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);
-      return;
+      return { ok: false, error: 'Only an active administrator can save staff accounts.' };
     }
-    if (!(await confirmSensitiveAdmin('user account create/change'))) return;
-    const exists = state.users.some(x => x.id === u.id);
-    // Password changes and newly created accounts must use the same 12+ character
-    // policy as first-login and managed-password flows. Existing hashes are kept
-    // unchanged when the password field is intentionally left blank by the UI.
-    const existing = state.users.find(x => x.id === u.id);
+    const targetSnapshot = stateRef.current.users.find(x => x.id === u.id) || null;
+    if (!(await confirmSensitiveAdmin('user account create/change'))) {
+      return { ok: false, error: 'Administrator confirmation was cancelled.' };
+    }
+
     const suppliedPassword = String(u.password || '');
-    const passwordChanged = !existing || suppliedPassword !== existing.password;    if (passwordChanged && suppliedPassword.length < 12) {
+    const passwordChanged = !targetSnapshot || suppliedPassword !== targetSnapshot.password;
+    if (passwordChanged && suppliedPassword.length < 12) {
       pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
-      return;
+      return { ok: false, error: 'New passwords must contain at least 12 characters.' };
     }
-    const password = isHashed(suppliedPassword)
-      ? suppliedPassword
-      : (existing && suppliedPassword === existing.password ? existing.password : hashPassword(suppliedPassword));
+    const password = passwordChanged
+      ? await hashPasswordAsync(suppliedPassword)
+      : targetSnapshot.password;
     const toSave = { ...u, password };
-    setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
-  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
+    if (!toSave.name.trim() || !toSave.email.trim()) {
+      return { ok: false, error: 'Name and email are required.' };
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toSave.email.trim())) {
+      return { ok: false, error: 'Enter a valid email address.' };
+    }
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during the user save. Please try again.' };
+    }
+    const leavesActiveAdmin = stateRef.current.users.some(account =>
+      account.id === toSave.id
+        ? toSave.role === 'admin' && toSave.active
+        : account.role === 'admin' && account.active,
+    ) || (!targetSnapshot && toSave.role === 'admin' && toSave.active);
+    if (!leavesActiveAdmin) {
+      pushAudit('DENIED', 'User', 'Blocked staff edit that would remove the final active administrator');
+      return { ok: false, error: 'At least one active Admin account must remain. Add or keep another Admin before changing this role.' };
+    }
+
+    const nextState = saveManagedUserIfCurrent(stateRef.current, adminSnapshot, targetSnapshot, toSave);
+    if (!nextState) {
+      return { ok: false, error: 'The administrator or target staff account changed during the save. Refresh and try again.' };
+    }
+    stateRef.current = nextState;
+    setState(current => saveManagedUserIfCurrent(current, adminSnapshot, targetSnapshot, toSave) || current);
+    if (targetSnapshot?.role === 'admin' || toSave.role === 'admin') sensitiveAuthRef.current = null;
+    const exists = Boolean(targetSnapshot);
+    pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${toSave.name} (${toSave.role})`);
+    return { ok: true };
+  }, [user, pushAudit, confirmSensitiveAdmin]);
 
   const toggleUserActive = useCallback(async (id: string) => {
-    if (!user || user.role !== 'admin') {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(account => account.id === user.id && account.role === 'admin' && account.active)
+      : undefined;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
       pushAudit('DENIED', 'User', `Blocked user status change for ${id}`);
       return;
     }
+    const targetSnapshot = stateRef.current.users.find(account => account.id === id);
+    if (!targetSnapshot) return;
+    if (targetSnapshot.id === adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked self-deactivation of the active administrator');
+      return;
+    }
     if (!(await confirmSensitiveAdmin('user activation change'))) return;
-    const u = state.users.find(x => x.id === id);
-    setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
-    if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
-  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked user status change after administrator session changed');
+      return;
+    }
+
+    const nextActive = !targetSnapshot.active;
+    const nextState = setManagedUserActiveIfCurrent(stateRef.current, adminSnapshot, targetSnapshot, nextActive);
+    if (!nextState) {
+      pushAudit('DENIED', 'User', 'Blocked stale user status change or removal of the final active administrator');
+      return;
+    }
+    stateRef.current = nextState;
+    setState(current => setManagedUserActiveIfCurrent(current, adminSnapshot, targetSnapshot, nextActive) || current);
+    if (targetSnapshot.role === 'admin') sensitiveAuthRef.current = null;
+    pushAudit('UPDATE', 'User', `${nextActive ? 'Activated' : 'Deactivated'} user ${targetSnapshot.name}`);
+  }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const deleteUser = useCallback(async (id: string) => {
-    if (!user || user.role !== 'admin') {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(account => account.id === user.id && account.role === 'admin' && account.active)
+      : undefined;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
       pushAudit('DENIED', 'User', `Blocked user delete for ${id}`);
       return;
     }
+    const targetSnapshot = stateRef.current.users.find(account => account.id === id);
+    if (!targetSnapshot || targetSnapshot.id === adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked deletion of the current administrator account');
+      return;
+    }
     if (!(await confirmSensitiveAdmin('user deletion'))) return;
-    const u = state.users.find(x => x.id === id);
-    if (!u || u.id === user?.id) return;
-    setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
-    pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
-  }, [state.users, user?.id, pushAudit, user, confirmSensitiveAdmin]);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'User', 'Blocked user delete after administrator session changed');
+      return;
+    }
 
-  /* ---------------- admin ---------------- */
+    const nextState = deleteManagedUserIfCurrent(stateRef.current, adminSnapshot, targetSnapshot);
+    if (!nextState) {
+      pushAudit('DENIED', 'User', 'Blocked stale user deletion or removal of the final active administrator');
+      return;
+    }
+    stateRef.current = nextState;
+    setState(current => deleteManagedUserIfCurrent(current, adminSnapshot, targetSnapshot) || current);
+    if (targetSnapshot.role === 'admin') sensitiveAuthRef.current = null;
+    pushAudit('DELETE', 'User', `Deleted user ${targetSnapshot.name}`);
+  }, [pushAudit, user, confirmSensitiveAdmin]);
+/* ---------------- admin ---------------- */
   const setPermission = useCallback(async (role: Role, key: string, value: boolean) => {
     if (!user || user.role !== 'admin') {
       pushAudit('DENIED', 'Permissions', `Blocked permission change for ${role}:${key}`);
@@ -3214,8 +3586,12 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
-    if (!user || user.role !== 'admin') {
+    if (!user || user.role !== 'admin' || sessionRef.current?.userId !== user.id) {
       pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'adminPinHash')) {
+      pushAudit('DENIED', 'Security', 'Blocked direct Admin PIN hash update; use the guarded PIN change flow');
       return;
     }
     const nextState = {
@@ -3437,15 +3813,27 @@ const deletePurchase = useCallback((id: string) => {
     } catch { return false; }
   }, [pushAudit, user]);
 
-  const resetData = useCallback(() => {
-    if (!user || user.role !== 'admin') {
-      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset without admin access');
-      return;
+  const resetData = useCallback(async (): Promise<boolean> => {
+    const adminSnapshot = user
+      ? findActiveAdminById(stateRef.current, user.id)
+      : null;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset without an active Admin session');
+      return false;
+    }
+    if (!(await confirmSensitiveAdmin('clear local POS data'))) return false;
+    const latestAdmin = findActiveAdminById(stateRef.current, adminSnapshot.id);
+    if (sessionRef.current?.userId !== adminSnapshot.id
+      || !latestAdmin || latestAdmin.password !== adminSnapshot.password) {
+      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset after administrator credentials changed');
+      return false;
     }
     const seed = buildSeed();
+    stateRef.current = seed;
     setState(seed);
     pushAudit('RESET', 'Settings', 'Restored demo seed dataset');
-  }, [pushAudit, user]);
+    return true;
+  }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const refreshPOS = useCallback(async () => {
     // A refresh is a data reload, not an authentication operation. Capture the
@@ -3453,7 +3841,7 @@ const deletePurchase = useCallback((id: string) => {
     // This prevents a stale IDB snapshot from making user temporarily null and
     // triggering Protected -> /login.
     const current = stateRef.current;
-    const activeSession = session;
+    const activeSession = sessionRef.current;
     try {
       if (ready) await persistState(current);
 
@@ -3477,22 +3865,41 @@ const deletePurchase = useCallback((id: string) => {
         } else if (!refreshedUser) {
           // No valid user record is available to preserve; keep the current
           // state instead of turning a refresh into an unexpected logout.
+          sessionRef.current = activeSession;
           setSession(activeSession);
           setState(current);
           return;
         }
       }
 
+      if (sessionRef.current?.userId !== activeSession?.userId) {
+        // An account switch or logout happened while storage was loading.
+        // Do not restore an older session or overwrite the newer account's state.
+        setState(stateRef.current);
+        return;
+      }
       setState(refreshed);
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
-      if (activeSession) setSession(activeSession);
+      if (activeSession) {
+        sessionRef.current = activeSession;
+        setSession(activeSession);
+      }
     } catch {
-      // A refresh failure must leave the authenticated POS session untouched.
+      // A refresh failure must leave the current account untouched. If the
+      // operator logged out or switched accounts while storage was loading,
+      // never restore the older session captured at the start of this request.
+      if (sessionRef.current?.userId !== activeSession?.userId) {
+        setState(stateRef.current);
+        return;
+      }
       setState(current);
-      if (activeSession) setSession(activeSession);
+      if (activeSession) {
+        sessionRef.current = activeSession;
+        setSession(activeSession);
+      }
     }
-  }, [ready, session]);
+  }, [ready]);
 
   /* ---------------- units (IMEI / serial) ---------------- */
   const saveUnit = useCallback(async (u: InventoryUnit): Promise<boolean> => {
