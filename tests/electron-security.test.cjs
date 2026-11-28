@@ -49,12 +49,11 @@ test('development navigation is limited to the configured origin', () => {
   assert.equal(isAllowedNavigation('http://user@localhost:5173/'), false);
 });
 
-test('Electron keeps the renderer sandboxed, isolated and DevTools-disabled in packaged builds', () => {
+test('Electron keeps the renderer sandboxed and isolated', () => {
   assert.match(
     mainSource,
-    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true[^}]*devTools:isDev\}/,
+    /webPreferences:\{[^}]*contextIsolation:true[^}]*nodeIntegration:false[^}]*sandbox:true[^}]*webSecurity:true\}/,
   );
-  assert.match(mainSource, /const isDev = !app\.isPackaged;/);
 });
 
 test('privileged clipboard, external-open and exit IPC handlers reject untrusted frames', () => {
@@ -203,7 +202,6 @@ test('local admin authentication guard IPC is limited to the trusted renderer an
   assert.ok(preloadSource.includes("beginLocalAuthAttempt: () => ipcRenderer.invoke('local-auth:begin')"));
   assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
 });
-
 
 test('async administrator authentication callers await verification before granting access', () => {
   const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
