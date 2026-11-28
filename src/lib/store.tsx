@@ -614,6 +614,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         : `Admin verification temporarily locked${reason ? ` for ${reason}` : ''}`);
       return false;
     }
+    if (sessionRef.current?.userId !== actor.id) return false;
     const latestActor = stateRef.current.users.find(u => u.id === actor.id);
     if ((stateRef.current.settings.adminPinHash || '') !== storedHash
       || !latestActor || !latestActor.active || latestActor.role !== actor.role || latestActor.password !== actor.password) {
@@ -640,7 +641,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       } catch { ownPasswordOk = false; }
       const latestCurrent = stateRef.current.users.find(u => u.id === current.id);
       if (ownPasswordOk) {
-        if (!latestCurrent || !latestCurrent.active || latestCurrent.mustChangePassword || latestCurrent.password !== initiatingUser.password) return false;
+        if (sessionRef.current?.userId !== initiatingUser.id
+          || !latestCurrent || !latestCurrent.active || latestCurrent.mustChangePassword
+          || latestCurrent.password !== initiatingUser.password) return false;
         loginAtRef.current = Date.now();
         pushAudit('UNLOCK', 'Auth', 'User session unlocked after idle lock');
         return true;
@@ -695,6 +698,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         : 'Administrator idle unlock temporarily locked');
       return false;
     }
+    if (sessionRef.current?.userId !== initiatingUser.id) return false;
     if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) return false;
     const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
     if (!latestInitiator || !latestInitiator.active || latestInitiator.role !== initiatingUser.role
@@ -769,6 +773,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         : 'Administrator confirmation temporarily locked for ' + prompt.reason);
       return false;
     }
+    if (sessionRef.current?.userId !== actorSnapshot.id) return false;
     const latestActor = findActiveAdminById(stateRef.current, actorSnapshot.id);
     if (sensitiveAdminResolverRef.current !== resolver || !sensitiveAdminPrompt
       || !latestActor || latestActor.password !== actorSnapshot.password
@@ -1067,7 +1072,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         } catch { passwordOk = false; }
         const latestCashier = stateRef.current.users.find(u => u.id === target!.id);
         const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
-        if (passwordOk && (!latestCashier || latestCashier.role !== 'cashier' || !latestCashier.active || latestCashier.password !== targetPasswordSnapshot
+        if (passwordOk && (sessionRef.current?.userId !== initiatingUser.id
+          || !latestCashier || latestCashier.role !== 'cashier' || !latestCashier.active || latestCashier.password !== targetPasswordSnapshot
           || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password)) {
           return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
         }
@@ -1152,13 +1158,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
       const latestTarget = stateRef.current.users.find(u => u.id === target!.id);
       const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
-      if (!latestTarget || !latestTarget.active || latestTarget.role !== role || latestTarget.password !== targetPasswordSnapshot
+      if (sessionRef.current?.userId !== initiatingUser.id
+        || !latestTarget || !latestTarget.active || latestTarget.role !== role || latestTarget.password !== targetPasswordSnapshot
         || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password) {
         return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
       }
       clearSensitiveAdminAuthorization();
 
-      const prev = session ? loadSession() : null;
+      const prev = sessionRef.current ? loadSession() : null;
       const sess = { userId: target.id, remember: prev?.remember ?? true };
       sessionRef.current = sess;
     setSession(sess);
@@ -1210,12 +1217,18 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           : 'Too many administrator attempts. Wait before trying again.',
       };
     }
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during PIN verification. Please try again.' };
+    }
     const latestAdmin = findActiveAdminById(stateRef.current, user.id);
     if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
       || !latestAdmin || latestAdmin.password !== adminSnapshot.password) {
       return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
     }
     const replacementHash = await hashPasswordAsync(nextSecret);
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed while saving the new PIN. Please try again.' };
+    }
     const latestAfterHash = findActiveAdminById(stateRef.current, user.id);
     if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
       || !latestAfterHash || latestAfterHash.password !== adminSnapshot.password) {
