@@ -14,8 +14,10 @@ export default function Users() {
   const [confirmPass, setConfirmPass] = useState('');
   const [formErr, setFormErr] = useState('');
   const [formOk, setFormOk] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const save = () => {
+  const save = async () => {
+    if (saving) return;
     setFormErr('');
     setFormOk('');
     if (!editing || !editing.name.trim() || !editing.email.trim()) {
@@ -31,7 +33,10 @@ export default function Users() {
       setFormErr('This email is already used by another user');
       return;
     }
-    if (editing.commissionPct != null && (!Number.isFinite(Number(editing.commissionPct)) || Number(editing.commissionPct) < 0 || Number(editing.commissionPct) > 100)) { setFormErr('Commission rate must be between 0% and 100%.'); return; }
+    if (editing.commissionPct != null && (!Number.isFinite(Number(editing.commissionPct)) || Number(editing.commissionPct) < 0 || Number(editing.commissionPct) > 100)) {
+      setFormErr('Commission rate must be between 0% and 100%.');
+      return;
+    }
     const existing = state.users.find(u => u.id === editing.id);
     const newPass = editing.password.trim();
     if (isNew && !newPass) {
@@ -58,13 +63,23 @@ export default function Users() {
       setFormErr('Password is required');
       return;
     }
-    saveUser(toSave);
-    setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
-    setConfirmPass('');
-    setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
-  };
 
-  return (
+    setSaving(true);
+    try {
+      const result = await saveUser(toSave);
+      if (!result.ok) {
+        setFormErr(result.error || 'The staff account could not be saved.');
+        return;
+      }
+      setFormOk(isNew ? 'User created' : 'User updated — name / email / password saved');
+      setConfirmPass('');
+      setTimeout(() => { setEditing(null); setFormOk(''); }, 600);
+    } catch {
+      setFormErr('Could not save this staff account. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };  return (
     <div>
       <PageHeading
         chip="Team" chipTone="violet"
@@ -121,7 +136,7 @@ export default function Users() {
         ))}
       </div>
 
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={isNew ? 'Add user' : 'Edit user'} sub={editing?.email}>
+      <Modal open={!!editing} onClose={() => { if (!saving) setEditing(null); }} title={isNew ? 'Add user' : 'Edit user'} sub={editing?.email}>
         {editing && (
           <div className="space-y-4">
             <Field label="Full name">
@@ -183,12 +198,12 @@ export default function Users() {
             <div className="flex gap-2.5 pt-1">
               <button
                 className="btn btn-primary flex-1"
-                onClick={save}
-                disabled={!editing.name.trim() || !editing.email.trim() || (isNew && !editing.password.trim())}
+                onClick={() => void save()}
+                disabled={saving || !editing.name.trim() || !editing.email.trim() || (isNew && !editing.password.trim())}
               >
-                {isNew ? 'Create account' : 'Save changes'}
+                {saving ? 'Saving…' : isNew ? 'Create account' : 'Save changes'}
               </button>
-              <button className="btn btn-soft" onClick={() => setEditing(null)}>Cancel</button>
+              <button className="btn btn-soft" onClick={() => setEditing(null)} disabled={saving}>Cancel</button>
             </div>
           </div>
         )}
