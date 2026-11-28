@@ -10,6 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade
 import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
 import { runWithAsyncLock } from './authConcurrency';
 import { runLocalAuthAttempt } from './localAuthGuard';
+import { replaceUserPasswordIfCurrent } from './userCredentialState';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -974,29 +975,42 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
+    const currentUserSnapshot = stateRef.current.users.find(u => u.id === user.id && u.active);
+    if (!currentUserSnapshot) return { ok: false, error: 'Your account is no longer active.' };
     const hashed = await hashPasswordAsync(next);
-    setState(s => ({
-      ...s,
-      users: s.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u),
-    }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === user.id ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    if (session?.userId !== currentUserSnapshot.id) {
+      return { ok: false, error: 'Your POS session changed during password update. Please try again.' };
+    }
+    const nextState = replaceUserPasswordIfCurrent(stateRef.current, currentUserSnapshot, hashed);
+    if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    stateRef.current = nextState;
+    setState(current => replaceUserPasswordIfCurrent(current, currentUserSnapshot, hashed) || current);
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
     return { ok: true };
-  }, [user, pushAudit]);
+  }, [user, session?.userId, pushAudit]);
 
   const changeManagedPassword = useCallback(async (targetUserId: string, nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
     if (!user || user.role !== 'admin') return { ok: false, error: 'Only admins can change account passwords' };
     const next = nextPassword.trim();
     if (next.length < 12) return { ok: false, error: 'New password must be at least 12 characters' };
     if (RETIRED_DEMO_PASSWORDS.includes(next)) return { ok: false, error: 'Choose a password different from the retired demo credentials' };
-    const target = stateRef.current.users.find(u => u.id === targetUserId && (u.role === 'admin' || u.role === 'cashier'));
+    const adminSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
+    const target = stateRef.current.users.find(u => u.id === targetUserId
+      && (u.role === 'admin' || u.role === 'cashier') && u.active);
+    if (!adminSnapshot) return { ok: false, error: 'Administrator account is no longer active.' };
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
+
     const hashed = await hashPasswordAsync(next);
-    setState(s => ({ ...s, users: s.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) }));
-    stateRef.current = { ...stateRef.current, users: stateRef.current.users.map(u => u.id === targetUserId ? { ...u, password: hashed, mustChangePassword: false } : u) };
+    if (session?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during password update. Please try again.' };
+    }
+    const nextState = replaceUserPasswordIfCurrent(stateRef.current, target, hashed, adminSnapshot);
+    if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
+    stateRef.current = nextState;
+    setState(current => replaceUserPasswordIfCurrent(current, target, hashed, adminSnapshot) || current);
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
-  }, [user, pushAudit]);
+  }, [user, session?.userId, pushAudit]);
   const signOut = useCallback((force = false) => {
     // Ignore only spurious/effect-driven signOut calls during the first 8s after login.
     // An explicit user action can always sign out immediately.
