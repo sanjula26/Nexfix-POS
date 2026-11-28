@@ -780,8 +780,9 @@ test('cashier idle-unlock fallback uses its own persistent scope instead of the 
   assert.ok(switchRole.includes("const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1'"));
   assert.ok(unlock.includes('if (ownPasswordOk)'));
   assert.ok(unlock.includes('if (!attempt.success)'));
-  assert.ok(storeSource.includes('const storageKeyForScope = (scope: LocalAuthAttemptScope)'));
-  assert.ok(storeSource.includes("scope === 'admin'"));
+  const guardSource = readFileSync(new URL('../src/lib/localAuthGuard.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(guardSource.includes("const storageKeyForScope = (scope: LocalAuthAttemptScope): string => scope === 'admin'"));
+  assert.ok(guardSource.includes('const browserGuards = new Map<LocalAuthAttemptScope'));
 });
 
 
