@@ -816,9 +816,11 @@ test('first online Sale and GRN publish the verified Cloud scope before tracking
   const saleScope = saleHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
   const saleWrite = saleHandler.indexOf("withCloudActivity('Cloud sale', () => completeSaleAtomic(");
   const grnScope = receiveHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
+  const grnCatalogWrite = receiveHandler.indexOf('syncNormalizedCatalog(stateRef.current, shop.shopId)');
   const grnWrite = receiveHandler.indexOf("withCloudActivity('GRN receive', () => receivePurchaseAtomic(");
   assert.ok(saleScope >= 0 && saleScope < saleWrite, 'verified Sale scope must be published before its atomic Cloud write');
-  assert.ok(grnScope >= 0 && grnScope < grnWrite, 'verified GRN scope must be published before its atomic Cloud write');
+  assert.ok(grnScope >= 0 && grnScope < grnCatalogWrite, 'verified GRN scope must be published before catalog Cloud writes');
+  assert.ok(grnScope < grnWrite, 'verified GRN scope must be published before its atomic Cloud write');
   assert.ok(storeSource.includes("import { setCloudActivityScope, withCloudActivity } from './cloudActivity';"));
 });
 
