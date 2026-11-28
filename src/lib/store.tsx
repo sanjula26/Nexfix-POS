@@ -27,7 +27,7 @@ import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCr
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
 import { supabase, supabaseConfigured } from './supabase';
-import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
+import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, getCachedPOSDeviceBranchId, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
 const STORE_KEY = 'nexfix_pos_v2';
@@ -4280,14 +4280,31 @@ const deletePurchase = useCallback((id: string) => {
       const shop = await ensureCloudShop('Nexfix Shop');
       if (shop.ok && shop.shopId) {
         if (getConnectivity() === 'offline') {
+          const repairBranchId = getCachedPOSDeviceBranchId(shop.shopId)
+            || getPOSBranchId(shop.shopId, stateRef.current.settings.branchId);
+          if (hasMultipleCachedBranches(shop.shopId) && repairBranchId === 'local-main') {
+            pushAudit('DENIED', 'Repair', 'Cannot queue repair delivery offline until this PC has a verified branch assignment. Connect online and confirm the POS branch in Settings.');
+            return;
+          }
           try {
-            await queueRepairDelivery(id, next, machine.id);
+            await queueRepairDelivery(id, next, machine.id, repairBranchId);
           } catch (error) {
             pushAudit('DENIED', 'Repair', error instanceof Error ? error.message : 'Repair delivery could not be queued safely');
             return;
           }
         } else {
-          const cloud = await withCloudActivity('Repair delivery', () => processRepairDeliveryAtomic({ shopId: shop.shopId!, repairId: id, deviceId: machine.id, repair: next }), result => result.ok);
+          const resolvedBranch = await resolveCloudBranchId(
+            shop.shopId,
+            getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
+          );
+          if (!resolvedBranch.ok || !resolvedBranch.branchId) {
+            pushAudit('DENIED', 'Repair', 'Cloud repair delivery needs a valid assigned branch: ' + (resolvedBranch.error || 'branch unavailable'));
+            return;
+          }
+          const cloud = await withCloudActivity('Repair delivery', () => processRepairDeliveryAtomic({
+            shopId: shop.shopId!, repairId: id, deviceId: machine.id,
+            branchId: resolvedBranch.branchId!, requireExactBranch: true, repair: next,
+          }), result => result.ok);
           if (!cloud.ok) {
             pushAudit('DENIED', 'Repair', 'Cloud repair delivery was not committed: ' + (cloud.error || 'unknown error'));
             return;
