@@ -90,7 +90,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
-    let blockedUnscopedLegacyWrite = false;
+    let blockedUnsafeSaleOrGrnReplay = false;
     const state=await idbLoadState();
 
     for(const op of ops){
@@ -172,7 +172,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         // Historical Sale jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
         if (!hasCloudRecordScope(parsed.cloudScope)) {
-          blockedUnscopedLegacyWrite = true;
+          blockedUnsafeSaleOrGrnReplay = true;
           break;
         }
         const markRetry = async (reason: unknown) => {
@@ -191,6 +191,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -210,6 +211,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const activeScopeBeforeSale = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed before the sale write; no Sale was sent to the new account.');
             break;
           }
@@ -237,6 +239,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
             const activeScopeBeforeTradeIn = getCloudActivityScope();
             if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
+              blockedUnsafeSaleOrGrnReplay = true;
               await markRetry('The Cloud account or shop changed before trade-in reconciliation; the queue was kept.');
               break;
             }
@@ -256,6 +259,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
@@ -294,7 +298,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         // Historical GRN jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
         if (!hasCloudRecordScope(parsed.cloudScope)) {
-          blockedUnscopedLegacyWrite = true;
+          blockedUnsafeSaleOrGrnReplay = true;
           break;
         }
         const markRetry = async (reason: unknown) => {
@@ -313,6 +317,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -326,6 +331,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScopeBeforeReceive = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed before the GRN write; no GRN was sent to the new account.');
             break;
           }
@@ -342,6 +348,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            blockedUnsafeSaleOrGrnReplay = true;
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
@@ -437,7 +444,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     // Do not publish a full POS snapshot while an unscoped legacy Sale/GRN
     // remains unresolved: that snapshot could otherwise copy it into the
     // currently active Cloud shop even though normalized replay was blocked.
-    if (blockedUnscopedLegacyWrite) {
+    if (blockedUnsafeSaleOrGrnReplay) {
       return {
         flushed,
         pending: remaining.length,
