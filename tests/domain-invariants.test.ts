@@ -1128,10 +1128,8 @@ test('first online Sale and GRN publish the verified Cloud scope before tracking
 });
 
 
-test('legacy Sale and GRN replay receipts are saved only under a reverified current Cloud member', () => {
+test('legacy Sale and GRN replay stays local until an original Cloud scope is reconciled', () => {
   const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
-  assert.ok(offlineSource.includes('async function reverifyLegacyReceiptScope('));
-  assert.ok(offlineSource.includes('current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId'));
 
   const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
   const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
@@ -1140,23 +1138,21 @@ test('legacy Sale and GRN replay receipts are saved only under a reverified curr
   const saleReplay = offlineSource.slice(saleStart, purchaseStart);
   const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
 
-  const assertLegacyReceipt = (source: string, kind: 'sale' | 'purchase', id: 'saleId' | 'purchaseId', operation: string) => {
-    const accepted = source.indexOf('if (!result.ok)');
-    const reverified = source.indexOf('await reverifyLegacyReceiptScope(verifiedScope)');
-    const receipt = source.indexOf(`acknowledgeCloudRecordQueue(`);
-    assert.ok(accepted >= 0 && reverified > accepted, `${kind} receipt scope must be reverified only after positive server acknowledgement`);
-    assert.ok(receipt > reverified, `${kind} acknowledgement must use the reverified uploader scope`);
-    assert.ok(source.includes(`const receiptScope = parsed.cloudScope`));
-    const missingReceiptScope = source.indexOf('if (!receiptScope) {');
-    assert.ok(missingReceiptScope > reverified, `${kind} must handle failed post-write scope re-verification`);
-    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}', reason, verifiedScope);`),
-      `${kind} must record RETRY against the pre-write verified uploader scope, not a newly active account`);
-    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}'`));
-    assert.ok(!source.includes('idbAcknowledgeQueue([op.id])'), `${kind} must not delete a legacy row without saving its receipt`);
+  const assertLegacyQueueBlocked = (source: string, kind: 'Sale' | 'GRN') => {
+    const scopeGuard = source.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;');
+    const cloudShop = source.indexOf("ensureCloudShop('Nexfix Shop')");
+    assert.ok(scopeGuard >= 0 && cloudShop > scopeGuard,
+      `${kind} legacy rows without an original shop/user must stop before Cloud shop resolution`);
+    assert.ok(!source.includes('reverifyLegacyReceiptScope'),
+      `${kind} replay must not treat the current uploader as proof of the old queue row's ownership`);
+    assert.ok(source.includes('const receiptScope = activeScope;'),
+      `${kind} receipts must use the same active scope that passed the original-scope guard`);
+    assert.ok(!source.includes('idbAcknowledgeQueue([op.id])'),
+      `${kind} must not delete a legacy row without saving its scoped receipt`);
   };
 
-  assertLegacyReceipt(saleReplay, 'sale', 'saleId', 'Offline sale sync');
-  assertLegacyReceipt(purchaseReplay, 'purchase', 'purchaseId', 'Offline GRN sync');
+  assertLegacyQueueBlocked(saleReplay, 'Sale');
+  assertLegacyQueueBlocked(purchaseReplay, 'GRN');
 });
 
 test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
