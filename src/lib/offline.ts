@@ -268,8 +268,8 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
+          const queuedBranchId = parsed.input.branchId || 'local-main';
           if (state) {
-            const queuedBranchId = parsed.input.branchId || 'local-main';
             const catalog = await syncNormalizedCatalog(state, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
               await markRetry(catalog.error || 'Product/customer data could not be prepared for Cloud sync.');
@@ -396,9 +396,9 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
+          const queuedBranchId = parsed.input.purchase.branchId || 'local-main';
           const catalogState = state || undefined;
           if (catalogState) {
-            const queuedBranchId = parsed.input.purchase.branchId || 'local-main';
             const catalog = await syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
               await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
