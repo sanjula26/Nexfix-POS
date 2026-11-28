@@ -367,6 +367,8 @@ function loadSession(): Session | null {
 export function POSProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<POSState>(loadState);
   const [session, setSession] = useState<Session | null>(loadSession);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
   const [dark, setDark] = useState<boolean>(() => {
     try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch { return false; }
   });
@@ -452,7 +454,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (raw) {
             const sess = JSON.parse(raw) as Session;
             // Prefer the just-loaded state (stateRef updates on next render; use functional check later via setSession)
-            setSession(sess);
+            sessionRef.current = sess;
+    setSession(sess);
           }
         } catch { /* ignore */ }
         if (!cancelled) setReady(true);
@@ -912,6 +915,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const sess = { userId: accountAtCommit.id, remember };
     loginAtRef.current = Date.now();
+    sessionRef.current = sess;
     setSession(sess);
     try {
       // Keep the authenticated POS session durable across a normal browser refresh.
@@ -961,6 +965,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
     const sess = { userId: admin.id, remember: true };
     loginAtRef.current = Date.now();
+    sessionRef.current = sess;
     setSession(sess);
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
@@ -978,7 +983,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const currentUserSnapshot = stateRef.current.users.find(u => u.id === user.id && u.active);
     if (!currentUserSnapshot) return { ok: false, error: 'Your account is no longer active.' };
     const hashed = await hashPasswordAsync(next);
-    if (session?.userId !== currentUserSnapshot.id) {
+    if (sessionRef.current?.userId !== currentUserSnapshot.id) {
       return { ok: false, error: 'Your POS session changed during password update. Please try again.' };
     }
     const nextState = replaceUserPasswordIfCurrent(stateRef.current, currentUserSnapshot, hashed);
@@ -1001,7 +1006,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
 
     const hashed = await hashPasswordAsync(next);
-    if (session?.userId !== adminSnapshot.id) {
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
       return { ok: false, error: 'Administrator session changed during password update. Please try again.' };
     }
     const nextState = replaceUserPasswordIfCurrent(stateRef.current, target, hashed, adminSnapshot);
@@ -1019,6 +1024,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
     clearSensitiveAdminAuthorization();
+    sessionRef.current = null;
     setSession(null);
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit, clearSensitiveAdminAuthorization]);
 
@@ -1154,7 +1160,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       const prev = session ? loadSession() : null;
       const sess = { userId: target.id, remember: prev?.remember ?? true };
-      setSession(sess);
+      sessionRef.current = sess;
+    setSession(sess);
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
         sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
