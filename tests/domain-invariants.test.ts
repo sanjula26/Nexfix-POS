@@ -1158,10 +1158,18 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
 
   assert.ok(offlineSource.includes('let blockedUnscopedLegacyWrite = false;'));
   assert.equal(
-    (offlineSource.match(/blockedUnscopedLegacyWrite = true;/g) || []).length,
-    2,
-    'both legacy Sale and GRN branches must mark the sync cycle as blocked',
+    (offlineSource.match(/blockedUnsafeSaleOrGrnReplay = true;/g) || []).length,
+    9,
+    'legacy rows and all seven shop/user mismatch checks must block the sync cycle',
   );
+  const replayScopeGuards = offlineSource.split('if (!isCloudRecordReplayScopeValid(').slice(1);
+  assert.equal(replayScopeGuards.length, 7);
+  for (const guard of replayScopeGuards) {
+    assert.ok(
+      guard.slice(0, guard.indexOf('}')).includes('blockedUnsafeSaleOrGrnReplay = true;'),
+      'each Sale/GRN shop/user mismatch must block the later full-state snapshot',
+    );
+  }
   const blockedReturn = offlineSource.indexOf('if (blockedUnscopedLegacyWrite) {');
   const snapshotStart = offlineSource.indexOf('const snapshotOps=remaining.filter');
   const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
@@ -1171,7 +1179,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(offlineSource.slice(blockedReturn, snapshotStart).includes('blockedLegacy: true'));
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedLegacy)'));
-  assert.ok(syncManagerSource.includes('need Admin reconciliation before Cloud sync can continue'));
+  assert.ok(syncManagerSource.includes('sign in to the original shop or ask Admin to reconcile before Cloud sync can continue'));
 });
 
 test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
