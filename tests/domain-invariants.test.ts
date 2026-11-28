@@ -1417,7 +1417,7 @@ test('default branch recovery is read-only for non-admin Cloud members', () => {
     'cashier cannot restore Main when the shop has no active branches',
     'manager can recover the Main branch when no active branch exists',
     'admin can recover an inactive default branch',
-    'cashier branch lookup does not initialize or rewrite branch stock',
+    'cashier branch lookup does not initialize stock for the inactive Main branch',
   ]) {
     assert.ok(databaseTest.includes(expected), `database regression must cover: ${expected}`);
   }
