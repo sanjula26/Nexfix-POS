@@ -1012,8 +1012,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const adminSnapshot = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
     const target = stateRef.current.users.find(u => u.id === targetUserId
       && (u.role === 'admin' || u.role === 'cashier') && u.active);
-    if (!adminSnapshot) return { ok: false, error: 'Administrator account is no longer active.' };
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator account is no longer active.' };
+    }
     if (!target) return { ok: false, error: 'Admin or cashier account not found' };
+    if (!(await confirmSensitiveAdmin('managed account password change'))) {
+      return { ok: false, error: 'Administrator confirmation was cancelled.' };
+    }
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during confirmation. Please try again.' };
+    }
 
     const hashed = await hashPasswordAsync(next);
     if (sessionRef.current?.userId !== adminSnapshot.id) {
@@ -1026,7 +1034,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (target.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
-  }, [user, pushAudit]);
+  }, [user, pushAudit, confirmSensitiveAdmin]);
   const signOut = useCallback((force = false) => {
     // Ignore only spurious/effect-driven signOut calls during the first 8s after login.
     // An explicit user action can always sign out immediately.
