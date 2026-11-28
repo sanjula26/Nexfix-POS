@@ -704,6 +704,21 @@ test('staff account saves await PBKDF2 and report success only after the current
   assert.ok(saveHandler.includes('const leavesActiveAdmin = stateRef.current.users.some('));
   assert.ok(saveHandler.includes('At least one active Admin account must remain.'));
   assert.ok(credentialSource.includes("if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;"));
+
+  const toggleStart = storeSource.indexOf('const toggleUserActive = useCallback');
+  const deleteStart = storeSource.indexOf('const deleteUser = useCallback', toggleStart);
+  const adminEnd = storeSource.indexOf('/* ---------------- admin ---------------- */', deleteStart);
+  assert.ok(toggleStart >= 0 && deleteStart > toggleStart && adminEnd > deleteStart);
+  const toggleHandler = storeSource.slice(toggleStart, deleteStart);
+  const deleteHandler = storeSource.slice(deleteStart, adminEnd);
+  assert.ok(toggleHandler.includes('setManagedUserActiveIfCurrent(stateRef.current'));
+  assert.ok(toggleHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(toggleHandler.includes('targetSnapshot.id === adminSnapshot.id'));
+  assert.ok(deleteHandler.includes('deleteManagedUserIfCurrent(stateRef.current'));
+  assert.ok(deleteHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(deleteHandler.includes('targetSnapshot.id === adminSnapshot.id'));
+  assert.ok(credentialSource.includes('if (!nextUsers.some(user => user.role === \'admin\' && user.active)) return null;'));
+  assert.ok(credentialSource.includes('targetSnapshot.id === adminSnapshot.id) return null;'));
 });
 
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
