@@ -3,7 +3,7 @@ const { writeBufferFully } = require('./write-buffer.cjs');
 const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncryptedUpdaterCredential, loadEncryptedUpdaterCredential, clearEncryptedUpdaterCredential } = require('./updater-credentials.cjs');
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
-const { beginLocalAuthAttempt, completeLocalAuthAttempt } = require('./local-auth-guard.cjs');
+const { beginLocalAuthAttempt, completeLocalAuthAttempt, isValidLocalAuthGuardState } = require('./local-auth-guard.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -81,7 +81,7 @@ function readLocalAuthGuard(){
   try{
     if(!fs.existsSync(file)) return {};
     const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
-    if(!parsed || parsed.version!==1 || !Number.isInteger(parsed.failures) || !Number.isFinite(parsed.lockedUntil)){
+    if(!isValidLocalAuthGuardState(parsed,Date.now())){
       return failClosedLocalAuthGuardState();
     }
     return parsed;
