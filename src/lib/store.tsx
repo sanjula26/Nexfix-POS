@@ -2635,6 +2635,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
+        const cloudRecordScope = getCloudActivityScope();
         const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
           shopId: shop.shopId!,
           branchId: receiveBranchId,
@@ -2643,7 +2644,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           purchase: po,
         }), result => result.ok);
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
-        const cloudRecordScope = getCloudActivityScope();
         if (cloudRecordScope?.shopId === shop.shopId) {
           void markCloudRecordSynced('purchase', po.id, 'GRN receive', cloudRecordScope);
         }
