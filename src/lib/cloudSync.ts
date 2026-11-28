@@ -929,7 +929,7 @@ export async function resolveCloudSaleIdByBillNo(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
 
-  const { data, error } = await supabase.rpc('resolve_sale_return_target', { p_bill_no: billNo });
+  const { data, error } = await supabase.rpc('resolve_sale_return_target_for_device_branch', { p_bill_no: billNo, p_device_id: deviceId() });
   if (error) return { ok: false, error: error.message };
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.ok || !row.sale_id || !row.shop_id) return { ok: false, error: row?.error || 'Sale not found' };
@@ -953,7 +953,7 @@ export async function resolveSaleReturnLines(input: {
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
   if (!input.shopId || !input.saleId || !input.lines.length) return { ok: false, error: 'Return identifiers and lines are required' };
-  const { data, error } = await supabase.rpc('resolve_sale_return_items', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_lines: input.lines });
+  const { data, error } = await supabase.rpc('resolve_sale_return_items_for_device_branch', { p_shop_id: input.shopId, p_sale_id: input.saleId, p_device_id: deviceId(), p_lines: input.lines });
   if (error) return { ok: false, error: error.message };
   const rows = Array.isArray(data) ? data : [];
   if (!rows.length) return { ok: false, error: 'Cloud sale item could not be matched' };
