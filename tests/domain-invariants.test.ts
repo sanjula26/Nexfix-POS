@@ -1421,6 +1421,13 @@ test('sale return, reversal and trade-in cloud writes require registered device 
   assert.ok(itemResolverSource.includes("resolve_sale_return_items_for_device_branch"));
   assert.ok(itemResolverSource.includes('p_device_id: deviceId()'));
 
+  const reversalListSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function listSaleReversalRequests'),
+    cloudSyncSource.indexOf('export async function processSaleReturnAtomic'),
+  );
+  assert.ok(reversalListSource.includes("list_sale_reversal_requests_for_device_branch"));
+  assert.ok(reversalListSource.includes('p_device_id: deviceId()'));
+
   const migration = readFileSync(new URL('../supabase/migrations/20261128150000_enforce_sale_return_reversal_tradein_branch_binding.sql', import.meta.url), 'utf8');
   const databaseTests = readFileSync(new URL('../supabase/tests/sale-branch-device-guard.test.sql', import.meta.url), 'utf8');
   for (const expected of [
@@ -1434,6 +1441,9 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     'public.request_sale_reversal_for_device_branch',
     'private.resolve_sale_return_target_for_device_branch',
     'private.resolve_sale_return_items_for_device_branch',
+    'private.list_sale_reversal_requests_for_device_branch',
+    'public.list_sale_reversal_requests_for_device_branch',
+    'v_role = \'admin\' or s.branch_id = v_branch_id',
     'public.resolve_sale_return_target_for_device_branch',
     'public.resolve_sale_return_items_for_device_branch',
     'revoke all on function private.resolve_sale_return_target(text)',
@@ -1461,6 +1471,9 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     'a Branch A device cannot resolve items for a Branch B sale',
     'the old bill-number resolver fails closed with an upgrade message',
     'the old return-item resolver fails closed with an upgrade message',
+    'a Branch A manager sees only Branch A reversal requests',
+    'a registered Cloud admin can see all branch reversal requests',
+    'the old shop-wide reversal list fails closed with an upgrade message',
   ]) {
     assert.ok(databaseTests.includes(expected), `database regression must cover: ${expected}`);
   }
