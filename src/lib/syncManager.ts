@@ -66,12 +66,12 @@ export async function runSyncNow(): Promise<SyncManagerState> {
   try {
     const result = await withCloudActivity('Pending changes', () => flushSyncQueue(), result => result.synced);
     retryAttempt = 0;
-    if (result.blockedLegacy) {
+    if (result.blockedQueueScope) {
       publish({
         ...state,
         status: 'error',
         pending: result.pending,
-        lastError: 'Older offline Sale/GRN records have no original Cloud shop/user. They are kept on this PC and need Admin reconciliation before Cloud sync can continue.',
+        lastError: 'Offline Sale/GRN records are not verified for the active Cloud shop/user. They are kept on this PC; sign in to the original shop or ask Admin to reconcile before Cloud sync can continue.',
       });
     } else if (result.conflict) {
       publish({ ...state, status: 'conflict', pending: result.pending });
