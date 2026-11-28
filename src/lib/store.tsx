@@ -455,7 +455,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             const sess = JSON.parse(raw) as Session;
             // Prefer the just-loaded state (stateRef updates on next render; use functional check later via setSession)
             sessionRef.current = sess;
-    setSession(sess);
+            setSession(sess);
           }
         } catch { /* ignore */ }
         if (!cancelled) setReady(true);
@@ -719,7 +719,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   const sensitiveAuthRef = useRef<{ at: number; userId: string; snapshot: AdminCredentialSnapshot } | null>(null);
   const confirmSensitiveAdmin = useCallback((reason: string): Promise<boolean> => {
-    if (user?.role !== 'admin') {
+    if (!user || sessionRef.current?.userId !== user.id) return Promise.resolve(false);
+    if (user.role !== 'admin') {
       pushAudit('DENIED', 'Security', 'Sensitive action blocked: administrator authentication required');
       return Promise.resolve(false);
     }
@@ -1168,7 +1169,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       const prev = sessionRef.current ? loadSession() : null;
       const sess = { userId: target.id, remember: prev?.remember ?? true };
       sessionRef.current = sess;
-    setSession(sess);
+      setSession(sess);
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
         sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
@@ -1183,7 +1184,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }));
       return { ok: true };
     });
-  }, [state.users, session, user, commitAdminPinHashIfCurrent, clearSensitiveAdminAuthorization]);
+  }, [state.users, user, commitAdminPinHashIfCurrent, clearSensitiveAdminAuthorization]);
   const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
@@ -3762,7 +3763,7 @@ const deletePurchase = useCallback((id: string) => {
           // No valid user record is available to preserve; keep the current
           // state instead of turning a refresh into an unexpected logout.
           sessionRef.current = activeSession;
-           setSession(activeSession);
+          setSession(activeSession);
           setState(current);
           return;
         }
