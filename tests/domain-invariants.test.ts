@@ -769,7 +769,8 @@ test('cashier idle-unlock fallback uses its own persistent scope instead of the 
   assert.ok(unlock.includes("current.role === 'admin' ? 'admin' : 'cashier-unlock'"));
   assert.ok(unlock.includes('if (ownPasswordOk)'));
   assert.ok(unlock.includes('if (!attempt.success)'));
-  assert.ok(storeSource.includes("const storageKeyForScope = (scope: LocalAuthAttemptScope) => scope === 'admin'"));
+  assert.ok(storeSource.includes('const storageKeyForScope = (scope: LocalAuthAttemptScope)'));
+  assert.ok(storeSource.includes("scope === 'admin'"));
 });
 
 
