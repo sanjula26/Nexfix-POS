@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
 import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, hasCloudRecordScope, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
-import { canAutoBindCloudShop } from '../src/lib/shopBindingSafety.ts';
+import { canAutoBindCloudShop, hasStoredLocalBusinessDataFromEntries } from '../src/lib/shopBindingSafety.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -907,6 +907,27 @@ test('first Cloud shop binding requires an empty queue and a clean local POS see
   assert.equal(canAutoBindCloudShop(cleanSeed, -1, false), false);
   assert.equal(canAutoBindCloudShop({ ...cleanSeed, sales: [{ id: 'old-sale' }] }, 0, false), false);
   assert.equal(canAutoBindCloudShop(cleanSeed, 0, true), false);
+
+  const legacySale = { ...cleanSeed, sales: [{ id: 'sale-v1' }] };
+  assert.equal(hasStoredLocalBusinessDataFromEntries([
+    { key: 'nexfix_pos_v2', raw: JSON.stringify(cleanSeed) },
+    { key: 'nexfix_pos_v1', raw: JSON.stringify(legacySale) },
+  ]), true, 'a clean v2 seed must not hide an older populated v1 snapshot');
+  assert.equal(hasStoredLocalBusinessDataFromEntries([
+    { key: 'nexfix_pos_v2', raw: JSON.stringify(cleanSeed) },
+    { key: 'nexfix_shop_state_cache_v1:shop-a', raw: JSON.stringify(legacySale) },
+  ]), true, 'per-shop cached business data must block automatic first binding');
+  assert.equal(hasStoredLocalBusinessDataFromEntries([
+    { key: 'nexfix_pos_v2', raw: JSON.stringify(cleanSeed) },
+    { key: 'nexfix_pos_v1', raw: null },
+    { key: 'nexfix_shop_state_cache_v1:shop-a', raw: JSON.stringify(cleanSeed) },
+  ]), false);
+  assert.equal(hasStoredLocalBusinessDataFromEntries([
+    { key: 'nexfix_shop_state_cache_v1:shop-a', raw: '{broken' },
+  ]), true, 'corrupt per-shop cache must fail closed');
+  assert.equal(hasStoredLocalBusinessDataFromEntries([
+    { key: 'unrelated-ui-setting', raw: '{broken' },
+  ]), false, 'unrelated localStorage entries do not affect Cloud dataset binding');
 
   const cloudSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
   const ensureStart = cloudSource.indexOf('export async function ensureCloudShop');
