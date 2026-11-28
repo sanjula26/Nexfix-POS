@@ -1140,7 +1140,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
 
   const assertLegacyQueueBlocked = (source: string, kind: 'Sale' | 'GRN') => {
     const scopeGuard = source.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) {');
-    const blockFlag = source.indexOf('blockedUnsafeSaleOrGrnReplay = true;', scopeGuard);
+    const blockFlag = source.indexOf('blockedUnsafeScopedTransactionReplay = true;', scopeGuard);
     const stop = source.indexOf('break;', blockFlag);
     const cloudShop = source.indexOf("ensureCloudShop('Nexfix Shop')");
     assert.ok(scopeGuard >= 0 && blockFlag > scopeGuard && stop > blockFlag && cloudShop > stop,
@@ -1155,31 +1155,55 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
 
   assertLegacyQueueBlocked(saleReplay, 'Sale');
   assertLegacyQueueBlocked(purchaseReplay, 'GRN');
-  assert.ok(offlineSource.includes('let blockedUnsafeSaleOrGrnReplay = false;'));
+  assert.ok(offlineSource.includes('let blockedUnsafeScopedTransactionReplay = false;'));
   assert.equal(
-    (offlineSource.match(/blockedUnsafeSaleOrGrnReplay = true;/g) || []).length,
+    (saleReplay.match(/blockedUnsafeScopedTransactionReplay = true;/g) || []).length
+      + (purchaseReplay.match(/blockedUnsafeScopedTransactionReplay = true;/g) || []).length,
     9,
-    'legacy rows and all seven shop/user mismatch checks must block the sync cycle',
+    'legacy Sale/GRN rows and all seven Sale/GRN scope mismatches must block the sync cycle',
   );
-  const replayScopeGuards = offlineSource.split('if (!isCloudRecordReplayScopeValid(').slice(1);
+  const replayScopeGuards = [
+    ...saleReplay.split('if (!isCloudRecordReplayScopeValid(').slice(1),
+    ...purchaseReplay.split('if (!isCloudRecordReplayScopeValid(').slice(1),
+  ];
   assert.equal(replayScopeGuards.length, 7);
   for (const guard of replayScopeGuards) {
     assert.ok(
-      guard.slice(0, guard.indexOf('}')).includes('blockedUnsafeSaleOrGrnReplay = true;'),
+      guard.slice(0, guard.indexOf('}')).includes('blockedUnsafeScopedTransactionReplay = true;'),
       'each Sale/GRN shop/user mismatch must block the later full-state snapshot',
     );
   }
 
   const snapshotStart = offlineSource.indexOf('const snapshotOps=remaining.filter');
   const pendingCheck = offlineSource.indexOf('const pendingTransactions = remaining.some');
-  const blockedReturn = offlineSource.indexOf('if (blockedUnsafeSaleOrGrnReplay || pendingTransactions) {');
+  const blockedReturn = offlineSource.indexOf('if (blockedUnsafeScopedTransactionReplay || pendingTransactions) {');
   const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
   assert.ok(snapshotStart > repairStart, 'snapshot processing must begin after business queue processing');
   assert.ok(pendingCheck > snapshotStart, 'remaining business transactions must be identified before snapshot publication');
   assert.ok(blockedReturn > pendingCheck && blockedReturn < snapshotUpload,
     'unconfirmed business transactions or a Sale/GRN scope mismatch must stop generic snapshot upload');
   assert.ok(offlineSource.slice(blockedReturn, snapshotUpload).includes('pendingTransactions: true'));
-  assert.ok(offlineSource.slice(blockedReturn, snapshotUpload).includes('blockedQueueScope: blockedUnsafeSaleOrGrnReplay || undefined'));
+  assert.ok(offlineSource.slice(blockedReturn, snapshotUpload).includes('blockedQueueScope: blockedUnsafeScopedTransactionReplay || undefined'));
+
+  const assertInventoryQueueScope = (operation: string, writeCall: string) => {
+    const start = offlineSource.indexOf("if(op.type==='" + operation + "')");
+    assert.ok(start >= 0, operation + ' replay block must exist');
+    const nextStart = offlineSource.indexOf("if(op.type==='", start + 12);
+    const block = offlineSource.slice(start, nextStart < 0 ? offlineSource.length : nextStart);
+    const scopeGuard = block.indexOf('if (!hasCloudRecordScope(parsed.cloudScope) ||');
+    const shopResolve = block.indexOf("ensureCloudShop('Nexfix Shop')");
+    const serverScopeGuard = block.indexOf('if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope()))');
+    const catalog = block.indexOf('syncNormalizedCatalog(');
+    const scopeBeforeWrite = block.indexOf('if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope()))', catalog);
+    const write = block.indexOf(writeCall);
+    assert.ok(scopeGuard >= 0 && shopResolve > scopeGuard, operation + ' must block unscoped legacy rows before shop resolution');
+    assert.ok(serverScopeGuard > shopResolve && catalog > serverScopeGuard, operation + ' must verify the resolved Cloud identity before catalog bootstrap');
+    assert.ok(write > scopeBeforeWrite && scopeBeforeWrite > catalog, operation + ' must re-check identity after catalog bootstrap and before the atomic write');
+    assert.ok(block.includes('cloudScope:getCloudActivityScope()||undefined'), operation + ' must persist enqueue-time Cloud scope');
+  };
+  assertInventoryQueueScope('inventory_unit_delete', 'addInventoryUnitsAtomic(');
+  assertInventoryQueueScope('inventory_units_add', 'addInventoryUnitsAtomic(');
+  assertInventoryQueueScope('branch_stock_adjustment', 'adjustBranchStockAtomic(');
 
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedQueueScope)'));
