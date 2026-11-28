@@ -1177,6 +1177,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   const snapshotStart = offlineSource.indexOf('const snapshotOps=remaining.filter');
   const snapshotScopeCheck = offlineSource.indexOf('const snapshotScopeBlocked = snapshotOps.some');
   const snapshotScopeReturn = offlineSource.indexOf('if (snapshotScopeBlocked) {');
+  const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
 
   assert.ok(snapshotScopeCheck > snapshotStart && snapshotScopeReturn > snapshotScopeCheck && snapshotScopeReturn < snapshotUpload,
     'snapshot queue identity must be checked before any full-state upload');
@@ -1191,7 +1192,6 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(offlineSource.includes('blockedQueueScope: true'));
   const pendingCheck = offlineSource.indexOf('const pendingTransactions = remaining.some');
   const blockedReturn = offlineSource.indexOf('if (blockedUnsafeScopedTransactionReplay || pendingTransactions) {');
-  const snapshotUpload = offlineSource.indexOf('syncStateSnapshot(latestState)');
   assert.ok(snapshotStart > repairStart, 'snapshot processing must begin after business queue processing');
   assert.ok(pendingCheck > snapshotStart, 'remaining business transactions must be identified before snapshot publication');
   assert.ok(blockedReturn > pendingCheck && blockedReturn < snapshotUpload,
