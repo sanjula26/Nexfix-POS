@@ -191,6 +191,7 @@ export default function Users() {
                     className={`btn ${editing.role === r ? (r === 'admin' ? 'btn-primary' : 'btn-emerald') : 'btn-soft'}`}
                     onClick={() => setEditing({ ...editing, role: r })}
                     disabled={saving}
+                    disabled={saving}
                   >
                     {r === 'admin' ? <ShieldCheck size={14} /> : <UserRound size={14} />}
                     {r === 'admin' ? 'Administrator' : 'Cashier'}
