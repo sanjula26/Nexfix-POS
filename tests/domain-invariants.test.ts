@@ -688,7 +688,7 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   assert.equal(cloudSyncSource.split('userId: sessionData.session.user.id').length - 1, 2);
   assert.ok(storeSource.includes("shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null"));
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
-  assert.ok(offlineSource.includes("parsed.cloudScope.userId !== shop.userId"));
+  assert.ok(offlineSource.includes("isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)"));
   assert.ok(!storeSource.includes('getCloudActivityScope'));
 });
 
