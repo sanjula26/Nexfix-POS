@@ -1408,6 +1408,19 @@ test('sale return, reversal and trade-in cloud writes require registered device 
   assert.ok(tradeInSource.includes("register_trade_in_atomic_for_device_branch"));
   assert.ok(tradeInSource.includes('p_device_id: deviceId()'));
 
+  const billResolverSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function resolveCloudSaleIdByBillNo'),
+    cloudSyncSource.indexOf('export async function resolveSaleReturnLines'),
+  );
+  const itemResolverSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function resolveSaleReturnLines'),
+    cloudSyncSource.indexOf('export async function requestSaleReversal'),
+  );
+  assert.ok(billResolverSource.includes("resolve_sale_return_target_for_device_branch"));
+  assert.ok(billResolverSource.includes('p_device_id: deviceId()'));
+  assert.ok(itemResolverSource.includes("resolve_sale_return_items_for_device_branch"));
+  assert.ok(itemResolverSource.includes('p_device_id: deviceId()'));
+
   const migration = readFileSync(new URL('../supabase/migrations/20261128150000_enforce_sale_return_reversal_tradein_branch_binding.sql', import.meta.url), 'utf8');
   const databaseTests = readFileSync(new URL('../supabase/tests/sale-branch-device-guard.test.sql', import.meta.url), 'utf8');
   for (const expected of [
@@ -1419,6 +1432,14 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     'public.process_sale_return_atomic_for_device_branch',
     'public.register_trade_in_atomic_for_device_branch',
     'public.request_sale_reversal_for_device_branch',
+    'private.resolve_sale_return_target_for_device_branch',
+    'private.resolve_sale_return_items_for_device_branch',
+    'public.resolve_sale_return_target_for_device_branch',
+    'public.resolve_sale_return_items_for_device_branch',
+    'revoke all on function private.resolve_sale_return_target(text)',
+    'revoke all on function private.resolve_sale_return_items(uuid, uuid, jsonb)',
+    'This Nexfix POS client is outdated. Update the POS before looking up a Cloud return bill.',
+    'This Nexfix POS client is outdated. Update the POS before looking up Cloud return items.',
     'revoke all on function private.process_sale_return_atomic',
     'revoke all on function private.register_trade_in_atomic',
     'revoke all on function private.request_sale_reversal',
@@ -1436,6 +1457,10 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     'a revoked device is rejected',
     'a stale conflicting branch assignment is rejected',
     'the old sale-return RPC fails closed with an upgrade message',
+    'a Branch A device cannot resolve a Branch B bill number',
+    'a Branch A device cannot resolve items for a Branch B sale',
+    'the old bill-number resolver fails closed with an upgrade message',
+    'the old return-item resolver fails closed with an upgrade message',
   ]) {
     assert.ok(databaseTests.includes(expected), `database regression must cover: ${expected}`);
   }
