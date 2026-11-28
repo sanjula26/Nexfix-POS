@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { getCloudRecordSyncStatus, useCloudRecordSyncSnapshot } from '../lib/cloudRecordSync';
 import {
   ReceiptText, Eye, RotateCcw, Printer, MessageCircle, TrendingUp, Banknote, CalendarDays, ShieldCheck, CheckCircle2, X,
 } from 'lucide-react';
@@ -12,6 +13,7 @@ type RangeKey = 'today' | 'custom' | 'week' | 'month' | 'all';
 
 export default function SalesHistory() {
   const { state, refundSale, can, user, approveBillReverse, rejectBillReverse } = usePOS();
+  const cloudSync = useCloudRecordSyncSnapshot();
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
@@ -142,7 +144,7 @@ export default function SalesHistory() {
               <thead>
                 <tr>
                   <th className="th">Bill #</th><th className="th">Date</th><th className="th">Customer</th>
-                  <th className="th">Cashier</th><th className="th">Items</th><th className="th">Payment</th>
+                  <th className="th">Cashier</th><th className="th">Items</th><th className="th">Payment</th><th className="th">Cloud</th>
                   <th className="th">Status</th><th className="th !text-right">Total</th><th className="th !text-right">Actions</th>
                 </tr>
               </thead>
@@ -157,6 +159,12 @@ export default function SalesHistory() {
                     </td>
                     <td className="td num text-sub">{s.items.reduce((a, i) => a + i.qty, 0)}</td>
                     <td className="td"><Badge tone={s.payments && s.payments.length > 1 ? 'violet' : s.payment === 'cash' ? 'emerald' : s.payment === 'card' ? 'blue' : s.payment === 'credit' ? 'amber' : 'violet'}>{salePaymentLabel(s)}</Badge></td>
+                    <td className="td">
+                      {getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'synced' ? <Badge tone="emerald">CLOUD OK</Badge> :
+                       getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'pending' ? <Badge tone="amber">WAITING</Badge> :
+                       getCloudRecordSyncStatus(cloudSync, 'sale', s.id) === 'checking' ? <Badge tone="slate">CHECKING</Badge> :
+                       <Badge tone="slate">UNVERIFIED</Badge>}
+                    </td>
                     <td className="td">
                       <Badge tone={s.status === 'completed' ? 'emerald' : s.status === 'refunded' ? 'rose' : s.status === 'reversed' ? 'rose' : 'amber'}>
                         {s.status.toUpperCase()}
