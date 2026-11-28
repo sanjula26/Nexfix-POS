@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
-import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
+import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, isCloudRecordReplayScopeValid, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -801,4 +801,31 @@ test('cloud sale activity highlights only the atomic sale and trade-in writes', 
   assert.ok(!saleHandler.includes("withCloudActivity('Cloud sale', execute"));
   assert.ok(!saleHandler.includes('cloudSaleCommitted'));
   assert.ok(saleHandler.indexOf("withCloudActivity('Trade-in unit'") < saleHandler.indexOf("markCloudRecordSynced('sale'"), 'bill receipt must wait until the optional trade-in Cloud write succeeds');
+});
+
+
+test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
+  const queued = { shopId: 'shop-original', userId: 'cloud-user-original' };
+  const verified = { ...queued };
+  const active = { ...queued };
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, active), true);
+  assert.equal(isCloudRecordReplayScopeValid(queued, { shopId: 'shop-other', userId: queued.userId }, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, { shopId: queued.shopId, userId: 'cloud-user-other' }, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, { shopId: 'shop-other', userId: queued.userId }), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, { shopId: queued.shopId, userId: 'cloud-user-other' }), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, null, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(undefined, verified, active), false);
+
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
+  const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
+  const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
+  assert.ok(saleStart >= 0 && purchaseStart > saleStart && repairStart > purchaseStart);
+  const saleReplay = offlineSource.slice(saleStart, purchaseStart);
+  const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
+  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)') < saleReplay.indexOf('syncNormalizedCatalog(state, shop.shopId)'));
+  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)') < saleReplay.indexOf('completeSaleAtomic({'));
+  assert.ok(saleReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)') < saleReplay.indexOf('registerTradeInAtomic({'));
+  assert.ok(purchaseReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)') < purchaseReplay.indexOf('syncNormalizedCatalog(catalogState, shop.shopId)'));
+  assert.ok(purchaseReplay.indexOf('isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)') < purchaseReplay.indexOf('receivePurchaseAtomic({'));
 });
