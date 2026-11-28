@@ -73,6 +73,13 @@ export async function runSyncNow(): Promise<SyncManagerState> {
         pending: result.pending,
         lastError: 'Offline Sale/GRN records are not verified for the active Cloud shop/user. They are kept on this PC; sign in to the original shop or ask Admin to reconcile before Cloud sync can continue.',
       });
+    } else if (result.pendingTransactions) {
+      publish({
+        ...state,
+        status: 'error',
+        pending: result.pending,
+        lastError: 'POS transactions are still waiting for Cloud confirmation. They remain on this PC; full-state Cloud snapshot sync is paused until the queued transactions are confirmed.',
+      });
     } else if (result.conflict) {
       publish({ ...state, status: 'conflict', pending: result.pending });
     } else if (result.synced) {
