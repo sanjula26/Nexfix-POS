@@ -406,6 +406,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [state.customerCreditPayments]);
   const expenseLockRef = useRef(false);
   const roleSwitchLockRef = useRef(false);
+  const initialAdminSetupLockRef = useRef(false);
 
   // Boot: prefer IndexedDB, migrate from localStorage if needed
   useEffect(() => {
@@ -854,16 +855,14 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
     const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
-    if (needsUpgrade) {
-      const latestUser = stateRef.current.users.find(x => x.id === u!.id);
-      if (!latestUser || latestUser.password !== u!.password || !latestUser.active) {
-        return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
-      }
+    const latestSignedInUser = stateRef.current.users.find(x => x.id === u!.id);
+    if (!latestSignedInUser || latestSignedInUser.password !== u!.password || !latestSignedInUser.active || latestSignedInUser.role !== u!.role) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
     }
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: initialAdminPinHash } : s.settings,
+      settings: pinWasUnset && !s.settings.adminPinHash ? { ...s.settings, adminPinHash: initialAdminPinHash } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
@@ -882,6 +881,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const createInitialAdmin = useCallback(async (name: string, email: string, password: string, cashier?: { name: string; email: string; password: string }) => {
+    return runWithAsyncLock(initialAdminSetupLockRef, () => ({ ok: false, error: 'Administrator setup is already in progress' }), async () => {
     const cleanName = name.trim();
     const mail = email.trim().toLowerCase();
     const next = password.trim();
@@ -923,6 +923,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
     } catch { /* ignore */ }
     return { ok: true };
+    });
   }, [pushAudit]);
 
   const changePassword = useCallback(async (nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
@@ -960,6 +961,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
+    sensitiveAuthRef.current = null;
     setSession(null);
     try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit]);
 
@@ -1077,7 +1079,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password) {
         return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
       }
-      if (adminPinVerified) sensitiveAuthRef.current = null;
+      sensitiveAuthRef.current = null;
 
       const prev = session ? loadSession() : null;
       const sess = { userId: target.id, remember: prev?.remember ?? true };
