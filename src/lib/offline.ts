@@ -1,6 +1,6 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
-import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState, type QueueOp } from './db';
 import { getCloudActivityScope } from './cloudActivity';
 import { acknowledgeCloudRecordQueue, hasCloudRecordScope, isCloudRecordReplayScopeValid, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
 import { getMachineIdentity } from './machine';
@@ -16,8 +16,28 @@ export function onConnectivityChange(cb:(status:Connectivity)=>void):()=>void { 
  * and existing queued sale IDs are checked before writing so repeated local-state
  * persistence does not repeatedly serialize/rewrite the same pending sale jobs.
  */
+function getQueuedSnapshotCloudScope(op: QueueOp): { shopId?: string; userId?: string } | null {
+  if (!('payload' in op) || typeof op.payload !== 'string') return null;
+  try {
+    const parsed = JSON.parse(op.payload) as { cloudScope?: unknown };
+    if (!parsed.cloudScope || typeof parsed.cloudScope !== 'object' || Array.isArray(parsed.cloudScope)) return null;
+    return parsed.cloudScope as { shopId?: string; userId?: string };
+  } catch {
+    return null;
+  }
+}
+
 export async function queueWrite(note?:string):Promise<void>{
-  const queued=await idbEnqueue({type:'state_write',note});
+  const cloudScope = getCloudActivityScope();
+  const scopeKey = cloudScope
+    ? `${encodeURIComponent(cloudScope.shopId)}:${encodeURIComponent(cloudScope.userId)}`
+    : 'unscoped';
+  const queued=await idbEnqueue({
+    type:'state_write',
+    id:`state-write:${scopeKey}`,
+    note,
+    payload:JSON.stringify({cloudScope:cloudScope||undefined}),
+  });
   if(!queued)throw new Error('Local sync storage is unavailable; write was not queued safely.');
   const state=await idbLoadState();
   if(!state) return;
@@ -551,6 +571,23 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
+    // A queued full-state snapshot is bound to the Cloud shop/user that existed
+    // when the offline write was recorded. Legacy rows without that identity
+    // stay local; never upload them to whichever account is active at retry time.
+    const snapshotScopeBlocked = snapshotOps.some(op => {
+      const queuedScope = getQueuedSnapshotCloudScope(op);
+      return !hasCloudRecordScope(queuedScope)
+        || !isCloudRecordReplayScopeValid(queuedScope, queuedScope, getCloudActivityScope());
+    });
+    if (snapshotScopeBlocked) {
+      return {
+        flushed,
+        pending: remaining.length,
+        synced: false,
+        conflict: false,
+        blockedQueueScope: true,
+      };
+    }
     // Business transaction queue rows must be positively acknowledged before
     // the full-state snapshot can publish. Otherwise an unconfirmed Sale, GRN,
     // stock, repair or return could be copied into the currently active shop.
@@ -589,6 +626,24 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       return {flushed,pending:remaining.length,synced:true,conflict:false};
     }
 
+    const snapshotShop = await ensureCloudShop('Nexfix Shop');
+    if (!snapshotShop.ok || !snapshotShop.shopId || !snapshotShop.userId) {
+      return {flushed,pending:remaining.length,synced:false,conflict:false};
+    }
+    const verifiedSnapshotScope = { shopId: snapshotShop.shopId, userId: snapshotShop.userId };
+    if (snapshotOps.some(op => {
+      const queuedScope = getQueuedSnapshotCloudScope(op);
+      return !hasCloudRecordScope(queuedScope)
+        || !isCloudRecordReplayScopeValid(queuedScope, verifiedSnapshotScope, getCloudActivityScope());
+    })) {
+      return {
+        flushed,
+        pending: remaining.length,
+        synced: false,
+        conflict: false,
+        blockedQueueScope: true,
+      };
+    }
     const result=await syncStateSnapshot(latestState);
     if(result.status==='synced'){
       const ids=snapshotOps.map(op=>op.id);
