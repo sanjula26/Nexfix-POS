@@ -824,6 +824,43 @@ test('cloud sync details explain local queue, confirmed transfers, issues and sa
 });
 
 
+test('customer sync and online bill-reversal RPC writes are tracked by the Cloud activity indicator', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+
+  const saleStart = storeSource.indexOf('const completeSaleCloud =');
+  const saleEnd = storeSource.indexOf('const refundSale =', saleStart);
+  assert.ok(saleStart >= 0 && saleEnd > saleStart);
+  const saleHandler = storeSource.slice(saleStart, saleEnd);
+  assert.ok(saleHandler.includes("withCloudActivity('Customer data', () => ensureCloudCustomerForSale("));
+
+  const reversalSections = [
+    {
+      start: 'const requestBillReverse =',
+      end: 'const approveBillReverse =',
+      operation: "withCloudActivity('Bill reversal request', () => requestSaleReversal(",
+    },
+    {
+      start: 'const approveBillReverse =',
+      end: 'const rejectBillReverse =',
+      operation: "withCloudActivity('Bill reversal approval', () => approveSaleReversal(",
+    },
+    {
+      start: 'const rejectBillReverse =',
+      end: '/* ---------------- held sales ---------------- */',
+      operation: "withCloudActivity('Bill reversal rejection', () => rejectSaleReversal(",
+    },
+  ];
+
+  for (const section of reversalSections) {
+    const start = storeSource.indexOf(section.start);
+    const end = storeSource.indexOf(section.end, start);
+    assert.ok(start >= 0 && end > start, section.start + ' handler should be present');
+    const handler = storeSource.slice(start, end);
+    assert.ok(handler.includes(section.operation), section.start + ' Cloud RPC must be tracked');
+    assert.ok(handler.includes('result => result.ok'), section.start + ' must use the explicit server success result');
+  }
+});
+
 test('cloud sale activity highlights only the atomic sale and trade-in writes', () => {
   const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
   const start = storeSource.indexOf('const completeSaleCloud =');
