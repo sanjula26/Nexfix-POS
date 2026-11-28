@@ -55,7 +55,8 @@ begin
     from public.pos_device_branches pb
     join public.branches b on b.id=pb.branch_id and b.shop_id=pb.shop_id and b.active
     where pb.shop_id=p_shop_id and pb.device_id=btrim(p_device_id)
-    limit 1;
+    limit 1
+    for share of pb, b;
     if v_branch_id is null then
       raise exception 'This POS device is not assigned to an active branch; repair parts were not deducted';
     end if;
@@ -67,7 +68,8 @@ begin
     from public.branches b
     where b.shop_id=p_shop_id and b.active
     order by b.is_default desc
-    limit 1;
+    limit 1
+    for share of b;
     if v_branch_id is null then
       raise exception 'No active branch is configured; repair parts were not deducted';
     end if;
