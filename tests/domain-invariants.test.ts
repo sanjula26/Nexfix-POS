@@ -900,14 +900,12 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
 });
 
 test('legacy offline Sale and GRN jobs without an original Cloud scope are blocked before replay', () => {
-  const legacySale = { saleId: 'sale-legacy' };
-  const legacyGrn = { purchaseId: 'purchase-legacy' };
+  const legacyScope = {} as Parameters<typeof hasCloudRecordScope>[0];
   const scoped = { shopId: 'shop-a', userId: 'user-a' };
 
   assert.equal(hasCloudRecordScope(undefined), false);
   assert.equal(hasCloudRecordScope(null), false);
-  assert.equal(hasCloudRecordScope(legacySale), false);
-  assert.equal(hasCloudRecordScope(legacyGrn), false);
+  assert.equal(hasCloudRecordScope(legacyScope), false);
   assert.equal(hasCloudRecordScope({ shopId: ' ', userId: 'user-a' }), false);
   assert.equal(hasCloudRecordScope({ shopId: 'shop-a', userId: '' }), false);
   assert.equal(hasCloudRecordScope(scoped), true);
@@ -917,7 +915,9 @@ test('legacy offline Sale and GRN jobs without an original Cloud scope are block
   const grnStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
   assert.ok(saleStart >= 0 && grnStart > saleStart);
   const saleReplay = offlineSource.slice(saleStart, grnStart);
-  const grnReplay = offlineSource.slice(grnStart, offlineSource.indexOf("if(op.type==='repair_delivery')", grnStart));
+  const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')", grnStart);
+  assert.ok(repairStart > grnStart);
+  const grnReplay = offlineSource.slice(grnStart, repairStart);
   assert.ok(saleReplay.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;') < saleReplay.indexOf("ensureCloudShop('Nexfix Shop')"));
   assert.ok(grnReplay.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;') < grnReplay.indexOf("ensureCloudShop('Nexfix Shop')"));
   assert.ok(!offlineSource.includes('reverifyLegacyReceiptScope'));
