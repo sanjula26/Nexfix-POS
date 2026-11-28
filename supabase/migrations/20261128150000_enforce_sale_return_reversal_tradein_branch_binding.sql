@@ -350,3 +350,144 @@ grant execute on function public.register_trade_in_atomic_for_device_branch(uuid
   to authenticated;
 grant execute on function public.request_sale_reversal_for_device_branch(uuid, uuid, uuid, text, text)
   to authenticated;
+
+
+-- Read-side resolver guards: bill lookup and item/IMEI resolution must not
+-- reveal another branch's Sale before the later atomic return RPC is called.
+-- These wrappers reuse the same source-sale/device/branch authorization helper.
+
+create or replace function private.resolve_sale_return_target_for_device_branch(
+  p_bill_no text,
+  p_device_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare
+  v_result jsonb;
+  v_shop_id uuid;
+  v_sale_id uuid;
+begin
+  v_result := private.resolve_sale_return_target(p_bill_no);
+  if coalesce((v_result ->> 'ok')::boolean, false) is not true then
+    return v_result;
+  end if;
+
+  v_shop_id := nullif(v_result ->> 'shop_id', '')::uuid;
+  v_sale_id := nullif(v_result ->> 'sale_id', '')::uuid;
+  perform private.assert_pos_device_can_access_sale(v_shop_id, p_device_id, v_sale_id);
+  return v_result;
+end;
+$function$;
+
+create or replace function private.resolve_sale_return_items_for_device_branch(
+  p_shop_id uuid,
+  p_sale_id uuid,
+  p_device_id text,
+  p_lines jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+begin
+  perform private.assert_pos_device_can_access_sale(p_shop_id, p_device_id, p_sale_id);
+  return private.resolve_sale_return_items(p_shop_id, p_sale_id, p_lines);
+end;
+$function$;
+
+create or replace function public.resolve_sale_return_target_for_device_branch(
+  p_bill_no text,
+  p_device_id text
+)
+returns jsonb
+language sql
+security invoker
+set search_path to ''
+as $wrapper$
+  select private.resolve_sale_return_target_for_device_branch(p_bill_no, p_device_id);
+$wrapper$;
+
+create or replace function public.resolve_sale_return_items_for_device_branch(
+  p_shop_id uuid,
+  p_sale_id uuid,
+  p_device_id text,
+  p_lines jsonb
+)
+returns jsonb
+language sql
+security invoker
+set search_path to ''
+as $wrapper$
+  select private.resolve_sale_return_items_for_device_branch(p_shop_id, p_sale_id, p_device_id, p_lines);
+$wrapper$;
+
+-- Old resolver entry points cannot prove the calling terminal's branch.
+-- Preserve the old signatures only as upgrade notices, never as data-returning RPCs.
+create or replace function public.resolve_sale_return_target(p_bill_no text)
+returns jsonb
+language plpgsql
+security invoker
+set search_path to ''
+as $legacy$
+begin
+  raise exception 'This Nexfix POS client is outdated. Update the POS before looking up a Cloud return bill.';
+end;
+$legacy$;
+
+create or replace function public.resolve_sale_return_items(
+  p_shop_id uuid,
+  p_sale_id uuid,
+  p_lines jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path to ''
+as $legacy$
+begin
+  raise exception 'This Nexfix POS client is outdated. Update the POS before looking up Cloud return items.';
+end;
+$legacy$;
+
+-- Existing private resolvers remain reachable only from the guarded wrappers.
+revoke all on function private.resolve_sale_return_target(text)
+  from public, anon, authenticated;
+revoke all on function private.resolve_sale_return_items(uuid, uuid, jsonb)
+  from public, anon, authenticated;
+
+revoke all on function private.resolve_sale_return_target_for_device_branch(text, text)
+  from public, anon;
+revoke all on function private.resolve_sale_return_items_for_device_branch(uuid, uuid, text, jsonb)
+  from public, anon;
+
+revoke all on function public.resolve_sale_return_target_for_device_branch(text, text)
+  from public, anon;
+revoke all on function public.resolve_sale_return_items_for_device_branch(uuid, uuid, text, jsonb)
+  from public, anon;
+
+revoke all on function public.resolve_sale_return_target(text)
+  from public, anon;
+revoke all on function public.resolve_sale_return_items(uuid, uuid, jsonb)
+  from public, anon;
+
+grant usage on schema private to authenticated;
+grant execute on function private.resolve_sale_return_target_for_device_branch(text, text)
+  to authenticated;
+grant execute on function private.resolve_sale_return_items_for_device_branch(uuid, uuid, text, jsonb)
+  to authenticated;
+
+grant execute on function public.resolve_sale_return_target_for_device_branch(text, text)
+  to authenticated;
+grant execute on function public.resolve_sale_return_items_for_device_branch(uuid, uuid, text, jsonb)
+  to authenticated;
+
+-- Old public signatures remain callable solely so older installed clients
+-- receive a clear upgrade message instead of a generic missing-function error.
+grant execute on function public.resolve_sale_return_target(text)
+  to authenticated;
+grant execute on function public.resolve_sale_return_items(uuid, uuid, jsonb)
+  to authenticated;
