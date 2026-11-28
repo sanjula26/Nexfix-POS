@@ -70,7 +70,7 @@ export function setCloudShopId(id: string): void {
 }
 
 /** Resolve an explicitly provisioned active shop membership for the authenticated user. */
-export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: boolean; shopId?: string; error?: string }> {
+export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: boolean; shopId?: string; userId?: string; error?: string }> {
   void shopName;
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud authentication is not configured' };
   // Restore first, then read back the session. Retry once because Electron's
@@ -101,7 +101,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
       .eq('active', true)
       .maybeSingle();
     if (cachedMembershipError) return { ok: false, error: cachedMembershipError.message };
-    if (data?.shop_id) return { ok: true, shopId: data.shop_id };
+    if (data?.shop_id) return { ok: true, shopId: data.shop_id, userId: sessionData.session.user.id };
     // Never silently bind an existing local POS dataset and pending offline
     // writes to another shop when the signed-in cloud account changes.
     return {
@@ -135,7 +135,7 @@ export async function ensureCloudShop(shopName = 'Nexfix Shop'): Promise<{ ok: b
       };
     }
     setCloudShopId(membership.shop_id);
-    return { ok: true, shopId: membership.shop_id };
+    return { ok: true, shopId: membership.shop_id, userId: sessionData.session.user.id };
   }
 
   // Security boundary: shop membership is the cloud authorization source of truth.
