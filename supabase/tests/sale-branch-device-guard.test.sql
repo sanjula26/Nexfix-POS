@@ -45,7 +45,7 @@ values
   ('b3000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'Branch A', 'SG-A', true, true),
   ('b3000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001', 'Branch B', 'SG-B', true, false),
   ('b3000000-0000-4000-8000-000000000003', 'b2000000-0000-4000-8000-000000000002', 'Single Branch', 'SG-C', true, true),
-  ('b3000000-0000-4000-8000-000000000004', 'b2000000-0000-4000-8000-000000000002', 'Retired Branch', 'SG-D', false, false);
+  ('b3000000-0000-4000-8000-000000000004', 'b2000000-0000-4000-8000-000000000002', 'Retired Branch', 'SG-D', true, false);
 
 insert into public.sales (id, shop_id, bill_no, subtotal, total, branch_id)
 values
@@ -53,6 +53,13 @@ values
   ('b4000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001', 'SG-B-001', 100, 100, 'b3000000-0000-4000-8000-000000000002'),
   ('b4000000-0000-4000-8000-000000000003', 'b2000000-0000-4000-8000-000000000002', 'SG-C-001', 100, 100, 'b3000000-0000-4000-8000-000000000003'),
   ('b4000000-0000-4000-8000-000000000004', 'b2000000-0000-4000-8000-000000000002', 'SG-D-001', 100, 100, 'b3000000-0000-4000-8000-000000000004');
+
+-- Sales can only be created against active branches. Retire Branch D after
+-- inserting its historical sale so the authorization guard can verify the
+-- historical inactive-branch rejection path.
+update public.branches
+set active = false
+where id = 'b3000000-0000-4000-8000-000000000004';
 
 insert into public.pos_devices (shop_id, device_id, user_id, revoked_at)
 values
