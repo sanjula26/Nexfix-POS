@@ -617,6 +617,18 @@ test('async sensitive admin re-auth is invalidated on logout and role switch', (
   assert.ok(clearBody.includes('sensitiveAdminResolverRef.current = null;'));
   assert.ok(clearBody.includes('setSensitiveAdminPrompt(null);'));
 
+  const sensitiveConfirmStart = storeSource.indexOf('const confirmSensitiveAdmin = useCallback(');
+  const sensitiveConfirmEnd = storeSource.indexOf('const resolveSensitiveAdmin =', sensitiveConfirmStart);
+  assert.ok(sensitiveConfirmStart >= 0 && sensitiveConfirmEnd > sensitiveConfirmStart);
+  assert.ok(storeSource.slice(sensitiveConfirmStart, sensitiveConfirmEnd).includes('sessionRef.current?.userId !== user.id'));
+
+  const verifyPinStart = storeSource.indexOf('const verifyAdminPin = useCallback(');
+  const verifyPinEnd = storeSource.indexOf('const unlockSession =', verifyPinStart);
+  assert.ok(storeSource.slice(verifyPinStart, verifyPinEnd).includes('sessionRef.current?.userId !== actor.id'));
+
+  const roleSwitchStart = storeSource.indexOf('const switchRole = useCallback(');
+  const roleSwitchEnd = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart);
+  assert.ok(storeSource.slice(roleSwitchStart, roleSwitchEnd).includes('sessionRef.current?.userId !== initiatingUser.id'));
   const signOutStart = storeSource.indexOf('const signOut = useCallback(');
   const signOutEnd = storeSource.indexOf('// Role switches create a real authenticated session', signOutStart);
   assert.ok(signOutStart >= 0 && signOutEnd > signOutStart);
