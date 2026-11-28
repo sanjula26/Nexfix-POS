@@ -3783,15 +3783,27 @@ const deletePurchase = useCallback((id: string) => {
     } catch { return false; }
   }, [pushAudit, user]);
 
-  const resetData = useCallback(() => {
-    if (!user || user.role !== 'admin') {
-      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset without admin access');
-      return;
+  const resetData = useCallback(async (): Promise<boolean> => {
+    const adminSnapshot = user
+      ? findActiveAdminById(stateRef.current, user.id)
+      : null;
+    if (!adminSnapshot || sessionRef.current?.userId !== adminSnapshot.id) {
+      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset without an active Admin session');
+      return false;
+    }
+    if (!(await confirmSensitiveAdmin('clear local POS data'))) return false;
+    const latestAdmin = findActiveAdminById(stateRef.current, adminSnapshot.id);
+    if (sessionRef.current?.userId !== adminSnapshot.id
+      || !latestAdmin || latestAdmin.password !== adminSnapshot.password) {
+      pushAudit('DENIED', 'Settings', 'Blocked demo-data reset after administrator credentials changed');
+      return false;
     }
     const seed = buildSeed();
+    stateRef.current = seed;
     setState(seed);
     pushAudit('RESET', 'Settings', 'Restored demo seed dataset');
-  }, [pushAudit, user]);
+    return true;
+  }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const refreshPOS = useCallback(async () => {
     // A refresh is a data reload, not an authentication operation. Capture the
