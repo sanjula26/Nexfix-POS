@@ -760,8 +760,8 @@ test('managed password change and POS reset enforce sensitive Admin confirmation
 
 
 test('Settings Admin PIN change uses its store-level guarded current credential once without a duplicate confirmation modal', () => {
-  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8');
-  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const submitStart = settingsSource.indexOf('const submitPin = async () => {');
   const submitEnd = settingsSource.indexOf('const onImport =', submitStart);
   assert.ok(submitStart >= 0 && submitEnd > submitStart);
