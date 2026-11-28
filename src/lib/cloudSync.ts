@@ -284,7 +284,7 @@ export async function refreshCloudBranchStock(shopId: string, branchId: string):
 }
 
 /** Resolve a branch from the server-authoritative device binding in multi-branch shops. */
-export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string, requireExactBranchMatch = false): Promise<{ ok: boolean; branchId?: string; error?: string }> {
+export async function resolveCloudBranchId(shopId: string, preferredBranchId?: string, requireExactBranchMatch = false, requestedDeviceId?: string): Promise<{ ok: boolean; branchId?: string; error?: string }> {
   if (!supabaseConfigured || !supabase) return { ok: false, error: 'Cloud is not configured' };
   if (!shopId) return { ok: false, error: 'Cloud shop is not configured' };
   const { data: rows, error } = await supabase.from('branches')
@@ -315,7 +315,7 @@ export async function resolveCloudBranchId(shopId: string, preferredBranchId?: s
 
   // Never map a local-only sentinel to Main in a multi-branch shop. Resolve the
   // registered device assignment and require the active branch to match it.
-  const currentDeviceId = deviceId();
+  const currentDeviceId = requestedDeviceId?.trim() || deviceId();
   const { data: binding, error: bindingError } = await supabase
     .from('pos_device_branches')
     .select('branch_id')
@@ -1078,16 +1078,22 @@ export async function receivePurchaseAtomic(input: {
 }
 
 export async function processRepairDeliveryAtomic(input: {
-  shopId: string; repairId: string; deviceId: string; repair: unknown;
+  shopId: string; repairId: string; deviceId: string; branchId: string; repair: unknown; requireExactBranch?: boolean;
 }): Promise<{ok:boolean; alreadyCommitted?:boolean; repairId?:string; error?:string}> {
   if (!supabaseConfigured || !supabase) return { ok:false, error:'Cloud is not configured' };
   if (typeof navigator !== 'undefined' && !navigator.onLine) return { ok:false, error:'offline' };
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok:false, error:sessionError.message };
   if (!sessionData.session) return { ok:false, error:'Cloud session is not available' };
-  if (!input.shopId || !input.repairId || !input.deviceId) return { ok:false, error:'Missing repair identifiers' };
+  if (!input.shopId || !input.repairId || !input.deviceId || !input.branchId) return { ok:false, error:'Missing repair delivery branch or identifiers' };
+  const branch = await resolveCloudBranchId(input.shopId, input.branchId, input.requireExactBranch === true, input.deviceId);
+  if (!branch.ok || !branch.branchId) return { ok:false, error:branch.error || 'Repair delivery branch is not valid for this POS device' };
+  if (!input.repair || typeof input.repair !== 'object' || Array.isArray(input.repair)) {
+    return { ok:false, error:'Invalid repair delivery payload' };
+  }
+  const repairPayload = { ...(input.repair as Record<string, unknown>), branchId: branch.branchId };
   const { data, error } = await supabase.rpc('process_repair_delivery_atomic', {
-    p_shop_id: input.shopId, p_repair_id: input.repairId, p_device_id: input.deviceId, p_repair: input.repair,
+    p_shop_id: input.shopId, p_repair_id: input.repairId, p_device_id: input.deviceId, p_repair: repairPayload,
   });
   if (error) return { ok:false, error:error.message };
   const row = Array.isArray(data) ? data[0] : data;
