@@ -816,11 +816,21 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
 
     let passwordOk = false;
-    if (isHashed(u.password)) {
-      passwordOk = await verifyPasswordAsync(password, u.password);
-      if (!passwordOk) {
-        try { passwordOk = verifyPassword(password, u.password); } catch { /* ignore */ }
+    if (u.role === 'admin') {
+      const attempt = await runLocalAuthAttempt(async () => {
+        if (!u.active) return false;
+        return isHashed(u.password)
+          ? await verifyPasswordAsync(password, u.password)
+          : u.password === password;
+      });
+      if (!attempt.allowed) return { ok: false, error: 'Too many administrator login attempts. Please wait before trying again.' };
+      passwordOk = attempt.success;
+      const latestAdmin = stateRef.current.users.find(candidate => candidate.id === u!.id);
+      if (passwordOk && (!latestAdmin || !latestAdmin.active || latestAdmin.role !== 'admin' || latestAdmin.password !== u.password)) {
+        return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
       }
+    } else if (isHashed(u.password)) {
+      passwordOk = await verifyPasswordAsync(password, u.password);
     } else {
       passwordOk = u.password === password;
     }
@@ -843,10 +853,17 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       stateRef.current = { ...stateRef.current, users: nextUsers };
     }
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
+    const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
+    if (needsUpgrade) {
+      const latestUser = stateRef.current.users.find(x => x.id === u!.id);
+      if (!latestUser || latestUser.password !== u!.password || !latestUser.active) {
+        return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
+      }
+    }
     setState(s => ({
       ...s,
       users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
-      settings: pinWasUnset ? { ...s.settings, adminPinHash: hashPin(password) } : s.settings,
+      settings: pinWasUnset ? { ...s.settings, adminPinHash: initialAdminPinHash } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
 
@@ -893,7 +910,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       id: uid(), name: cashierName, email: cashierMail, password: cashierHashed, role: 'cashier',
       active: true, createdAt: nowIso, mustChangePassword: false,
     } : null;
-    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: hashPin(next) } };
+    const initialAdminPinHash = await hashPasswordAsync(next);
+    const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: initialAdminPinHash } };
     stateRef.current = nextState;
     setState(nextState);
     pushAudit('CREATE', 'Auth', 'Initial administrator account created', mail);
@@ -1029,22 +1047,54 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }));
     return { ok: true };
   }, [state.users, state.settings.adminPinHash, session, user]);
-  const changeAdminPin = useCallback((current: string, next: string): { ok: boolean; error?: string } => {
+  const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
-    let currentOk = false;
-    if (state.settings.adminPinHash) {
-      try { currentOk = verifyPassword(currentSecret, state.settings.adminPinHash); } catch { currentOk = false; }
-    } else {
-      const admin = stateRef.current.users.find(u => u.id === user.id && u.role === 'admin' && u.active);
-      try { currentOk = !!admin && (isHashed(admin.password) ? verifyPassword(currentSecret, admin.password) : currentSecret === admin.password); } catch { currentOk = false; }
+    const nextSecret = String(next || '').trim();
+    if (!currentSecret) return { ok: false, error: 'Enter the current administrator credential' };
+    if (nextSecret.length < 8) return { ok: false, error: 'New admin unlock PIN must be at least 8 characters' };
+    const adminSnapshot = findActiveAdminById(stateRef.current, user.id);
+    if (!adminSnapshot) return { ok: false, error: 'Administrator account is no longer active' };
+    const storedPinHash = stateRef.current.settings.adminPinHash || '';
+    let currentValid = false;
+    let currentPinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    const attempt = await runLocalAuthAttempt(async () => {
+      if (storedPinHash) {
+        currentPinVerification = await verifyPasswordWithLegacyUpgrade(currentSecret, storedPinHash);
+        currentValid = currentPinVerification.valid;
+      } else {
+        currentValid = isHashed(adminSnapshot.password)
+          ? await verifyPasswordAsync(currentSecret, adminSnapshot.password)
+          : currentSecret === adminSnapshot.password;
+      }
+      return currentValid;
+    });
+    if (!attempt.success) {
+      return {
+        ok: false,
+        error: attempt.allowed
+          ? (storedPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect')
+          : 'Too many administrator attempts. Wait before trying again.',
+      };
     }
-    if (!currentOk) return { ok: false, error: state.settings.adminPinHash ? 'Current admin unlock PIN is incorrect' : 'Current administrator login password is incorrect' };
-    if (next.trim().length < 4) return { ok: false, error: 'New password must be at least 4 characters' };
-    setState(s => ({ ...s, settings: { ...s.settings, adminPinHash: hashPin(next.trim()) } }));
-    pushAudit('SETTINGS', 'Security', 'Admin switch password changed');
+    const latestAdmin = findActiveAdminById(stateRef.current, user.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
+      || !latestAdmin || latestAdmin.password !== adminSnapshot.password) {
+      return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+    }
+    const replacementHash = await hashPasswordAsync(nextSecret);
+    const latestAfterHash = findActiveAdminById(stateRef.current, user.id);
+    if ((stateRef.current.settings.adminPinHash || '') !== storedPinHash
+      || !latestAfterHash || latestAfterHash.password !== adminSnapshot.password) {
+      return { ok: false, error: 'Administrator credentials changed while saving the new PIN. Please try again.' };
+    }
+    if (!commitAdminPinHashIfCurrent(storedPinHash, replacementHash)) {
+      return { ok: false, error: 'Administrator PIN changed while saving. Please try again.' };
+    }
+    sensitiveAuthRef.current = null;
+    pushAudit('SETTINGS', 'Security', 'Admin unlock PIN changed');
     return { ok: true };
-  }, [user, state.settings.adminPinHash, pushAudit]);
+  }, [user, pushAudit, commitAdminPinHashIfCurrent]);
 
   /* ---------------- products ---------------- */
   const saveKitItems = useCallback((items: KitItem[]) => {
