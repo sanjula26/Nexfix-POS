@@ -1016,7 +1016,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
       }
 
-      let adminPinVerified = false;
       let adminPinHashSnapshot = '';
       let adminPinUpgradeHash: string | undefined;
       if (role === 'cashier' && user.role === 'admin') {
@@ -1087,7 +1086,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           return { ok: false, error: 'Administrator accounts changed during verification. Please try again.' };
         }
         if (pinVerification.valid) {
-          adminPinVerified = true;
           adminPinUpgradeHash = pinVerification.upgradedHash;
           target = findActiveAdminById(stateRef.current, activeAdmins[0].id) || undefined;
         } else if (matchingAdmin) {
