@@ -1176,7 +1176,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(blockedReturn > repairStart, 'the blocked-cycle return must happen after queue processing');
   assert.ok(snapshotStart > blockedReturn, 'the snapshot logic must come after the blocked-cycle guard');
   assert.ok(snapshotUpload > snapshotStart, 'the blocked-cycle guard must precede every generic snapshot upload');
-  assert.ok(offlineSource.slice(blockedReturn, snapshotStart).includes('blockedLegacy: true'));
+  assert.ok(offlineSource.slice(blockedReturn, snapshotStart).includes('blockedQueueScope: true'));
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedLegacy)'));
   assert.ok(syncManagerSource.includes('sign in to the original shop or ask Admin to reconcile before Cloud sync can continue'));
