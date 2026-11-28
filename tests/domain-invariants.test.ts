@@ -896,7 +896,8 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   assert.ok(storeSource.includes("shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null"));
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
   assert.ok(offlineSource.includes("isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)"));
-  assert.ok(!storeSource.includes('getCloudActivityScope'));
+  assert.ok(storeSource.includes('cloudScope: getCloudActivityScope() || undefined'),
+    'locally completed Sales capture the current Cloud scope without replacing the verified online membership scope');
 });
 
 test('legacy offline Sale and GRN jobs without an original Cloud scope are blocked before replay', () => {
@@ -1124,7 +1125,7 @@ test('first online Sale and GRN publish the verified Cloud scope before tracking
   assert.ok(saleScope >= 0 && saleScope < saleWrite, 'verified Sale scope must be published before its atomic Cloud write');
   assert.ok(grnScope >= 0 && grnScope < grnCatalogWrite, 'verified GRN scope must be published before catalog Cloud writes');
   assert.ok(grnScope < grnWrite, 'verified GRN scope must be published before its atomic Cloud write');
-  assert.ok(storeSource.includes("import { setCloudActivityScope, withCloudActivity } from './cloudActivity';"));
+  assert.ok(storeSource.includes("import { getCloudActivityScope, setCloudActivityScope, withCloudActivity } from './cloudActivity';"));
 });
 
 
