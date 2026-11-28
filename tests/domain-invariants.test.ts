@@ -844,6 +844,10 @@ test('legacy Sale and GRN replay receipts are saved only under a reverified curr
     assert.ok(accepted >= 0 && reverified > accepted, `${kind} receipt scope must be reverified only after positive server acknowledgement`);
     assert.ok(receipt > reverified, `${kind} acknowledgement must use the reverified uploader scope`);
     assert.ok(source.includes(`const receiptScope = parsed.cloudScope`));
+    const missingReceiptScope = source.indexOf('if (!receiptScope) {');
+    assert.ok(missingReceiptScope > reverified, `${kind} must handle failed post-write scope re-verification`);
+    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}', reason, verifiedScope);`),
+      `${kind} must record RETRY against the pre-write verified uploader scope, not a newly active account`);
     assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}'`));
     assert.ok(!source.includes('idbAcknowledgeQueue([op.id])'), `${kind} must not delete a legacy row without saving its receipt`);
   };
