@@ -86,6 +86,38 @@ test('managed user creation and profile updates require the same active Admin an
   assert.equal(initial.users.some(user => user.id === created.id), false);
 });
 
+test('managed user save rejects a profile changed while the password hash was being derived', () => {
+  const initial = stateWithUsers([admin, cashier]);
+  const latestProfile = stateWithUsers([
+    admin,
+    { ...cashier, name: 'Newer display name', email: 'newer@example.test', commissionPct: 4.5 },
+  ]);
+
+  assert.equal(
+    saveManagedUserIfCurrent(latestProfile, admin, cashier, {
+      ...cashier,
+      password: 'derived-new-password-hash',
+      name: 'Stale display name',
+      email: 'stale@example.test',
+    }),
+    null,
+  );
+  assert.equal(latestProfile.users.find(user => user.id === cashier.id)?.email, 'newer@example.test');
+  assert.equal(initial.users.find(user => user.id === cashier.id)?.email, cashier.email);
+});
+
+test('a deactivated staff profile can be edited without silently reactivating the account', () => {
+  const inactiveCashier = { ...cashier, active: false };
+  const initial = stateWithUsers([admin, inactiveCashier]);
+  const next = saveManagedUserIfCurrent(initial, admin, inactiveCashier, {
+    ...inactiveCashier,
+    name: 'Archived cashier updated',
+  });
+
+  assert.equal(next?.users.find(user => user.id === cashier.id)?.name, 'Archived cashier updated');
+  assert.equal(next?.users.find(user => user.id === cashier.id)?.active, false);
+});
+
 test('managed user save rejects duplicate email and duplicate new account IDs', () => {
   const initial = stateWithUsers([admin, cashier]);
   const duplicateEmail: AppUser = {
