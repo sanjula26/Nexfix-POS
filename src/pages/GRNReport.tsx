@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, useCloudRecordSyncSnapshot } from '../lib/cloudRecordSync';
 import { ClipboardList, Download, PackageCheck, Clock4 } from 'lucide-react';
 import { usePOS } from '../lib/store';
 import { Badge, EmptyState, PageHeading, SearchInput } from '../components/ui';
@@ -14,6 +15,7 @@ const PERIODS: Array<{ key: PeriodKey; label: string }> = [
 
 export default function GRNReport() {
   const { state } = usePOS();
+  const cloudSync = useCloudRecordSyncSnapshot();
   const [period, setPeriod] = useState<PeriodKey>('month');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'all' | 'pending' | 'received'>('all');
@@ -61,7 +63,17 @@ export default function GRNReport() {
           <SearchInput value={search} onChange={setSearch} placeholder="Search GRN/PO, supplier or invoice..." className="max-w-md flex-1" />
           <div className="flex gap-1.5">{(['all', 'pending', 'received'] as const).map(s => <button key={s} className={`btn !text-xs ${status === s ? 'btn-primary' : 'btn-soft'}`} onClick={() => setStatus(s)}>{s === 'all' ? 'All' : s === 'received' ? 'Received' : 'Pending'}</button>)}</div>
         </div>
-        {rows.length === 0 ? <EmptyState icon={<ClipboardList size={26} />} title="No receiving records" sub="No purchase/GRN records match the selected filters." /> : <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr><th className="th">GRN / PO</th><th className="th">Date</th><th className="th">Supplier</th><th className="th">Invoice</th><th className="th">Items</th><th className="th">Status</th><th className="th !text-right">Total</th></tr></thead><tbody>{rows.map(p => <tr key={p.id} className="hover:bg-raised/40"><td className="td font-bold text-violet-500">{p.poNo}</td><td className="td text-xs text-sub">{fmtDate(p.date)}</td><td className="td font-semibold">{p.supplierName}</td><td className="td text-xs text-sub">{p.supplierInvoiceNo || '—'}</td><td className="td text-xs text-sub">{p.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td><td className="td"><Badge tone={p.status === 'received' ? 'emerald' : 'amber'}>{p.status === 'received' ? <PackageCheck size={11} /> : <Clock4 size={11} />}{p.status.toUpperCase()}</Badge></td><td className="td num font-bold text-right">{fmtRs(p.total)}</td></tr>)}</tbody></table></div>}
+        {rows.length === 0 ? <EmptyState icon={<ClipboardList size={26} />} title="No receiving records" sub="No purchase/GRN records match the selected filters." /> : <div className="overflow-x-auto"><table className="w-full min-w-[900px]"><thead><tr><th className="th">GRN / PO</th><th className="th">Date</th><th className="th">Supplier</th><th className="th">Invoice</th><th className="th">Items</th><th className="th">Status</th><th className="th">Cloud</th><th className="th !text-right">Total</th></tr></thead><tbody>{rows.map(p => <tr key={p.id} className="hover:bg-raised/40"><td className="td font-bold text-violet-500">{p.poNo}</td><td className="td text-xs text-sub">{fmtDate(p.date)}</td><td className="td font-semibold">{p.supplierName}</td><td className="td text-xs text-sub">{p.supplierInvoiceNo || '—'}</td><td className="td text-xs text-sub">{p.items.map(i => `${i.name} ×${i.qty}`).join(', ')}</td><td className="td"><Badge tone={p.status === 'received' ? 'emerald' : 'amber'}>{p.status === 'received' ? <PackageCheck size={11} /> : <Clock4 size={11} />}{p.status.toUpperCase()}</Badge></td><td className="td">{p.status === 'received' ? (
+        getCloudRecordSyncStatus(cloudSync, 'purchase', p.id) === 'synced' ? <Badge tone="emerald">CLOUD OK</Badge> :
+        getCloudRecordSyncStatus(cloudSync, 'purchase', p.id) === 'retry' ? (
+          <span title={`Last Cloud sync attempt needs retry. ${getCloudRecordSyncIssue(cloudSync, 'purchase', p.id) || 'No positive Cloud receipt is saved on this PC.'} The queue is kept; use Retry sync in the Cloud panel.`}>
+            <Badge tone="rose">RETRY</Badge>
+          </span>
+        ) :
+        getCloudRecordSyncStatus(cloudSync, 'purchase', p.id) === 'pending' ? <Badge tone="amber">WAITING</Badge> :
+        getCloudRecordSyncStatus(cloudSync, 'purchase', p.id) === 'checking' ? <Badge tone="slate">CHECKING</Badge> :
+        <Badge tone="slate">UNVERIFIED</Badge>
+      ) : <span className="text-faint">—</span>}</td><td className="td num font-bold text-right">{fmtRs(p.total)}</td></tr>)}</tbody></table></div>}
       </div>
     </div>
   );

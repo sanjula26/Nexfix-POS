@@ -1,4 +1,5 @@
 import { flushSyncQueue, getConnectivity, getPendingSyncOperations, type Connectivity, onConnectivityChange } from './offline';
+import { withCloudActivity } from './cloudActivity';
 
 export type SyncManagerStatus =
   | 'idle'
@@ -63,9 +64,23 @@ export async function runSyncNow(): Promise<SyncManagerState> {
   syncing = true;
   publish({ ...state, status: 'syncing', lastError: null });
   try {
-    const result = await flushSyncQueue();
+    const result = await withCloudActivity('Pending changes', () => flushSyncQueue(), result => result.synced);
     retryAttempt = 0;
-    if (result.conflict) {
+    if (result.blockedQueueScope) {
+      publish({
+        ...state,
+        status: 'error',
+        pending: result.pending,
+        lastError: 'Offline transactions are not verified for the active Cloud shop/user. They are kept on this PC; sign in to the original shop or ask Admin to reconcile before Cloud sync can continue.',
+      });
+    } else if (result.pendingTransactions) {
+      publish({
+        ...state,
+        status: 'error',
+        pending: result.pending,
+        lastError: 'POS transactions are still waiting for Cloud confirmation. They remain on this PC; full-state Cloud snapshot sync is paused until the queued transactions are confirmed.',
+      });
+    } else if (result.conflict) {
       publish({ ...state, status: 'conflict', pending: result.pending });
     } else if (result.synced) {
       publish({ ...state, status: 'synced', pending: result.pending, lastSyncAt: new Date().toISOString() });

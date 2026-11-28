@@ -836,15 +836,27 @@ export default function POS() {
   };
 
   /* ---------- admin gate (price override) ---------- */
-  const tryGate = () => {
+  const tryGate = async () => {
     if (!gatePin || gateBusy) return;
-    setGateBusy(true); setGateErr('');
-    setTimeout(() => {
-      const ok = verifyAdminPin(gatePin, 'price override');
+    setGateBusy(true);
+    setGateErr('');
+    try {
+      const ok = await verifyAdminPin(gatePin, 'price override');
+      if (ok) {
+        setPriceUnlocked(true);
+        setGateOpen(false);
+        setGatePin('');
+        toast('Price override unlocked for this bill', 'amber');
+      } else {
+        setGateErr('Incorrect admin password or PIN');
+        setGatePin('');
+      }
+    } catch {
+      setGateErr('Could not verify the administrator credential. Please try again.');
+      setGatePin('');
+    } finally {
       setGateBusy(false);
-      if (ok) { setPriceUnlocked(true); setGateOpen(false); setGatePin(''); toast('Price override unlocked for this bill', 'amber'); }
-      else { setGateErr('Incorrect admin password'); setGatePin(''); }
-    }, 350);
+    }
   };
 
   /* ---------- keyboard shortcuts ---------- */

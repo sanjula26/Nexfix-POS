@@ -8,7 +8,7 @@ on:
       - 'scripts/test-branch-stock-cas-concurrency.sh'
       - '.github/workflows/database-tests.yml'
   pull_request:
-    branches: [main]
+    branches: [main, 'integration/**', 'fix/**']
     paths:
       - 'supabase/**'
       - 'scripts/test-branch-stock-cas-concurrency.sh'

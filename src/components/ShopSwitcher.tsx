@@ -8,7 +8,7 @@ import { getMachineIdentity } from '../lib/machine';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { runSyncNow } from '../lib/syncManager';
 import type { POSState } from '../lib/types';
-import { hasLocalBusinessData } from '../lib/shopBindingSafety';
+import { hasLocalBusinessData, hasStoredLocalBusinessData } from '../lib/shopBindingSafety';
 
 interface ShopOption { id: string; name: string; role: string; }
 
@@ -118,21 +118,27 @@ export default function ShopSwitcher() {
   const [busy, setBusy] = useState(false);
   const [bootstrapping, setBootstrapping] = useState(false);
   const [error, setError] = useState('');
+  const [bindingBlocked, setBindingBlocked] = useState(false);
   const activeId = getCloudShopId();
-  const unboundLocalData = !activeId && hasLocalBusinessData(state);
+  const unboundLocalData = !activeId && (hasLocalBusinessData(state) || hasStoredLocalBusinessData());
   // A persisted binding that is not in this user's memberships is a hard stop.
   // Likewise, don't guess a first shop for a previously used local POS whose
   // shop binding has disappeared.
   const activeShop = useMemo(() => {
+    if (bindingBlocked) return null;
     if (activeId) return shops.find(shop => shop.id === activeId) || null;
-    if (hasLocalBusinessData(state)) return null;
+    if (unboundLocalData) return null;
     return shops[0] || null;
-  }, [shops, activeId, state]);
+  }, [shops, activeId, unboundLocalData, bindingBlocked]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!user) { setShops([]); setBootstrapping(false); return; }
-    void listMemberships(user.id).then(items => {
+    if (!user) { setShops([]); setBootstrapping(false); setBindingBlocked(false); return; }
+    // A clean first-link remains blocked while the queue and binding are checked;
+    // the hydration effect must not start during this short validation window.
+    const hasSavedBinding = Boolean(getCloudShopId());
+    setBindingBlocked(!hasSavedBinding && !unboundLocalData);
+    void listMemberships(user.id).then(async items => {
       if (cancelled) return;
       setShops(items);
       const selected = getCloudShopId();
@@ -148,8 +154,35 @@ export default function ShopSwitcher() {
         return;
       }
       const resolved = selectedMembership?.id || items[0]?.id;
-      if (!resolved) { setBootstrapping(false); return; }
-      if (!selected) setCloudShopId(resolved);
+      if (!resolved) { setBindingBlocked(false); setBootstrapping(false); return; }
+      if (!selected) {
+        const pendingQueue = await idbListQueue().catch(() => null);
+        if (cancelled) return;
+        if (!pendingQueue) {
+          setBindingBlocked(true);
+          setError('Could not inspect the local offline queue. Automatic Cloud setup is blocked until local storage can be checked safely.');
+          setBootstrapping(false);
+          return;
+        }
+        if (pendingQueue.length > 0) {
+          setBindingBlocked(true);
+          setError('This PC has pending offline operations but no saved cloud-shop binding. Reconnect to the original shop or ask Admin for reconciliation before first Cloud setup.');
+          setBootstrapping(false);
+          return;
+        }
+        if (!setCloudShopId(resolved)) {
+          setBindingBlocked(true);
+          setError('Could not save the Cloud shop binding on this PC. No shop data was switched or uploaded; check local storage permissions and retry.');
+          setBootstrapping(false);
+          return;
+        }
+      }
+      setBindingBlocked(false);
+    }).catch(error => {
+      if (cancelled) return;
+      setBindingBlocked(true);
+      setError(error instanceof Error ? error.message : 'Could not safely resolve the Cloud shop binding.');
+      setBootstrapping(false);
     });
     return () => { cancelled = true; };
   }, [user?.id, unboundLocalData]);
@@ -177,7 +210,6 @@ export default function ShopSwitcher() {
           try { localStorage.setItem(REVISION_KEY, '0'); } catch { /* ignore */ }
         } else {
           const next = preserveLocalAuthentication(state, remote?.state || cached || buildSeed());
-          setCloudShopId(activeShop.id);
           try { localStorage.setItem(REVISION_KEY, String(remote?.revision ?? 0)); } catch { /* ignore */ }
           writeCachedState(activeShop.id, next);
           writeActiveStoreState(next);
@@ -196,19 +228,21 @@ export default function ShopSwitcher() {
 
   if (!user) return null;
   if (!activeShop) {
-    if (!shops.length) return null;
+    if (!shops.length && !bindingBlocked) return null;
     const hasSavedBinding = Boolean(getCloudShopId());
-    const localDataDetected = hasLocalBusinessData(state);
-    if (!hasSavedBinding && !localDataDetected) return null;
+    const localDataDetected = unboundLocalData;
+    if (!hasSavedBinding && !localDataDetected && !bindingBlocked) return null;
     return (
       <div className="fixed top-3 right-3 z-[100] w-[min(92vw,420px)] rounded-2xl border border-amber-500/30 bg-panel p-4 shadow-2xl">
         <div className="flex items-start gap-2 text-sm font-semibold text-ink">
           <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-500" />
-          <span>{hasSavedBinding ? 'Cloud shop mismatch — syncing is blocked to protect the previous shop’s data.' : 'Existing local POS data is not bound to a cloud shop.'}</span>
+          <span>{bindingBlocked ? 'Cloud shop binding could not be verified or saved.' : hasSavedBinding ? 'Cloud shop mismatch — syncing is blocked to protect the previous shop’s data.' : 'Existing local POS data is not bound to a cloud shop.'}</span>
         </div>
-        <p className="mt-2 text-xs text-faint">{hasSavedBinding
-          ? 'This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available. No shop data was switched or uploaded.'
-          : 'Automatic cloud setup is blocked because this PC has local business data but no saved shop binding. No local data was copied or uploaded. Restore the original shop binding or request a verified migration before syncing.'}</p>
+        <p className="mt-2 text-xs text-faint">{bindingBlocked
+          ? error || 'Automatic Cloud setup is blocked until the local binding and offline queue can be verified.'
+          : hasSavedBinding
+            ? 'This cloud account does not have access to the shop currently bound to this PC. Sign in with the original shop account. To use a different account, use a separate Windows profile or POS installation until an explicit rebind flow is available. No shop data was switched or uploaded.'
+            : 'Automatic cloud setup is blocked because this PC has local business data but no saved shop binding. No local data was copied or uploaded. Restore the original shop binding or request a verified migration before syncing.'}</p>
       </div>
     );
   }
@@ -238,7 +272,9 @@ export default function ShopSwitcher() {
         ? 'Could not load the selected shop. Try again.'
         : 'The selected shop is not cached on this device yet. Connect once before switching to it offline.');
       const next = preserveLocalAuthentication(state, remote?.state || cached || buildSeed());
-      setCloudShopId(target.id);
+      if (!setCloudShopId(target.id)) {
+        throw new Error('Could not save the selected Cloud shop binding on this PC. The active local POS state was not switched.');
+      }
       try { localStorage.setItem(REVISION_KEY, String(remote?.revision ?? 0)); } catch { /* ignore */ }
       writeCachedState(target.id, next);
       writeActiveStoreState(next);

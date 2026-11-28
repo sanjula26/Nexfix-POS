@@ -3,6 +3,7 @@ const { writeBufferFully } = require('./write-buffer.cjs');
 const { parseStoredUpdaterDeviceCredential, buildUpdaterRequestHeaders, saveEncryptedUpdaterCredential, loadEncryptedUpdaterCredential, clearEncryptedUpdaterCredential } = require('./updater-credentials.cjs');
 const path = require('path');
 const { createNavigationGuard } = require('./navigation-security.cjs');
+const { beginLocalAuthAttempt, completeLocalAuthAttempt, isValidLocalAuthGuardState } = require('./local-auth-guard.cjs');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
@@ -62,6 +63,48 @@ function isTrustedRenderer(event){
 }
 
 function getSecureRecoveryFile(){ return path.join(app.getPath('userData'),'nexfix-secure','cloud-updater-recovery.json'); }
+
+const LOCAL_AUTH_SCOPES = new Set(['admin','cashier-unlock']);
+function isValidLocalAuthScope(scope){ return typeof scope==='string' && LOCAL_AUTH_SCOPES.has(scope); }
+function getLocalAuthGuardFile(scope='admin'){
+  if(!isValidLocalAuthScope(scope)) throw new Error('Invalid local authentication scope');
+  // Preserve the original Admin guard file so existing lockout history is not reset.
+  const filename = scope==='admin' ? 'local-auth-guard.json' : 'local-auth-guard-cashier-unlock.json';
+  return path.join(app.getPath('userData'),'nexfix-secure',filename);
+}
+function failClosedLocalAuthGuardState(scope='admin'){
+  const locked={version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+  try{
+    // Repair corrupt state atomically so the fail-closed lock expires normally.
+    writeLocalAuthGuard(locked,scope);
+  }catch{
+    // If storage cannot be repaired, keep this attempt blocked for this read.
+  }
+  return locked;
+}
+
+function readLocalAuthGuard(scope='admin'){
+  const file=getLocalAuthGuardFile(scope);
+  try{
+    if(!fs.existsSync(file)) return {};
+    const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(!isValidLocalAuthGuardState(parsed,Date.now())){
+      return failClosedLocalAuthGuardState(scope);
+    }
+    return parsed;
+  }catch{
+    // Corrupt guard state must not silently reset an administrator attempt budget.
+    return failClosedLocalAuthGuardState(scope);
+  }
+}
+function writeLocalAuthGuard(value,scope='admin'){
+  const file=getLocalAuthGuardFile(scope);
+  const dir=path.dirname(file);
+  fs.mkdirSync(dir,{recursive:true});
+  const tmp=file+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify(value),{encoding:'utf8',mode:0o600});
+  fs.renameSync(tmp,file);
+}
 
 function readSecureRecoveryFile(){
   try{
@@ -549,6 +592,29 @@ app.on('before-quit',(event)=>{
   if(allowQuit)return;
   event.preventDefault();
   requestExitWithBackup();
+});
+
+ipcMain.handle('local-auth:begin',(event,payload)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  const scope=payload?.scope;
+  if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'};
+  try{
+    const next=beginLocalAuthAttempt(readLocalAuthGuard(scope),Date.now(),crypto.randomUUID());
+    writeLocalAuthGuard(next.state,scope);
+    return next.result;
+  }catch(error){return {ok:false,error:error?.message||'Local authentication guard is unavailable'};}
+});
+ipcMain.handle('local-auth:complete',(event,payload)=>{
+  if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  const scope=payload?.scope;
+  if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'};
+  if(typeof payload?.attemptId!=='string'||payload.attemptId.length>128||typeof payload?.success!=='boolean') return {ok:false,error:'Invalid local authentication result'};
+  try{
+    const next=completeLocalAuthAttempt(readLocalAuthGuard(scope),payload.attemptId,payload.success,Date.now());
+    if(!next.result.ok) return next.result;
+    writeLocalAuthGuard(next.state,scope);
+    return {ok:true};
+  }catch(error){return {ok:false,error:error?.message||'Local authentication guard could not be saved'};}
 });
 
 function isCloudAuthStorageKey(key){

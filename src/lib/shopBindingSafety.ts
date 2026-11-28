@@ -35,18 +35,56 @@ export function hasLocalBusinessData(input: unknown): boolean {
 }
 
 
-/** Inspect legacy localStorage snapshots too; a fresh/empty IndexedDB row must
- * not hide an older local POS dataset and trigger automatic cloud rebinding.
- * Unreadable/corrupt saved state fails closed rather than being assumed empty.
+/** Pure evaluator for saved local snapshots/caches; every legacy source is checked independently. */
+export function hasStoredLocalBusinessDataFromEntries(
+  entries: Array<{ key: string; raw: string | null }>,
+): boolean {
+  const relevant = entries.filter(entry =>
+    entry.raw !== null
+    && (
+      entry.key === 'nexfix_pos_v2'
+      || entry.key === 'nexfix_pos_v1'
+      || entry.key.startsWith('nexfix_shop_state_cache_v1:')
+    ),
+  );
+  for (const entry of relevant) {
+    if (entry.raw === null) return true;
+    let parsed: unknown;
+    try { parsed = JSON.parse(entry.raw); } catch { return true; }
+    if (hasLocalBusinessData(parsed)) return true;
+  }
+  return false;
+}
+
+/** Inspect both legacy snapshots and every per-shop cache. Unreadable storage
+ * or corrupt saved state fails closed rather than being assumed empty.
  */
 export function hasStoredLocalBusinessData(): boolean {
   try {
-    const raw = localStorage.getItem('nexfix_pos_v2') || localStorage.getItem('nexfix_pos_v1');
-    if (!raw) return false;
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { return true; }
-    return hasLocalBusinessData(parsed);
+    const entries: Array<{ key: string; raw: string | null }> = [];
+    const keys = ['nexfix_pos_v2', 'nexfix_pos_v1'];
+    for (const key of keys) entries.push({ key, raw: localStorage.getItem(key) });
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith('nexfix_shop_state_cache_v1:')) {
+        entries.push({ key, raw: localStorage.getItem(key) });
+      }
+    }
+    return hasStoredLocalBusinessDataFromEntries(entries);
   } catch {
     return true;
   }
+}
+
+
+/** First-time automatic Cloud binding is safe only for a clean seed with no legacy snapshot or pending local work. */
+export function canAutoBindCloudShop(
+  state: unknown,
+  pendingQueueCount: number,
+  hasStoredLegacyBusinessData: boolean,
+): boolean {
+  if (!Number.isSafeInteger(pendingQueueCount) || pendingQueueCount < 0) return false;
+  return pendingQueueCount === 0
+    && !hasLocalBusinessData(state)
+    && hasStoredLegacyBusinessData === false;
 }
