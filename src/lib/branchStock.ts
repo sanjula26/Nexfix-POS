@@ -2,6 +2,19 @@ import { getMachineIdentity } from './machine.ts';
 
 export interface BranchStockRow { productId: string; qty: number }
 
+/** A queued mutation must never be remapped to a device's newer branch assignment. */
+export function isQueuedOperationBranchValid(
+  queuedBranchId: string | null | undefined,
+  assignedBranchId: string,
+  activeBranchCount: number,
+): boolean {
+  const queued = typeof queuedBranchId === 'string' ? queuedBranchId.trim() : '';
+  const assigned = typeof assignedBranchId === 'string' ? assignedBranchId.trim() : '';
+  if (!queued || !assigned || !Number.isSafeInteger(activeBranchCount) || activeBranchCount < 1) return false;
+  if (activeBranchCount === 1) return queued === 'local-main' || queued === assigned;
+  return queued !== 'local-main' && queued === assigned;
+}
+
 function storage(): Storage | null {
   try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; }
 }
