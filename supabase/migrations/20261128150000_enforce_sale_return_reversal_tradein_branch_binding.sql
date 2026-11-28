@@ -189,7 +189,7 @@ $function$;
 
 -- New public entry points keep the Data API boundary SECURITY INVOKER while
 -- the narrowly scoped private wrappers perform the protected transaction.
-create or replace function public.process_sale_return_atomic(
+create or replace function public.process_sale_return_atomic_for_device_branch(
   p_shop_id uuid,
   p_return_id uuid,
   p_sale_id uuid,
@@ -209,7 +209,7 @@ as $wrapper$
   );
 $wrapper$;
 
-create or replace function public.register_trade_in_atomic(
+create or replace function public.register_trade_in_atomic_for_device_branch(
   p_shop_id uuid,
   p_device_id text,
   p_sale_id uuid,
@@ -229,7 +229,7 @@ as $wrapper$
   );
 $wrapper$;
 
-create or replace function public.request_sale_reversal(
+create or replace function public.request_sale_reversal_for_device_branch(
   p_shop_id uuid,
   p_request_id uuid,
   p_sale_id uuid,
@@ -328,11 +328,11 @@ revoke all on function public.register_trade_in_atomic(uuid, uuid, uuid, uuid, n
 revoke all on function public.request_sale_reversal(uuid, uuid, uuid, text)
   from public, anon;
 
-revoke all on function public.process_sale_return_atomic(uuid, uuid, uuid, text, text, text, text, jsonb)
+revoke all on function public.process_sale_return_atomic_for_device_branch(uuid, uuid, uuid, text, text, text, text, jsonb)
   from public, anon;
-revoke all on function public.register_trade_in_atomic(uuid, text, uuid, uuid, uuid, numeric, text, text)
+revoke all on function public.register_trade_in_atomic_for_device_branch(uuid, text, uuid, uuid, uuid, numeric, text, text)
   from public, anon;
-revoke all on function public.request_sale_reversal(uuid, uuid, uuid, text, text)
+revoke all on function public.request_sale_reversal_for_device_branch(uuid, uuid, uuid, text, text)
   from public, anon;
 
 grant usage on schema private to authenticated;
@@ -344,9 +344,9 @@ grant execute on function private.register_trade_in_atomic_for_device_branch(uui
 grant execute on function private.request_sale_reversal_for_device_branch(uuid, uuid, uuid, text, text)
   to authenticated;
 
-grant execute on function public.process_sale_return_atomic(uuid, uuid, uuid, text, text, text, text, jsonb)
+grant execute on function public.process_sale_return_atomic_for_device_branch(uuid, uuid, uuid, text, text, text, text, jsonb)
   to authenticated;
-grant execute on function public.register_trade_in_atomic(uuid, text, uuid, uuid, uuid, numeric, text, text)
+grant execute on function public.register_trade_in_atomic_for_device_branch(uuid, text, uuid, uuid, uuid, numeric, text, text)
   to authenticated;
-grant execute on function public.request_sale_reversal(uuid, uuid, uuid, text, text)
+grant execute on function public.request_sale_reversal_for_device_branch(uuid, uuid, uuid, text, text)
   to authenticated;
