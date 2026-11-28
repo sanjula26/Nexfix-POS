@@ -1479,3 +1479,13 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     assert.ok(databaseTests.includes(expected), `database regression must cover: ${expected}`);
   }
 });
+
+
+test('Supabase local database CI pins a stable CLI version without latest-release lookup', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/database-tests.yml', import.meta.url), 'utf8');
+  assert.ok(workflow.includes('uses: supabase/setup-cli@v3.2.0'));
+  assert.ok(workflow.includes('version: 3.4.0'));
+  assert.ok(!workflow.includes('version: latest'));
+  assert.ok(workflow.includes('supabase db reset --local --no-seed'));
+  assert.ok(workflow.includes('supabase test db --local'));
+});
