@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, type CloudRecordSyncEntry, type CloudRecordType } from './db';
+import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db';
 import { getCloudActivityScope, subscribeCloudActivity, type CloudActivityScope } from './cloudActivity';
 
 export interface CloudRecordSyncSnapshot {
@@ -59,6 +59,32 @@ export function getCloudRecordSyncStatus(
   return 'unknown';
 }
 
+export function getPendingCloudRecordKeys(
+  queue: QueueOp[],
+  scope: CloudActivityScope,
+): Set<string> {
+  const pending = new Set<string>();
+  for (const item of queue) {
+    if (item.type !== 'sale_create' && item.type !== 'purchase_receive') continue;
+    try {
+      const payload = JSON.parse(item.payload) as {
+        cloudScope?: { shopId?: string; userId?: string };
+      };
+      // A queued transaction is pending only for the Cloud identity that owned it when it was queued.
+      // Legacy/unscoped rows stay unverified rather than being attributed to the wrong account.
+      if (payload.cloudScope?.shopId !== scope.shopId || payload.cloudScope?.userId !== scope.userId) continue;
+    } catch {
+      continue;
+    }
+    if (item.type === 'sale_create' && item.id.startsWith('sale:')) {
+      pending.add(cloudRecordSyncKey('sale', item.id.slice('sale:'.length)));
+    } else if (item.type === 'purchase_receive' && item.id.startsWith('purchase-receive:')) {
+      pending.add(cloudRecordSyncKey('purchase', item.id.slice('purchase-receive:'.length)));
+    }
+  }
+  return pending;
+}
+
 /** Read per-record Cloud confirmations and pending queue IDs for the active Cloud shop/user only. */
 export function useCloudRecordSyncSnapshot(): CloudRecordSyncSnapshot {
   const [snapshot, setSnapshot] = useState<CloudRecordSyncSnapshot>(EMPTY_SNAPSHOT);
@@ -80,25 +106,7 @@ export function useCloudRecordSyncSnapshot(): CloudRecordSyncSnapshot {
           idbGetCloudRecordSyncStatuses(scope.shopId, scope.userId),
           idbListQueue(),
         ]);
-        const pending = new Set<string>();
-        for (const item of queue) {
-          if (item.type !== 'sale_create' && item.type !== 'purchase_receive') continue;
-          try {
-            const payload = JSON.parse(item.payload) as {
-              cloudScope?: { shopId?: string; userId?: string };
-            };
-            // A queued transaction is shown as pending only for the Cloud identity
-            // that owned it when it was queued. Legacy/unscoped rows remain unverified.
-            if (payload.cloudScope?.shopId !== scope.shopId || payload.cloudScope?.userId !== scope.userId) continue;
-          } catch {
-            continue;
-          }
-          if (item.type === 'sale_create' && item.id.startsWith('sale:')) {
-            pending.add(cloudRecordSyncKey('sale', item.id.slice('sale:'.length)));
-          } else if (item.type === 'purchase_receive' && item.id.startsWith('purchase-receive:')) {
-            pending.add(cloudRecordSyncKey('purchase', item.id.slice('purchase-receive:'.length)));
-          }
-        }
+        const pending = getPendingCloudRecordKeys(queue, scope);
         if (active && requestRevision === revision) setSnapshot({ ready: true, confirmed, pending });
       } catch {
         if (active && requestRevision === revision) setSnapshot({ ready: true, confirmed: {}, pending: new Set() });
