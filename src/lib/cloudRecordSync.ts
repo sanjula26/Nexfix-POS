@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { idbAcknowledgeCloudRecordQueue, idbGetCloudRecordSyncStatuses, idbListQueue, idbMarkCloudRecordSynced, idbMarkCloudRecordSyncRetry, type CloudRecordSyncEntry, type CloudRecordType, type QueueOp } from './db.ts';
 import { getCloudActivityScope, subscribeCloudActivity, type CloudActivityScope } from './cloudActivity.ts';
 
@@ -10,6 +10,29 @@ export interface CloudRecordSyncSnapshot {
 
 const EMPTY_SNAPSHOT: CloudRecordSyncSnapshot = { ready: false, confirmed: {}, pending: new Set() };
 const CHANGE_EVENT = 'nexfix:cloud-record-sync-changed';
+
+/** Stable identity for the Cloud tenant/user whose receipt metadata is being displayed. */
+export function cloudRecordScopeKey(scope: CloudActivityScope | null): string | null {
+  const shopId = scope?.shopId.trim();
+  const userId = scope?.userId.trim();
+  return shopId && userId
+    ? `${encodeURIComponent(shopId)}:${encodeURIComponent(userId)}`
+    : null;
+}
+
+/**
+ * Drop the previous account's receipt snapshot immediately after a scope switch.
+ * A new scope remains in CHECKING state until its own IndexedDB records are loaded.
+ */
+export function resetCloudRecordSyncSnapshotForScope(
+  previousScopeKey: string | null | undefined,
+  nextScopeKey: string | null,
+): CloudRecordSyncSnapshot | null {
+  if (previousScopeKey === nextScopeKey) return null;
+  return nextScopeKey === null
+    ? { ready: true, confirmed: {}, pending: new Set() }
+    : { ready: false, confirmed: {}, pending: new Set() };
+}
 
 export function cloudRecordSyncKey(type: CloudRecordType, recordId: string): string {
   return `${type}:${encodeURIComponent(recordId)}`;
@@ -143,14 +166,16 @@ export function useCloudRecordSyncSnapshot(): CloudRecordSyncSnapshot {
   useEffect(() => {
     let active = true;
     let revision = 0;
+    const scopeKeyRef = useRef<string | null | undefined>(undefined);
 
     const refresh = async () => {
       const requestRevision = ++revision;
       const scope = getCloudActivityScope();
-      if (!scope) {
-        if (active && requestRevision === revision) setSnapshot({ ready: true, confirmed: {}, pending: new Set() });
-        return;
-      }
+      const nextScopeKey = cloudRecordScopeKey(scope);
+      const resetSnapshot = resetCloudRecordSyncSnapshotForScope(scopeKeyRef.current, nextScopeKey);
+      scopeKeyRef.current = nextScopeKey;
+      if (resetSnapshot) setSnapshot(resetSnapshot);
+      if (!scope) return;
 
       try {
         const [confirmed, queue] = await Promise.all([
