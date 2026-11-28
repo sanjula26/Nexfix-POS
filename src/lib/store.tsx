@@ -2113,9 +2113,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
-    if (cloudRecordScope?.shopId === cloudShopId) {
-      void markCloudRecordSynced('sale', saleId, 'Cloud sale', cloudRecordScope);
-    }
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
       const tradeInCloud = await withCloudActivity('Trade-in unit', () => registerTradeInAtomic({
@@ -2128,6 +2125,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         serial: tradeIn.serial?.trim() || undefined,
       }), result => result.ok);
       if (!tradeInCloud.ok) throw new Error(tradeInCloud.error || 'Cloud trade-in could not be registered. The sale is committed; retry the bill to finish trade-in reconciliation.');
+    }
+    // Confirm the bill only after every required Cloud write for this checkout succeeds.
+    if (cloudRecordScope?.shopId === cloudShopId) {
+      void markCloudRecordSynced('sale', saleId, 'Cloud sale', cloudRecordScope);
     }
 
     const row = committed.sale;
