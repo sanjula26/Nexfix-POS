@@ -72,13 +72,13 @@ export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:st
   const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
-export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
+export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
 export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');notifyCloudRecordSyncChanged();}
-export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
-export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
-export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
-export async function queueSaleReversalRejection(requestId:string,note?:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_reject',id:`sale-reversal-reject:${requestId}`,payload:JSON.stringify({requestId,note})});if(!queued)throw new Error('Local sync storage is unavailable; reversal rejection was not queued safely.');}
+export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
+export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
+export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
+export async function queueSaleReversalRejection(requestId:string,note?:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_reject',id:`sale-reversal-reject:${requestId}`,payload:JSON.stringify({requestId,note,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; reversal rejection was not queued safely.');}
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
@@ -431,9 +431,19 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='repair_delivery'){
         try{
-          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string};
+          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await processRepairDeliveryAtomic({shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,repair:parsed.repair});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
@@ -443,9 +453,19 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_reversal_request'){
         try{
-          const parsed=JSON.parse(op.payload) as {requestId:string;input:{saleId:string;reason:string}};
+          const parsed=JSON.parse(op.payload) as {requestId:string;input:{saleId:string;reason:string};cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await requestSaleReversal({shopId:shop.shopId,requestId:parsed.requestId,saleId:parsed.input.saleId,reason:parsed.input.reason});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
@@ -455,9 +475,19 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_reversal_approve'){
         try{
-          const parsed=JSON.parse(op.payload) as {requestId:string};
+          const parsed=JSON.parse(op.payload) as {requestId:string;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await approveSaleReversal({shopId:shop.shopId,requestId:parsed.requestId});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
@@ -467,9 +497,19 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='sale_reversal_reject'){
         try{
-          const parsed=JSON.parse(op.payload) as {requestId:string;note?:string};
+          const parsed=JSON.parse(op.payload) as {requestId:string;note?:string;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await rejectSaleReversal({shopId:shop.shopId,requestId:parsed.requestId,note:parsed.note});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
@@ -479,11 +519,25 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='return_create'){
         try{
-          const parsed=JSON.parse(op.payload) as {returnId:string;input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}};
+          const parsed=JSON.parse(op.payload) as {returnId:string;input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>};cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const resolved=await resolveSaleReturnLines({shopId:shop.shopId,saleId:parsed.input.saleId,lines:parsed.input.lines});
           if(!resolved.ok || !resolved.lines) break;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await processSaleReturnAtomic({shopId:shop.shopId,returnId:parsed.returnId,saleId:parsed.input.saleId,reason:parsed.input.reason,mode:parsed.input.mode,paymentMethod:parsed.input.paymentMethod,lines:resolved.lines});
           if(!result.ok) break;
           acknowledged.push(op.id); flushed++;
