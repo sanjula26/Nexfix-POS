@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getCloudActivityScope, withCloudActivity } from './cloudActivity';
+import { withCloudActivity } from './cloudActivity';
 import { markCloudRecordSynced } from './cloudRecordSync';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
@@ -1874,7 +1874,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     // Capture the validated non-empty shop ID before entering async callbacks.
     const cloudShopId = shop.shopId;
-    const cloudRecordScope = getCloudActivityScope();
+    const cloudRecordScope = shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null;
     const branchResolution = await resolveCloudBranchId(
       shop.shopId,
       getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
@@ -2635,7 +2635,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
-        const cloudRecordScope = getCloudActivityScope();
+        const cloudRecordScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
         const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
           shopId: shop.shopId!,
           branchId: receiveBranchId,
