@@ -848,23 +848,40 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (expectedRole && u.role !== expectedRole) return { ok: false, error: `This account is registered as ${u.role === 'admin' ? 'Admin' : 'Cashier'}. Select the matching login role.` };
     const needsUpgrade = !isPasswordHash(u.password);
     const upgradedPassword = needsUpgrade ? await hashPasswordAsync(password) : u.password;
-    const nextUser = needsUpgrade ? { ...u, password: upgradedPassword } : u;
-    if (needsUpgrade) {
-      const nextUsers = users.map(x => x.id === u.id ? nextUser : x);
-      stateRef.current = { ...stateRef.current, users: nextUsers };
-    }
-    const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
-    const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
-    const latestSignedInUser = stateRef.current.users.find(x => x.id === u!.id);
-    if (!latestSignedInUser || latestSignedInUser.password !== upgradedPassword || !latestSignedInUser.active || latestSignedInUser.role !== u!.role) {
+    const latestStateBeforeCommit = stateRef.current;
+    const latestSignedInUser = latestStateBeforeCommit.users.find(x => x.id === u.id);
+    if (!latestSignedInUser || latestSignedInUser.password !== u.password
+      || !latestSignedInUser.active || latestSignedInUser.role !== u.role) {
       return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
     }
-    setState(s => ({
-      ...s,
-      users: needsUpgrade ? s.users.map(x => x.id === u!.id && x.password === u!.password && x.active && x.role === u!.role ? nextUser : x) : s.users,
-      settings: pinWasUnset && !s.settings.adminPinHash ? { ...s.settings, adminPinHash: initialAdminPinHash } : s.settings,
-      audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
-    }));
+
+    const pinWasUnset = !latestStateBeforeCommit.settings?.adminPinHash && latestSignedInUser.role === 'admin';
+    const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
+    const latestState = stateRef.current;
+    const accountAtCommit = latestState.users.find(x => x.id === u.id);
+    if (!accountAtCommit || accountAtCommit.password !== u.password
+      || !accountAtCommit.active || accountAtCommit.role !== u.role) {
+      return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
+    }
+
+    const nextState: POSState = {
+      ...latestState,
+      users: needsUpgrade
+        ? latestState.users.map(x => x.id === u.id && x.password === u.password && x.active && x.role === u.role
+          ? { ...x, password: upgradedPassword }
+          : x)
+        : latestState.users,
+      settings: pinWasUnset && !latestState.settings.adminPinHash
+        ? { ...latestState.settings, adminPinHash: initialAdminPinHash }
+        : latestState.settings,
+      audit: [{
+        id: uid(), time: new Date().toISOString(), user: accountAtCommit.email,
+        action: 'LOGIN', entity: 'Auth',
+        details: `${accountAtCommit.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}`,
+      }, ...(latestState.audit || [])].slice(0, 500),
+    };
+    stateRef.current = nextState;
+    setState(nextState);
 
     const sess = { userId: nextUser.id, remember };
     loginAtRef.current = Date.now();
