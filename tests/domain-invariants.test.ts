@@ -603,6 +603,32 @@ test('stale branch stock conflict invalidates only the affected cached product',
   }
 });
 
+
+test('async sensitive admin re-auth is invalidated on logout and role switch', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+
+  assert.ok(storeSource.includes('const clearSensitiveAdminAuthorization = useCallback(() => {'));
+  const clearStart = storeSource.indexOf('const clearSensitiveAdminAuthorization = useCallback(() => {');
+  const clearEnd = storeSource.indexOf('  }, []);', clearStart);
+  assert.ok(clearEnd > clearStart);
+  const clearBody = storeSource.slice(clearStart, clearEnd);
+  assert.ok(clearBody.includes('sensitiveAuthRef.current = null;'));
+  assert.ok(clearBody.includes('resolver(false);'));
+  assert.ok(clearBody.includes('sensitiveAdminResolverRef.current = null;'));
+  assert.ok(clearBody.includes('setSensitiveAdminPrompt(null);'));
+
+  const signOutStart = storeSource.indexOf('const signOut = useCallback(');
+  const signOutEnd = storeSource.indexOf('// Role switches create a real authenticated session', signOutStart);
+  assert.ok(signOutStart >= 0 && signOutEnd > signOutStart);
+  assert.ok(storeSource.slice(signOutStart, signOutEnd).includes('clearSensitiveAdminAuthorization();'));
+
+  const roleSwitchStart = storeSource.indexOf('const switchRole = useCallback(');
+  const roleSwitchEnd = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart);
+  assert.ok(roleSwitchStart >= 0 && roleSwitchEnd > roleSwitchStart);
+  assert.ok(storeSource.slice(roleSwitchStart, roleSwitchEnd).includes('clearSensitiveAdminAuthorization();'));
+});
+
+
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
