@@ -1388,3 +1388,104 @@ test('cloud sync conflicts take precedence over pending labels and disable retry
   assert.ok(layoutSource.indexOf(conflictTitle) >= 0, 'conflict title must be present');
   assert.ok(layoutSource.indexOf(conflictTitle) < layoutSource.indexOf(issueTitle), 'conflict must take precedence over the generic issue title');
 });
+
+
+test('sale return, reversal and trade-in cloud writes require registered device branch scope', () => {
+  const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  const returnStart = cloudSyncSource.indexOf('export async function processSaleReturnAtomic');
+  const reversalStart = cloudSyncSource.indexOf('export async function requestSaleReversal');
+  const tradeInStart = cloudSyncSource.indexOf('export async function registerTradeInAtomic');
+  assert.ok(returnStart >= 0 && reversalStart >= 0 && tradeInStart >= 0);
+
+  const returnSource = cloudSyncSource.slice(returnStart, cloudSyncSource.indexOf('export async function receivePurchaseAtomic', returnStart));
+  const reversalSource = cloudSyncSource.slice(reversalStart, cloudSyncSource.indexOf('export async function approveSaleReversal', reversalStart));
+  const tradeInSource = cloudSyncSource.slice(tradeInStart, cloudSyncSource.indexOf('export async function resolveCloudSaleIdByBillNo', tradeInStart));
+
+  assert.ok(returnSource.includes("process_sale_return_atomic_for_device_branch"));
+  assert.ok(returnSource.includes('p_device_id: deviceId()'));
+  assert.ok(reversalSource.includes("request_sale_reversal_for_device_branch"));
+  assert.ok(reversalSource.includes('p_device_id: deviceId()'));
+  assert.ok(tradeInSource.includes("register_trade_in_atomic_for_device_branch"));
+  assert.ok(tradeInSource.includes('p_device_id: deviceId()'));
+
+  const billResolverSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function resolveCloudSaleIdByBillNo'),
+    cloudSyncSource.indexOf('export async function resolveSaleReturnLines'),
+  );
+  const itemResolverSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function resolveSaleReturnLines'),
+    cloudSyncSource.indexOf('export async function requestSaleReversal'),
+  );
+  assert.ok(billResolverSource.includes("resolve_sale_return_target_for_device_branch"));
+  assert.ok(billResolverSource.includes('p_device_id: deviceId()'));
+  assert.ok(itemResolverSource.includes("resolve_sale_return_items_for_device_branch"));
+  assert.ok(itemResolverSource.includes('p_device_id: deviceId()'));
+
+  const reversalListSource = cloudSyncSource.slice(
+    cloudSyncSource.indexOf('export async function listSaleReversalRequests'),
+    cloudSyncSource.indexOf('export async function processSaleReturnAtomic'),
+  );
+  assert.ok(reversalListSource.includes("list_sale_reversal_requests_for_device_branch"));
+  assert.ok(reversalListSource.includes('p_device_id: deviceId()'));
+
+  const migration = readFileSync(new URL('../supabase/migrations/20261128150000_enforce_sale_return_reversal_tradein_branch_binding.sql', import.meta.url), 'utf8');
+  const databaseTests = readFileSync(new URL('../supabase/tests/sale-branch-device-guard.test.sql', import.meta.url), 'utf8');
+  for (const expected of [
+    'private.assert_pos_device_can_access_sale',
+    'pd.user_id = v_uid',
+    'pd.revoked_at is null',
+    'for share',
+    'v_device_branch_id is distinct from v_sale_branch_id',
+    'public.process_sale_return_atomic_for_device_branch',
+    'public.register_trade_in_atomic_for_device_branch',
+    'public.request_sale_reversal_for_device_branch',
+    'private.resolve_sale_return_target_for_device_branch',
+    'private.resolve_sale_return_items_for_device_branch',
+    'private.list_sale_reversal_requests_for_device_branch',
+    'public.list_sale_reversal_requests_for_device_branch',
+    'v_role = \'admin\' or s.branch_id = v_branch_id',
+    'public.resolve_sale_return_target_for_device_branch',
+    'public.resolve_sale_return_items_for_device_branch',
+    'revoke all on function private.resolve_sale_return_target(text)',
+    'revoke all on function private.resolve_sale_return_items(uuid, uuid, jsonb)',
+    'This Nexfix POS client is outdated. Update the POS before looking up a Cloud return bill.',
+    'This Nexfix POS client is outdated. Update the POS before looking up Cloud return items.',
+    'revoke all on function private.process_sale_return_atomic',
+    'revoke all on function private.register_trade_in_atomic',
+    'revoke all on function private.request_sale_reversal',
+    'security invoker',
+    "notify pgrst, 'reload schema'",
+  ]) {
+    assert.ok(migration.includes(expected), `branch transaction migration must include: ${expected}`);
+  }
+  assert.ok(!migration.includes('create table'), 'branch transaction guard must not add a table');
+  assert.ok(!migration.includes('alter table'), 'branch transaction guard must not add a column');
+  for (const expected of [
+    'a Branch A device cannot access a Branch B sale',
+    'the public sale-return RPC rejects a cross-branch sale',
+    'the public trade-in RPC rejects a cross-branch sale',
+    'the public reversal-request RPC rejects a cross-branch sale',
+    'a revoked device is rejected',
+    'a stale conflicting branch assignment is rejected',
+    'the old sale-return RPC fails closed with an upgrade message',
+    'a Branch A device cannot resolve a Branch B bill number',
+    'a Branch A device cannot resolve items for a Branch B sale',
+    'the old bill-number resolver fails closed with an upgrade message',
+    'the old return-item resolver fails closed with an upgrade message',
+    'a Branch A manager sees only Branch A reversal requests',
+    'a registered Cloud admin can see all branch reversal requests',
+    'the old shop-wide reversal list fails closed with an upgrade message',
+  ]) {
+    assert.ok(databaseTests.includes(expected), `database regression must cover: ${expected}`);
+  }
+});
+
+
+test('Supabase local database CI pins a stable CLI version without latest-release lookup', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/database-tests.yml', import.meta.url), 'utf8');
+  assert.ok(workflow.includes('uses: supabase/setup-cli@v3.2.0'));
+  assert.ok(workflow.includes('version: 3.4.0'));
+  assert.ok(!workflow.includes('version: latest'));
+  assert.ok(workflow.includes('supabase db reset --local --no-seed'));
+  assert.ok(workflow.includes('supabase test db --local'));
+});
