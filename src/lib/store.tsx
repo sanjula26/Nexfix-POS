@@ -3560,8 +3560,12 @@ const deletePurchase = useCallback((id: string) => {
   }, [pushAudit, user, confirmSensitiveAdmin]);
 
   const updateSettings = useCallback((patch: Partial<Settings>) => {
-    if (!user || user.role !== 'admin') {
+    if (!user || user.role !== 'admin' || sessionRef.current?.userId !== user.id) {
       pushAudit('DENIED', 'Settings', `Blocked settings update: ${Object.keys(patch).join(', ')}`);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'adminPinHash')) {
+      pushAudit('DENIED', 'Security', 'Blocked direct Admin PIN hash update; use the guarded PIN change flow');
       return;
     }
     const nextState = {
