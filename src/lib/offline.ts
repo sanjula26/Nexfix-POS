@@ -83,6 +83,19 @@ export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 
+/** Legacy queue rows lack the original cloud user. Re-verify the same authenticated
+ * membership after the positive write and record the receipt under that uploader,
+ * never by guessing which user created the old local record. */
+async function reverifyLegacyReceiptScope(
+  expectedScope: { shopId: string; userId: string } | null,
+): Promise<{ shopId: string; userId: string } | null> {
+  if (!expectedScope?.shopId || !expectedScope.userId) return null;
+  const current = await ensureCloudShop('Nexfix Shop');
+  if (!current.ok || !current.shopId || !current.userId ||
+      current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId) return null;
+  return { shopId: current.shopId, userId: current.userId };
+}
+
 /** Flush normalized transactions first, then legacy snapshot writes. */
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
   if(flushInFlight) return flushInFlight;
@@ -248,21 +261,25 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             }
           }
           const activeScope = getCloudActivityScope();
-          if (parsed.cloudScope) {
-            if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
-              await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
-              break;
-            }
-            const saved = await acknowledgeCloudRecordQueue(
-              activeScope, 'sale', parsed.saleId, op.id, 'Offline sale sync',
-            );
-            if (!saved) {
-              await markRetry('Cloud accepted the sale, but this PC could not save its receipt. The queue was kept for retry.');
-              break;
-            }
-          } else {
-            // Legacy queue rows predate per-record receipts; preserve replay without inventing confirmation.
-            await idbAcknowledgeQueue([op.id]);
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
+            break;
+          }
+          // For legacy rows, the original user cannot be recovered. Only attach a
+          // positive receipt after re-verifying that the same shop/user still owns this
+          // completed upload. The server response remains the proof of Sale acceptance.
+          const receiptScope = parsed.cloudScope
+            ? activeScope
+            : await reverifyLegacyReceiptScope(verifiedScope);
+          if (!receiptScope) break;
+          const saved = await acknowledgeCloudRecordQueue(
+            receiptScope, 'sale', parsed.saleId, op.id, 'Offline sale sync',
+          );
+          if (!saved) {
+            const reason = 'Cloud accepted the sale, but this PC could not save its receipt. The queue was kept for retry.';
+            if (parsed.cloudScope) await markRetry(reason);
+            else await markCloudRecordSyncRetry('sale', parsed.saleId, 'Offline sale sync', reason, receiptScope);
+            break;
           }
           flushed++;
           continue;
@@ -324,21 +341,24 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             break;
           }
           const activeScope = getCloudActivityScope();
-          if (parsed.cloudScope) {
-            if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
-              await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
-              break;
-            }
-            const saved = await acknowledgeCloudRecordQueue(
-              activeScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync',
-            );
-            if (!saved) {
-              await markRetry('Cloud accepted the GRN, but this PC could not save its receipt. The queue was kept for retry.');
-              break;
-            }
-          } else {
-            // Legacy queue rows predate per-record receipts; preserve replay without inventing confirmation.
-            await idbAcknowledgeQueue([op.id]);
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
+            break;
+          }
+          // Attribute a legacy GRN receipt only to the same freshly re-verified
+          // Cloud shop/user that completed this upload; never invent its old scope.
+          const receiptScope = parsed.cloudScope
+            ? activeScope
+            : await reverifyLegacyReceiptScope(verifiedScope);
+          if (!receiptScope) break;
+          const saved = await acknowledgeCloudRecordQueue(
+            receiptScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync',
+          );
+          if (!saved) {
+            const reason = 'Cloud accepted the GRN, but this PC could not save its receipt. The queue was kept for retry.';
+            if (parsed.cloudScope) await markRetry(reason);
+            else await markCloudRecordSyncRetry('purchase', parsed.purchaseId, 'Offline GRN sync', reason, receiptScope);
+            break;
           }
           flushed++;
           continue;
