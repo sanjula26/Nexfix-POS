@@ -1139,10 +1139,12 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
 
   const assertLegacyQueueBlocked = (source: string, kind: 'Sale' | 'GRN') => {
-    const scopeGuard = source.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) break;');
+    const scopeGuard = source.indexOf('if (!hasCloudRecordScope(parsed.cloudScope)) {');
+    const blockFlag = source.indexOf('blockedUnscopedLegacyWrite = true;', scopeGuard);
+    const stop = source.indexOf('break;', blockFlag);
     const cloudShop = source.indexOf("ensureCloudShop('Nexfix Shop')");
-    assert.ok(scopeGuard >= 0 && cloudShop > scopeGuard,
-      `${kind} legacy rows without an original shop/user must stop before Cloud shop resolution`);
+    assert.ok(scopeGuard >= 0 && blockFlag > scopeGuard && stop > blockFlag && cloudShop > stop,
+      `${kind} legacy rows must set the blocked flag and stop before Cloud shop resolution`);
     assert.ok(!source.includes('reverifyLegacyReceiptScope'),
       `${kind} replay must not treat the current uploader as proof of the old queue row's ownership`);
     assert.ok(source.includes('const receiptScope = activeScope;'),
