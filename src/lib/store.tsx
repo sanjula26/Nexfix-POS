@@ -645,8 +645,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
     const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
     const storedPinHash = adminSnapshot.adminPinHash;
-    let matchingAdmin: AppUser | null = null;
-    let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+    type AdminUnlockVerification =
+      | { kind: 'admin-password'; admin: AppUser }
+      | { kind: 'admin-pin'; verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> };
+    const verificationResult: { value: AdminUnlockVerification | null } = { value: null };
     const attempt = await runLocalAuthAttempt(async () => {
       if (current.role === 'admin') {
         let ownAdminOk = false;
@@ -656,10 +658,11 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             : credential === initiatingUser.password;
         } catch { ownAdminOk = false; }
         if (ownAdminOk) {
-          matchingAdmin = initiatingUser;
+          verificationResult.value = { kind: 'admin-password', admin: initiatingUser };
           return true;
         }
       }
+
       const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async admin => {
         try {
           return isHashed(admin.password)
@@ -667,12 +670,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             : credential === admin.password;
         } catch { return false; }
       });
-      matchingAdmin = matchedAdmin;
-      if (matchedAdmin) return true;
+      if (matchedAdmin) {
+        verificationResult.value = { kind: 'admin-password', admin: matchedAdmin };
+        return true;
+      }
+
       try {
-        pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
-        return pinVerification.valid;
-      } catch { return false; }
+        const pinVerification = await verifyPasswordWithLegacyUpgrade(credential, storedPinHash);
+        if (pinVerification.valid) {
+          verificationResult.value = { kind: 'admin-pin', verification: pinVerification };
+          return true;
+        }
+      } catch { /* an invalid or unreadable PIN must not unlock the session */ }
+      verificationResult.value = null;
+      return false;
     });
     if (!attempt.success) {
       pushAudit('DENIED', 'Auth', attempt.allowed
@@ -684,11 +695,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
     if (!latestInitiator || !latestInitiator.active || latestInitiator.role !== initiatingUser.role
       || latestInitiator.password !== initiatingUser.password || latestInitiator.mustChangePassword) return false;
-    if (matchingAdmin) {
-      const latestAdmin = findActiveAdminById(stateRef.current, matchingAdmin.id);
-      if (!latestAdmin || latestAdmin.password !== matchingAdmin.password) return false;
+    const verified = verificationResult.value;
+    if (!verified) return false;
+    if (verified.kind === 'admin-password') {
+      const latestAdmin = findActiveAdminById(stateRef.current, verified.admin.id);
+      if (!latestAdmin || latestAdmin.password !== verified.admin.password) return false;
+    } else if (verified.verification.upgradedHash
+      && !commitAdminPinHashIfCurrent(storedPinHash, verified.verification.upgradedHash)) {
+      return false;
     }
-    if (pinVerification.upgradedHash && !commitAdminPinHashIfCurrent(storedPinHash, pinVerification.upgradedHash)) return false;
     loginAtRef.current = Date.now();
     pushAudit('UNLOCK', 'Auth', 'Session unlocked after administrator credential verification');
     return true;
@@ -1052,13 +1067,19 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (!activeAdmins.length) return { ok: false, error: 'No active administrator account exists' };
         const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
         adminPinHashSnapshot = adminSnapshot.adminPinHash;
-        let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
-        let matchingAdmin: AppUser | null = null;
+        type AdminSwitchVerification =
+          | { kind: 'admin-pin'; verification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> }
+          | { kind: 'admin-password'; admin: AppUser };
+        const verificationResult: { value: AdminSwitchVerification | null } = { value: null };
         const attempt = await runLocalAuthAttempt(async () => {
           try {
-            pinVerification = await verifyPasswordWithLegacyUpgrade(secret, adminSnapshot.adminPinHash);
-            if (pinVerification.valid) return true;
+            const pinVerification = await verifyPasswordWithLegacyUpgrade(secret, adminSnapshot.adminPinHash);
+            if (pinVerification.valid) {
+              verificationResult.value = { kind: 'admin-pin', verification: pinVerification };
+              return true;
+            }
           } catch { /* check the active admin login credentials next */ }
+
           const matchedAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
             try {
               return isHashed(candidate.password)
@@ -1066,8 +1087,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
                 : verifyPassword(secret, candidate.password || '');
             } catch { return false; }
           });
-          matchingAdmin = matchedAdmin;
-          return !!matchedAdmin;
+          if (!matchedAdmin) {
+            verificationResult.value = null;
+            return false;
+          }
+          verificationResult.value = { kind: 'admin-password', admin: matchedAdmin };
+          return true;
         });
         if (!attempt.success) {
           setState(st => ({ ...st, audit: [{
@@ -1085,11 +1110,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) {
           return { ok: false, error: 'Administrator accounts changed during verification. Please try again.' };
         }
-        if (pinVerification.valid) {
-          adminPinUpgradeHash = pinVerification.upgradedHash;
+        const verified = verificationResult.value;
+        if (!verified) return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+        if (verified.kind === 'admin-pin') {
+          adminPinUpgradeHash = verified.verification.upgradedHash;
           target = findActiveAdminById(stateRef.current, activeAdmins[0].id) || undefined;
-        } else if (matchingAdmin) {
-          target = findActiveAdminById(stateRef.current, matchingAdmin.id) || undefined;
+        } else {
+          target = findActiveAdminById(stateRef.current, verified.admin.id) || undefined;
+          if (!target || target.password !== verified.admin.password) {
+            return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+          }
         }
         if (!target) return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
         targetPasswordSnapshot = target.password;
