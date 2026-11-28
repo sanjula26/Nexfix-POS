@@ -1388,3 +1388,46 @@ test('cloud sync conflicts take precedence over pending labels and disable retry
   assert.ok(layoutSource.indexOf(conflictTitle) >= 0, 'conflict title must be present');
   assert.ok(layoutSource.indexOf(conflictTitle) < layoutSource.indexOf(issueTitle), 'conflict must take precedence over the generic issue title');
 });
+
+
+test('default branch recovery is read-only for non-admin Cloud members', () => {
+  const migration = readFileSync(
+    new URL('../supabase/migrations/20261128193000_limit_default_branch_recovery_to_admin.sql', import.meta.url),
+    'utf8',
+  );
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8');
+  const databaseTest = readFileSync(
+    new URL('../supabase/tests/ensure-default-branch-role-guard.test.sql', import.meta.url),
+    'utf8',
+  );
+
+  assert.ok(migration.includes("if v_role not in ('admin', 'manager')"));
+  assert.ok(migration.includes("and b.active = true"));
+  assert.ok(migration.includes("'read_only', true"));
+  assert.ok(migration.includes('No active branch is configured. Ask a Cloud Admin or Manager'));
+  assert.ok(migration.includes('set search_path = \'\''));
+  assert.ok(migration.includes('revoke all on function public.ensure_default_branch(uuid) from public, anon'));
+  assert.ok(migration.includes('grant execute on function public.ensure_default_branch(uuid) to authenticated'));
+  assert.ok(!migration.toLowerCase().includes('create table'));
+  assert.ok(!migration.toLowerCase().includes('alter table'));
+
+  assert.ok(settingsSource.includes("supabase.rpc('ensure_default_branch'"));
+  for (const expected of [
+    'cashier cannot reactivate the inactive Main branch',
+    'cashier cannot restore Main when the shop has no active branches',
+    'manager can recover the Main branch when no active branch exists',
+    'admin can recover an inactive default branch',
+    'cashier branch lookup does not initialize stock for the inactive Main branch',
+  ]) {
+    assert.ok(databaseTest.includes(expected), `database regression must cover: ${expected}`);
+  }
+});
+
+test('Supabase local database CI pins a stable CLI version without latest-release lookup', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/database-tests.yml', import.meta.url), 'utf8');
+  assert.ok(workflow.includes('uses: supabase/setup-cli@v3.2.0'));
+  assert.ok(workflow.includes('version: 3.4.0'));
+  assert.ok(!workflow.includes('version: latest'));
+  assert.ok(workflow.includes('supabase db reset --local --no-seed'));
+  assert.ok(workflow.includes('supabase test db --local'));
+});
