@@ -17,6 +17,10 @@ interface GuardStorage {
 }
 
 const STORAGE_KEY = 'nexfix_local_auth_guard_v1';
+export type LocalAuthAttemptScope = 'admin' | 'cashier-unlock';
+const storageKeyForScope = (scope: LocalAuthAttemptScope): string => scope === 'admin'
+  ? STORAGE_KEY
+  : `${STORAGE_KEY}_${scope}`;
 const MAX_FAILURES = 5;
 const BASE_LOCK_MS = 15_000;
 const MAX_LOCK_MS = 300_000;
@@ -39,9 +43,10 @@ export const createLocalAuthGuard = (
   storage: GuardStorage,
   now: () => number = () => Date.now(),
   makeId: () => string = () => globalThis.crypto.randomUUID(),
+  storageKey: string = STORAGE_KEY,
 ) => {
   const read = (): GuardState => {
-    const raw = storage.getItem(STORAGE_KEY);
+    const raw = storage.getItem(storageKey);
     if (!raw) return emptyState();
     try {
       const value = JSON.parse(raw) as Partial<GuardState>;
@@ -59,11 +64,11 @@ export const createLocalAuthGuard = (
       };
     } catch {
       const locked = { version: 1 as const, failures: MAX_FAILURES, lockedUntil: now() + MAX_LOCK_MS, pending: null };
-      try { storage.setItem(STORAGE_KEY, JSON.stringify(locked)); } catch { /* remain fail-closed if storage is unavailable */ }
+      try { storage.setItem(storageKey, JSON.stringify(locked)); } catch { /* remain fail-closed if storage is unavailable */ }
       return locked;
     }
   };
-  const write = (state: GuardState) => storage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const write = (state: GuardState) => storage.setItem(storageKey, JSON.stringify(state));
 
   return {
     begin() {
@@ -95,18 +100,20 @@ export const createLocalAuthGuard = (
 };
 
 type DesktopAuthBridge = {
-  beginLocalAuthAttempt?: () => Promise<{ ok: boolean; attemptId?: string; retryAfterMs?: number; error?: string }>;
-  completeLocalAuthAttempt?: (payload: { attemptId: string; success: boolean }) => Promise<{ ok: boolean }>;
+  beginLocalAuthAttempt?: (scope: LocalAuthAttemptScope) => Promise<{ ok: boolean; attemptId?: string; retryAfterMs?: number; error?: string }>;
+  completeLocalAuthAttempt?: (payload: { scope: LocalAuthAttemptScope; attemptId: string; success: boolean }) => Promise<{ ok: boolean }>;
 };
 
-let browserGuard: ReturnType<typeof createLocalAuthGuard> | null = null;
+const browserGuards = new Map<LocalAuthAttemptScope, ReturnType<typeof createLocalAuthGuard>>();
 
-const getBrowserGuard = () => {
-  if (!browserGuard) {
+const getBrowserGuard = (scope: LocalAuthAttemptScope) => {
+  let guard = browserGuards.get(scope);
+  if (!guard) {
     if (typeof window === 'undefined' || !window.localStorage) throw new Error('Local authentication guard is unavailable');
-    browserGuard = createLocalAuthGuard(window.localStorage);
+    guard = createLocalAuthGuard(window.localStorage, undefined, undefined, storageKeyForScope(scope));
+    browserGuards.set(scope, guard);
   }
-  return browserGuard;
+  return guard;
 };
 
 /**
@@ -115,20 +122,21 @@ const getBrowserGuard = () => {
  */
 export const runLocalAuthAttempt = async (
   verify: () => Promise<boolean> | boolean,
+  scope: LocalAuthAttemptScope = 'admin',
 ): Promise<LocalAuthAttemptResult> => {
   let attemptId = '';
   let finish: (success: boolean) => Promise<boolean>;
   try {
     const bridge = (window as Window & { nexfixDesktop?: DesktopAuthBridge }).nexfixDesktop;
     if (bridge?.beginLocalAuthAttempt && bridge.completeLocalAuthAttempt) {
-      const begun = await bridge.beginLocalAuthAttempt();
+      const begun = await bridge.beginLocalAuthAttempt(scope);
       if (!begun?.ok || !begun.attemptId) {
         return { allowed: false, success: false, retryAfterMs: Math.max(1000, begun?.retryAfterMs || 30_000) };
       }
       attemptId = begun.attemptId;
-      finish = async success => (await bridge.completeLocalAuthAttempt!({ attemptId, success }))?.ok === true;
+      finish = async success => (await bridge.completeLocalAuthAttempt!({ scope, attemptId, success }))?.ok === true;
     } else {
-      const guard = getBrowserGuard();
+      const guard = getBrowserGuard(scope);
       const begun = guard.begin();
       if (!begun.ok) return { allowed: false, success: false, retryAfterMs: begun.retryAfterMs };
       attemptId = begun.attemptId;
