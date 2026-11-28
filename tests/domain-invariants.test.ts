@@ -679,6 +679,19 @@ test('catalog sync cache separates shops, users, branches and changed fingerprin
 });
 
 
+test('per-record Cloud receipts use the authenticated shop membership user, not a stale UI scope', () => {
+  const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+
+  assert.match(cloudSyncSource, /ensureCloudShop[\\s\\S]*?userId\\?: string/);
+  assert.equal((cloudSyncSource.match(/userId: sessionData\\.session\\.user\\.id/g) || []).length, 2);
+  assert.ok(storeSource.includes("shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null"));
+  assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
+  assert.ok(offlineSource.includes("parsed.cloudScope.userId !== shop.userId"));
+  assert.ok(!storeSource.includes('getCloudActivityScope'));
+});
+
 test('per-record Cloud pending markers never leak across shops or Cloud users', () => {
   const queue: QueueOp[] = [
     { id: 'sale:sale-a', ts: '2026-11-28T04:00:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-a' } }) },
