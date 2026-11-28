@@ -996,6 +996,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
     stateRef.current = nextState;
     setState(current => replaceUserPasswordIfCurrent(current, currentUserSnapshot, hashed) || current);
+    if (currentUserSnapshot.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
     return { ok: true };
   }, [user, pushAudit]);
@@ -1019,6 +1020,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!nextState) return { ok: false, error: 'Account credentials changed during password update. Please try again.' };
     stateRef.current = nextState;
     setState(current => replaceUserPasswordIfCurrent(current, target, hashed, adminSnapshot) || current);
+    if (target.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
   }, [user, pushAudit]);
@@ -3451,6 +3453,7 @@ const deletePurchase = useCallback((id: string) => {
     }
     stateRef.current = nextState;
     setState(current => saveManagedUserIfCurrent(current, adminSnapshot, targetSnapshot, toSave) || current);
+    if (targetSnapshot?.role === 'admin' || toSave.role === 'admin') sensitiveAuthRef.current = null;
     const exists = Boolean(targetSnapshot);
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${toSave.name} (${toSave.role})`);
     return { ok: true };
@@ -3464,6 +3467,7 @@ const deletePurchase = useCallback((id: string) => {
     if (!(await confirmSensitiveAdmin('user activation change'))) return;
     const u = state.users.find(x => x.id === id);
     setState(s => ({ ...s, users: s.users.map(x => (x.id === id ? { ...x, active: !x.active } : x)) }));
+    if (u?.role === 'admin') sensitiveAuthRef.current = null;
     if (u) pushAudit('UPDATE', 'User', `${u.active ? 'Deactivated' : 'Activated'} user ${u.name}`);
   }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
 
@@ -3476,6 +3480,7 @@ const deletePurchase = useCallback((id: string) => {
     const u = state.users.find(x => x.id === id);
     if (!u || u.id === user?.id) return;
     setState(s => ({ ...s, users: s.users.filter(x => x.id !== id) }));
+    if (u.role === 'admin') sensitiveAuthRef.current = null;
     pushAudit('DELETE', 'User', `Deleted user ${u.name}`);
   }, [state.users, user?.id, pushAudit, user, confirmSensitiveAdmin]);
 
