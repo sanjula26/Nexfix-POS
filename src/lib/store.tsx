@@ -775,6 +775,16 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     setSensitiveAdminPrompt(null);
   }, [pushAudit]);
+
+  const clearSensitiveAdminAuthorization = useCallback(() => {
+    sensitiveAuthRef.current = null;
+    const resolver = sensitiveAdminResolverRef.current;
+    if (resolver) {
+      resolver(false);
+      sensitiveAdminResolverRef.current = null;
+    }
+    setSensitiveAdminPrompt(null);
+  }, []);
   const toggleTheme = useCallback(() => setDark(d => !d), []);
 
 
@@ -978,9 +988,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     if (user) pushAudit('LOGOUT', 'Auth', `${user.name} signed out`);
-    sensitiveAuthRef.current = null;
+    clearSensitiveAdminAuthorization();
     setSession(null);
-    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit]);
+    try { localStorage.removeItem(SESSION_KEY); sessionStorage.removeItem(SESSION_KEY); sessionStorage.removeItem('nexfix_prev_user'); } catch { /* ignore */ }  }, [user, pushAudit, clearSensitiveAdminAuthorization]);
 
   // Role switches create a real authenticated session; App.tsx enforces mustChangePassword on the target user.
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
@@ -1096,7 +1106,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password) {
         return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
       }
-      sensitiveAuthRef.current = null;
+      clearSensitiveAdminAuthorization();
 
       const prev = session ? loadSession() : null;
       const sess = { userId: target.id, remember: prev?.remember ?? true };
@@ -1115,7 +1125,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }));
       return { ok: true };
     });
-  }, [state.users, session, user, commitAdminPinHashIfCurrent]);
+  }, [state.users, session, user, commitAdminPinHashIfCurrent, clearSensitiveAdminAuthorization]);
   const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
