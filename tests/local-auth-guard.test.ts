@@ -74,6 +74,44 @@ test('corrupt browser guard state fails closed instead of resetting attempts', (
 });
 
 
+
+test('Admin and cashier idle-unlock guards keep independent persistent failure counters', () => {
+  const values = new Map<string, string>();
+  let now = 10_000;
+  let id = 0;
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+  const nextId = () => 'scoped-attempt-' + (++id);
+  const admin = createLocalAuthGuard(storage, () => now, nextId, 'nexfix_local_auth_guard_v1');
+  const cashier = createLocalAuthGuard(storage, () => now, nextId, 'nexfix_local_auth_guard_v1_cashier-unlock');
+
+  for (let i = 0; i < 5; i++) {
+    const attempt = cashier.begin();
+    assert.equal(attempt.ok, true);
+    if (attempt.ok) assert.equal(cashier.complete(attempt.attemptId, false), true);
+  }
+  const cashierBlocked = cashier.begin();
+  assert.equal(cashierBlocked.ok, false);
+  if (!cashierBlocked.ok) assert.equal(cashierBlocked.retryAfterMs, 15_000);
+
+  // Five failed cashier-session attempts must not consume the Admin budget.
+  const adminAllowed = admin.begin();
+  assert.equal(adminAllowed.ok, true);
+  if (adminAllowed.ok) admin.complete(adminAllowed.attemptId, true);
+  const cashierStillBlocked = cashier.begin();
+  assert.equal(cashierStillBlocked.ok, false);
+
+  // The original Admin storage key is retained for backward compatibility.
+  assert.equal(values.has('nexfix_local_auth_guard_v1'), true);
+  assert.equal(values.has('nexfix_local_auth_guard_v1_cashier-unlock'), true);
+  now += 15_000;
+  const cashierAfterCooldown = cashier.begin();
+  assert.equal(cashierAfterCooldown.ok, true);
+});
+
+
 test('legacy admin PIN hashes verify for migration and new PIN hashes use salted PBKDF2', async () => {
   const legacy = hashPin('old-admin-pin-123');
   assert.equal(isLegacyPasswordHash(legacy), true);
