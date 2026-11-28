@@ -84,7 +84,7 @@ export async function getPendingSyncOperations(){return idbListQueue();}
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
-export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean;blockedLegacy?:boolean}>{
+export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean;blockedQueueScope?:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=(async()=>{
     const ops=await idbListQueue();
@@ -450,7 +450,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         pending: remaining.length,
         synced: false,
         conflict: false,
-        blockedLegacy: true,
+        blockedQueueScope: true,
       };
     }
     const latestState=await idbLoadState();
