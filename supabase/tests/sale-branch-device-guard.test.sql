@@ -2,7 +2,7 @@
 -- Every row is inserted inside a transaction and rolled back; no hosted data is used.
 begin;
 
-select plan(26);
+select plan(39);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password,
@@ -53,6 +53,29 @@ values
   ('b4000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001', 'SG-B-001', 100, 100, 'b3000000-0000-4000-8000-000000000002'),
   ('b4000000-0000-4000-8000-000000000003', 'b2000000-0000-4000-8000-000000000002', 'SG-C-001', 100, 100, 'b3000000-0000-4000-8000-000000000003'),
   ('b4000000-0000-4000-8000-000000000004', 'b2000000-0000-4000-8000-000000000002', 'SG-D-001', 100, 100, 'b3000000-0000-4000-8000-000000000004');
+
+insert into public.products (id, shop_id, name, cost, price, stock)
+values (
+  'b6000000-0000-4000-8000-000000000001',
+  'b2000000-0000-4000-8000-000000000001',
+  'Sale Branch Guard Product',
+  50,
+  100,
+  10
+);
+
+insert into public.sale_items (id, sale_id, product_id, name, qty, price, cost, unit_ids)
+values (
+  'b7000000-0000-4000-8000-000000000001',
+  'b4000000-0000-4000-8000-000000000001',
+  'b6000000-0000-4000-8000-000000000001',
+  'Sale Branch Guard Product',
+  1,
+  100,
+  50,
+  '{}'::uuid[]
+);
+
 
 -- Sales can only be created against active branches. Retire Branch D after
 -- inserting its historical sale so the authorization guard can verify the
@@ -297,6 +320,96 @@ select ok(
   and not has_function_privilege('anon', 'public.register_trade_in_atomic(uuid,uuid,uuid,uuid,numeric,text,text)', 'EXECUTE')
   and not has_function_privilege('anon', 'public.request_sale_reversal(uuid,uuid,uuid,text)', 'EXECUTE'),
   'anon cannot execute any legacy sale-transaction RPC'
+);
+
+
+select is(
+  (public.resolve_sale_return_target_for_device_branch(
+    'SG-A-001',
+    'guard-device-a'
+  ) ->> 'sale_id'),
+  'b4000000-0000-4000-8000-000000000001',
+  'a Branch A device can resolve a Branch A bill number'
+);
+
+select throws_ok(
+  $select public.resolve_sale_return_target_for_device_branch(
+    'SG-B-001',
+    'guard-device-a'
+  )$,
+  'P0001',
+  'This POS device is not assigned to the sale branch',
+  'a Branch A device cannot resolve a Branch B bill number'
+);
+
+select is(
+  jsonb_array_length(public.resolve_sale_return_items_for_device_branch(
+    'b2000000-0000-4000-8000-000000000001',
+    'b4000000-0000-4000-8000-000000000001',
+    'guard-device-a',
+    '[{"product_id":"b6000000-0000-4000-8000-000000000001","qty":1,"unit_ids":[]}]'::jsonb
+  )),
+  1,
+  'a Branch A device can resolve items for its own sale'
+);
+
+select throws_ok(
+  $select public.resolve_sale_return_items_for_device_branch(
+    'b2000000-0000-4000-8000-000000000001',
+    'b4000000-0000-4000-8000-000000000002',
+    'guard-device-a',
+    '[{"product_id":"b6000000-0000-4000-8000-000000000001","qty":1,"unit_ids":[]}]'::jsonb
+  )$,
+  'P0001',
+  'This POS device is not assigned to the sale branch',
+  'a Branch A device cannot resolve items for a Branch B sale'
+);
+
+select throws_ok(
+  $select public.resolve_sale_return_target('SG-A-001')$,
+  'P0001',
+  'This Nexfix POS client is outdated. Update the POS before looking up a Cloud return bill.',
+  'the old bill-number resolver fails closed with an upgrade message'
+);
+
+select throws_ok(
+  $select public.resolve_sale_return_items(
+    'b2000000-0000-4000-8000-000000000001',
+    'b4000000-0000-4000-8000-000000000001',
+    '[{"product_id":"b6000000-0000-4000-8000-000000000001","qty":1,"unit_ids":[]}]'::jsonb
+  )$,
+  'P0001',
+  'This Nexfix POS client is outdated. Update the POS before looking up Cloud return items.',
+  'the old return-item resolver fails closed with an upgrade message'
+);
+
+select ok(
+  has_function_privilege('authenticated', 'public.resolve_sale_return_target_for_device_branch(text,text)', 'EXECUTE'),
+  'authenticated can execute the guarded bill-number resolver'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.resolve_sale_return_items_for_device_branch(uuid,uuid,text,jsonb)', 'EXECUTE'),
+  'authenticated can execute the guarded return-item resolver'
+);
+select ok(
+  not has_function_privilege('authenticated', 'private.resolve_sale_return_target(text)', 'EXECUTE'),
+  'authenticated cannot bypass the guarded bill-number resolver'
+);
+select ok(
+  not has_function_privilege('authenticated', 'private.resolve_sale_return_items(uuid,uuid,jsonb)', 'EXECUTE'),
+  'authenticated cannot bypass the guarded return-item resolver'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.resolve_sale_return_target(text)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'public.resolve_sale_return_items(uuid,uuid,jsonb)', 'EXECUTE'),
+  'older authenticated clients can reach both read-only resolver upgrade stubs'
+);
+select ok(
+  not has_function_privilege('anon', 'public.resolve_sale_return_target_for_device_branch(text,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.resolve_sale_return_items_for_device_branch(uuid,uuid,text,jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.resolve_sale_return_target(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.resolve_sale_return_items(uuid,uuid,jsonb)', 'EXECUTE'),
+  'anon cannot execute any old or guarded Sale return resolver RPC'
 );
 
 select * from finish();
