@@ -101,7 +101,9 @@ async function loadCloudSalesData({
 
       if (!(await waitForCloudSession(supabase))) throw new Error('Cloud login is still starting. Please wait a moment and refresh.');
 
-      if (resolvedShopId !== getCloudShopId()) setCloudShopId(resolvedShopId);
+      if (resolvedShopId !== getCloudShopId() && !setCloudShopId(resolvedShopId)) {
+        throw new Error('Could not save the selected Cloud shop binding on this device. Refresh and retry before loading sales.');
+      }
       setActiveShopId(resolvedShopId);
 
       const snapshot = await downloadStateSnapshot();
@@ -258,7 +260,11 @@ export default function MobileTodaySales() {
         if (!cancelled) { setShopError('You do not have access to this shop.'); setShopReady(false); }
         return;
       }
-      setCloudShopId(requestedShopId);
+      if (!setCloudShopId(requestedShopId)) {
+        setShopError('Could not save the selected Cloud shop binding on this device.');
+        setShopReady(false);
+        return;
+      }
       setActiveShopId(requestedShopId);
       setShopReady(true);
     };
@@ -310,7 +316,11 @@ export default function MobileTodaySales() {
         setShopReady(false);
         return;
       }
-      setCloudShopId(resolvedShopId);
+      if (!setCloudShopId(resolvedShopId)) {
+        setShopError('Could not save the selected Cloud shop binding on this device.');
+        setShopReady(false);
+        return;
+      }
       setActiveShopId(resolvedShopId);
       setShopReady(true);
     };
