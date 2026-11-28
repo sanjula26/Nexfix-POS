@@ -64,25 +64,30 @@ function isTrustedRenderer(event){
 
 function getSecureRecoveryFile(){ return path.join(app.getPath('userData'),'nexfix-secure','cloud-updater-recovery.json'); }
 
-function getLocalAuthGuardFile(){ return path.join(app.getPath('userData'),'nexfix-secure','local-auth-guard.json'); }
-function failClosedLocalAuthGuardState(){
+const LOCAL_AUTH_SCOPES = new Set(['admin','cashier-unlock']);
+function isValidLocalAuthScope(scope){ return typeof scope==='string' && LOCAL_AUTH_SCOPES.has(scope); }
+function getLocalAuthGuardFile(scope='admin'){
+  if(!isValidLocalAuthScope(scope)) throw new Error('Invalid local authentication scope');
+  return path.join(app.getPath('userData'),'nexfix-secure',`local-auth-guard-${scope}.json`);
+}
+function failClosedLocalAuthGuardState(scope='admin'){
   const locked={version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
   try{
     // Repair corrupt state atomically so the fail-closed lock expires normally.
-    writeLocalAuthGuard(locked);
+    writeLocalAuthGuard(locked,scope);
   }catch{
     // If storage cannot be repaired, keep this attempt blocked for this read.
   }
   return locked;
 }
 
-function readLocalAuthGuard(){
-  const file=getLocalAuthGuardFile();
+function readLocalAuthGuard(scope='admin'){
+  const file=getLocalAuthGuardFile(scope);
   try{
     if(!fs.existsSync(file)) return {};
     const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
     if(!isValidLocalAuthGuardState(parsed,Date.now())){
-      return failClosedLocalAuthGuardState();
+      return failClosedLocalAuthGuardState(scope);
     }
     return parsed;
   }catch{
@@ -90,8 +95,8 @@ function readLocalAuthGuard(){
     return failClosedLocalAuthGuardState();
   }
 }
-function writeLocalAuthGuard(value){
-  const file=getLocalAuthGuardFile();
+function writeLocalAuthGuard(value,scope='admin'){
+  const file=getLocalAuthGuardFile(scope);
   const dir=path.dirname(file);
   fs.mkdirSync(dir,{recursive:true});
   const tmp=file+'.tmp';
@@ -587,21 +592,25 @@ app.on('before-quit',(event)=>{
   requestExitWithBackup();
 });
 
-ipcMain.handle('local-auth:begin',(event)=>{
+ipcMain.handle('local-auth:begin',(event,payload)=>{
   if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  const scope=payload?.scope;
+  if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'};
   try{
-    const next=beginLocalAuthAttempt(readLocalAuthGuard(),Date.now(),crypto.randomUUID());
-    writeLocalAuthGuard(next.state);
+    const next=beginLocalAuthAttempt(readLocalAuthGuard(scope),Date.now(),crypto.randomUUID());
+    writeLocalAuthGuard(next.state,scope);
     return next.result;
   }catch(error){return {ok:false,error:error?.message||'Local authentication guard is unavailable'};}
 });
 ipcMain.handle('local-auth:complete',(event,payload)=>{
   if(!isTrustedRenderer(event)) return {ok:false,error:'Untrusted renderer'};
+  const scope=payload?.scope;
+  if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'};
   if(typeof payload?.attemptId!=='string'||payload.attemptId.length>128||typeof payload?.success!=='boolean') return {ok:false,error:'Invalid local authentication result'};
   try{
-    const next=completeLocalAuthAttempt(readLocalAuthGuard(),payload.attemptId,payload.success,Date.now());
+    const next=completeLocalAuthAttempt(readLocalAuthGuard(scope),payload.attemptId,payload.success,Date.now());
     if(!next.result.ok) return next.result;
-    writeLocalAuthGuard(next.state);
+    writeLocalAuthGuard(next.state,scope);
     return {ok:true};
   }catch(error){return {ok:false,error:error?.message||'Local authentication guard could not be saved'};}
 });
