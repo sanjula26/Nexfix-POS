@@ -65,18 +65,29 @@ function isTrustedRenderer(event){
 function getSecureRecoveryFile(){ return path.join(app.getPath('userData'),'nexfix-secure','cloud-updater-recovery.json'); }
 
 function getLocalAuthGuardFile(){ return path.join(app.getPath('userData'),'nexfix-secure','local-auth-guard.json'); }
+function failClosedLocalAuthGuardState(){
+  const locked={version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+  try{
+    // Repair corrupt state atomically so the fail-closed lock expires normally.
+    writeLocalAuthGuard(locked);
+  }catch{
+    // If storage cannot be repaired, keep this attempt blocked for this read.
+  }
+  return locked;
+}
+
 function readLocalAuthGuard(){
   const file=getLocalAuthGuardFile();
   try{
     if(!fs.existsSync(file)) return {};
     const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
     if(!parsed || parsed.version!==1 || !Number.isInteger(parsed.failures) || !Number.isFinite(parsed.lockedUntil)){
-      return {version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+      return failClosedLocalAuthGuardState();
     }
     return parsed;
   }catch{
     // Corrupt guard state must not silently reset an administrator attempt budget.
-    return {version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
+    return failClosedLocalAuthGuardState();
   }
 }
 function writeLocalAuthGuard(value){
