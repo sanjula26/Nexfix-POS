@@ -3758,13 +3758,17 @@ const deletePurchase = useCallback((id: string) => {
       setState(refreshed);
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
-      if (activeSession) sessionRef.current = activeSession;
-           setSession(activeSession);
+      if (activeSession) {
+        sessionRef.current = activeSession;
+        setSession(activeSession);
+      }
     } catch {
       // A refresh failure must leave the authenticated POS session untouched.
       setState(current);
-      if (activeSession) sessionRef.current = activeSession;
-           setSession(activeSession);
+      if (activeSession) {
+        sessionRef.current = activeSession;
+        setSession(activeSession);
+      }
     }
   }, [ready, session]);
 
