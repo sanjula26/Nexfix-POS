@@ -1404,6 +1404,11 @@ test('queued Sale and GRN replay requires the original verified Cloud shop/user 
   assert.ok(cloudSyncSource.includes('requireExactBranchMatch && !isQueuedOperationBranchValid(preferredBranchId, boundBranch.id, branches.length)'));
   assert.ok(cloudSyncSource.includes('input.requireExactBranch === true'));
   assert.ok(cloudSyncSource.includes('expectedBranchId !== undefined'));
+  const catalogStart = cloudSyncSource.indexOf('export async function syncNormalizedCatalog(');
+  const selectedBranchCheck = cloudSyncSource.indexOf('resolveCloudBranchId(shopId, expectedBranchId ?? state.settings.branchId, expectedBranchId !== undefined)', catalogStart);
+  const catalogWritesStart = cloudSyncSource.indexOf('const result = await cache.run(', selectedBranchCheck);
+  assert.ok(catalogStart >= 0 && selectedBranchCheck > catalogStart && catalogWritesStart > selectedBranchCheck,
+    'queued branch validation must finish before normalized catalog writes begin');
 
   for (const operation of ['inventory_unit_delete', 'inventory_units_add', 'branch_stock_adjustment']) {
     const start = offlineSource.indexOf("if(op.type==='" + operation + "')");
