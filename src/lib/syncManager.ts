@@ -71,7 +71,7 @@ export async function runSyncNow(): Promise<SyncManagerState> {
         ...state,
         status: 'error',
         pending: result.pending,
-        lastError: 'Offline transactions are not verified for the active Cloud shop/user. They are kept on this PC; sign in to the original shop or ask Admin to reconcile before Cloud sync can continue.',
+        lastError: 'Offline transactions no longer match the active Cloud shop/user/device branch. Queue entries are kept on this PC; restore the original shop/branch or ask Admin to reconcile before Cloud sync can continue.',
       });
     } else if (result.pendingTransactions) {
       publish({
