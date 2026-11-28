@@ -271,7 +271,13 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const receiptScope = parsed.cloudScope
             ? activeScope
             : await reverifyLegacyReceiptScope(verifiedScope);
-          if (!receiptScope) break;
+          if (!receiptScope) {
+            const reason = 'Cloud accepted the sale, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
+            if (verifiedScope) {
+              await markCloudRecordSyncRetry('sale', parsed.saleId, 'Offline sale sync', reason, verifiedScope);
+            }
+            break;
+          }
           const saved = await acknowledgeCloudRecordQueue(
             receiptScope, 'sale', parsed.saleId, op.id, 'Offline sale sync',
           );
@@ -350,7 +356,13 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const receiptScope = parsed.cloudScope
             ? activeScope
             : await reverifyLegacyReceiptScope(verifiedScope);
-          if (!receiptScope) break;
+          if (!receiptScope) {
+            const reason = 'Cloud accepted the GRN, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
+            if (verifiedScope) {
+              await markCloudRecordSyncRetry('purchase', parsed.purchaseId, 'Offline GRN sync', reason, verifiedScope);
+            }
+            break;
+          }
           const saved = await acknowledgeCloudRecordQueue(
             receiptScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync',
           );
