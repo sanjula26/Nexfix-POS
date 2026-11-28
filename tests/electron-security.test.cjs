@@ -203,6 +203,22 @@ test('local admin authentication guard IPC is limited to the trusted renderer an
   assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
 });
 
+test('corrupt packaged local-auth guard state fails closed but repairs the persisted lockout timer', () => {
+  const guardStart = mainSource.indexOf('function failClosedLocalAuthGuardState()');
+  const readerStart = mainSource.indexOf('function readLocalAuthGuard()');
+  const writerStart = mainSource.indexOf('function writeLocalAuthGuard()', readerStart);
+  assert.ok(guardStart >= 0 && readerStart > guardStart && writerStart > readerStart);
+
+  const repair = mainSource.slice(guardStart, readerStart);
+  assert.ok(repair.includes('failures:5'));
+  assert.ok(repair.includes('lockedUntil:Date.now()+300000'));
+  assert.ok(repair.includes('writeLocalAuthGuard(locked)'));
+  assert.ok(repair.includes('return locked;'));
+
+  const reader = mainSource.slice(readerStart, writerStart);
+  assert.equal((reader.match(/failClosedLocalAuthGuardState\(\)/g) || []).length, 2);
+});
+
 test('async administrator authentication callers await verification before granting access', () => {
   const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
   const posSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'POS.tsx'), 'utf8');
