@@ -539,10 +539,15 @@ export default function AppLayout() {
           setUnlockError('Too many failed unlock attempts. Try again in 30 seconds.');
         } else {
           setUnlockAttempts(nextAttempts);
-          setUnlockError('Incorrect password or admin unlock password.');
+          setUnlockError('Incorrect password or administrator unlock credential.');
         }
       }
-    } finally { setUnlockBusy(false); }
+    } catch {
+      setUnlockCredential('');
+      setUnlockError('Could not verify this credential. Please try again.');
+    } finally {
+      setUnlockBusy(false);
+    }
   };
 
   const handleRefresh = async () => {
@@ -661,6 +666,9 @@ export default function AppLayout() {
               return;
             }
             setSensitiveCredential('');
+          } catch {
+            setSensitiveCredential('');
+            setSensitiveError('Could not verify the administrator credential. Please try again.');
           } finally {
             setSensitiveBusy(false);
           }
