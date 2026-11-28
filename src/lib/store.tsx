@@ -5,8 +5,11 @@ import {
   InventoryUnit, RepairJob, RepairStatus, PurchaseReturn, PurchaseReturnItem, WarrantyClaim, ClaimStatus, TradeIn,
 } from './types';
 import { buildSeed, DEFAULT_CATEGORIES, DEFAULT_BRANDS, DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS } from './seed';
-import { dkey, uid, POINT_VALUE, hashPin, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
-import { hashPasswordAsync, verifyPasswordAsync } from './passwordAsync';
+import { dkey, uid, POINT_VALUE, hashPassword, verifyPassword, isHashed, isPasswordHash, normalizeWhatsAppPhone, salePayments } from './utils';
+import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade } from './passwordAsync';
+import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
+import { runWithAsyncLock } from './authConcurrency';
+import { runLocalAuthAttempt } from './localAuthGuard';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -104,15 +107,15 @@ interface StoreCtx {
   signOut: (force?: boolean) => void;
   /** Switching to the other POS role always authenticates the target account; admin → cashier uses cashier credentials, cashier → admin accepts the admin unlock PIN or admin login password. */
   switchRole: (role: Role, credential?: string, email?: string) => Promise<{ ok: boolean; error?: string }>;
-  changeAdminPin: (current: string, next: string) => { ok: boolean; error?: string };
+  changeAdminPin: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>;
   /** verify the admin password without switching role (used for price overrides etc.) */
-  verifyAdminPin: (pin: string, reason?: string) => boolean;
+  verifyAdminPin: (pin: string, reason?: string) => Promise<boolean>;
   /** Fresh admin confirmation for sensitive destructive/security actions. */
   confirmSensitiveAdmin: (reason: string) => Promise<boolean>;
   sensitiveAdminPrompt: { reason: string } | null;
-  resolveSensitiveAdmin: (credential: string) => boolean;
+  resolveSensitiveAdmin: (credential: string) => Promise<boolean>;
   cancelSensitiveAdmin: () => void;
-  unlockSession: (credential: string) => boolean;
+  unlockSession: (credential: string) => Promise<boolean>;
   // products
   saveProduct: (p: Product) => Promise<boolean>;
   deleteProduct: (id: string) => void;
@@ -376,6 +379,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   const [pendingQueueCount, setPendingQueueCount] = useState(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const commitAdminPinHashIfCurrent = useCallback((expectedHash: string, replacementHash: string): boolean => {
+    const nextState = replaceAdminPinHashIfCurrent(stateRef.current, expectedHash, replacementHash);
+    if (!nextState) return false;
+    stateRef.current = nextState;
+    setState(current => replaceAdminPinHashIfCurrent(current, expectedHash, replacementHash) || current);
+    return true;
+  }, []);
   const previousBackupStateRef = useRef(state);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Blocks accidental signOut for a few seconds after successful login (boot/effect race). */
