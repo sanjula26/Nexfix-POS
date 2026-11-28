@@ -130,6 +130,34 @@ test('managed user save rejects duplicate email and duplicate new account IDs', 
   assert.equal(saveManagedUserIfCurrent(initial, admin, null, duplicateId), null);
 });
 
+
+test('managed user save cannot demote or deactivate the final active Admin', () => {
+  const initial = stateWithUsers([admin, cashier]);
+
+  assert.equal(
+    saveManagedUserIfCurrent(initial, admin, admin, { ...admin, role: 'cashier' }),
+    null,
+  );
+  assert.equal(
+    saveManagedUserIfCurrent(initial, admin, admin, { ...admin, active: false }),
+    null,
+  );
+
+  const secondAdmin: AppUser = {
+    ...admin,
+    id: 'admin-2',
+    email: 'admin2@example.test',
+    password: 'second-admin-password',
+  };
+  const twoAdmins = stateWithUsers([admin, secondAdmin, cashier]);
+  const demoted = saveManagedUserIfCurrent(twoAdmins, admin, secondAdmin, {
+    ...secondAdmin,
+    role: 'cashier',
+  });
+  assert.equal(demoted?.users.some(user => user.role === 'admin' && user.active), true);
+  assert.equal(demoted?.users.find(user => user.id === secondAdmin.id)?.role, 'cashier');
+});
+
 test('managed user profile update preserves latest unrelated POS state', () => {
   const initial = {
     ...stateWithUsers([admin, cashier]),
