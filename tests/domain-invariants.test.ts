@@ -1210,6 +1210,42 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assertInventoryQueueScope('inventory_units_add', 'queueInventoryUnitsAdd', 'addInventoryUnitsAtomic(');
   assertInventoryQueueScope('branch_stock_adjustment', 'queueBranchStockAdjustment', 'adjustBranchStockAtomic(');
 
+  const assertScopedLegacyTransaction = (
+    operation: string,
+    queueFunction: string,
+    firstCloudCall: string,
+    secondCloudCall?: string,
+  ) => {
+    const writerStart = offlineSource.indexOf('export async function ' + queueFunction);
+    assert.ok(writerStart >= 0, queueFunction + ' queue writer must exist');
+    const nextWriter = offlineSource.indexOf('\nexport async function ', writerStart + 1);
+    const writer = offlineSource.slice(writerStart, nextWriter < 0 ? offlineSource.length : nextWriter);
+    assert.ok(writer.includes('cloudScope:getCloudActivityScope()||undefined'),
+      operation + ' queue must persist enqueue-time Cloud shop/user');
+
+    const start = offlineSource.indexOf("if(op.type==='" + operation + "')");
+    assert.ok(start >= 0, operation + ' replay block must exist');
+    const nextStart = offlineSource.indexOf("if(op.type==='", start + 12);
+    const block = offlineSource.slice(start, nextStart < 0 ? offlineSource.length : nextStart);
+    const scopeGuard = block.indexOf('if (!hasCloudRecordScope(parsed.cloudScope) ||');
+    const shopResolve = block.indexOf("ensureCloudShop('Nexfix Shop')");
+    const verified = block.indexOf('if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope()))');
+    const call = block.indexOf(firstCloudCall);
+    assert.ok(scopeGuard >= 0 && shopResolve > scopeGuard, operation + ' must stop unscoped legacy rows before Cloud resolution');
+    assert.ok(verified > shopResolve && call > verified, operation + ' must verify the resolved Cloud identity before the RPC');
+    if (secondCloudCall) {
+      const second = block.indexOf(secondCloudCall);
+      const recheck = block.indexOf('if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope()))', call + firstCloudCall.length);
+      assert.ok(second > call && recheck > call && second > recheck,
+        operation + ' must re-check Cloud identity before the final transaction RPC');
+    }
+  };
+  assertScopedLegacyTransaction('repair_delivery', 'queueRepairDelivery', 'processRepairDeliveryAtomic(');
+  assertScopedLegacyTransaction('sale_reversal_request', 'queueSaleReversalRequest', 'requestSaleReversal(');
+  assertScopedLegacyTransaction('sale_reversal_approve', 'queueSaleReversalApproval', 'approveSaleReversal(');
+  assertScopedLegacyTransaction('sale_reversal_reject', 'queueSaleReversalRejection', 'rejectSaleReversal(');
+  assertScopedLegacyTransaction('return_create', 'queueReturnCreate', 'resolveSaleReturnLines(', 'processSaleReturnAtomic(');
+
   const syncManagerSource = readFileSync(new URL('../src/lib/syncManager.ts', import.meta.url), 'utf8');
   assert.ok(syncManagerSource.includes('if (result.blockedQueueScope)'));
   assert.ok(syncManagerSource.includes('sign in to the original shop or ask Admin to reconcile before Cloud sync can continue'));
