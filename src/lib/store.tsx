@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { withCloudActivity } from './cloudActivity';
+import { setCloudActivityScope, withCloudActivity } from './cloudActivity';
 import { markCloudRecordSynced } from './cloudRecordSync';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
@@ -1875,6 +1875,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Capture the validated non-empty shop ID before entering async callbacks.
     const cloudShopId = shop.shopId;
     const cloudRecordScope = shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null;
+    // ensureCloudShop has just verified this membership identity. Publish it synchronously
+    // before the atomic write so the first checkout is tracked even if AppLayout's
+    // initial auth-scope refresh is still completing. This is deliberately not awaited.
+    if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
     const branchResolution = await resolveCloudBranchId(
       shop.shopId,
       getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
@@ -2637,6 +2641,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
         const cloudRecordScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+        // Use the freshly verified Cloud membership scope for the real GRN write;
+        // do not wait for IndexedDB status restoration before receiving stock.
+        if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
         const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
           shopId: shop.shopId!,
           branchId: receiveBranchId,
