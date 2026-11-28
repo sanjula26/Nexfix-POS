@@ -97,7 +97,7 @@ export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:st
   const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
-export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
+export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string,branchId:string):Promise<void>{if(!branchId)throw new Error('Repair delivery needs a verified branch before it can be queued safely.');const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId,branchId,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
 export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
@@ -464,7 +464,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
       if(op.type==='repair_delivery'){
         try{
-          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string;cloudScope?:{shopId?:string;userId?:string}};
+          const parsed=JSON.parse(op.payload) as {repairId:string;repair:unknown;deviceId:string;branchId?:string;cloudScope?:{shopId?:string;userId?:string}};
           if (!hasCloudRecordScope(parsed.cloudScope) ||
               !isCloudRecordReplayScopeValid(parsed.cloudScope,parsed.cloudScope,getCloudActivityScope())) {
             blockedUnsafeScopedTransactionReplay = true;
@@ -477,8 +477,16 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
-          const result=await processRepairDeliveryAtomic({shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,repair:parsed.repair});
-          if(!result.ok) break;
+          const queuedBranchId = parsed.branchId || 'local-main';
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
+          const result=await processRepairDeliveryAtomic({
+            shopId:shop.shopId,repairId:parsed.repairId,deviceId:parsed.deviceId,
+            branchId:queuedBranchId,requireExactBranch:true,repair:parsed.repair,
+          });
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
