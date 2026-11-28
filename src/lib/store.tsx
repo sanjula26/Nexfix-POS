@@ -965,88 +965,138 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
   // Role switches create a real authenticated session; App.tsx enforces mustChangePassword on the target user.
   const switchRole = useCallback(async (role: Role, credential?: string, email?: string): Promise<{ ok: boolean; error?: string }> => {
-    // Switching changes the authenticated POS identity. It is never a cosmetic
-    // "view" switch and must always authenticate the target account.
     if (!user) return { ok: false, error: 'You must be signed in' };
     if (role === user.role) return { ok: true };
     if (!['admin', 'cashier'].includes(role)) return { ok: false, error: 'Unsupported role switch' };
+    const initiatingUser = stateRef.current.users.find(u => u.id === user.id && u.role === user.role && u.active);
+    if (!initiatingUser) return { ok: false, error: 'Your account changed. Sign in again before switching roles.' };
 
-    let target: AppUser | undefined;
-    const secret = credential || '';
-    if (roleSwitchLockRef.current) return { ok: false, error: 'Please wait and try again' };
-    const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
-    let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
-    try {
-      const raw = localStorage.getItem(SWITCH_RATE_KEY);
-      if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
-    } catch { /* ignore malformed limiter state */ }
-    const now = Date.now();
-    if (guard.lockedUntil > now) {
-      return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
-    }
-
-    if (role === 'cashier' && user.role === 'admin') {
-      const mail = (email || '').trim().toLowerCase();
-      if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
-      target = state.users.find(u => u.role === 'cashier' && u.active && u.email.trim().toLowerCase() === mail);
-      if (!target) return { ok: false, error: 'Incorrect cashier email or password' };
-      const passwordOk = isHashed(target.password)
-        ? await verifyPasswordAsync(secret, target.password)
-        : verifyPassword(secret, target.password || '');
-      if (!passwordOk) {
-        setState(st => ({ ...st, audit: [{
-          id: uid(), time: new Date().toISOString(), user: user.email,
-          action: 'DENIED', entity: 'Auth',
-          details: 'Failed CASHIER switch authentication by ' + user.name,
-        }, ...st.audit].slice(0, 500) }));
-        const failures = guard.failures + 1;
-        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
-        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
-        return { ok: false, error: 'Incorrect cashier email or password' };
+    return runWithAsyncLock(roleSwitchLockRef, () => ({ ok: false, error: 'Please wait and try again' }), async () => {
+      let target: AppUser | undefined;
+      let targetPasswordSnapshot = '';
+      const secret = credential || '';
+      const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1';
+      let guard: { failures: number; lockedUntil: number } = { failures: 0, lockedUntil: 0 };
+      try {
+        const raw = localStorage.getItem(SWITCH_RATE_KEY);
+        if (raw) guard = { ...guard, ...(JSON.parse(raw) as Partial<typeof guard>) };
+      } catch { /* ignore malformed limiter state */ }
+      const now = Date.now();
+      if (guard.lockedUntil > now) {
+        return { ok: false, error: `Too many failed role-switch attempts. Try again in ${Math.ceil((guard.lockedUntil - now) / 1000)} seconds.` };
       }
-    } else if (role === 'admin' && user.role === 'cashier') {
-      target = state.users.find(u => u.role === 'admin' && u.active);
-      if (!target) return { ok: false, error: 'No active administrator account exists' };
-      const pinOk = verifyPassword(secret, state.settings.adminPinHash);
-      const passwordOk = isHashed(target.password)
-        ? await verifyPasswordAsync(secret, target.password)
-        : verifyPassword(secret, target.password || '');
-      if (!pinOk && !passwordOk) {
-        setState(st => ({ ...st, audit: [{
-          id: uid(), time: new Date().toISOString(), user: user.email,
-          action: 'DENIED', entity: 'Auth',
-          details: 'Failed ADMIN unlock attempt by ' + user.name,
-        }, ...st.audit].slice(0, 500) }));
-        const failures = guard.failures + 1;
-        const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
-        try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
-        return { ok: false, error: 'Incorrect admin unlock PIN or admin login password' };
+
+      let adminPinVerified = false;
+      let adminPinHashSnapshot = '';
+      let adminPinUpgradeHash: string | undefined;
+      if (role === 'cashier' && user.role === 'admin') {
+        const mail = (email || '').trim().toLowerCase();
+        if (!mail || !secret) return { ok: false, error: 'Cashier email and password are required' };
+        target = stateRef.current.users.find(u => u.role === 'cashier' && u.active && u.email.trim().toLowerCase() === mail);
+        if (!target) return { ok: false, error: 'Incorrect cashier email or password' };
+        targetPasswordSnapshot = target.password;
+        let passwordOk = false;
+        try {
+          passwordOk = isHashed(targetPasswordSnapshot)
+            ? await verifyPasswordAsync(secret, targetPasswordSnapshot)
+            : verifyPassword(secret, targetPasswordSnapshot || '');
+        } catch { passwordOk = false; }
+        const latestCashier = stateRef.current.users.find(u => u.id === target!.id);
+        const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+        if (passwordOk && (!latestCashier || latestCashier.role !== 'cashier' || !latestCashier.active || latestCashier.password !== targetPasswordSnapshot
+          || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password)) {
+          return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
+        }
+        if (!passwordOk) {
+          setState(st => ({ ...st, audit: [{
+            id: uid(), time: new Date().toISOString(), user: user.email,
+            action: 'DENIED', entity: 'Auth',
+            details: 'Failed CASHIER switch authentication by ' + user.name,
+          }, ...st.audit].slice(0, 500) }));
+          const failures = guard.failures + 1;
+          const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+          try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
+          return { ok: false, error: 'Incorrect cashier email or password' };
+        }
+      } else if (role === 'admin' && user.role === 'cashier') {
+        const activeAdmins = stateRef.current.users.filter(u => u.role === 'admin' && u.active);
+        if (!activeAdmins.length) return { ok: false, error: 'No active administrator account exists' };
+        const adminSnapshot = captureAdminCredentialSnapshot(stateRef.current);
+        adminPinHashSnapshot = adminSnapshot.adminPinHash;
+        let pinVerification: Awaited<ReturnType<typeof verifyPasswordWithLegacyUpgrade>> = { valid: false };
+        let matchingAdmin: AppUser | null = null;
+        const attempt = await runLocalAuthAttempt(async () => {
+          try {
+            pinVerification = await verifyPasswordWithLegacyUpgrade(secret, adminSnapshot.adminPinHash);
+            if (pinVerification.valid) return true;
+          } catch { /* check the active admin login credentials next */ }
+          matchingAdmin = await findActiveAdminByCredential(stateRef.current, async candidate => {
+            try {
+              return isHashed(candidate.password)
+                ? await verifyPasswordAsync(secret, candidate.password)
+                : verifyPassword(secret, candidate.password || '');
+            } catch { return false; }
+          });
+          return !!matchingAdmin;
+        });
+        if (!attempt.success) {
+          setState(st => ({ ...st, audit: [{
+            id: uid(), time: new Date().toISOString(), user: user.email,
+            action: 'DENIED', entity: 'Auth',
+            details: 'Failed ADMIN unlock attempt by ' + user.name,
+          }, ...st.audit].slice(0, 500) }));
+          if (attempt.allowed) {
+            const failures = guard.failures + 1;
+            const lockSeconds = failures >= 5 ? Math.min(300, 15 * Math.pow(2, Math.min(failures - 5, 4))) : 0;
+            try { localStorage.setItem(SWITCH_RATE_KEY, JSON.stringify({ failures, lockedUntil: lockSeconds ? now + lockSeconds * 1000 : 0 })); } catch { /* ignore */ }
+          }
+          return { ok: false, error: attempt.allowed ? 'Incorrect admin unlock PIN or admin login password' : 'Too many administrator attempts. Wait before trying again.' };
+        }
+        if (!adminCredentialSnapshotMatches(stateRef.current, adminSnapshot)) {
+          return { ok: false, error: 'Administrator accounts changed during verification. Please try again.' };
+        }
+        if (pinVerification.valid) {
+          adminPinVerified = true;
+          adminPinUpgradeHash = pinVerification.upgradedHash;
+          target = findActiveAdminById(stateRef.current, activeAdmins[0].id) || undefined;
+        } else if (matchingAdmin) {
+          target = findActiveAdminById(stateRef.current, matchingAdmin.id) || undefined;
+        }
+        if (!target) return { ok: false, error: 'Administrator credentials changed during verification. Please try again.' };
+        targetPasswordSnapshot = target.password;
+        if (adminPinUpgradeHash && !commitAdminPinHashIfCurrent(adminPinHashSnapshot, adminPinUpgradeHash)) {
+          return { ok: false, error: 'Administrator PIN changed during verification. Please try again.' };
+        }
       }
-    }
 
-    if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
-    try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
+      if (!target) return { ok: false, error: 'No active ' + role + ' account exists' };
+      try { localStorage.removeItem(SWITCH_RATE_KEY); } catch { /* ignore */ }
+      const latestTarget = stateRef.current.users.find(u => u.id === target!.id);
+      const latestInitiator = stateRef.current.users.find(u => u.id === initiatingUser.id);
+      if (!latestTarget || !latestTarget.active || latestTarget.role !== role || latestTarget.password !== targetPasswordSnapshot
+        || !latestInitiator || latestInitiator.role !== user.role || !latestInitiator.active || latestInitiator.password !== initiatingUser.password) {
+        return { ok: false, error: 'Account credentials changed during verification. Please try again.' };
+      }
+      if (adminPinVerified) sensitiveAuthRef.current = null;
 
-    const prev = session ? loadSession() : null;
-    const sess = { userId: target.id, remember: prev?.remember ?? true };
-    setSession(sess);
-    try {
-      // Keep the authenticated POS session durable across a normal browser refresh.
-      // "Remember me" is retained in the session metadata for compatibility, but
-      // refresh must never force an already-authenticated cashier/admin back to Login.
-      localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
-      localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
-    } catch { /* ignore */ }
-    setState(st => ({
-      ...st,
-      audit: [{
-        id: uid(), time: new Date().toISOString(), user: target!.email, action: 'SWITCH', entity: 'Auth',
-        details: 'Authenticated switch to ' + role.toUpperCase() + ' (' + target!.name + ')',
-      }, ...st.audit].slice(0, 500),
-    }));
-    return { ok: true };
-  }, [state.users, state.settings.adminPinHash, session, user]);
+      const prev = session ? loadSession() : null;
+      const sess = { userId: target.id, remember: prev?.remember ?? true };
+      setSession(sess);
+      try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sess));
+        localStorage.setItem('nexfix_session_started_v1', String(Date.now()));
+      } catch { /* ignore */ }
+      setState(st => ({
+        ...st,
+        audit: [{
+          id: uid(), time: new Date().toISOString(), user: target!.email, action: 'SWITCH', entity: 'Auth',
+          details: 'Authenticated switch to ' + role.toUpperCase() + ' (' + target!.name + ')',
+        }, ...st.audit].slice(0, 500),
+      }));
+      return { ok: true };
+    });
+  }, [state.users, session, user, commitAdminPinHashIfCurrent]);
   const changeAdminPin = useCallback(async (current: string, next: string): Promise<{ ok: boolean; error?: string }> => {
     if (user?.role !== 'admin') return { ok: false, error: 'Only admins can change this password' };
     const currentSecret = String(current || '').trim();
