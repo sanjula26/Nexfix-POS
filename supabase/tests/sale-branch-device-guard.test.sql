@@ -2,7 +2,7 @@
 -- Every row is inserted inside a transaction and rolled back; no hosted data is used.
 begin;
 
-select plan(38);
+select plan(46);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password,
@@ -31,9 +31,9 @@ values
 
 insert into public.shop_memberships (user_id, shop_id, role, active)
 values
-  ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'admin', true),
-  ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000002', 'admin', true),
-  ('b1000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001', 'cashier', true);
+  ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'manager', true),
+  ('b1000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000002', 'manager', true),
+  ('b1000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001', 'admin', true);
 
 insert into public.pos_shops (shop_id, created_by)
 values
@@ -75,6 +75,30 @@ values (
   50,
   '{}'::uuid[]
 );
+
+insert into public.sale_reversal_requests (
+  id, shop_id, sale_id, bill_no, reason, requested_by, status
+)
+values
+  (
+    'b8000000-0000-4000-8000-000000000001',
+    'b2000000-0000-4000-8000-000000000001',
+    'b4000000-0000-4000-8000-000000000001',
+    'SG-A-001',
+    'Branch A reversal request',
+    'b1000000-0000-4000-8000-000000000001',
+    'pending'
+  ),
+  (
+    'b8000000-0000-4000-8000-000000000002',
+    'b2000000-0000-4000-8000-000000000001',
+    'b4000000-0000-4000-8000-000000000002',
+    'SG-B-001',
+    'Branch B reversal request',
+    'b1000000-0000-4000-8000-000000000001',
+    'pending'
+  );
+
 
 
 -- Sales can only be created against active branches. Retire Branch D after
@@ -410,6 +434,69 @@ select ok(
   and not has_function_privilege('anon', 'public.resolve_sale_return_target(text)', 'EXECUTE')
   and not has_function_privilege('anon', 'public.resolve_sale_return_items(uuid,uuid,jsonb)', 'EXECUTE'),
   'anon cannot execute any old or guarded Sale return resolver RPC'
+);
+
+
+select is(
+  (select count(*) from public.list_sale_reversal_requests_for_device_branch(
+    'b2000000-0000-4000-8000-000000000001',
+    'guard-device-a'
+  )),
+  1::bigint,
+  'a Branch A manager sees only Branch A reversal requests'
+);
+
+select throws_ok(
+  $select * from public.list_sale_reversal_requests_for_device_branch(
+    'b2000000-0000-4000-8000-000000000001',
+    'unregistered-reversal-list-device'
+  )$,
+  'P0001',
+  'POS device is not registered to this user for this shop',
+  'an unregistered terminal cannot read reversal requests'
+);
+
+select set_config('request.jwt.claim.sub', 'b1000000-0000-4000-8000-000000000002', true);
+select set_config(
+  'request.jwt.claims',
+  '{"sub":"b1000000-0000-4000-8000-000000000002","role":"authenticated"}',
+  true
+);
+
+select is(
+  (select count(*) from public.list_sale_reversal_requests_for_device_branch(
+    'b2000000-0000-4000-8000-000000000001',
+    'guard-device-other-user'
+  )),
+  2::bigint,
+  'a registered Cloud admin can see all branch reversal requests'
+);
+
+select throws_ok(
+  $select * from public.list_sale_reversal_requests(
+    'b2000000-0000-4000-8000-000000000001'
+  )$,
+  'P0001',
+  'This Nexfix POS client is outdated. Update the POS before loading Cloud bill reversal requests.',
+  'the old shop-wide reversal list fails closed with an upgrade message'
+);
+
+select ok(
+  has_function_privilege('authenticated', 'public.list_sale_reversal_requests_for_device_branch(uuid,text)', 'EXECUTE'),
+  'authenticated can execute the guarded reversal list'
+);
+select ok(
+  not has_function_privilege('authenticated', 'private.list_sale_reversal_requests(uuid)', 'EXECUTE'),
+  'authenticated cannot bypass the guarded reversal list'
+);
+select ok(
+  has_function_privilege('authenticated', 'public.list_sale_reversal_requests(uuid)', 'EXECUTE'),
+  'older authenticated clients can reach the reversal-list upgrade stub'
+);
+select ok(
+  not has_function_privilege('anon', 'public.list_sale_reversal_requests_for_device_branch(uuid,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'public.list_sale_reversal_requests(uuid)', 'EXECUTE'),
+  'anon cannot execute the old or guarded reversal list'
 );
 
 select * from finish();
