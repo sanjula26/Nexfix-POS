@@ -607,6 +607,213 @@ test('stale branch stock conflict invalidates only the affected cached product',
   }
 });
 
+
+test('async sensitive admin re-auth is invalidated on logout and role switch', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+
+  assert.ok(storeSource.includes('const clearSensitiveAdminAuthorization = useCallback(() => {'));
+  const clearStart = storeSource.indexOf('const clearSensitiveAdminAuthorization = useCallback(() => {');
+  const clearEnd = storeSource.indexOf('  }, []);', clearStart);
+  assert.ok(clearEnd > clearStart);
+  const clearBody = storeSource.slice(clearStart, clearEnd);
+  assert.ok(clearBody.includes('sensitiveAuthRef.current = null;'));
+  assert.ok(clearBody.includes('resolver(false);'));
+  assert.ok(clearBody.includes('sensitiveAdminResolverRef.current = null;'));
+  assert.ok(clearBody.includes('setSensitiveAdminPrompt(null);'));
+
+  const sensitiveConfirmStart = storeSource.indexOf('const confirmSensitiveAdmin = useCallback(');
+  const sensitiveConfirmEnd = storeSource.indexOf('const resolveSensitiveAdmin =', sensitiveConfirmStart);
+  assert.ok(sensitiveConfirmStart >= 0 && sensitiveConfirmEnd > sensitiveConfirmStart);
+  assert.ok(storeSource.slice(sensitiveConfirmStart, sensitiveConfirmEnd).includes('sessionRef.current?.userId !== user.id'));
+
+  const verifyPinStart = storeSource.indexOf('const verifyAdminPin = useCallback(');
+  const verifyPinEnd = storeSource.indexOf('const unlockSession =', verifyPinStart);
+  assert.ok(storeSource.slice(verifyPinStart, verifyPinEnd).includes('sessionRef.current?.userId !== actor.id'));
+
+  const roleSwitchStart = storeSource.indexOf('const switchRole = useCallback(');
+  const roleSwitchEnd = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart);
+  assert.ok(storeSource.slice(roleSwitchStart, roleSwitchEnd).includes('sessionRef.current?.userId !== initiatingUser.id'));
+  const signOutStart = storeSource.indexOf('const signOut = useCallback(');
+  const signOutEnd = storeSource.indexOf('// Role switches create a real authenticated session', signOutStart);
+  assert.ok(signOutStart >= 0 && signOutEnd > signOutStart);
+  assert.ok(storeSource.slice(signOutStart, signOutEnd).includes('clearSensitiveAdminAuthorization();'));
+
+  const unlockStart = storeSource.indexOf('const unlockSession = useCallback(');
+  const unlockEnd = storeSource.indexOf('const sensitiveAuthRef =', unlockStart);
+  assert.ok(unlockStart >= 0 && unlockEnd > unlockStart);
+  assert.ok(storeSource.slice(unlockStart, unlockEnd).includes('sessionRef.current?.userId !== initiatingUser.id'));
+
+  const roleSwitchStart2 = storeSource.indexOf('const switchRole = useCallback(');
+  const roleSwitchEnd2 = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart2);
+  assert.ok(roleSwitchStart2 >= 0 && roleSwitchEnd2 > roleSwitchStart2);
+  const roleSwitchSource = storeSource.slice(roleSwitchStart2, roleSwitchEnd2);
+  assert.ok(roleSwitchSource.includes('clearSensitiveAdminAuthorization();'));
+  assert.ok(roleSwitchSource.includes('sessionRef.current?.userId !== initiatingUser.id'));
+
+  const changePinStart = storeSource.indexOf('const changeAdminPin = useCallback(');
+  const changePinEnd = storeSource.indexOf('/* ---------------- products ---------------- */', changePinStart);
+  assert.ok(changePinStart >= 0 && changePinEnd > changePinStart);
+  assert.ok(storeSource.slice(changePinStart, changePinEnd).includes('sessionRef.current?.userId !== adminSnapshot.id'));
+});
+
+
+test('initial Admin setup is serialized and rechecks account state after async PBKDF2', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const start = storeSource.indexOf('const createInitialAdmin = useCallback(async');
+  const end = storeSource.indexOf('const changePassword = useCallback(', start);
+  assert.ok(start >= 0 && end > start);
+  const setup = storeSource.slice(start, end);
+
+  assert.ok(setup.includes('runWithAsyncLock(initialAdminSetupLockRef'));
+  const firstEmptyCheck = setup.indexOf("if ((stateRef.current.users || []).length > 0)");
+  const pinHash = setup.indexOf('const initialAdminPinHash = await hashPasswordAsync(next)');
+  const finalEmptyCheck = setup.indexOf("if ((stateRef.current.users || []).length > 0)", firstEmptyCheck + 1);
+  const commit = setup.indexOf('const nextState =', pinHash);
+
+  assert.ok(firstEmptyCheck >= 0);
+  assert.ok(pinHash > firstEmptyCheck);
+  assert.ok(finalEmptyCheck > pinHash);
+  assert.ok(commit > finalEmptyCheck);
+  assert.ok(setup.slice(finalEmptyCheck, commit).includes("Administrator setup is already complete"));
+});
+
+test('staff account saves await PBKDF2 and report success only after the current Admin and target are revalidated', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const usersSource = readFileSync(new URL('../src/pages/Users.tsx', import.meta.url), 'utf8');
+  const credentialSource = readFileSync(new URL('../src/lib/userCredentialState.ts', import.meta.url), 'utf8');
+
+  const storeStart = storeSource.indexOf('const saveUser = useCallback(async');
+  const storeEnd = storeSource.indexOf('const toggleUserActive =', storeStart);
+  assert.ok(storeStart >= 0 && storeEnd > storeStart);
+  const saveHandler = storeSource.slice(storeStart, storeEnd);
+  assert.ok(saveHandler.includes('await hashPasswordAsync(suppliedPassword)'));
+  assert.ok(saveHandler.includes('await confirmSensitiveAdmin('));
+  assert.ok(saveHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(saveHandler.includes('saveManagedUserIfCurrent(stateRef.current'));
+  assert.ok(saveHandler.includes('setState(current => saveManagedUserIfCurrent(current'));
+  assert.ok(saveHandler.includes('return { ok: true };'));
+
+  const pageStart = usersSource.indexOf('const save = async () => {');
+  const pageEnd = usersSource.indexOf('  return (', pageStart);
+  assert.ok(pageStart >= 0 && pageEnd > pageStart);
+  const pageSave = usersSource.slice(pageStart, pageEnd);
+  assert.ok(pageSave.includes('const result = await saveUser(toSave);'));
+  assert.ok(pageSave.indexOf('if (!result.ok)') < pageSave.indexOf("setFormOk(isNew ? 'User created'"));
+  assert.ok(usersSource.includes('saving ? \'Saving…\''));
+  assert.ok(usersSource.includes('disabled={saving}'));
+
+  assert.ok(credentialSource.includes('currentAdmin.password !== adminSnapshot.password'));
+  assert.ok(credentialSource.includes('currentTarget.password !== targetSnapshot.password'));
+  assert.ok(credentialSource.includes('state.users.some(user => user.id !== nextUser.id'));
+  assert.ok(saveHandler.includes('const leavesActiveAdmin = stateRef.current.users.some('));
+  assert.ok(saveHandler.includes('At least one active Admin account must remain.'));
+  assert.ok(credentialSource.includes("if (!nextUsers.some(user => user.role === 'admin' && user.active)) return null;"));
+
+  const toggleStart = storeSource.indexOf('const toggleUserActive = useCallback');
+  const deleteStart = storeSource.indexOf('const deleteUser = useCallback', toggleStart);
+  const adminEnd = storeSource.indexOf('/* ---------------- admin ---------------- */', deleteStart);
+  assert.ok(toggleStart >= 0 && deleteStart > toggleStart && adminEnd > deleteStart);
+  const toggleHandler = storeSource.slice(toggleStart, deleteStart);
+  const deleteHandler = storeSource.slice(deleteStart, adminEnd);
+  assert.ok(toggleHandler.includes('setManagedUserActiveIfCurrent(stateRef.current'));
+  assert.ok(toggleHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(toggleHandler.includes('targetSnapshot.id === adminSnapshot.id'));
+  assert.ok(deleteHandler.includes('deleteManagedUserIfCurrent(stateRef.current'));
+  assert.ok(deleteHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(deleteHandler.includes('targetSnapshot.id === adminSnapshot.id'));
+  assert.ok(credentialSource.includes('if (!nextUsers.some(user => user.role === \'admin\' && user.active)) return null;'));
+  assert.ok(credentialSource.includes('targetSnapshot.id === adminSnapshot.id) return null;'));
+});
+
+test('managed password change and POS reset enforce sensitive Admin confirmation in the store', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8');
+
+  const managedStart = storeSource.indexOf('const changeManagedPassword = useCallback(async');
+  const managedEnd = storeSource.indexOf('const signOut = useCallback', managedStart);
+  assert.ok(managedStart >= 0 && managedEnd > managedStart);
+  const managedHandler = storeSource.slice(managedStart, managedEnd);
+  assert.ok(managedHandler.includes("await confirmSensitiveAdmin('managed account password change')"));
+  assert.ok(managedHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+
+  const resetStart = storeSource.indexOf('const resetData = useCallback(async');
+  const resetEnd = storeSource.indexOf('const refreshPOS = useCallback', resetStart);
+  assert.ok(resetStart >= 0 && resetEnd > resetStart);
+  const resetHandler = storeSource.slice(resetStart, resetEnd);
+  assert.ok(resetHandler.includes("await confirmSensitiveAdmin('clear local POS data')"));
+  assert.ok(resetHandler.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+  assert.ok(resetHandler.includes('latestAdmin.password !== adminSnapshot.password'));
+  assert.ok(resetHandler.includes('return true;'));
+
+  const managedUiStart = settingsSource.indexOf('const submitManagedPassword = async () => {');
+  const managedUiEnd = settingsSource.indexOf('const submitPin = async () => {', managedUiStart);
+  assert.ok(managedUiStart >= 0 && managedUiEnd > managedUiStart);
+  assert.ok(settingsSource.slice(managedUiStart, managedUiEnd).includes('await changeManagedPassword('));
+  assert.equal(settingsSource.slice(managedUiStart, managedUiEnd).includes('confirmSensitiveAdmin('), false);
+
+  assert.match(settingsSource, /if \(await resetData\(\)\) setConfirmReset\(false\)/);
+
+  const settingsStart = storeSource.indexOf('const updateSettings = useCallback(');
+  const settingsEnd = storeSource.indexOf('const closeSession = useCallback', settingsStart);
+  assert.ok(settingsStart >= 0 && settingsEnd > settingsStart);
+  const settingsHandler = storeSource.slice(settingsStart, settingsEnd);
+  assert.ok(settingsHandler.includes("Object.prototype.hasOwnProperty.call(patch, 'adminPinHash')"));
+  assert.ok(settingsHandler.includes('Blocked direct Admin PIN hash update'));
+  assert.ok(settingsHandler.includes('use the guarded PIN change flow'));
+});
+
+
+
+test('cashier idle-unlock fallback uses its own persistent scope instead of the shared Admin lockout', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const start = storeSource.indexOf('const unlockSession = useCallback(async (credential: string)');
+  const end = storeSource.indexOf('const sensitiveAuthRef =', start);
+  assert.ok(start >= 0 && end > start);
+  const unlock = storeSource.slice(start, end);
+  assert.ok(unlock.includes("current.role === 'admin' ? 'admin' : 'cashier-unlock'"));
+  const verifyStart = storeSource.indexOf('const verifyAdminPin = useCallback(');
+  const unlockStart = storeSource.indexOf('const unlockSession = useCallback(', verifyStart);
+  assert.ok(verifyStart >= 0 && unlockStart > verifyStart);
+  assert.ok(storeSource.slice(verifyStart, unlockStart).includes("user.role === 'admin' ? 'admin' : 'cashier-unlock'"));
+
+  const switchStart = storeSource.indexOf('const switchRole = useCallback(');
+  const changePinStart = storeSource.indexOf('const changeAdminPin = useCallback(', switchStart);
+  assert.ok(switchStart >= 0 && changePinStart > switchStart);
+  const switchRole = storeSource.slice(switchStart, changePinStart);
+  assert.ok(switchRole.includes("}, 'cashier-unlock');"));
+  assert.ok(switchRole.includes("const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1'"));
+  assert.ok(unlock.includes('if (ownPasswordOk)'));
+  assert.ok(unlock.includes('if (!attempt.success)'));
+  const guardSource = readFileSync(new URL('../src/lib/localAuthGuard.ts', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(guardSource.includes("const storageKeyForScope = (scope: LocalAuthAttemptScope): string => scope === 'admin'"));
+  assert.ok(guardSource.includes('const browserGuards = new Map<LocalAuthAttemptScope'));
+});
+
+
+test('Settings Admin PIN change uses its store-level guarded current credential once without a duplicate confirmation modal', () => {
+  const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const submitStart = settingsSource.indexOf('const submitPin = async () => {');
+  const submitEnd = settingsSource.indexOf('const onImport =', submitStart);
+  assert.ok(submitStart >= 0 && submitEnd > submitStart);
+  const submit = settingsSource.slice(submitStart, submitEnd);
+  assert.ok(submit.includes('await changeAdminPin(pinCur, pinNew)'));
+  assert.ok(!submit.includes('confirmSensitiveAdmin('));
+  assert.ok(submit.includes('if (pinBusy) return;'));
+  assert.ok(submit.includes('finally {\n      setPinBusy(false);'));
+  assert.ok(settingsSource.includes('disabled={pinBusy || !pinNew || !pinConfirm || !pinCur}'));
+
+  const changeStart = storeSource.indexOf('const changeAdminPin = useCallback(');
+  const changeEnd = storeSource.indexOf('/* ---------------- products ---------------- */', changeStart);
+  assert.ok(changeStart >= 0 && changeEnd > changeStart);
+  const change = storeSource.slice(changeStart, changeEnd);
+  assert.ok(change.includes('runLocalAuthAttempt(async () =>'));
+  assert.ok(change.includes('verifyPasswordWithLegacyUpgrade(currentSecret, storedPinHash)'));
+  assert.ok(change.includes('verifyPasswordAsync(currentSecret, adminSnapshot.password)'));
+  assert.ok(change.includes('sessionRef.current?.userId !== adminSnapshot.id'));
+});
+
+
 test('stock adjustment uses compare-and-set for verified online cloud quantities only', () => {
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', false, 12), 12);
   assert.equal(getExpectedBranchQtyForStockAdjustment('shop-1', true, 12), undefined);
