@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
 import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, hasCloudRecordScope, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
+import { canAutoBindCloudShop } from '../src/lib/shopBindingSafety.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -885,6 +886,47 @@ test('catalog sync cache separates shops, users, branches and changed fingerprin
   assert.equal(calls, keys.length);
 });
 
+
+test('first Cloud shop binding requires an empty queue and a clean local POS seed', () => {
+  const cleanSeed = {
+    products: [], customers: [], suppliers: [], sales: [], purchases: [],
+    expenses: [], exchanges: [], purchaseReturns: [], held: [], sessions: [],
+    units: [], repairs: [], kitItems: [], quotations: [], warrantyClaims: [],
+    inventoryTransactions: [], supplierPayments: [], customerCreditPayments: [],
+    grns: [], reverseRequests: [], counters: {},
+    settings: {
+      shopName: 'Nexfix Solution', tagline: '', address: '', phone: '', email: '',
+      receiptFooter: '', taxDefault: 0, lowStockDefault: 5, exchangeDays: 3,
+      openingFloat: 10000, loyaltyPointsPerRs: 0.001, loyaltyPointValue: 20,
+      taxRegistrationNo: '', invoicePlaceOfSupply: '',
+    },
+  };
+  assert.equal(canAutoBindCloudShop(cleanSeed, 0, false), true);
+  assert.equal(canAutoBindCloudShop(cleanSeed, 1, false), false);
+  assert.equal(canAutoBindCloudShop(cleanSeed, Number.NaN, false), false);
+  assert.equal(canAutoBindCloudShop(cleanSeed, -1, false), false);
+  assert.equal(canAutoBindCloudShop({ ...cleanSeed, sales: [{ id: 'old-sale' }] }, 0, false), false);
+  assert.equal(canAutoBindCloudShop(cleanSeed, 0, true), false);
+
+  const cloudSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  const ensureStart = cloudSource.indexOf('export async function ensureCloudShop');
+  const ensureEnd = cloudSource.indexOf('export async function adjustBranchStockAtomic', ensureStart);
+  const ensureBlock = cloudSource.slice(ensureStart, ensureEnd);
+  const queueRead = ensureBlock.indexOf('idbListQueue()');
+  const queueGuard = ensureBlock.indexOf('if (pendingQueue.length > 0)');
+  const stateCheck = ensureBlock.indexOf('canAutoBindCloudShop(localState, pendingQueue.length, hasStoredLocalBusinessData())');
+  const bindWrite = ensureBlock.indexOf('if (!setCloudShopId(membership.shop_id))');
+  assert.ok(queueRead >= 0 && queueGuard > queueRead);
+  assert.ok(stateCheck > queueGuard && bindWrite > stateCheck,
+    'first Cloud shop binding must validate queue and local state before persisting the binding');
+
+  assert.ok(cloudSource.includes("const storageValue = target.getItem(SHOP_KEY)?.trim() || '';"));
+  assert.ok(cloudSource.includes('if (storageValue !== normalized) return false;'),
+    'setCloudShopId must confirm that localStorage stored the requested shop ID');
+  const shopSwitcherSource = readFileSync(new URL('../src/components/ShopSwitcher.tsx', import.meta.url), 'utf8');
+  assert.ok(shopSwitcherSource.includes('if (pendingQueue.length > 0)'));
+  assert.ok(shopSwitcherSource.includes('if (!setCloudShopId(resolved))'));
+});
 
 test('per-record Cloud receipts use the authenticated shop membership user, not a stale UI scope', () => {
   const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
