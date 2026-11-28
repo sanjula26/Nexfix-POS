@@ -1454,6 +1454,7 @@ test('sale return, reversal and trade-in cloud writes require registered device 
     'revoke all on function private.register_trade_in_atomic',
     'revoke all on function private.request_sale_reversal',
     'security invoker',
+    "notify pgrst, 'reload schema'",
   ]) {
     assert.ok(migration.includes(expected), `branch transaction migration must include: ${expected}`);
   }
