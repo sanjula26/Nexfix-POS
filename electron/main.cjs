@@ -68,7 +68,9 @@ const LOCAL_AUTH_SCOPES = new Set(['admin','cashier-unlock']);
 function isValidLocalAuthScope(scope){ return typeof scope==='string' && LOCAL_AUTH_SCOPES.has(scope); }
 function getLocalAuthGuardFile(scope='admin'){
   if(!isValidLocalAuthScope(scope)) throw new Error('Invalid local authentication scope');
-  return path.join(app.getPath('userData'),'nexfix-secure',`local-auth-guard-${scope}.json`);
+  // Preserve the original Admin guard file so existing lockout history is not reset.
+  const filename = scope==='admin' ? 'local-auth-guard.json' : 'local-auth-guard-cashier-unlock.json';
+  return path.join(app.getPath('userData'),'nexfix-secure',filename);
 }
 function failClosedLocalAuthGuardState(scope='admin'){
   const locked={version:1,failures:5,lockedUntil:Date.now()+300000,pending:null};
@@ -92,7 +94,7 @@ function readLocalAuthGuard(scope='admin'){
     return parsed;
   }catch{
     // Corrupt guard state must not silently reset an administrator attempt budget.
-    return failClosedLocalAuthGuardState();
+    return failClosedLocalAuthGuardState(scope);
   }
 }
 function writeLocalAuthGuard(value,scope='admin'){
