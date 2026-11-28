@@ -61,15 +61,15 @@ export async function queueWrite(note?:string):Promise<void>{
 }
 
 export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product}):Promise<void>{
-  const queued=await idbEnqueue({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueue({type:'branch_stock_adjustment',id:`branch-adjust:${input.adjustmentId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; stock adjustment was not queued safely.');
 }
 export async function queueInventoryUnitsAdd(input:{shopId?:string;branchId:string;deviceId:string;units:InventoryUnit[];newUnitIds:string[];operationId:string}):Promise<void>{
-  const queued=await idbEnqueue({type:'inventory_units_add',id:`inventory-units:${input.operationId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueue({type:'inventory_units_add',id:`inventory-units:${input.operationId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked units were not queued safely.');
 }
 export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:string;deviceId:string;unit:InventoryUnit;operationId:string}):Promise<void>{
-  const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify(input)});
+  const queued=await idbEnqueue({type:'inventory_unit_delete',id:`inventory-unit-delete:${input.operationId}`,payload:JSON.stringify({...input,cloudScope:getCloudActivityScope()||undefined})});
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
 export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
@@ -90,21 +90,40 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
-    let blockedUnsafeSaleOrGrnReplay = false;
+    let blockedUnsafeScopedTransactionReplay = false;
     const state=await idbLoadState();
 
     for(const op of ops){
       if(op.type==='inventory_unit_delete'){
         try{
-          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;unit:InventoryUnit;operationId:string};
+          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;unit:InventoryUnit;operationId:string;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              (parsed.shopId && parsed.shopId !== parsed.cloudScope.shopId) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope, parsed.cloudScope, getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           if(state){
             const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId);
             if(!catalog.ok) break;
           }
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit]});
           if(!restored.ok) break;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id});
           if(!deleted.ok) break;
           acknowledged.push(op.id); flushed++;
@@ -113,9 +132,20 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
       if(op.type==='inventory_units_add'){
         try{
-          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;units:InventoryUnit[];newUnitIds:string[];operationId:string};
+          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;units:InventoryUnit[];newUnitIds:string[];operationId:string;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              (parsed.shopId && parsed.shopId !== parsed.cloudScope.shopId) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope, parsed.cloudScope, getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           if(state){
             const newIds=new Set(parsed.newUnitIds||[]);
             const additions=new Map<string,number>();
@@ -123,6 +153,10 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             const bootstrapState={...state,units:[],products:state.products.map(product=>({...product,stock:Math.max(0,product.stock-(additions.get(product.id)||0))}))};
             const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
             if(!catalog.ok) break;
+          }
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
           }
           const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId});
           if(!result.ok) break;
@@ -132,16 +166,35 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
       if(op.type==='branch_stock_adjustment'){
         try{
-          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product};
+          const parsed=JSON.parse(op.payload) as {shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product;cloudScope?:{shopId?:string;userId?:string}};
+          if (!hasCloudRecordScope(parsed.cloudScope) ||
+              (parsed.shopId && parsed.shopId !== parsed.cloudScope.shopId) ||
+              !isCloudRecordReplayScopeValid(parsed.cloudScope, parsed.cloudScope, getCloudActivityScope())) {
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const shop=await ensureCloudShop('Nexfix Shop');
           if(!shop.ok || !shop.shopId) break;
+          const verifiedScope=shop.userId?{shopId:shop.shopId,userId:shop.userId}:null;
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           if(parsed.baseProduct && state){
             const hasBaseProduct=state.products.some(product=>product.id===parsed.baseProduct!.id); const bootstrapState={...state,products:hasBaseProduct?state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product):[...state.products,parsed.baseProduct!]};
             const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId);
             if(!catalog.ok) break;
           }
+          if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+            blockedUnsafeScopedTransactionReplay = true;
+            break;
+          }
           const result=await adjustBranchStockAtomic({...parsed,shopId:shop.shopId});
           if(!result.ok && result.error?.includes('Product is not synced to this cloud shop yet') && state){
+            if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
+              blockedUnsafeScopedTransactionReplay = true;
+              break;
+            }
             const catalog=await syncNormalizedCatalog(state,shop.shopId);
             if(!catalog.ok) break;
             // Catalog bootstrap already includes this local product's final stock.
@@ -172,7 +225,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         // Historical Sale jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
         if (!hasCloudRecordScope(parsed.cloudScope)) {
-          blockedUnsafeSaleOrGrnReplay = true;
+          blockedUnsafeScopedTransactionReplay = true;
           break;
         }
         const markRetry = async (reason: unknown) => {
@@ -191,7 +244,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -211,7 +264,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
           const activeScopeBeforeSale = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed before the sale write; no Sale was sent to the new account.');
             break;
           }
@@ -239,7 +292,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
             const activeScopeBeforeTradeIn = getCloudActivityScope();
             if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
-              blockedUnsafeSaleOrGrnReplay = true;
+              blockedUnsafeScopedTransactionReplay = true;
               await markRetry('The Cloud account or shop changed before trade-in reconciliation; the queue was kept.');
               break;
             }
@@ -259,7 +312,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
@@ -298,7 +351,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         // Historical GRN jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
         if (!hasCloudRecordScope(parsed.cloudScope)) {
-          blockedUnsafeSaleOrGrnReplay = true;
+          blockedUnsafeScopedTransactionReplay = true;
           break;
         }
         const markRetry = async (reason: unknown) => {
@@ -317,7 +370,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
           const activeScopeBeforeCatalog = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
             break;
           }
@@ -331,7 +384,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScopeBeforeReceive = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed before the GRN write; no GRN was sent to the new account.');
             break;
           }
@@ -348,7 +401,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (!isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
-            blockedUnsafeSaleOrGrnReplay = true;
+            blockedUnsafeScopedTransactionReplay = true;
             await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
             break;
           }
@@ -450,13 +503,13 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
     const pendingTransactions = remaining.some(op =>
       op.type !== 'state_write' && op.type !== 'backup' && op.type !== 'custom'
     );
-    if (blockedUnsafeSaleOrGrnReplay || pendingTransactions) {
+    if (blockedUnsafeScopedTransactionReplay || pendingTransactions) {
       return {
         flushed,
         pending: remaining.length,
         synced: false,
         conflict: false,
-        blockedQueueScope: blockedUnsafeSaleOrGrnReplay || undefined,
+        blockedQueueScope: blockedUnsafeScopedTransactionReplay || undefined,
         pendingTransactions: true,
       };
     }
