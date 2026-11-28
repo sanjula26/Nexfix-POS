@@ -26,6 +26,7 @@ function storage(): Storage | null {
 function sanitizeCloudSnapshotState(state: POSState): POSState {
   return {
     ...state,
+    sales: state.sales.map(({ cloudScope: _localCloudScope, ...sale }) => sale),
     users: [],
     sessions: [],
     settings: {
@@ -1130,16 +1131,23 @@ export async function syncStateSnapshot(state: POSState): Promise<CloudSyncResul
 }
 
 export async function downloadStateSnapshot(): Promise<{ state: POSState; revision: number } | null> {
-  if (!supabaseConfigured || !supabase || !getCloudShopId()) return null;
+  if (!supabaseConfigured || !supabase) return null;
+  const shopId = getCloudShopId();
+  if (!shopId) return null;
   const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session) return null;
-  const { data, error } = await supabase.from('pos_state_snapshots').select('state, revision').eq('shop_id', getCloudShopId()).maybeSingle();
+  const userId = sessionData.session?.user.id;
+  if (!userId) return null;
+  const { data, error } = await supabase.from('pos_state_snapshots').select('state, revision').eq('shop_id', shopId).maybeSingle();
   if (error || !data || !data.state || typeof data.state !== 'object' || Array.isArray(data.state)) return null;
   const revision = Number(data.revision);
   if (!Number.isSafeInteger(revision) || revision < 0) return null;
   setRevision(revision);
   const cloudState = sanitizeCloudSnapshotState(data.state as POSState);
-  return { state: cloudState, revision };
+  const cloudScope = { shopId, userId };
+  return {
+    state: { ...cloudState, sales: cloudState.sales.map(sale => ({ ...sale, cloudScope })) },
+    revision,
+  };
 }
 
 export async function resolveCloudConflict(): Promise<{ state: POSState; revision: number } | null> { return downloadStateSnapshot(); }
