@@ -84,12 +84,13 @@ export async function getPendingSyncOperations(){return idbListQueue();}
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
-export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
+export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean;blockedLegacy?:boolean}>{
   if(flushInFlight) return flushInFlight;
   flushInFlight=(async()=>{
     const ops=await idbListQueue();
     let flushed=0;
     const acknowledged:string[]=[];
+    let blockedUnscopedLegacyWrite = false;
     const state=await idbLoadState();
 
     for(const op of ops){
@@ -170,7 +171,10 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         try { parsed = JSON.parse(op.payload) as ParsedSaleQueue; } catch { break; }
         // Historical Sale jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
-        if (!hasCloudRecordScope(parsed.cloudScope)) break;
+        if (!hasCloudRecordScope(parsed.cloudScope)) {
+          blockedUnscopedLegacyWrite = true;
+          break;
+        }
         const markRetry = async (reason: unknown) => {
           if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
           await markCloudRecordSyncRetry(
@@ -289,7 +293,10 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
         try { parsed = JSON.parse(op.payload) as ParsedPurchaseQueue; } catch { break; }
         // Historical GRN jobs did not store their original Cloud shop/user.
         // Keep those rows local until an explicit reconciliation can bind them.
-        if (!hasCloudRecordScope(parsed.cloudScope)) break;
+        if (!hasCloudRecordScope(parsed.cloudScope)) {
+          blockedUnscopedLegacyWrite = true;
+          break;
+        }
         const markRetry = async (reason: unknown) => {
           if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
           await markCloudRecordSyncRetry(
@@ -427,6 +434,18 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
 
     if(acknowledged.length) await idbAcknowledgeQueue(acknowledged);
     const remaining=await idbListQueue();
+    // Do not publish a full POS snapshot while an unscoped legacy Sale/GRN
+    // remains unresolved: that snapshot could otherwise copy it into the
+    // currently active Cloud shop even though normalized replay was blocked.
+    if (blockedUnscopedLegacyWrite) {
+      return {
+        flushed,
+        pending: remaining.length,
+        synced: false,
+        conflict: false,
+        blockedLegacy: true,
+      };
+    }
     const latestState=await idbLoadState();
     if(!latestState) return {flushed,pending:remaining.length,synced:false,conflict:false};
     const snapshotOps=remaining.filter(op=>op.type==='state_write' || op.type==='backup' || op.type==='custom');
