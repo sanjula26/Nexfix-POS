@@ -654,7 +654,6 @@ export default function Settings() {
 
   const submitManagedPassword = async () => {
     setAccountMsg(null);
-    if (!(await confirmSensitiveAdmin('managed account password change'))) return;
     if (!securityUserId) return setAccountMsg({ ok: false, text: 'No active ' + securityRole + ' account is available' });
     if (accountNew.length < 12) return setAccountMsg({ ok: false, text: 'Password must be at least 12 characters' });
     if (accountNew !== accountConfirm) return setAccountMsg({ ok: false, text: 'Passwords do not match' });
