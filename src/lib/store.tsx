@@ -3449,6 +3449,15 @@ const deletePurchase = useCallback((id: string) => {
     if (sessionRef.current?.userId !== adminSnapshot.id) {
       return { ok: false, error: 'Administrator session changed during the user save. Please try again.' };
     }
+    const leavesActiveAdmin = stateRef.current.users.some(account =>
+      account.id === toSave.id
+        ? toSave.role === 'admin' && toSave.active
+        : account.role === 'admin' && account.active,
+    ) || (!targetSnapshot && toSave.role === 'admin' && toSave.active);
+    if (!leavesActiveAdmin) {
+      pushAudit('DENIED', 'User', 'Blocked staff edit that would remove the final active administrator');
+      return { ok: false, error: 'At least one active Admin account must remain. Add or keep another Admin before changing this role.' };
+    }
 
     const nextState = saveManagedUserIfCurrent(stateRef.current, adminSnapshot, targetSnapshot, toSave);
     if (!nextState) {
