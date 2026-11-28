@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { withCloudActivity } from './cloudActivity';
+import { getCloudActivityScope, withCloudActivity } from './cloudActivity';
+import { markCloudRecordSynced } from './cloudRecordSync';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
@@ -1873,6 +1874,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     // Capture the validated non-empty shop ID before entering async callbacks.
     const cloudShopId = shop.shopId;
+    const cloudRecordScope = getCloudActivityScope();
     const branchResolution = await resolveCloudBranchId(
       shop.shopId,
       getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
@@ -2111,6 +2113,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
+    if (cloudRecordScope?.shopId === cloudShopId) {
+      void markCloudRecordSynced('sale', saleId, 'Cloud sale', cloudRecordScope);
+    }
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
       const tradeInCloud = await withCloudActivity('Trade-in unit', () => registerTradeInAtomic({
@@ -2638,6 +2643,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           purchase: po,
         }), result => result.ok);
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
+        const cloudRecordScope = getCloudActivityScope();
+        if (cloudRecordScope?.shopId === shop.shopId) {
+          void markCloudRecordSynced('purchase', po.id, 'GRN receive', cloudRecordScope);
+        }
       } else if (cloudEnabled && !online) {
         await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: { ...po, branchId: receiveBranchId } });
       }
