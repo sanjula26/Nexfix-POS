@@ -82,6 +82,17 @@ export function useCloudRecordSyncSnapshot(): CloudRecordSyncSnapshot {
         ]);
         const pending = new Set<string>();
         for (const item of queue) {
+          if (item.type !== 'sale_create' && item.type !== 'purchase_receive') continue;
+          try {
+            const payload = JSON.parse(item.payload) as {
+              cloudScope?: { shopId?: string; userId?: string };
+            };
+            // A queued transaction is shown as pending only for the Cloud identity
+            // that owned it when it was queued. Legacy/unscoped rows remain unverified.
+            if (payload.cloudScope?.shopId !== scope.shopId || payload.cloudScope?.userId !== scope.userId) continue;
+          } catch {
+            continue;
+          }
           if (item.type === 'sale_create' && item.id.startsWith('sale:')) {
             pending.add(cloudRecordSyncKey('sale', item.id.slice('sale:'.length)));
           } else if (item.type === 'purchase_receive' && item.id.startsWith('purchase-receive:')) {
