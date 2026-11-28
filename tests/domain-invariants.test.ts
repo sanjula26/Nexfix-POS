@@ -1237,8 +1237,8 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assertLegacyQueueBlocked(purchaseReplay, 'GRN');
   assert.ok(offlineSource.includes('let blockedUnsafeScopedTransactionReplay = false;'));
   const branchMismatchStops =
-    (saleReplay.match(/isQueuedBranchMismatch\\(/g) || []).length
-      + (purchaseReplay.match(/isQueuedBranchMismatch\\(/g) || []).length;
+    (saleReplay.split('isQueuedBranchMismatch(').length - 1)
+      + (purchaseReplay.split('isQueuedBranchMismatch(').length - 1);
   assert.equal(branchMismatchStops, 4, 'queued Sale/GRN catalog and atomic writes must block on branch mismatch');
   assert.equal(
     (saleReplay.match(/blockedUnsafeScopedTransactionReplay = true;/g) || []).length
