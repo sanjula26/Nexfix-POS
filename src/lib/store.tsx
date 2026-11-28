@@ -10,7 +10,7 @@ import { hashPasswordAsync, verifyPasswordAsync, verifyPasswordWithLegacyUpgrade
 import { adminCredentialSnapshotMatches, captureAdminCredentialSnapshot, findActiveAdminByCredential, findActiveAdminById, replaceAdminPinHashIfCurrent, type AdminCredentialSnapshot } from './adminPinState';
 import { runWithAsyncLock } from './authConcurrency';
 import { runLocalAuthAttempt } from './localAuthGuard';
-import { replaceUserPasswordIfCurrent } from './userCredentialState';
+import { replaceUserPasswordIfCurrent, saveManagedUserIfCurrent } from './userCredentialState';
 import { idbLoadState, idbSaveState, idbAvailable, idbGetMeta, idbSetMeta, idbListQueue, type BackupMeta } from './db';
 import { downloadBackup, startAutoBackup, scheduleGoogleBackup } from './backup';
 import {
@@ -156,7 +156,7 @@ interface StoreCtx {
   // exchanges
   processExchange: (saleId: string, returns: Array<{ itemIdx: number; qty: number }>, reason: string, mode: 'refund' | 'replace') => void;
   // users
-  saveUser: (u: AppUser) => void;
+  saveUser: (u: AppUser) => Promise<{ ok: boolean; error?: string }>;
   toggleUserActive: (id: string) => void;
   deleteUser: (id: string) => void;
   // admin
@@ -3391,29 +3391,49 @@ const deletePurchase = useCallback((id: string) => {
   }, [state.sales, state.settings.exchangeDays, pushAudit, user, can]);
 
   /* ---------------- users ---------------- */
-  const saveUser = useCallback(async (u: AppUser) => {
-    if (!user || user.role !== 'admin') {
+  const saveUser = useCallback(async (u: AppUser): Promise<{ ok: boolean; error?: string }> => {
+    const adminSnapshot = user
+      ? stateRef.current.users.find(x => x.id === user.id && x.role === 'admin' && x.active)
+      : undefined;
+    if (!adminSnapshot) {
       pushAudit('DENIED', 'User', `Blocked user save for ${u.email || u.name || u.id}`);
-      return;
+      return { ok: false, error: 'Only an active administrator can save staff accounts.' };
     }
-    if (!(await confirmSensitiveAdmin('user account create/change'))) return;
-    const exists = state.users.some(x => x.id === u.id);
-    // Password changes and newly created accounts must use the same 12+ character
-    // policy as first-login and managed-password flows. Existing hashes are kept
-    // unchanged when the password field is intentionally left blank by the UI.
-    const existing = state.users.find(x => x.id === u.id);
+    const targetSnapshot = stateRef.current.users.find(x => x.id === u.id) || null;
+    if (!(await confirmSensitiveAdmin('user account create/change'))) {
+      return { ok: false, error: 'Administrator confirmation was cancelled.' };
+    }
+
     const suppliedPassword = String(u.password || '');
-    const passwordChanged = !existing || suppliedPassword !== existing.password;    if (passwordChanged && suppliedPassword.length < 12) {
+    const passwordChanged = !targetSnapshot || suppliedPassword !== targetSnapshot.password;
+    if (passwordChanged && suppliedPassword.length < 12) {
       pushAudit('DENIED', 'User', `Blocked weak password for ${u.email || u.name || u.id}`);
-      return;
+      return { ok: false, error: 'New passwords must contain at least 12 characters.' };
     }
-    const password = isHashed(suppliedPassword)
-      ? suppliedPassword
-      : (existing && suppliedPassword === existing.password ? existing.password : hashPassword(suppliedPassword));
+    const password = passwordChanged
+      ? await hashPasswordAsync(suppliedPassword)
+      : targetSnapshot.password;
     const toSave = { ...u, password };
-    setState(s => ({ ...s, users: exists ? s.users.map(x => (x.id === u.id ? toSave : x)) : [...s.users, toSave] }));
-    pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${u.name} (${u.role})`);
-  }, [state.users, pushAudit, user, confirmSensitiveAdmin]);
+    if (!toSave.name.trim() || !toSave.email.trim()) {
+      return { ok: false, error: 'Name and email are required.' };
+    }
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(toSave.email.trim())) {
+      return { ok: false, error: 'Enter a valid email address.' };
+    }
+    if (session?.userId !== adminSnapshot.id) {
+      return { ok: false, error: 'Administrator session changed during the user save. Please try again.' };
+    }
+
+    const nextState = saveManagedUserIfCurrent(stateRef.current, adminSnapshot, targetSnapshot, toSave);
+    if (!nextState) {
+      return { ok: false, error: 'The administrator or target staff account changed during the save. Refresh and try again.' };
+    }
+    stateRef.current = nextState;
+    setState(current => saveManagedUserIfCurrent(current, adminSnapshot, targetSnapshot, toSave) || current);
+    const exists = Boolean(targetSnapshot);
+    pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${toSave.name} (${toSave.role})`);
+    return { ok: true };
+  }, [user, session?.userId, pushAudit, confirmSensitiveAdmin]);
 
   const toggleUserActive = useCallback(async (id: string) => {
     if (!user || user.role !== 'admin') {
