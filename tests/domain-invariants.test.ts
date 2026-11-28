@@ -1479,7 +1479,7 @@ test('safe verification workflows trigger for integration and focused fix pull r
   ];
 
   for (const workflowPath of workflowPaths) {
-    const source = readFileSync(new URL(workflowPath, import.meta.url), 'utf8').split('\\r\\n').join('\\n');
+    const source = readFileSync(new URL(workflowPath, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
     const expectedPullRequestFilter = [
       '  pull_request:',
       "    branches: [main, 'integration/**', 'fix/**']",
