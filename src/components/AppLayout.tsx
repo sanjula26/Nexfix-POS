@@ -480,10 +480,10 @@ export default function AppLayout() {
               : 'No cloud transfer is active';
   const cloudSyncTitle = cloudSyncActive
     ? `Sending data to cloud: ${cloudActivity.operations.join(', ') || 'POS data'}`
-    : cloudLastIssue
-      ? `Cloud operation needs attention: ${cloudLastIssue}`
-      : syncManagerState.status === 'conflict'
-        ? `Cloud sync conflict — ${syncManagerState.pending} update(s) need attention`
+    : syncManagerState.status === 'conflict'
+      ? `Cloud sync conflict — ${syncManagerState.pending} update(s) need attention`
+      : cloudLastIssue
+        ? `Cloud operation needs attention: ${cloudLastIssue}`
         : connectivity !== 'online'
           ? `Offline — ${syncManagerState.pending} cloud update(s) waiting`
           : syncManagerState.pending > 0
@@ -491,7 +491,8 @@ export default function AppLayout() {
             : cloudSyncComplete
               ? `No pending updates — last successful transfer: ${cloudActivity.lastSuccessOperation || 'Cloud sync'}`
               : 'No data is being sent to the cloud right now';
-  const showRetryCloudSync = syncManagerState.pending > 0 || syncManagerState.status === 'error';
+  const showRetryCloudSync = syncManagerState.status !== 'conflict'
+    && (syncManagerState.pending > 0 || syncManagerState.status === 'error');
   const canRetryCloudSync = connectivity === 'online'
     && syncManagerState.status !== 'conflict'
     && syncManagerState.status !== 'syncing'
@@ -702,7 +703,7 @@ export default function AppLayout() {
             >
               {cloudSyncActive ? <CloudUpload size={15} className="animate-pulse" /> : <Cloud size={15} />}
               <span className={`h-1.5 w-1.5 rounded-full ${cloudSyncHealthy ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
-              <span className="hidden md:inline">{cloudSyncActive ? 'Sending' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.status === 'error' || cloudLastIssue ? 'Issue' : connectivity !== 'online' ? 'Offline' : 'Idle'}</span>
+              <span className="hidden md:inline">{cloudSyncActive ? 'Sending' : syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.pending > 0 ? 'Pending' : syncManagerState.status === 'error' || cloudLastIssue ? 'Issue' : connectivity !== 'online' ? 'Offline' : 'Idle'}</span>
               {syncManagerState.pending > 0 && <span className="num">{syncManagerState.pending}</span>}
             </button>
             {cloudDetailsOpen && (
