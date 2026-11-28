@@ -767,6 +767,17 @@ test('cashier idle-unlock fallback uses its own persistent scope instead of the 
   assert.ok(start >= 0 && end > start);
   const unlock = storeSource.slice(start, end);
   assert.ok(unlock.includes("current.role === 'admin' ? 'admin' : 'cashier-unlock'"));
+  const verifyStart = storeSource.indexOf('const verifyAdminPin = useCallback(');
+  const unlockStart = storeSource.indexOf('const unlockSession = useCallback(', verifyStart);
+  assert.ok(verifyStart >= 0 && unlockStart > verifyStart);
+  assert.ok(storeSource.slice(verifyStart, unlockStart).includes("user.role === 'admin' ? 'admin' : 'cashier-unlock'"));
+
+  const switchStart = storeSource.indexOf('const switchRole = useCallback(');
+  const changePinStart = storeSource.indexOf('const changeAdminPin = useCallback(', switchStart);
+  assert.ok(switchStart >= 0 && changePinStart > switchStart);
+  const switchRole = storeSource.slice(switchStart, changePinStart);
+  assert.ok(switchRole.includes("}, 'cashier-unlock');"));
+  assert.ok(switchRole.includes("const SWITCH_RATE_KEY = 'nexfix_role_switch_guard_v1'"));
   assert.ok(unlock.includes('if (ownPasswordOk)'));
   assert.ok(unlock.includes('if (!attempt.success)'));
   assert.ok(storeSource.includes('const storageKeyForScope = (scope: LocalAuthAttemptScope)'));
