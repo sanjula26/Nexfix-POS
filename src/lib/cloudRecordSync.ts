@@ -20,6 +20,14 @@ export function cloudRecordScopeKey(scope: CloudActivityScope | null): string | 
     : null;
 }
 
+/** A legacy queued write without its original Cloud tenant must not be replayed automatically. */
+export function hasCloudRecordScope(
+  scope: Partial<CloudActivityScope> | null | undefined,
+): scope is CloudActivityScope {
+  return typeof scope?.shopId === 'string' && Boolean(scope.shopId.trim())
+    && typeof scope.userId === 'string' && Boolean(scope.userId.trim());
+}
+
 /**
  * Drop the previous account's receipt snapshot immediately after a scope switch.
  * A new scope remains in CHECKING state until its own IndexedDB records are loaded.
@@ -44,15 +52,13 @@ export function isCloudRecordReplayScopeValid(
   verifiedScope: CloudActivityScope | null | undefined,
   activeScope: CloudActivityScope | null | undefined,
 ): boolean {
-  const shopId = queuedScope?.shopId?.trim();
-  const userId = queuedScope?.userId?.trim();
-  return Boolean(
-    shopId && userId &&
-    verifiedScope?.shopId?.trim() === shopId &&
-    verifiedScope?.userId?.trim() === userId &&
-    activeScope?.shopId?.trim() === shopId &&
-    activeScope?.userId?.trim() === userId
-  );
+  if (!hasCloudRecordScope(queuedScope)
+    || !hasCloudRecordScope(verifiedScope)
+    || !hasCloudRecordScope(activeScope)) return false;
+  return verifiedScope.shopId.trim() === queuedScope.shopId.trim()
+    && verifiedScope.userId.trim() === queuedScope.userId.trim()
+    && activeScope.shopId.trim() === queuedScope.shopId.trim()
+    && activeScope.userId.trim() === queuedScope.userId.trim();
 }
 
 export function notifyCloudRecordSyncChanged(): void {
