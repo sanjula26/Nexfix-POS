@@ -27,6 +27,11 @@ function getQueuedSnapshotCloudScope(op: QueueOp): { shopId?: string; userId?: s
   }
 }
 
+function isQueuedBranchMismatch(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason || '');
+  return message.includes('Queued transaction branch no longer matches');
+}
+
 export async function queueWrite(note?:string):Promise<void>{
   const cloudScope = getCloudActivityScope();
   const scopeKey = cloudScope
@@ -132,20 +137,20 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           if(state){
             const catalog=await syncNormalizedCatalog({...state,units:[]},shop.shopId,parsed.branchId);
-            if(!catalog.ok) break;
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
           const restored=await addInventoryUnitsAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,units:[parsed.unit],requireExactBranch:true});
-          if(!restored.ok) break;
+          if(!restored.ok) { if(isQueuedBranchMismatch(restored.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
           const deleted=await deleteInventoryUnitAtomic({shopId:shop.shopId,branchId:parsed.branchId,deviceId:parsed.deviceId,unitId:parsed.unit.id,requireExactBranch:true});
-          if(!deleted.ok) break;
+          if(!deleted.ok) { if(isQueuedBranchMismatch(deleted.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -172,14 +177,14 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             for(const unit of parsed.units||[]) if(newIds.has(unit.id)) additions.set(unit.productId,(additions.get(unit.productId)||0)+1);
             const bootstrapState={...state,units:[],products:state.products.map(product=>({...product,stock:Math.max(0,product.stock-(additions.get(product.id)||0))}))};
             const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
-            if(!catalog.ok) break;
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
             break;
           }
           const result=await addInventoryUnitsAtomic({...parsed,shopId:shop.shopId,requireExactBranch:true});
-          if(!result.ok) break;
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -203,7 +208,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if(parsed.baseProduct && state){
             const hasBaseProduct=state.products.some(product=>product.id===parsed.baseProduct!.id); const bootstrapState={...state,products:hasBaseProduct?state.products.map(product=>product.id===parsed.baseProduct!.id?parsed.baseProduct!:product):[...state.products,parsed.baseProduct!]};
             const catalog=await syncNormalizedCatalog(bootstrapState,shop.shopId,parsed.branchId);
-            if(!catalog.ok) break;
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           }
           if(!isCloudRecordReplayScopeValid(parsed.cloudScope,verifiedScope,getCloudActivityScope())){
             blockedUnsafeScopedTransactionReplay = true;
@@ -216,12 +221,12 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
               break;
             }
             const catalog=await syncNormalizedCatalog(state,shop.shopId,parsed.branchId);
-            if(!catalog.ok) break;
+            if(!catalog.ok) { if(isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true; break; }
             // Catalog bootstrap already includes this local product's final stock.
             acknowledged.push(op.id); flushed++;
             continue;
           }
-          if(!result.ok) break;
+          if(!result.ok) { if(isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true; break; }
           acknowledged.push(op.id); flushed++;
           continue;
         }catch{break;}
@@ -272,6 +277,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if (state) {
             const catalog = await syncNormalizedCatalog(state, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              if (isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true;
               await markRetry(catalog.error || 'Product/customer data could not be prepared for Cloud sync.');
               break;
             }
@@ -308,6 +314,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             payments,
           });
           if (!result.ok) {
+            if (isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true;
             await markRetry(result.error || 'Cloud did not confirm this sale. The same sale ID will be retried safely.');
             break;
           }
@@ -401,6 +408,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if (catalogState) {
             const catalog = await syncNormalizedCatalog(catalogState, shop.shopId, queuedBranchId);
             if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              if (isQueuedBranchMismatch(catalog.error)) blockedUnsafeScopedTransactionReplay = true;
               await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
               break;
             }
@@ -420,6 +428,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
             purchase: parsed.input.purchase,
           });
           if (!result.ok) {
+            if (isQueuedBranchMismatch(result.error)) blockedUnsafeScopedTransactionReplay = true;
             await markRetry(result.error || 'Cloud did not confirm this GRN. The same GRN ID will be retried safely.');
             break;
           }
