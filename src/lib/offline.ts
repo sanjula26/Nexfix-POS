@@ -49,7 +49,7 @@ export async function queueWrite(note?:string):Promise<void>{
   for(const sale of state.sales){
     if(existingSaleIds.has(sale.id)) continue;
     const payload={
-      cloudScope: getCloudActivityScope() || undefined,
+      cloudScope: cloudScope || undefined,
       saleId:sale.id,
       input:{
         branchId:sale.branchId || state.settings.branchId || 'local-main',
