@@ -1375,7 +1375,7 @@ test('legacy Sale and GRN replay stays local until an original Cloud scope is re
   assert.ok(repairMigration.includes('Queued transaction branch no longer matches this POS device assignment'));
   assert.ok(repairMigration.includes('for share of pb, b;'), 'repair delivery must lock the current device binding and active branch during stock deduction');
   assert.ok(repairMigration.includes('for share of b;'), 'single-branch repair delivery must lock the selected active branch during stock deduction');
-  assert.ok(offlineSource.includes("message.includes('not assigned to an active branch')") && offlineSource.includes("message.includes('No active branch is configured')"),
+  assert.ok(offlineSource.includes("message.includes('not assigned to an active branch')") && offlineSource.includes("message.includes('No active branch is configured')") && offlineSource.includes("message.includes('No active branch exists for this shop')"),
     'missing or inactive assigned branches must surface as blocked queue-scope errors');
   assert.ok(repairMigration.indexOf('v_expected_branch_id <> v_branch_id::text') < repairMigration.indexOf("if coalesce(p_repair->>'status','') <> 'delivered'"),
     'SQL must verify expected branch before changing repair status or deducting parts');
