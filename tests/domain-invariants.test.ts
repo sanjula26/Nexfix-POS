@@ -775,4 +775,5 @@ test('cloud sale activity highlights only the atomic sale and trade-in writes', 
   assert.ok(saleHandler.includes("withCloudActivity('Trade-in unit', () => registerTradeInAtomic("));
   assert.ok(!saleHandler.includes("withCloudActivity('Cloud sale', execute"));
   assert.ok(!saleHandler.includes('cloudSaleCommitted'));
+  assert.ok(saleHandler.indexOf("withCloudActivity('Trade-in unit'") < saleHandler.indexOf("markCloudRecordSynced('sale'"), 'bill receipt must wait until the optional trade-in Cloud write succeeds');
 });
