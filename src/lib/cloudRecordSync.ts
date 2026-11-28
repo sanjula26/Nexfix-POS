@@ -14,6 +14,23 @@ const CHANGE_EVENT = 'nexfix:cloud-record-sync-changed';
 export function cloudRecordSyncKey(type: CloudRecordType, recordId: string): string {
   return `${type}:${encodeURIComponent(recordId)}`;
 }
+ 
+/** A queued transaction may only be replayed into the exact authenticated shop/user that created it. */
+export function isCloudRecordReplayScopeValid(
+  queuedScope: CloudActivityScope | null | undefined,
+  verifiedScope: CloudActivityScope | null | undefined,
+  activeScope: CloudActivityScope | null | undefined,
+): boolean {
+  const shopId = queuedScope?.shopId?.trim();
+  const userId = queuedScope?.userId?.trim();
+  return Boolean(
+    shopId && userId &&
+    verifiedScope?.shopId?.trim() === shopId &&
+    verifiedScope?.userId?.trim() === userId &&
+    activeScope?.shopId?.trim() === shopId &&
+    activeScope?.userId?.trim() === userId
+  );
+}
 
 export function notifyCloudRecordSyncChanged(): void {
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(CHANGE_EVENT));
