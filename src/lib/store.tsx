@@ -992,7 +992,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(current => replaceUserPasswordIfCurrent(current, currentUserSnapshot, hashed) || current);
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Mandatory first-login password changed');
     return { ok: true };
-  }, [user, session?.userId, pushAudit]);
+  }, [user, pushAudit]);
 
   const changeManagedPassword = useCallback(async (targetUserId: string, nextPassword: string): Promise<{ ok: boolean; error?: string }> => {
     if (!user || user.role !== 'admin') return { ok: false, error: 'Only admins can change account passwords' };
@@ -1015,7 +1015,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     setState(current => replaceUserPasswordIfCurrent(current, target, hashed, adminSnapshot) || current);
     pushAudit('PASSWORD-CHANGE', 'Auth', 'Admin changed ' + target.role.toUpperCase() + ' login password for ' + target.email);
     return { ok: true };
-  }, [user, session?.userId, pushAudit]);
+  }, [user, pushAudit]);
   const signOut = useCallback((force = false) => {
     // Ignore only spurious/effect-driven signOut calls during the first 8s after login.
     // An explicit user action can always sign out immediately.
@@ -3427,7 +3427,7 @@ const deletePurchase = useCallback((id: string) => {
     if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(toSave.email.trim())) {
       return { ok: false, error: 'Enter a valid email address.' };
     }
-    if (session?.userId !== adminSnapshot.id) {
+    if (sessionRef.current?.userId !== adminSnapshot.id) {
       return { ok: false, error: 'Administrator session changed during the user save. Please try again.' };
     }
 
@@ -3440,7 +3440,7 @@ const deletePurchase = useCallback((id: string) => {
     const exists = Boolean(targetSnapshot);
     pushAudit(exists ? 'UPDATE' : 'CREATE', 'User', `${exists ? 'Updated' : 'Created'} user ${toSave.name} (${toSave.role})`);
     return { ok: true };
-  }, [user, session?.userId, pushAudit, confirmSensitiveAdmin]);
+  }, [user, pushAudit, confirmSensitiveAdmin]);
 
   const toggleUserActive = useCallback(async (id: string) => {
     if (!user || user.role !== 'admin') {
@@ -3748,7 +3748,8 @@ const deletePurchase = useCallback((id: string) => {
         } else if (!refreshedUser) {
           // No valid user record is available to preserve; keep the current
           // state instead of turning a refresh into an unexpected logout.
-          setSession(activeSession);
+          sessionRef.current = activeSession;
+           setSession(activeSession);
           setState(current);
           return;
         }
@@ -3757,11 +3758,13 @@ const deletePurchase = useCallback((id: string) => {
       setState(refreshed);
       // Explicitly restore the React session captured before the reload.
       // Do not clear or replace localStorage/sessionStorage credentials here.
-      if (activeSession) setSession(activeSession);
+      if (activeSession) sessionRef.current = activeSession;
+           setSession(activeSession);
     } catch {
       // A refresh failure must leave the authenticated POS session untouched.
       setState(current);
-      if (activeSession) setSession(activeSession);
+      if (activeSession) sessionRef.current = activeSession;
+           setSession(activeSession);
     }
   }, [ready, session]);
 
