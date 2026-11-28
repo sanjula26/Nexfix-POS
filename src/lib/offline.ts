@@ -189,7 +189,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           }
           const activeScope = getCloudActivityScope();
           if (parsed.cloudScope) {
-            if (!activeScope || parsed.cloudScope.shopId !== shop.shopId || activeScope.shopId !== parsed.cloudScope.shopId || activeScope.userId !== parsed.cloudScope.userId) break;
+            if (!activeScope || !shop.userId || parsed.cloudScope.shopId !== shop.shopId || parsed.cloudScope.userId !== shop.userId || activeScope.shopId !== shop.shopId || activeScope.userId !== shop.userId) break;
             const saved = await acknowledgeCloudRecordQueue(activeScope, 'sale', parsed.saleId, op.id, 'Offline sale sync');
             if (!saved) break;
           } else {
@@ -215,7 +215,7 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
           if(!result.ok) break;
           const activeScope = getCloudActivityScope();
           if (parsed.cloudScope) {
-            if (!activeScope || parsed.cloudScope.shopId !== shop.shopId || activeScope.shopId !== parsed.cloudScope.shopId || activeScope.userId !== parsed.cloudScope.userId) break;
+            if (!activeScope || !shop.userId || parsed.cloudScope.shopId !== shop.shopId || parsed.cloudScope.userId !== shop.userId || activeScope.shopId !== shop.shopId || activeScope.userId !== shop.userId) break;
             const saved = await acknowledgeCloudRecordQueue(activeScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync');
             if (!saved) break;
           } else {
