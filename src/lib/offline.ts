@@ -1,6 +1,8 @@
 /** Durable connectivity helpers and local sync queue. */
 import type { InventoryUnit, Product, Purchase } from './types';
 import { idbAcknowledgeQueue, idbEnqueue, idbListQueue, idbLoadState } from './db';
+import { getCloudActivityScope } from './cloudActivity';
+import { acknowledgeCloudRecordQueue, isCloudRecordReplayScopeValid, markCloudRecordSyncRetry, notifyCloudRecordSyncChanged } from './cloudRecordSync';
 import { getMachineIdentity } from './machine';
 import { completeSaleAtomic, addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, resolveCloudSalesmanId, registerTradeInAtomic, processSaleReturnAtomic, resolveSaleReturnLines, syncStateSnapshot, downloadStateSnapshot, ensureCloudShop, syncNormalizedCatalog, requestSaleReversal, approveSaleReversal, rejectSaleReversal, receivePurchaseAtomic, processRepairDeliveryAtomic } from './cloudSync';
 
@@ -27,6 +29,7 @@ export async function queueWrite(note?:string):Promise<void>{
   for(const sale of state.sales){
     if(existingSaleIds.has(sale.id)) continue;
     const payload={
+      cloudScope: getCloudActivityScope() || undefined,
       saleId:sale.id,
       input:{
         branchId:sale.branchId || state.settings.branchId || 'local-main',
@@ -54,6 +57,7 @@ export async function queueWrite(note?:string):Promise<void>{
     const ok=await idbEnqueue({type:'sale_create',id:`sale:${sale.id}`,payload:JSON.stringify(payload)});
     if(!ok)throw new Error('Local sync storage is unavailable; sale was not queued safely.');
   }
+  notifyCloudRecordSyncChanged();
 }
 
 export async function queueBranchStockAdjustment(input:{shopId?:string;branchId:string;deviceId:string;productId:string;delta:number;note:string;adjustmentId:string;baseProduct?:Product}):Promise<void>{
@@ -69,8 +73,8 @@ export async function queueInventoryUnitDelete(input:{shopId?:string;branchId:st
   if(!queued)throw new Error('Local sync storage is unavailable; tracked-unit deletion was not queued safely.');
 }
 export async function queueRepairDelivery(repairId:string,repair:unknown,deviceId:string):Promise<void>{const queued=await idbEnqueue({type:'repair_delivery',id:`repair-delivery:${repairId}`,payload:JSON.stringify({repairId,repair,deviceId})});if(!queued)throw new Error('Local sync storage is unavailable; repair delivery was not queued safely.');}
-export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');}
-export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');}
+export async function queuePurchaseReceive(purchaseId:string,input:{deviceId:string;purchase:unknown}):Promise<void>{const queued=await idbEnqueue({type:'purchase_receive',id:`purchase-receive:${purchaseId}`,payload:JSON.stringify({purchaseId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; GRN was not queued safely.');notifyCloudRecordSyncChanged();}
+export async function queueSaleCreate(saleId:string,input:unknown):Promise<void>{const queued=await idbEnqueue({type:'sale_create',id:`sale:${saleId}`,payload:JSON.stringify({saleId,input,cloudScope:getCloudActivityScope()||undefined})});if(!queued)throw new Error('Local sync storage is unavailable; sale was not queued safely.');notifyCloudRecordSyncChanged();}
 export async function queueReturnCreate(returnId:string,input:{saleId:string;reason:string;mode:'refund'|'replace';paymentMethod?:string;lines:Array<{product_id:string;qty:number;unit_ids?:string[]}>}):Promise<void>{const queued=await idbEnqueue({type:'return_create',id:`return:${returnId}`,payload:JSON.stringify({returnId,input})});if(!queued)throw new Error('Local sync storage is unavailable; return was not queued safely.');}
 export async function queueSaleReversalRequest(requestId:string,input:{saleId:string;reason:string}):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_request',id:`sale-reversal-request:${requestId}`,payload:JSON.stringify({requestId,input})});if(!queued)throw new Error('Local sync storage is unavailable; reversal request was not queued safely.');}
 export async function queueSaleReversalApproval(requestId:string):Promise<void>{const queued=await idbEnqueue({type:'sale_reversal_approve',id:`sale-reversal-approve:${requestId}`,payload:JSON.stringify({requestId})});if(!queued)throw new Error('Local sync storage is unavailable; reversal approval was not queued safely.');}
@@ -78,6 +82,19 @@ export async function queueSaleReversalRejection(requestId:string,note?:string):
 export async function getPendingSyncOperations(){return idbListQueue();}
 
 let flushInFlight: Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}> | null = null;
+
+/** Legacy queue rows lack the original cloud user. Re-verify the same authenticated
+ * membership after the positive write and record the receipt under that uploader,
+ * never by guessing which user created the old local record. */
+async function reverifyLegacyReceiptScope(
+  expectedScope: { shopId: string; userId: string } | null,
+): Promise<{ shopId: string; userId: string } | null> {
+  if (!expectedScope?.shopId || !expectedScope.userId) return null;
+  const current = await ensureCloudShop('Nexfix Shop');
+  if (!current.ok || !current.shopId || !current.userId ||
+      current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId) return null;
+  return { shopId: current.shopId, userId: current.userId };
+}
 
 /** Flush normalized transactions first, then legacy snapshot writes. */
 export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:boolean;conflict:boolean}>{
@@ -150,28 +167,85 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
       }
 
       if(op.type==='sale_create'){
-        try{
-          const parsed=JSON.parse(op.payload) as {saleId:string;input:{branchId?:string;customerId?:string;shipping?:number;discount:number;tradeInValue?:number;tradeIn?:{unitId?:string;productId:string;value:number;imei?:string;serial?:string};taxPct:number;pointsRedeemed?:number;note?:string;salesmanId?:string;lines:Array<{productId:string;qty:number;discount?:number;price?:number;unitIds?:string[]}>;payment:'cash'|'card'|'bank'|'mobile'|'credit';amountPaid:number;payments?:Array<{method:'cash'|'card'|'bank'|'mobile'|'credit';amount:number}>}};
-          const shop=await ensureCloudShop('Nexfix Shop');
-          if(!shop.ok || !shop.shopId) break;
-          if(state) {
-            const catalog=await syncNormalizedCatalog(state, shop.shopId);
-            if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
+        type ParsedSaleQueue = {
+          cloudScope?: { shopId?: string; userId?: string };
+          saleId: string;
+          input: {
+            branchId?: string; customerId?: string; shipping?: number; discount: number; tradeInValue?: number;
+            tradeIn?: { unitId?: string; productId: string; value: number; imei?: string; serial?: string };
+            taxPct: number; pointsRedeemed?: number; note?: string; salesmanId?: string;
+            lines: Array<{ productId: string; qty: number; discount?: number; price?: number; unitIds?: string[] }>;
+            payment: 'cash'|'card'|'bank'|'mobile'|'credit'; amountPaid: number;
+            payments?: Array<{ method: 'cash'|'card'|'bank'|'mobile'|'credit'; amount: number }>;
+          };
+        };
+        let parsed: ParsedSaleQueue;
+        try { parsed = JSON.parse(op.payload) as ParsedSaleQueue; } catch { break; }
+        const markRetry = async (reason: unknown) => {
+          if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
+          await markCloudRecordSyncRetry(
+            'sale', parsed.saleId, 'Offline sale sync', reason,
+            { shopId: parsed.cloudScope.shopId, userId: parsed.cloudScope.userId },
+          );
+        };
+        try {
+          const shop = await ensureCloudShop('Nexfix Shop');
+          if (!shop.ok || !shop.shopId) {
+            await markRetry(shop.error || 'Cloud shop access could not be verified.');
+            break;
           }
-          const payments=(parsed.input.payments&&parsed.input.payments.length)
-            ? parsed.input.payments.filter(p=>p.amount>0).map(p=>({method:p.method,amount:p.amount}))
-            : [{method:parsed.input.payment,amount:parsed.input.amountPaid}];
+          const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+          const activeScopeBeforeCatalog = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
+            break;
+          }
+          if (state) {
+            const catalog = await syncNormalizedCatalog(state, shop.shopId);
+            if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              await markRetry(catalog.error || 'Product/customer data could not be prepared for Cloud sync.');
+              break;
+            }
+          }
+          const payments = (parsed.input.payments && parsed.input.payments.length)
+            ? parsed.input.payments.filter(payment => payment.amount > 0).map(payment => ({ method: payment.method, amount: payment.amount }))
+            : [{ method: parsed.input.payment, amount: parsed.input.amountPaid }];
           const localSalesman = parsed.input.salesmanId && state
-            ? state.users.find(u => u.id === parsed.input.salesmanId && u.active)
+            ? state.users.find(user => user.id === parsed.input.salesmanId && user.active)
             : undefined;
           const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
-          const result=await completeSaleAtomic({
-            shopId:shop.shopId,branchId:parsed.input.branchId || state?.settings.branchId || 'local-main',deviceId:getMachineIdentity().id,saleId:parsed.saleId,customerId:parsed.input.customerId,shipping:parsed.input.shipping,
-            discount:parsed.input.discount + (parsed.input.tradeInValue || 0),taxPct:parsed.input.taxPct,pointsRedeemed:parsed.input.pointsRedeemed,note:parsed.input.note,
-            salesmanId:cloudSalesmanId,lines:parsed.input.lines.map(l=>({product_id:l.productId,qty:l.qty,discount:l.discount,price:l.price,unit_ids:l.unitIds})),payments,
+          const activeScopeBeforeSale = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)) {
+            await markRetry('The Cloud account or shop changed before the sale write; no Sale was sent to the new account.');
+            break;
+          }
+          const result = await completeSaleAtomic({
+            shopId: shop.shopId,
+            branchId: parsed.input.branchId || state?.settings.branchId || 'local-main',
+            deviceId: getMachineIdentity().id,
+            saleId: parsed.saleId,
+            customerId: parsed.input.customerId,
+            shipping: parsed.input.shipping,
+            discount: parsed.input.discount + (parsed.input.tradeInValue || 0),
+            taxPct: parsed.input.taxPct,
+            pointsRedeemed: parsed.input.pointsRedeemed,
+            note: parsed.input.note,
+            salesmanId: cloudSalesmanId,
+            lines: parsed.input.lines.map(line => ({
+              product_id: line.productId, qty: line.qty, discount: line.discount, price: line.price, unit_ids: line.unitIds,
+            })),
+            payments,
           });
-          if(!result.ok) break;
+          if (!result.ok) {
+            await markRetry(result.error || 'Cloud did not confirm this sale. The same sale ID will be retried safely.');
+            break;
+          }
           if (parsed.input.tradeIn?.productId && parsed.input.tradeIn.unitId) {
+            const activeScopeBeforeTradeIn = getCloudActivityScope();
+            if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)) {
+              await markRetry('The Cloud account or shop changed before trade-in reconciliation; the queue was kept.');
+              break;
+            }
             const tradeIn = await registerTradeInAtomic({
               shopId: shop.shopId,
               saleId: parsed.saleId,
@@ -181,28 +255,129 @@ export function flushSyncQueue():Promise<{flushed:number;pending:number;synced:b
               imei: parsed.input.tradeIn.imei,
               serial: parsed.input.tradeIn.serial,
             });
-            if (!tradeIn.ok) break;
+            if (!tradeIn.ok) {
+              await markRetry(tradeIn.error || 'The Cloud sale was accepted, but its trade-in write needs retry.');
+              break;
+            }
           }
-          acknowledged.push(op.id); flushed++;
+          const activeScope = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
+            break;
+          }
+          // For legacy rows, the original user cannot be recovered. Only attach a
+          // positive receipt after re-verifying that the same shop/user still owns this
+          // completed upload. The server response remains the proof of Sale acceptance.
+          const receiptScope = parsed.cloudScope
+            ? activeScope
+            : await reverifyLegacyReceiptScope(verifiedScope);
+          if (!receiptScope) {
+            const reason = 'Cloud accepted the sale, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
+            if (verifiedScope) {
+              await markCloudRecordSyncRetry('sale', parsed.saleId, 'Offline sale sync', reason, verifiedScope);
+            }
+            break;
+          }
+          const saved = await acknowledgeCloudRecordQueue(
+            receiptScope, 'sale', parsed.saleId, op.id, 'Offline sale sync',
+          );
+          if (!saved) {
+            const reason = 'Cloud accepted the sale, but this PC could not save its receipt. The queue was kept for retry.';
+            if (parsed.cloudScope) await markRetry(reason);
+            else await markCloudRecordSyncRetry('sale', parsed.saleId, 'Offline sale sync', reason, receiptScope);
+            break;
+          }
+          flushed++;
           continue;
-        }catch{break;}
+        } catch (error) {
+          await markRetry(error);
+          break;
+        }
       }
 
       if(op.type==='purchase_receive'){
-        try{
-          const parsed=JSON.parse(op.payload) as {purchaseId:string;input:{deviceId:string;purchase:Purchase}};
-          const shop=await ensureCloudShop('Nexfix Shop');
-          if(!shop.ok || !shop.shopId) break;
-          const catalogState=state || undefined;
-          if(catalogState){
-            const catalog=await syncNormalizedCatalog(catalogState,shop.shopId);
-            if(!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') break;
+        type ParsedPurchaseQueue = {
+          cloudScope?: { shopId?: string; userId?: string };
+          purchaseId: string;
+          input: { deviceId: string; purchase: Purchase };
+        };
+        let parsed: ParsedPurchaseQueue;
+        try { parsed = JSON.parse(op.payload) as ParsedPurchaseQueue; } catch { break; }
+        const markRetry = async (reason: unknown) => {
+          if (!parsed.cloudScope?.shopId || !parsed.cloudScope.userId) return;
+          await markCloudRecordSyncRetry(
+            'purchase', parsed.purchaseId, 'Offline GRN sync', reason,
+            { shopId: parsed.cloudScope.shopId, userId: parsed.cloudScope.userId },
+          );
+        };
+        try {
+          const shop = await ensureCloudShop('Nexfix Shop');
+          if (!shop.ok || !shop.shopId) {
+            await markRetry(shop.error || 'Cloud shop access could not be verified.');
+            break;
           }
-          const result=await receivePurchaseAtomic({shopId:shop.shopId,branchId:parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',deviceId:parsed.input.deviceId,purchaseId:parsed.purchaseId,purchase:parsed.input.purchase});
-          if(!result.ok) break;
-          acknowledged.push(op.id); flushed++;
+          const verifiedScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+          const activeScopeBeforeCatalog = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)) {
+            await markRetry('The Cloud account or shop changed. Sign in to the original account before replay; no Cloud write was started.');
+            break;
+          }
+          const catalogState = state || undefined;
+          if (catalogState) {
+            const catalog = await syncNormalizedCatalog(catalogState, shop.shopId);
+            if (!catalog.ok && catalog.error !== 'Catalog sync requires admin or manager access') {
+              await markRetry(catalog.error || 'Product/supplier data could not be prepared for GRN sync.');
+              break;
+            }
+          }
+          const activeScopeBeforeReceive = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)) {
+            await markRetry('The Cloud account or shop changed before the GRN write; no GRN was sent to the new account.');
+            break;
+          }
+          const result = await receivePurchaseAtomic({
+            shopId: shop.shopId,
+            branchId: parsed.input.purchase.branchId || state?.settings.branchId || 'local-main',
+            deviceId: parsed.input.deviceId,
+            purchaseId: parsed.purchaseId,
+            purchase: parsed.input.purchase,
+          });
+          if (!result.ok) {
+            await markRetry(result.error || 'Cloud did not confirm this GRN. The same GRN ID will be retried safely.');
+            break;
+          }
+          const activeScope = getCloudActivityScope();
+          if (parsed.cloudScope && !isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScope)) {
+            await markRetry('The Cloud account or shop changed during sync. Sign in to the original account and retry.');
+            break;
+          }
+          // Attribute a legacy GRN receipt only to the same freshly re-verified
+          // Cloud shop/user that completed this upload; never invent its old scope.
+          const receiptScope = parsed.cloudScope
+            ? activeScope
+            : await reverifyLegacyReceiptScope(verifiedScope);
+          if (!receiptScope) {
+            const reason = 'Cloud accepted the GRN, but shop/user verification changed before this PC could save its receipt. The queue was kept; sign in to the original shop and retry.';
+            if (verifiedScope) {
+              await markCloudRecordSyncRetry('purchase', parsed.purchaseId, 'Offline GRN sync', reason, verifiedScope);
+            }
+            break;
+          }
+          const saved = await acknowledgeCloudRecordQueue(
+            receiptScope, 'purchase', parsed.purchaseId, op.id, 'Offline GRN sync',
+          );
+          if (!saved) {
+            const reason = 'Cloud accepted the GRN, but this PC could not save its receipt. The queue was kept for retry.';
+            if (parsed.cloudScope) await markRetry(reason);
+            else await markCloudRecordSyncRetry('purchase', parsed.purchaseId, 'Offline GRN sync', reason, receiptScope);
+            break;
+          }
+          flushed++;
           continue;
-        }catch{break;}
+        } catch (error) {
+          await markRetry(error);
+          break;
+        }
       }
 
       if(op.type==='repair_delivery'){

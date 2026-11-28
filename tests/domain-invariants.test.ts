@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
+import type { QueueOp } from '../src/lib/db.ts';
+import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
 import { buildNormalizedCatalogSyncFingerprint } from '../src/lib/cloudSyncFingerprint.ts';
+import { beginCloudActivity, getCloudActivityState, withCloudActivity } from '../src/lib/cloudActivity.ts';
+import { createSuccessfulSingleFlightCache } from '../src/lib/successfulSyncCache.ts';
 import {
   allocateCreditPaymentFIFO,
   getOpenCreditInvoiceBalance,
@@ -618,4 +622,353 @@ test('Adjust Stock and Stock Take pass verified online quantities to the store',
   assert.match(inventorySource, /adjustStock\(product\.id, delta, stockTakeReason\.trim\(\) \|\| 'Stock take adjustment', getExpectedBranchQtyForStockAdjustment\(shopId, offline, systemQty\)\)/);
   assert.match(inventorySource, /adjustStock\(stockAdj\.id, parseFloat\(adjDelta\) \|\| 0, adjReason, getExpectedBranchQtyForStockAdjustment\(shopId, offline, stockAdj\.stock\)\)/);
   assert.ok(inventorySource.includes('earlier adjustment(s) were already committed and were not rolled back'));
+});
+
+
+test('successful catalog sync results are reused for an unchanged key', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: true, value: ++calls });
+  assert.deepEqual(await cache.run('shop:user:branch:fingerprint-a', action), { ok: true, value: 1 });
+  assert.deepEqual(await cache.run('shop:user:branch:fingerprint-a', action), { ok: true, value: 1 });
+  assert.equal(calls, 1);
+});
+
+test('concurrent catalog sync callers share one in-flight request', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  let release!: (value: { ok: boolean; value: number }) => void;
+  const action = () => {
+    calls += 1;
+    return new Promise<{ ok: boolean; value: number }>(resolve => { release = resolve; });
+  };
+  const first = cache.run('same-key', action);
+  const second = cache.run('same-key', action);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release({ ok: true, value: 7 });
+  assert.deepEqual(await Promise.all([first, second]), [
+    { ok: true, value: 7 },
+    { ok: true, value: 7 },
+  ]);
+});
+
+test('failed catalog sync results are not cached and can be retried', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: ++calls > 1, value: calls });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: false, value: 1 });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: true, value: 2 });
+  assert.deepEqual(await cache.run('retry-key', action), { ok: true, value: 2 });
+  assert.equal(calls, 2);
+});
+
+test('catalog sync cache separates shops, users, branches and changed fingerprints', async () => {
+  const cache = createSuccessfulSingleFlightCache<{ ok: boolean; value: number }>();
+  let calls = 0;
+  const action = async () => ({ ok: true, value: ++calls });
+  const keys = [
+    'shop-a:user:branch-a:fingerprint-a',
+    'shop-b:user:branch-a:fingerprint-a',
+    'shop-a:other-user:branch-a:fingerprint-a',
+    'shop-a:user:branch-b:fingerprint-a',
+    'shop-a:user:branch-a:fingerprint-b',
+  ];
+  for (const key of keys) await cache.run(key, action);
+  assert.equal(calls, keys.length);
+});
+
+
+test('per-record Cloud receipts use the authenticated shop membership user, not a stale UI scope', () => {
+  const cloudSyncSource = readFileSync(new URL('../src/lib/cloudSync.ts', import.meta.url), 'utf8');
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+
+  assert.ok(cloudSyncSource.includes('userId?: string'));
+  assert.equal(cloudSyncSource.split('userId: sessionData.session.user.id').length - 1, 2);
+  assert.ok(storeSource.includes("shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null"));
+  assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
+  assert.ok(offlineSource.includes("isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)"));
+  assert.ok(!storeSource.includes('getCloudActivityScope'));
+});
+
+test('per-record Cloud receipt snapshots clear stale statuses immediately when the Cloud scope changes', () => {
+  const shopAUserA = cloudRecordScopeKey({ shopId: 'shop-a', userId: 'user-a' });
+  const shopBUserA = cloudRecordScopeKey({ shopId: 'shop-b', userId: 'user-a' });
+  const shopBUserB = cloudRecordScopeKey({ shopId: 'shop-b', userId: 'user-b' });
+
+  assert.notEqual(shopAUserA, shopBUserA);
+  assert.notEqual(shopBUserA, shopBUserB);
+  assert.equal(
+    cloudRecordScopeKey({ shopId: ' shop-a ', userId: ' user-a ' }),
+    shopAUserA,
+  );
+
+  const switched = resetCloudRecordSyncSnapshotForScope(shopAUserA, shopBUserA);
+  assert.ok(switched, 'changing shop must discard the prior receipt snapshot immediately');
+  assert.equal(switched.ready, false);
+  assert.equal(getCloudRecordSyncStatus(switched, 'sale', 'same-local-sale-id'), 'checking');
+  assert.deepEqual(Object.keys(switched.confirmed), []);
+  assert.equal(switched.pending.size, 0);
+
+  assert.equal(
+    resetCloudRecordSyncSnapshotForScope(shopBUserA, shopBUserA),
+    null,
+    'ordinary refreshes within the same Cloud identity must retain the loaded snapshot',
+  );
+
+  const signedOut = resetCloudRecordSyncSnapshotForScope(shopBUserA, null);
+  assert.ok(signedOut);
+  assert.equal(signedOut.ready, true);
+  assert.equal(getCloudRecordSyncStatus(signedOut, 'sale', 'same-local-sale-id'), 'unknown');
+
+  const source = readFileSync(new URL('../src/lib/cloudRecordSync.ts', import.meta.url), 'utf8');
+  assert.ok(source.includes('const resetSnapshot = resetCloudRecordSyncSnapshotForScope(scopeKeyRef.current, nextScopeKey);'));
+  assert.ok(source.includes('if (resetSnapshot) setSnapshot(resetSnapshot);'));
+});
+
+test('per-record Cloud retry status is distinct from waiting, synced and unverified', () => {
+  const snapshot: CloudRecordSyncSnapshot = {
+    ready: true,
+    confirmed: {
+      'sale:sale-retry': {
+        status: 'retry',
+        attemptedAt: '2026-11-28T05:00:00.000Z',
+        operation: 'Offline sale sync',
+        error: 'Cloud request timed out',
+      },
+      'sale:sale-confirmed': {
+        confirmedAt: '2026-11-28T04:59:00.000Z',
+        operation: 'Cloud sale',
+      },
+    },
+    pending: new Set(['sale:sale-retry', 'sale:sale-waiting']),
+  };
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-retry'), 'retry');
+  assert.equal(getCloudRecordSyncIssue(snapshot, 'sale', 'sale-retry'), 'Cloud request timed out');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-waiting'), 'pending');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-confirmed'), 'synced');
+  assert.equal(getCloudRecordSyncStatus(snapshot, 'sale', 'sale-unknown'), 'unknown');
+  assert.equal(getCloudRecordSyncStatus({ ...snapshot, ready: false }, 'sale', 'sale-unknown'), 'checking');
+});
+
+test('per-record Cloud pending markers never leak across shops or Cloud users', () => {
+  const queue: QueueOp[] = [
+    { id: 'sale:sale-a', ts: '2026-11-28T04:00:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-a' } }) },
+    { id: 'purchase-receive:purchase-a', ts: '2026-11-28T04:01:00.000Z', type: 'purchase_receive', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-a' } }) },
+    { id: 'sale:sale-other-user', ts: '2026-11-28T04:02:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-a', userId: 'user-b' } }) },
+    { id: 'sale:sale-other-shop', ts: '2026-11-28T04:03:00.000Z', type: 'sale_create', payload: JSON.stringify({ cloudScope: { shopId: 'shop-b', userId: 'user-a' } }) },
+    { id: 'sale:sale-legacy', ts: '2026-11-28T04:04:00.000Z', type: 'sale_create', payload: JSON.stringify({ saleId: 'sale-legacy' }) },
+  ];
+
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-a', userId: 'user-a' })],
+    ['sale:sale-a', 'purchase:purchase-a'],
+  );
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-a', userId: 'user-b' })],
+    ['sale:sale-other-user'],
+  );
+  assert.deepEqual(
+    [...getPendingCloudRecordKeys(queue, { shopId: 'shop-b', userId: 'user-a' })],
+    ['sale:sale-other-shop'],
+  );
+});
+
+test('cloud activity indicator tracks overlapping uploads and clears when each completes', () => {
+  const finishSale = beginCloudActivity('Cloud sale');
+  const finishCatalog = beginCloudActivity('Catalog data');
+  assert.equal(getCloudActivityState().active, 2);
+  assert.deepEqual(getCloudActivityState().operations, ['Cloud sale', 'Catalog data']);
+  finishSale();
+  finishSale();
+  assert.equal(getCloudActivityState().active, 1);
+  finishCatalog();
+  assert.deepEqual(getCloudActivityState(), { active: 0, operations: [], startedAt: null, lastError: null, lastSuccessAt: null, lastSuccessOperation: null });
+});
+
+test('cloud activity wrapper clears the indicator after success and failure', async () => {
+  assert.equal(await withCloudActivity('No-op check', async () => false, result => result), false);
+  assert.equal(getCloudActivityState().lastSuccessAt, null);
+  await withCloudActivity('Stock adjustment', async () => ({ ok: false, error: 'server rejected stock change' }), result => result.ok);
+  assert.equal(getCloudActivityState().lastError, 'server rejected stock change');
+  assert.equal(await withCloudActivity('POS data', async () => 42), 42);
+  const successfulState = getCloudActivityState();
+  assert.equal(successfulState.active, 0);
+  assert.equal(successfulState.lastError, null);
+  assert.equal(typeof successfulState.lastSuccessAt, 'number');
+  assert.equal(successfulState.lastSuccessOperation, 'POS data');
+  await assert.rejects(
+    withCloudActivity('POS data', async () => { throw new Error('network failure'); }),
+    /network failure/,
+  );
+  const failedState = getCloudActivityState();
+  assert.equal(failedState.active, 0);
+  assert.equal(failedState.lastError, 'network failure');
+  assert.equal(failedState.lastSuccessAt, successfulState.lastSuccessAt);
+  assert.equal(failedState.lastSuccessOperation, successfulState.lastSuccessOperation);
+});
+
+test('cloud sync details explain local queue, confirmed transfers, issues and safe retry', () => {
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.ok(layoutSource.includes('aria-expanded={cloudDetailsOpen}'));
+  assert.ok(layoutSource.includes('aria-controls="nexfix-cloud-sync-details"'));
+  assert.ok(layoutSource.includes('Updates are saved on this PC and waiting to sync'));
+  assert.ok(layoutSource.includes("These updates are stored in this PC's local queue and are waiting for cloud confirmation."));
+  assert.ok(layoutSource.includes('Last successful transfer'));
+  assert.ok(layoutSource.includes('Latest issue:'));
+  assert.ok(layoutSource.includes('The Internet indicator does not guarantee the cloud server is reachable.'));
+  assert.ok(layoutSource.includes('onClick={() => { void runSyncNow(); }}'));
+  assert.ok(layoutSource.includes("syncManagerState.status !== 'conflict'"));
+  assert.ok(layoutSource.includes("connectivity === 'online'"));
+});
+
+
+test('customer sync and online bill-reversal RPC writes are tracked by the Cloud activity indicator', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+
+  const saleStart = storeSource.indexOf('const completeSaleCloud =');
+  const saleEnd = storeSource.indexOf('const refundSale =', saleStart);
+  assert.ok(saleStart >= 0 && saleEnd > saleStart);
+  const saleHandler = storeSource.slice(saleStart, saleEnd);
+  assert.ok(saleHandler.includes("withCloudActivity('Customer data', () => ensureCloudCustomerForSale("));
+
+  const reversalSections = [
+    {
+      start: 'const requestBillReverse =',
+      end: 'const approveBillReverse =',
+      operation: "withCloudActivity('Bill reversal request', () => requestSaleReversal(",
+    },
+    {
+      start: 'const approveBillReverse =',
+      end: 'const rejectBillReverse =',
+      operation: "withCloudActivity('Bill reversal approval', () => approveSaleReversal(",
+    },
+    {
+      start: 'const rejectBillReverse =',
+      end: '/* ---------------- held sales ---------------- */',
+      operation: "withCloudActivity('Bill reversal rejection', () => rejectSaleReversal(",
+    },
+  ];
+
+  for (const section of reversalSections) {
+    const start = storeSource.indexOf(section.start);
+    const end = storeSource.indexOf(section.end, start);
+    assert.ok(start >= 0 && end > start, section.start + ' handler should be present');
+    const handler = storeSource.slice(start, end);
+    assert.ok(handler.includes(section.operation), section.start + ' Cloud RPC must be tracked');
+    assert.ok(handler.includes('result => result.ok'), section.start + ' must use the explicit server success result');
+  }
+});
+
+test('cloud sale activity highlights only the atomic sale and trade-in writes', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const start = storeSource.indexOf('const completeSaleCloud =');
+  const end = storeSource.indexOf('const refundSale =', start);
+  assert.ok(start >= 0 && end > start, 'cloud sale handler should be present');
+  const saleHandler = storeSource.slice(start, end);
+
+  assert.ok(saleHandler.includes("withCloudActivity('Cloud sale', () => completeSaleAtomic("));
+  assert.ok(saleHandler.includes("withCloudActivity('Trade-in unit', () => registerTradeInAtomic("));
+  assert.ok(!saleHandler.includes("withCloudActivity('Cloud sale', execute"));
+  assert.ok(!saleHandler.includes('cloudSaleCommitted'));
+  assert.ok(saleHandler.indexOf("withCloudActivity('Trade-in unit'") < saleHandler.indexOf("markCloudRecordSynced('sale'"), 'bill receipt must wait until the optional trade-in Cloud write succeeds');
+});
+
+test('first online Sale and GRN publish the verified Cloud scope before tracking the atomic write', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8');
+  const saleStart = storeSource.indexOf('const completeSaleCloud =');
+  const saleEnd = storeSource.indexOf('const refundSale =', saleStart);
+  const receiveStart = storeSource.indexOf('const receivePurchase =');
+  const receiveEnd = storeSource.indexOf('const processGRN =', receiveStart);
+  assert.ok(saleStart >= 0 && saleEnd > saleStart);
+  assert.ok(receiveStart >= 0 && receiveEnd > receiveStart);
+  const saleHandler = storeSource.slice(saleStart, saleEnd);
+  const receiveHandler = storeSource.slice(receiveStart, receiveEnd);
+  const saleScope = saleHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
+  const saleWrite = saleHandler.indexOf("withCloudActivity('Cloud sale', () => completeSaleAtomic(");
+  const grnScope = receiveHandler.indexOf('if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);');
+  const grnCatalogWrite = receiveHandler.indexOf('syncNormalizedCatalog(stateRef.current, shop.shopId)');
+  const grnWrite = receiveHandler.indexOf("withCloudActivity('GRN receive', () => receivePurchaseAtomic(");
+  assert.ok(saleScope >= 0 && saleScope < saleWrite, 'verified Sale scope must be published before its atomic Cloud write');
+  assert.ok(grnScope >= 0 && grnScope < grnCatalogWrite, 'verified GRN scope must be published before catalog Cloud writes');
+  assert.ok(grnScope < grnWrite, 'verified GRN scope must be published before its atomic Cloud write');
+  assert.ok(storeSource.includes("import { setCloudActivityScope, withCloudActivity } from './cloudActivity';"));
+});
+
+
+test('legacy Sale and GRN replay receipts are saved only under a reverified current Cloud member', () => {
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  assert.ok(offlineSource.includes('async function reverifyLegacyReceiptScope('));
+  assert.ok(offlineSource.includes('current.shopId !== expectedScope.shopId || current.userId !== expectedScope.userId'));
+
+  const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
+  const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
+  const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
+  assert.ok(saleStart >= 0 && purchaseStart > saleStart && repairStart > purchaseStart);
+  const saleReplay = offlineSource.slice(saleStart, purchaseStart);
+  const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
+
+  const assertLegacyReceipt = (source: string, kind: 'sale' | 'purchase', id: 'saleId' | 'purchaseId', operation: string) => {
+    const accepted = source.indexOf('if (!result.ok)');
+    const reverified = source.indexOf('await reverifyLegacyReceiptScope(verifiedScope)');
+    const receipt = source.indexOf(`acknowledgeCloudRecordQueue(`);
+    assert.ok(accepted >= 0 && reverified > accepted, `${kind} receipt scope must be reverified only after positive server acknowledgement`);
+    assert.ok(receipt > reverified, `${kind} acknowledgement must use the reverified uploader scope`);
+    assert.ok(source.includes(`const receiptScope = parsed.cloudScope`));
+    const missingReceiptScope = source.indexOf('if (!receiptScope) {');
+    assert.ok(missingReceiptScope > reverified, `${kind} must handle failed post-write scope re-verification`);
+    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}', reason, verifiedScope);`),
+      `${kind} must record RETRY against the pre-write verified uploader scope, not a newly active account`);
+    assert.ok(source.includes(`await markCloudRecordSyncRetry('${kind}', parsed.${id}, '${operation}'`));
+    assert.ok(!source.includes('idbAcknowledgeQueue([op.id])'), `${kind} must not delete a legacy row without saving its receipt`);
+  };
+
+  assertLegacyReceipt(saleReplay, 'sale', 'saleId', 'Offline sale sync');
+  assertLegacyReceipt(purchaseReplay, 'purchase', 'purchaseId', 'Offline GRN sync');
+});
+
+test('queued Sale and GRN replay requires the original verified Cloud shop/user before any Cloud write', () => {
+  const queued = { shopId: 'shop-original', userId: 'cloud-user-original' };
+  const verified = { ...queued };
+  const active = { ...queued };
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, active), true);
+  assert.equal(isCloudRecordReplayScopeValid(queued, { shopId: 'shop-other', userId: queued.userId }, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, { shopId: queued.shopId, userId: 'cloud-user-other' }, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, { shopId: 'shop-other', userId: queued.userId }), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, verified, { shopId: queued.shopId, userId: 'cloud-user-other' }), false);
+  assert.equal(isCloudRecordReplayScopeValid(queued, null, active), false);
+  assert.equal(isCloudRecordReplayScopeValid(undefined, verified, active), false);
+
+  const offlineSource = readFileSync(new URL('../src/lib/offline.ts', import.meta.url), 'utf8');
+  const saleStart = offlineSource.indexOf("if(op.type==='sale_create')");
+  const purchaseStart = offlineSource.indexOf("if(op.type==='purchase_receive')");
+  const repairStart = offlineSource.indexOf("if(op.type==='repair_delivery')");
+  assert.ok(saleStart >= 0 && purchaseStart > saleStart && repairStart > purchaseStart);
+  const saleReplay = offlineSource.slice(saleStart, purchaseStart);
+  const purchaseReplay = offlineSource.slice(purchaseStart, repairStart);
+  const assertBefore = (source: string, guard: string, write: string) => {
+    const guardIndex = source.indexOf(guard);
+    const writeIndex = source.indexOf(write);
+    assert.ok(guardIndex >= 0, `missing pre-write identity guard: ${guard}`);
+    assert.ok(writeIndex >= 0, `missing Cloud write: ${write}`);
+    assert.ok(guardIndex < writeIndex, `identity guard must run before Cloud write: ${write}`);
+  };
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(state, shop.shopId)');
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeSale)', 'completeSaleAtomic({');
+  assertBefore(saleReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeTradeIn)', 'registerTradeInAtomic({');
+  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)', 'syncNormalizedCatalog(catalogState, shop.shopId)');
+  assertBefore(purchaseReplay, 'isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeReceive)', 'receivePurchaseAtomic({');
+});
+
+
+test('cloud sync conflicts take precedence over pending labels and disable retry actions', () => {
+  const layoutSource = readFileSync(new URL('../src/components/AppLayout.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+
+  assert.ok(layoutSource.includes("const showRetryCloudSync = syncManagerState.status !== 'conflict'\n    && (syncManagerState.pending > 0 || syncManagerState.status === 'error');"));
+  assert.ok(layoutSource.includes("syncManagerState.status === 'conflict' ? 'Conflict' : syncManagerState.pending > 0 ? 'Pending'"));
+  const conflictTitle = "syncManagerState.status === 'conflict'\n      ? `Cloud sync conflict";
+  const issueTitle = ": cloudLastIssue\n        ? `Cloud operation needs attention";
+  assert.ok(layoutSource.indexOf(conflictTitle) >= 0, 'conflict title must be present');
+  assert.ok(layoutSource.indexOf(conflictTitle) < layoutSource.indexOf(issueTitle), 'conflict must take precedence over the generic issue title');
 });

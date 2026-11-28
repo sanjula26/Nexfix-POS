@@ -1,4 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { setCloudActivityScope, withCloudActivity } from './cloudActivity';
+import { markCloudRecordSynced } from './cloudRecordSync';
 import {
   POSState, Product, Customer, Supplier, KitItem, Sale, Purchase, Expense, Exchange,
   AppUser, AuditEntry, HeldSale, Settings, Permissions, Role, SaleItem, PaymentMethod, PaymentLeg, DaySession, ReverseRequest,
@@ -20,7 +22,7 @@ import { applyInventoryLedger, type InventoryLedgerOperation } from './inventory
 import { allocateCreditPaymentFIFO, getOpenCreditInvoiceBalance, type CustomerCreditPayment } from './customerCredit';
 import { calculateDayEndTotals } from './dayEnd';
 import { addInventoryUnitsAtomic, deleteInventoryUnitAtomic, adjustBranchStockAtomic, completeSaleAtomic, ensureCloudShop, refreshCloudBranchStock, getCloudBranchStockQuantity, resolveCloudSalesmanId, registerTradeInAtomic, syncNormalizedCatalog, ensureCloudCustomerForSale, processSaleReturnAtomic, processPurchaseReturnAtomic, processRepairDeliveryAtomic, resolveSaleReturnLines, requestSaleReversal, approveSaleReversal, rejectSaleReversal, listSaleReversalRequests, receivePurchaseAtomic, getCloudShopId, resolveCloudBranchId } from './cloudSync';
-import { restoreCloudSession, supabase, supabaseConfigured } from './supabase';
+import { supabase, supabaseConfigured } from './supabase';
 import { getCachedBranchStock, invalidateCachedBranchStockProduct, isStaleBranchStockConflict, hasCachedBranchStock, hasMultipleCachedBranches, applyBranchStockDeltas, getDefaultBranchId, getPOSBranchId, shouldReadBranchStockProductFallback } from './branchStock';
 
 
@@ -522,7 +524,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const unsub = onConnectivityChange(async (status) => {
       setConnectivity(status);
       if (status === 'online') {
-        const { flushed, pending } = await flushSyncQueue();
+        const { flushed, pending } = await withCloudActivity('Pending changes', () => flushSyncQueue(), result => result.synced);
         // Keep the durable queue count authoritative. Conflicts/errors intentionally leave queued writes visible.
         setPendingQueueCount(pending);
         // startAutoBackup() owns the interval/due decision. Reconnect only
@@ -1063,10 +1065,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             pushAudit('DENIED', 'Product', 'Blocked stock edit: ' + (catalog.error || 'Catalog sync failed.'));
             return false;
           }
-          const cloudResult = await adjustBranchStockAtomic({
-            shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id,
+          const cloudResult = await withCloudActivity('Stock adjustment', () => adjustBranchStockAtomic({
+            shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id,
             productId: normalized.id, delta: stockDelta, note: 'Product editor stock change', adjustmentId, refreshCache: false,
-          });
+          }), result => result.ok);
           if (!cloudResult.ok) {
             pushAudit('DENIED', 'Product', 'Cloud stock edit was not committed: ' + (cloudResult.error || 'unknown error'));
             return false;
@@ -1220,7 +1222,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Product', 'Blocked stock adjustment: ' + (shop.error || 'Cloud shop is unavailable; stock was not changed.'));
         return false;
       }
-      const cloudResult = await adjustBranchStockAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false });
+      const cloudResult = await withCloudActivity('Stock adjustment', () => adjustBranchStockAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, productId: id, delta: amount, note, adjustmentId, expectedBranchQty, refreshCache: false }), result => result.ok);
       if (!cloudResult.ok) {
         if (isStaleBranchStockConflict(cloudResult.error)) {
           // Remove the stale cached quantity first. A single authoritative row
@@ -1796,6 +1798,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
+    const execute = async (): Promise<Sale | null> => {
     if (!user) throw new Error('Sign in again before completing this sale.');
     if (!can('page:pos')) {
       pushAudit('DENIED', 'Sale', 'Blocked cloud sale completion without POS access');
@@ -1849,12 +1852,10 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     // Restore durable Electron Auth before resolving the shop. A transient
     // empty session gets one restore/resolve retry; explicit Cloud sign-out
     // remains a single clear gate and never triggers an automatic re-login.
-    const restored = await restoreCloudSession();
-    let shop = await ensureCloudShop('Nexfix Shop');
-    if (!shop.ok && !restored.error && /Cloud sign-in required once in Settings/i.test(shop.error || '')) {
-      await restoreCloudSession();
-      shop = await ensureCloudShop('Nexfix Shop');
-    }
+    // ensureCloudShop already restores durable Electron auth and performs one
+    // bounded retry when the session is briefly unavailable. Avoid repeating
+    // the same secure-storage/session work on every normal online checkout.
+    const shop = await ensureCloudShop('Nexfix Shop');
     if (!shop.ok || !shop.shopId) {
       if (shop.error === 'Cloud authentication is not configured' || shop.error === 'offline') {
         const localBranchId = getPOSBranchId(getCloudShopId(), stateRef.current.settings.branchId);
@@ -1871,6 +1872,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       }
       throw new Error(shop.error || 'Cloud shop membership is not available. Ask the shop owner to check shop_memberships.');
     }
+    // Capture the validated non-empty shop ID before entering async callbacks.
+    const cloudShopId = shop.shopId;
+    const cloudRecordScope = shop.userId ? { shopId: cloudShopId, userId: shop.userId } : null;
+    // ensureCloudShop has just verified this membership identity. Publish it synchronously
+    // before the atomic write so the first checkout is tracked even if AppLayout's
+    // initial auth-scope refresh is still completing. This is deliberately not awaited.
+    if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
     const branchResolution = await resolveCloudBranchId(
       shop.shopId,
       getPOSBranchId(shop.shopId, stateRef.current.settings.branchId),
@@ -1907,17 +1915,27 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       if (duplicate) throw new Error('This trade-in IMEI/serial already exists in stock.');
     }
 
-    let customerIdMap: Record<string, string> = {};
-    if (user.role === 'admin' || user.role === 'manager') {
-      const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
-      if (!catalog.ok) throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
-      customerIdMap = catalog.customerIdMap || {};
+    // Catalog reconciliation and salesman identity resolution are independent
+    // cloud reads. Run them together so checkout does not pay both network
+    // round-trips serially. The selected customer is resolved after catalog
+    // reconciliation because it may return a canonical customer ID mapping.
+    const localSalesman = input.salesmanId
+      ? state.users.find(u => u.id === input.salesmanId && u.active)
+      : user;
+    const catalogSyncPromise = user.role === 'admin' || user.role === 'manager'
+      ? syncNormalizedCatalog(stateRef.current, shop.shopId)
+      : Promise.resolve(null);
+    const salesmanPromise = resolveCloudSalesmanId(shop.shopId, localSalesman);
+    const [catalog, cloudSalesmanId] = await Promise.all([catalogSyncPromise, salesmanPromise]);
+    if (catalog && !catalog.ok) {
+      throw new Error(`Cloud catalog sync failed: ${catalog.error || 'unknown catalog error'}`);
     }
+    const customerIdMap = catalog?.customerIdMap || {};
     let cloudCustomerId = input.customerId ? (customerIdMap[input.customerId] || input.customerId) : undefined;
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
       if (localCustomer) {
-        const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        const resolvedCustomer = await withCloudActivity('Customer data', () => ensureCloudCustomerForSale(shop.shopId!, localCustomer), result => result.ok);
         if (resolvedCustomer.ok && resolvedCustomer.customerId) {
           cloudCustomerId = resolvedCustomer.customerId;
         } else if ((input.creditDue || 0) > 0.009) {
@@ -1934,11 +1952,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         cloudCustomerId = undefined;
       }
     }
-    const localSalesman = input.salesmanId
-      ? state.users.find(u => u.id === input.salesmanId && u.active)
-      : user;
-    const cloudSalesmanId = await resolveCloudSalesmanId(shop.shopId, localSalesman);
-
     const pendingKey = 'nexfix_pending_cloud_sale_v2';
     const fingerprint = JSON.stringify({
       lines: saleLines.map(l => ({ productId: l.productId, qty: l.qty, discount: l.discount || 0, price: l.price, unitIds: l.unitIds || [] })),
@@ -2091,13 +2104,13 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
-      cloud = await completeSaleAtomic({
-      shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
+      cloud = await withCloudActivity('Cloud sale', () => completeSaleAtomic({
+      shopId: cloudShopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
-      });
+      }), result => result.ok);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error || 'unknown RPC error');
       throw new Error(`Cloud sale failed: ${detail}`);
@@ -2106,16 +2119,20 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
-      const tradeInCloud = await registerTradeInAtomic({
-        shopId: shop.shopId,
+      const tradeInCloud = await withCloudActivity('Trade-in unit', () => registerTradeInAtomic({
+        shopId: cloudShopId,
         saleId,
         unitId: tradeInUnitId!,
         productId: tradeIn.productId,
         value: tradeInValue,
         imei: tradeIn.imei?.trim() || undefined,
         serial: tradeIn.serial?.trim() || undefined,
-      });
+      }), result => result.ok);
       if (!tradeInCloud.ok) throw new Error(tradeInCloud.error || 'Cloud trade-in could not be registered. The sale is committed; retry the bill to finish trade-in reconciliation.');
+    }
+    // Confirm the bill only after every required Cloud write for this checkout succeeds.
+    if (cloudRecordScope?.shopId === cloudShopId) {
+      void markCloudRecordSynced('sale', saleId, 'Cloud sale', cloudRecordScope);
     }
 
     const row = committed.sale;
@@ -2224,6 +2241,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     scheduleGoogleBackup(() => stateRef.current, 'sale');
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
+    };
+    return execute();
   }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
@@ -2305,15 +2324,15 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      const cloud = await processSaleReturnAtomic({
-        shopId: shop.shopId,
+      const cloud = await withCloudActivity('Sale refund', () => processSaleReturnAtomic({
+        shopId: shop.shopId!,
         returnId,
         saleId: sale.id,
         reason: 'Full bill refund',
         mode: 'refund',
         paymentMethod: 'cash',
-        lines: resolve.lines,
-      });
+        lines: resolve.lines!,
+      }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud refund failed: ' + (cloud.error || 'Cloud return was not committed'));
         return false;
@@ -2426,7 +2445,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await requestSaleReversal({ shopId: shop.shopId, requestId: req.id, saleId, reason: note });
+      const cloud = await withCloudActivity('Bill reversal request', () => requestSaleReversal({ shopId: shop.shopId!, requestId: req.id, saleId, reason: note }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (cloud.error || 'Request was not committed'));
         return false;
@@ -2458,7 +2477,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await approveSaleReversal({ shopId: shop.shopId, requestId });
+      const cloud = await withCloudActivity('Bill reversal approval', () => approveSaleReversal({ shopId: shop.shopId!, requestId }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (cloud.error || 'Approval was not committed'));
         return false;
@@ -2512,7 +2531,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await rejectSaleReversal({ shopId: shop.shopId, requestId, note: reviewNote });
+      const cloud = await withCloudActivity('Bill reversal rejection', () => rejectSaleReversal({ shopId: shop.shopId!, requestId, note: reviewNote }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (cloud.error || 'Rejection was not committed'));
         return false;
@@ -2617,18 +2636,25 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
 
       if (cloudEnabled && online) {
         if (!shop.ok || !shop.shopId) return { ok: false, error: shop.error || 'Cloud shop is not available for GRN receive.' };
+        const cloudRecordScope = shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null;
+        // Publish the verified identity before catalog reconciliation too, because
+        // catalog sync itself is a tracked Cloud write during GRN preflight.
+        if (cloudRecordScope) void setCloudActivityScope(cloudRecordScope);
         if (user.role === 'admin' || user.role === 'manager') {
           const catalog = await syncNormalizedCatalog(stateRef.current, shop.shopId);
           if (!catalog.ok) return { ok: false, error: catalog.error || 'Cloud catalog sync failed. GRN was not received.' };
         }
-        const cloudResult = await receivePurchaseAtomic({
-          shopId: shop.shopId,
+        const cloudResult = await withCloudActivity('GRN receive', () => receivePurchaseAtomic({
+          shopId: shop.shopId!,
           branchId: receiveBranchId,
           deviceId: getMachineIdentity().id,
           purchaseId: po.id,
           purchase: po,
-        });
+        }), result => result.ok);
         if (!cloudResult.ok) return { ok: false, error: cloudResult.error || 'Cloud GRN receive was not committed. No local stock was changed.' };
+        if (cloudRecordScope?.shopId === shop.shopId) {
+          void markCloudRecordSynced('purchase', po.id, 'GRN receive', cloudRecordScope);
+        }
       } else if (cloudEnabled && !online) {
         await queuePurchaseReceive(po.id, { deviceId: getMachineIdentity().id, purchase: { ...po, branchId: receiveBranchId } });
       }
@@ -2846,8 +2872,8 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
           pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: ' + (shop.error || 'Cloud shop is unavailable'));
           return null;
         }
-        const cloudResult = await processPurchaseReturnAtomic({
-          shopId: shop.shopId,
+        const cloudResult = await withCloudActivity('Supplier return', () => processPurchaseReturnAtomic({
+          shopId: shop.shopId!,
           returnId,
           purchaseId: purchase.id,
           deviceId: getMachineIdentity().id,
@@ -2860,7 +2886,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
             cost: item.cost,
             ...(item.unitIds?.length ? { unit_ids: item.unitIds } : {}),
           })),
-        });
+        }), result => result.ok);
         if (!cloudResult.ok) {
           pushAudit('DENIED', 'Purchase', 'Cloud supplier return blocked: ' + (cloudResult.error || 'Return was not committed'));
           return null;
@@ -3543,7 +3569,7 @@ const deletePurchase = useCallback((id: string) => {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not saved: ' + (catalog.error || 'Catalog sync failed.'));
         return false;
       }
-      const cloudResult = await addInventoryUnitsAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: [normalized] });
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: [normalized] }), result => result.ok);
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not saved: ' + (cloudResult.error || 'Cloud transaction failed.'));
         return false;
@@ -3646,7 +3672,7 @@ const deletePurchase = useCallback((id: string) => {
       if (!shop.ok || !shop.shopId) return { ok: false, added: 0, errors: [...errors, shop.error || 'Cloud shop is unavailable.'] };
       const catalog = await syncNormalizedCatalog({ ...stateRef.current, products: currentProducts, units: [] }, shop.shopId);
       if (!catalog.ok) return { ok: false, added: 0, errors: [...errors, catalog.error || 'Catalog sync failed.'] };
-      const cloudResult = await addInventoryUnitsAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: toSync });
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => addInventoryUnitsAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, units: toSync }), result => result.ok);
       if (!cloudResult.ok) return { ok: false, added: 0, errors: [...errors, cloudResult.error || 'Cloud unit transaction failed.'] };
       productStocks = cloudResult.productStocks;
     } else {
@@ -3722,7 +3748,7 @@ const deletePurchase = useCallback((id: string) => {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (catalog.error || 'Catalog sync failed.'));
         return false;
       }
-      const cloudResult = await deleteInventoryUnitAtomic({ shopId: shop.shopId, branchId: targetBranchId, deviceId: getMachineIdentity().id, unitId: unit.id });
+      const cloudResult = await withCloudActivity('IMEI / Serial units', () => deleteInventoryUnitAtomic({ shopId: shop.shopId!, branchId: targetBranchId, deviceId: getMachineIdentity().id, unitId: unit.id }), result => result.ok);
       if (!cloudResult.ok) {
         pushAudit('DENIED', 'Unit', 'Tracked unit was not deleted: ' + (cloudResult.error || 'Cloud transaction failed.'));
         return false;
@@ -3854,7 +3880,7 @@ const deletePurchase = useCallback((id: string) => {
             return;
           }
         } else {
-          const cloud = await processRepairDeliveryAtomic({ shopId: shop.shopId, repairId: id, deviceId: machine.id, repair: next });
+          const cloud = await withCloudActivity('Repair delivery', () => processRepairDeliveryAtomic({ shopId: shop.shopId!, repairId: id, deviceId: machine.id, repair: next }), result => result.ok);
           if (!cloud.ok) {
             pushAudit('DENIED', 'Repair', 'Cloud repair delivery was not committed: ' + (cloud.error || 'unknown error'));
             return;
