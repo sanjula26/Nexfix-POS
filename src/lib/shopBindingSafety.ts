@@ -50,3 +50,16 @@ export function hasStoredLocalBusinessData(): boolean {
     return true;
   }
 }
+
+
+/** First-time automatic Cloud binding is safe only for a clean seed with no legacy snapshot or pending local work. */
+export function canAutoBindCloudShop(
+  state: unknown,
+  pendingQueueCount: number,
+  hasStoredLegacyBusinessData: boolean,
+): boolean {
+  if (!Number.isSafeInteger(pendingQueueCount) || pendingQueueCount < 0) return false;
+  return pendingQueueCount === 0
+    && !hasLocalBusinessData(state)
+    && hasStoredLegacyBusinessData === false;
+}
