@@ -187,3 +187,66 @@ test('clearing updater credentials preserves the separate cloud recovery credent
     cloudUpdaterRecovery: 'encrypted-cloud-recovery',
   });
 });
+
+
+test('local admin authentication guard IPC is limited to the trusted renderer and validates completion payloads', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  for (const channel of ['local-auth:begin', 'local-auth:complete']) {
+    const markerText = `ipcMain.handle('${channel}'`;
+    const handlerStart = mainSource.indexOf(markerText);
+    assert.notEqual(handlerStart, -1, `Missing IPC handler: ${channel}`);
+    assert.ok(mainSource.slice(handlerStart, handlerStart + 700).includes('isTrustedRenderer(event)'));
+  }
+  assert.ok(mainSource.includes("typeof payload?.attemptId!=='string'"));
+  assert.ok(mainSource.includes("typeof payload?.success!=='boolean'"));
+  assert.ok(preloadSource.includes("beginLocalAuthAttempt: (scope) => ipcRenderer.invoke('local-auth:begin', { scope })"));
+  assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
+});
+
+test('corrupt packaged local-auth guard state fails closed but repairs the persisted lockout timer', () => {
+  const guardStart = mainSource.indexOf("function failClosedLocalAuthGuardState(scope='admin')");
+  const readerStart = mainSource.indexOf("function readLocalAuthGuard(scope='admin')");
+  const writerStart = mainSource.indexOf("function writeLocalAuthGuard(value,scope='admin')", readerStart);
+  assert.ok(guardStart >= 0 && readerStart > guardStart && writerStart > readerStart);
+
+  const repair = mainSource.slice(guardStart, readerStart);
+  assert.ok(repair.includes('failures:5'));
+  assert.ok(repair.includes('lockedUntil:Date.now()+300000'));
+  assert.ok(repair.includes('writeLocalAuthGuard(locked,scope)'));
+  assert.ok(repair.includes('return locked;'));
+
+  const reader = mainSource.slice(readerStart, writerStart);
+  assert.equal((reader.match(/failClosedLocalAuthGuardState\(scope\)/g) || []).length, 2);
+});
+
+test('Electron reads persisted local-auth state only after strict schema validation', () => {
+  assert.ok(mainSource.includes("isValidLocalAuthGuardState } = require('./local-auth-guard.cjs')"));
+  assert.ok(mainSource.includes('if(!isValidLocalAuthGuardState(parsed,Date.now())){'));
+  assert.ok(mainSource.includes('return failClosedLocalAuthGuardState(scope);'));
+});
+
+test('Electron stores Admin and cashier idle-unlock attempts in separate validated guard files', () => {
+  const preloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
+  assert.ok(mainSource.includes("new Set(['admin','cashier-unlock'])"));
+  assert.ok(mainSource.includes("scope==='admin' ? 'local-auth-guard.json' : 'local-auth-guard-cashier-unlock.json'"));
+  assert.ok(mainSource.includes("if(!isValidLocalAuthScope(scope)) return {ok:false,error:'Invalid local authentication scope'}"));
+  assert.ok(mainSource.includes('readLocalAuthGuard(scope)'));
+  assert.ok(mainSource.includes('writeLocalAuthGuard(next.state,scope)'));
+  assert.ok(preloadSource.includes("beginLocalAuthAttempt: (scope) => ipcRenderer.invoke('local-auth:begin', { scope })"));
+  assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
+});
+
+
+test('async administrator authentication callers await verification before granting access', () => {
+  const mobileSalesSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'MobileTodaySales.tsx'), 'utf8');
+  const posSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'POS.tsx'), 'utf8');
+  const layoutSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'AppLayout.tsx'), 'utf8');
+  const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'pages', 'Settings.tsx'), 'utf8');
+
+  assert.match(mobileSalesSource, /const submitPin = async \(\) =>/);
+  assert.match(mobileSalesSource, /await verifyAdminPin\(value, 'Today sales'\)/);
+  assert.match(posSource, /ok = await verifyAdminPin\(gatePin, 'price override'\)/);
+  assert.match(layoutSource, /if \(await unlockSession\(unlockCredential\)\)/);
+  assert.match(layoutSource, /await resolveSensitiveAdmin\(sensitiveCredential\)/);
+  assert.match(settingsSource, /await changeAdminPin\(pinCur, pinNew\)/);
+});
