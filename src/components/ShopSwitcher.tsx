@@ -8,7 +8,7 @@ import { getMachineIdentity } from '../lib/machine';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { runSyncNow } from '../lib/syncManager';
 import type { POSState } from '../lib/types';
-import { hasLocalBusinessData } from '../lib/shopBindingSafety';
+import { hasLocalBusinessData, hasStoredLocalBusinessData } from '../lib/shopBindingSafety';
 
 interface ShopOption { id: string; name: string; role: string; }
 
@@ -120,16 +120,16 @@ export default function ShopSwitcher() {
   const [error, setError] = useState('');
   const [bindingBlocked, setBindingBlocked] = useState(false);
   const activeId = getCloudShopId();
-  const unboundLocalData = !activeId && hasLocalBusinessData(state);
+  const unboundLocalData = !activeId && (hasLocalBusinessData(state) || hasStoredLocalBusinessData());
   // A persisted binding that is not in this user's memberships is a hard stop.
   // Likewise, don't guess a first shop for a previously used local POS whose
   // shop binding has disappeared.
   const activeShop = useMemo(() => {
     if (bindingBlocked) return null;
     if (activeId) return shops.find(shop => shop.id === activeId) || null;
-    if (hasLocalBusinessData(state)) return null;
+    if (unboundLocalData) return null;
     return shops[0] || null;
-  }, [shops, activeId, state, bindingBlocked]);
+  }, [shops, activeId, unboundLocalData, bindingBlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -230,7 +230,7 @@ export default function ShopSwitcher() {
   if (!activeShop) {
     if (!shops.length && !bindingBlocked) return null;
     const hasSavedBinding = Boolean(getCloudShopId());
-    const localDataDetected = hasLocalBusinessData(state);
+    const localDataDetected = unboundLocalData;
     if (!hasSavedBinding && !localDataDetected && !bindingBlocked) return null;
     return (
       <div className="fixed top-3 right-3 z-[100] w-[min(92vw,420px)] rounded-2xl border border-amber-500/30 bg-panel p-4 shadow-2xl">
