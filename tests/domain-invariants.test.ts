@@ -759,6 +759,20 @@ test('managed password change and POS reset enforce sensitive Admin confirmation
 });
 
 
+
+test('cashier idle-unlock fallback uses its own persistent scope instead of the shared Admin lockout', () => {
+  const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const start = storeSource.indexOf('const unlockSession = useCallback(async (credential: string)');
+  const end = storeSource.indexOf('const sensitiveAuthRef =', start);
+  assert.ok(start >= 0 && end > start);
+  const unlock = storeSource.slice(start, end);
+  assert.ok(unlock.includes("current.role === 'admin' ? 'admin' : 'cashier-unlock'"));
+  assert.ok(unlock.includes('if (ownPasswordOk)'));
+  assert.ok(unlock.includes('if (!attempt.success)'));
+  assert.ok(storeSource.includes("const storageKeyForScope = (scope: LocalAuthAttemptScope) => scope === 'admin'"));
+});
+
+
 test('Settings Admin PIN change uses its store-level guarded current credential once without a duplicate confirmation modal', () => {
   const settingsSource = readFileSync(new URL('../src/pages/Settings.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const storeSource = readFileSync(new URL('../src/lib/store.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
