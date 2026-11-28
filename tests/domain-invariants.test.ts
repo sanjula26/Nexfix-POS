@@ -926,6 +926,8 @@ test('first Cloud shop binding requires an empty queue and a clean local POS see
   const shopSwitcherSource = readFileSync(new URL('../src/components/ShopSwitcher.tsx', import.meta.url), 'utf8');
   assert.ok(shopSwitcherSource.includes('if (pendingQueue.length > 0)'));
   assert.ok(shopSwitcherSource.includes('if (!setCloudShopId(resolved))'));
+  assert.ok(shopSwitcherSource.includes('hasLocalBusinessData(state) || hasStoredLocalBusinessData()'),
+    'ShopSwitcher must consider legacy localStorage data before automatic first binding');
 });
 
 test('per-record Cloud receipts use the authenticated shop membership user, not a stale UI scope', () => {
