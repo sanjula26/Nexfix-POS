@@ -3,7 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import type { POSState } from '../src/lib/types.ts';
 import type { QueueOp } from '../src/lib/db.ts';
-import { getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, isCloudRecordReplayScopeValid, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
+import { cloudRecordScopeKey, getCloudRecordSyncIssue, getCloudRecordSyncStatus, getPendingCloudRecordKeys, isCloudRecordReplayScopeValid, resetCloudRecordSyncSnapshotForScope, type CloudRecordSyncSnapshot } from '../src/lib/cloudRecordSync.ts';
 import { clearUpdaterCredentialsForRecovery, isUpdaterAuthorizationError } from '../src/lib/updaterErrors.ts';
 import { hasValidCustomerCreditPayment } from '../src/lib/creditPaymentBackupValidation.ts';
 import { buildCreditSettlementSyncFingerprint } from '../src/lib/creditSettlementSyncFingerprint.ts';
@@ -690,6 +690,41 @@ test('per-record Cloud receipts use the authenticated shop membership user, not 
   assert.ok(storeSource.includes("shop.userId ? { shopId: shop.shopId, userId: shop.userId } : null"));
   assert.ok(offlineSource.includes("isCloudRecordReplayScopeValid(parsed.cloudScope, verifiedScope, activeScopeBeforeCatalog)"));
   assert.ok(!storeSource.includes('getCloudActivityScope'));
+});
+
+test('per-record Cloud receipt snapshots clear stale statuses immediately when the Cloud scope changes', () => {
+  const shopAUserA = cloudRecordScopeKey({ shopId: 'shop-a', userId: 'user-a' });
+  const shopBUserA = cloudRecordScopeKey({ shopId: 'shop-b', userId: 'user-a' });
+  const shopBUserB = cloudRecordScopeKey({ shopId: 'shop-b', userId: 'user-b' });
+
+  assert.notEqual(shopAUserA, shopBUserA);
+  assert.notEqual(shopBUserA, shopBUserB);
+  assert.equal(
+    cloudRecordScopeKey({ shopId: ' shop-a ', userId: ' user-a ' }),
+    shopAUserA,
+  );
+
+  const switched = resetCloudRecordSyncSnapshotForScope(shopAUserA, shopBUserA);
+  assert.ok(switched, 'changing shop must discard the prior receipt snapshot immediately');
+  assert.equal(switched.ready, false);
+  assert.equal(getCloudRecordSyncStatus(switched, 'sale', 'same-local-sale-id'), 'checking');
+  assert.deepEqual(Object.keys(switched.confirmed), []);
+  assert.equal(switched.pending.size, 0);
+
+  assert.equal(
+    resetCloudRecordSyncSnapshotForScope(shopBUserA, shopBUserA),
+    null,
+    'ordinary refreshes within the same Cloud identity must retain the loaded snapshot',
+  );
+
+  const signedOut = resetCloudRecordSyncSnapshotForScope(shopBUserA, null);
+  assert.ok(signedOut);
+  assert.equal(signedOut.ready, true);
+  assert.equal(getCloudRecordSyncStatus(signedOut, 'sale', 'same-local-sale-id'), 'unknown');
+
+  const source = readFileSync(new URL('../src/lib/cloudRecordSync.ts', import.meta.url), 'utf8');
+  assert.ok(source.includes('const resetSnapshot = resetCloudRecordSyncSnapshotForScope(scopeKeyRef.current, nextScopeKey);'));
+  assert.ok(source.includes('if (resetSnapshot) setSnapshot(resetSnapshot);'));
 });
 
 test('per-record Cloud retry status is distinct from waiting, synced and unverified', () => {
