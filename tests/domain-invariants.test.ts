@@ -634,10 +634,22 @@ test('async sensitive admin re-auth is invalidated on logout and role switch', (
   assert.ok(signOutStart >= 0 && signOutEnd > signOutStart);
   assert.ok(storeSource.slice(signOutStart, signOutEnd).includes('clearSensitiveAdminAuthorization();'));
 
+  const unlockStart = storeSource.indexOf('const unlockSession = useCallback(');
+  const unlockEnd = storeSource.indexOf('const sensitiveAuthRef =', unlockStart);
+  assert.ok(unlockStart >= 0 && unlockEnd > unlockStart);
+  assert.ok(storeSource.slice(unlockStart, unlockEnd).includes('sessionRef.current?.userId !== initiatingUser.id'));
+
   const roleSwitchStart = storeSource.indexOf('const switchRole = useCallback(');
   const roleSwitchEnd = storeSource.indexOf('const changeAdminPin = useCallback(', roleSwitchStart);
   assert.ok(roleSwitchStart >= 0 && roleSwitchEnd > roleSwitchStart);
-  assert.ok(storeSource.slice(roleSwitchStart, roleSwitchEnd).includes('clearSensitiveAdminAuthorization();'));
+  const roleSwitchSource = storeSource.slice(roleSwitchStart, roleSwitchEnd);
+  assert.ok(roleSwitchSource.includes('clearSensitiveAdminAuthorization();'));
+  assert.ok(roleSwitchSource.includes('sessionRef.current?.userId !== initiatingUser.id'));
+
+  const changePinStart = storeSource.indexOf('const changeAdminPin = useCallback(');
+  const changePinEnd = storeSource.indexOf('/* ---------------- products ---------------- */', changePinStart);
+  assert.ok(changePinStart >= 0 && changePinEnd > changePinStart);
+  assert.ok(storeSource.slice(changePinStart, changePinEnd).includes('sessionRef.current?.userId !== adminSnapshot.id'));
 });
 
 
