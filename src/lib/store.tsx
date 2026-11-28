@@ -1935,7 +1935,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     if (input.customerId) {
       const localCustomer = stateRef.current.customers.find(customer => customer.id === input.customerId);
       if (localCustomer) {
-        const resolvedCustomer = await ensureCloudCustomerForSale(shop.shopId, localCustomer);
+        const resolvedCustomer = await withCloudActivity('Customer data', () => ensureCloudCustomerForSale(shop.shopId, localCustomer), result => result.ok);
         if (resolvedCustomer.ok && resolvedCustomer.customerId) {
           cloudCustomerId = resolvedCustomer.customerId;
         } else if ((input.creditDue || 0) > 0.009) {
@@ -2445,7 +2445,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await requestSaleReversal({ shopId: shop.shopId, requestId: req.id, saleId, reason: note });
+      const cloud = await withCloudActivity('Bill reversal request', () => requestSaleReversal({ shopId: shop.shopId, requestId: req.id, saleId, reason: note }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal request blocked: ' + (cloud.error || 'Request was not committed'));
         return false;
@@ -2477,7 +2477,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await approveSaleReversal({ shopId: shop.shopId, requestId });
+      const cloud = await withCloudActivity('Bill reversal approval', () => approveSaleReversal({ shopId: shop.shopId, requestId }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal approval blocked: ' + (cloud.error || 'Approval was not committed'));
         return false;
@@ -2531,7 +2531,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (shop.error || 'Cloud shop unavailable'));
         return false;
       }
-      const cloud = await rejectSaleReversal({ shopId: shop.shopId, requestId, note: reviewNote });
+      const cloud = await withCloudActivity('Bill reversal rejection', () => rejectSaleReversal({ shopId: shop.shopId, requestId, note: reviewNote }), result => result.ok);
       if (!cloud.ok) {
         pushAudit('DENIED', 'Sale', 'Cloud reversal rejection blocked: ' + (cloud.error || 'Rejection was not committed'));
         return false;
