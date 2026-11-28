@@ -1019,7 +1019,7 @@ export async function listSaleReversalRequests(shopId: string): Promise<{ ok: bo
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { ok: false, error: sessionError.message };
   if (!sessionData.session) return { ok: false, error: 'Cloud session is not available' };
-  const { data, error } = await supabase.rpc('list_sale_reversal_requests', { p_shop_id: shopId });
+  const { data, error } = await supabase.rpc('list_sale_reversal_requests_for_device_branch', { p_shop_id: shopId, p_device_id: deviceId() });
   if (error) return { ok: false, error: error.message };
   return { ok: true, requests: (Array.isArray(data) ? data : []) as any };
 }
