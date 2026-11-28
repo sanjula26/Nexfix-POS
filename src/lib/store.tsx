@@ -965,6 +965,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       active: true, createdAt: nowIso, mustChangePassword: false,
     } : null;
     const initialAdminPinHash = await hashPasswordAsync(next);
+    if ((stateRef.current.users || []).length > 0) {
+      return { ok: false, error: 'Administrator setup is already complete' };
+    }
     const nextState = { ...stateRef.current, users: cashierUser ? [admin, cashierUser] : [admin], settings: { ...stateRef.current.settings, adminPinHash: initialAdminPinHash } };
     stateRef.current = nextState;
     setState(nextState);
