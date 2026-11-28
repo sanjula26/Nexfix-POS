@@ -199,30 +199,30 @@ test('local admin authentication guard IPC is limited to the trusted renderer an
   }
   assert.ok(mainSource.includes("typeof payload?.attemptId!=='string'"));
   assert.ok(mainSource.includes("typeof payload?.success!=='boolean'"));
-  assert.ok(preloadSource.includes("beginLocalAuthAttempt: () => ipcRenderer.invoke('local-auth:begin')"));
+  assert.ok(preloadSource.includes("beginLocalAuthAttempt: (scope) => ipcRenderer.invoke('local-auth:begin', { scope })"));
   assert.ok(preloadSource.includes("completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload)"));
 });
 
 test('corrupt packaged local-auth guard state fails closed but repairs the persisted lockout timer', () => {
-  const guardStart = mainSource.indexOf('function failClosedLocalAuthGuardState()');
-  const readerStart = mainSource.indexOf('function readLocalAuthGuard()');
-  const writerStart = mainSource.indexOf('function writeLocalAuthGuard(', readerStart);
+  const guardStart = mainSource.indexOf("function failClosedLocalAuthGuardState(scope='admin')");
+  const readerStart = mainSource.indexOf("function readLocalAuthGuard(scope='admin')");
+  const writerStart = mainSource.indexOf("function writeLocalAuthGuard(value,scope='admin')", readerStart);
   assert.ok(guardStart >= 0 && readerStart > guardStart && writerStart > readerStart);
 
   const repair = mainSource.slice(guardStart, readerStart);
   assert.ok(repair.includes('failures:5'));
   assert.ok(repair.includes('lockedUntil:Date.now()+300000'));
-  assert.ok(repair.includes('writeLocalAuthGuard(locked)'));
+  assert.ok(repair.includes('writeLocalAuthGuard(locked,scope)'));
   assert.ok(repair.includes('return locked;'));
 
   const reader = mainSource.slice(readerStart, writerStart);
-  assert.equal((reader.match(/failClosedLocalAuthGuardState\(\)/g) || []).length, 2);
+  assert.equal((reader.match(/failClosedLocalAuthGuardState\(scope\)/g) || []).length, 2);
 });
 
 test('Electron reads persisted local-auth state only after strict schema validation', () => {
   assert.ok(mainSource.includes("isValidLocalAuthGuardState } = require('./local-auth-guard.cjs')"));
   assert.ok(mainSource.includes('if(!isValidLocalAuthGuardState(parsed,Date.now())){'));
-  assert.ok(mainSource.includes('return failClosedLocalAuthGuardState();'));
+  assert.ok(mainSource.includes('return failClosedLocalAuthGuardState(scope);'));
 });
 
 test('Electron stores Admin and cashier idle-unlock attempts in separate validated guard files', () => {
