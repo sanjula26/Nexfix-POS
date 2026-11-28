@@ -1,5 +1,5 @@
 import { restoreCloudSession, setCloudSignOutMarker, supabase, supabaseConfigured, verifyCloudSessionPersistence } from './supabase';
-import { ensureCloudShop, setCloudShopId } from './cloudSync';
+import { ensureCloudShop } from './cloudSync';
 import { getMachineIdentity } from './machine';
 
 type CloudUpdaterRecovery = { email: string; userId: string; refreshToken: string };
@@ -302,7 +302,6 @@ export async function provisionCloudUpdaterAccount(
     return { ok: false, error: detail || 'Could not resolve the existing Cloud shop membership.' };
   }
 
-  setCloudShopId(existingShop.shopId);
   const updaterReady = await refreshDesktopUpdaterCredentials();
   return updaterReady
     ? { ok: true }
@@ -362,7 +361,6 @@ export async function signInToCloud(email: string, password: string): Promise<{ 
     }
     return { ok: false, error: detail || 'Could not resolve the Cloud shop membership.' };
   }
-  setCloudShopId(membership.shopId);
   return { ok: true };
 }
 
