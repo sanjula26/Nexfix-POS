@@ -856,12 +856,12 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     const pinWasUnset = !stateRef.current.settings?.adminPinHash && nextUser.role === 'admin';
     const initialAdminPinHash = pinWasUnset ? await hashPasswordAsync(password) : '';
     const latestSignedInUser = stateRef.current.users.find(x => x.id === u!.id);
-    if (!latestSignedInUser || latestSignedInUser.password !== u!.password || !latestSignedInUser.active || latestSignedInUser.role !== u!.role) {
+    if (!latestSignedInUser || latestSignedInUser.password !== upgradedPassword || !latestSignedInUser.active || latestSignedInUser.role !== u!.role) {
       return { ok: false, error: 'Account credentials changed during sign-in. Please try again.' };
     }
     setState(s => ({
       ...s,
-      users: needsUpgrade ? s.users.map(x => x.id === u!.id ? nextUser : x) : s.users,
+      users: needsUpgrade ? s.users.map(x => x.id === u!.id && x.password === u!.password && x.active && x.role === u!.role ? nextUser : x) : s.users,
       settings: pinWasUnset && !s.settings.adminPinHash ? { ...s.settings, adminPinHash: initialAdminPinHash } : s.settings,
       audit: [{ id: uid(), time: new Date().toISOString(), user: u!.email, action: 'LOGIN', entity: 'Auth', details: `${u!.name} signed in${needsUpgrade ? ' · password upgraded to PBKDF2' : ''}` }, ...(s.audit || [])].slice(0, 500),
     }));
@@ -1122,6 +1122,9 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
       return currentValid;
     });
     if (!attempt.success) {
+      pushAudit('DENIED', 'Security', attempt.allowed
+        ? 'Failed administrator unlock PIN change'
+        : 'Administrator unlock PIN change temporarily locked');
       return {
         ok: false,
         error: attempt.allowed
