@@ -169,7 +169,7 @@ interface StoreCtx {
   clearAudit: () => void;
   exportData: () => Promise<string>;
   importData: (json: string) => Promise<boolean>;
-  resetData: () => void;
+  resetData: () => Promise<boolean>;
   /** Reload the current POS data without destroying the authenticated session or route. */
   refreshPOS: () => Promise<void>;
   /** Phase 2: connectivity + backup */
