@@ -77,6 +77,11 @@ export async function setCloudActivityScope(scope: CloudActivityScope | null): P
   publish();
 }
 
+/** Read the authenticated Cloud shop/user scope; local POS cashier IDs are never used. */
+export function getCloudActivityScope(): CloudActivityScope | null {
+  return activeScope ? { ...activeScope } : null;
+}
+
 export function getCloudActivityState(): CloudActivityState {
   return state;
 }
