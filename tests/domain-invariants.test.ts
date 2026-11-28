@@ -1483,7 +1483,7 @@ test('safe verification workflows trigger for integration and focused fix pull r
     const expectedPullRequestFilter = [
       '  pull_request:',
       "    branches: [main, 'integration/**', 'fix/**']",
-    ].join('\\n');
+    ].join(String.fromCharCode(10));
     assert.ok(source.includes(expectedPullRequestFilter), `${workflowPath} must run for main, integration and fix PRs`);
   }
 });
