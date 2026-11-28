@@ -1797,7 +1797,6 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
   }, [user, state, pushAudit, can]);
 
   const completeSaleCloud = useCallback(async (input: NewSaleInput): Promise<Sale | null> => {
-    let cloudSaleCommitted = false;
     const execute = async (): Promise<Sale | null> => {
     if (!user) throw new Error('Sign in again before completing this sale.');
     if (!can('page:pos')) {
@@ -2097,23 +2096,22 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     }
     let cloud: Awaited<ReturnType<typeof completeSaleAtomic>>;
     try {
-      cloud = await completeSaleAtomic({
+      cloud = await withCloudActivity('Cloud sale', () => completeSaleAtomic({
       shopId: shop.shopId, branchId: saleBranchId, deviceId: getMachineIdentity().id, saleId, customerId: cloudCustomerId, shipping: input.shipping,
       discount: (input.discount || 0) + tradeInValue, taxPct: input.taxPct, pointsRedeemed: input.pointsRedeemed,
       note: input.note, salesmanId: cloudSalesmanId,
       lines: saleLines.map(l => ({ product_id: l.productId, qty: l.qty, discount: l.discount, price: l.price, unit_ids: l.unitIds })),
       payments,
-      });
+      }), result => result.ok);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error || 'unknown RPC error');
       throw new Error(`Cloud sale failed: ${detail}`);
     }
     if (!cloud.ok) throw new Error(`Cloud sale failed: ${cloud.error || 'RPC rejected the sale without a reason'}`);
     if (!cloud.saleId || !cloud.billNo || cloud.saleId !== saleId || !cloud.committed?.sale) throw new Error('Cloud sale was committed without a complete receipt response');
-    cloudSaleCommitted = true;
     const committed = cloud.committed;
     if (tradeIn?.addToInventory) {
-      const tradeInCloud = await registerTradeInAtomic({
+      const tradeInCloud = await withCloudActivity('Trade-in unit', () => registerTradeInAtomic({
         shopId: shop.shopId,
         saleId,
         unitId: tradeInUnitId!,
@@ -2121,7 +2119,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
         value: tradeInValue,
         imei: tradeIn.imei?.trim() || undefined,
         serial: tradeIn.serial?.trim() || undefined,
-      });
+      }), result => result.ok);
       if (!tradeInCloud.ok) throw new Error(tradeInCloud.error || 'Cloud trade-in could not be registered. The sale is committed; retry the bill to finish trade-in reconciliation.');
     }
 
@@ -2232,9 +2230,7 @@ export function POSProvider({ children }: { children: React.ReactNode }) {
     pushAudit('SALE', 'Sale', `Cloud bill ${sale.billNo} · authoritative reconciliation · ${committedItems.length} item(s)`);
     return sale;
     };
-    return typeof navigator !== 'undefined' && navigator.onLine
-      ? withCloudActivity('Cloud sale', execute, () => cloudSaleCommitted)
-      : execute();
+    return execute();
   }, [user, state, pushAudit, completeSale, can]);
 
   const refundSale = useCallback(async (saleId: string): Promise<boolean> => {
