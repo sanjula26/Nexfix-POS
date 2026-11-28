@@ -2,7 +2,7 @@
 -- Every row is inserted inside a transaction and rolled back; no hosted data is used.
 begin;
 
-select plan(39);
+select plan(38);
 
 insert into auth.users (
   id, aud, role, email, encrypted_password,
