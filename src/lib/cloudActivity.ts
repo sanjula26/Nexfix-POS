@@ -116,7 +116,7 @@ function reportCloudActivityFailure(error: unknown): void {
 export async function withCloudActivity<T>(
   operation: string,
   action: () => Promise<T>,
-  didTransfer: (result: T) => boolean = () => true,
+  didTransfer: (result: T) => boolean = result => !(result && typeof result === 'object' && 'ok' in result && result.ok === false),
 ): Promise<T> {
   const requestScope = activeScope;
   const requestScopeKey = activeScopeKey;
