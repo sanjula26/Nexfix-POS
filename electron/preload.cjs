@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('nexfixDesktop', {
   isPortable: Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
   platform: process.platform,
   getVersion: () => ipcRenderer.invoke('app:version'),
+  beginLocalAuthAttempt: (scope) => ipcRenderer.invoke('local-auth:begin', { scope }),
+  completeLocalAuthAttempt: (payload) => ipcRenderer.invoke('local-auth:complete', payload),
   copyText: (text) => ipcRenderer.invoke('app:copy-text', text),
   openExternal: (url) => ipcRenderer.invoke('app:open-external', url),
   exitApp: () => ipcRenderer.invoke('app:exit'),
